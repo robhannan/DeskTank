@@ -1,5 +1,5 @@
-//! Interact tools (SPEC §2.5): pour, scoop, net and inspect, driven by
-//! pointer events in cell coordinates.
+//! Interact tools (SPEC §2.5): pour, scoop, glue, net and inspect, driven
+//! by pointer events in cell coordinates.
 //!
 //! This is the platform-free half of interaction, shared by every host
 //! (`desktank window`, the web, later the overlay): a host maps its pointer
@@ -7,10 +7,14 @@
 //! (`desktank_render::PaletteLayout`), and feeds the rest here. Strokes are
 //! interpolated between pointer samples, so a fast drag leaves no gaps.
 //!
+//! A pour stroke of a rigid material (rock) makes one body, held still
+//! while the button is down; it drops when released (D17). Glue toggles
+//! the bodies under the brush between glued (static) and free.
+//!
 //! Net and inspect need creatures (T7). Until then the net's hit test finds
 //! nothing and inspect reports the cell's material.
 
-use crate::{Brush, MaterialId, World};
+use crate::{BodyId, Brush, MaterialId, World};
 
 /// Smallest brush radius in cells (a single cell).
 pub const MIN_RADIUS: u32 = 0;
@@ -36,6 +40,8 @@ pub enum Tool {
     Pour,
     /// Erase: air above the water line, water below.
     Scoop,
+    /// Glue rigid bodies in place, or free them (D17).
+    Glue,
     /// Pick up a creature and move it.
     Net,
     /// Show what is under the pointer.
@@ -90,6 +96,8 @@ pub enum Outcome {
     Painted(usize),
     /// Inspect found something to show.
     Inspected(Inspection),
+    /// Glue changed this many bodies.
+    Glued(usize),
 }
 
 /// A stroke in progress: which button, what it does, where it last was.
@@ -98,12 +106,17 @@ struct Stroke {
     button: Button,
     action: Action,
     last: (i64, i64),
+    /// The rigid body a pour stroke is filling.
+    body: Option<BodyId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Pour,
     Scoop,
+    /// Glue (`Some(true)`) or free bodies; `None` until the stroke first
+    /// touches a body, which it toggles, setting the way for the rest.
+    Glue(Option<bool>),
     /// Carrying a creature (or, before T7, nothing: the hit test missed).
     Net(Option<CreatureId>),
     Inspect,
@@ -134,14 +147,15 @@ impl Tools {
     }
 
     /// The palette for `world`'s materials: the [`POUR_MATERIALS`] it has,
-    /// then scoop, net and inspect.
+    /// then scoop, net, inspect and glue (appended, so the earlier number
+    /// keys stay put).
     #[must_use]
     pub fn palette(world: &World) -> Vec<PaletteItem> {
         let materials = POUR_MATERIALS
             .iter()
             .filter_map(|n| world.materials().id(n))
             .map(PaletteItem::Material);
-        let tools = [Tool::Scoop, Tool::Net, Tool::Inspect].map(PaletteItem::Tool);
+        let tools = [Tool::Scoop, Tool::Net, Tool::Inspect, Tool::Glue].map(PaletteItem::Tool);
         materials.chain(tools).collect()
     }
 
@@ -179,12 +193,12 @@ impl Tools {
     }
 
     /// The brush outline to preview at the pointer, `(x, y, radius)` in
-    /// cells: for pour and scoop, or any stroke that paints.
+    /// cells: for pour, scoop and glue, or any stroke that uses the brush.
     #[must_use]
     pub fn preview(&self) -> Option<(i64, i64, u32)> {
         let painting = match self.stroke {
-            Some(s) => matches!(s.action, Action::Pour | Action::Scoop),
-            None => matches!(self.tool, Tool::Pour | Tool::Scoop),
+            Some(s) => matches!(s.action, Action::Pour | Action::Scoop | Action::Glue(_)),
+            None => matches!(self.tool, Tool::Pour | Tool::Scoop | Tool::Glue),
         };
         let (x, y) = self.pointer?;
         painting.then_some((x, y, self.radius))
@@ -223,6 +237,7 @@ impl Tools {
         let action = match (button, self.tool) {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
+            (Button::Primary, Tool::Glue) => Action::Glue(None),
             (Button::Primary, Tool::Net) => Action::Net(creature_at(world, cell)),
             (Button::Primary, Tool::Inspect) => Action::Inspect,
         };
@@ -230,9 +245,11 @@ impl Tools {
             button,
             action,
             last: cell,
+            body: None,
         });
         match action {
-            Action::Pour | Action::Scoop => Outcome::Painted(self.stamp(world, action, cell)),
+            Action::Pour | Action::Scoop => Outcome::Painted(self.stamp(world, cell)),
+            Action::Glue(_) => Outcome::Glued(self.glue(world, cell)),
             Action::Inspect => inspect(world, cell),
             Action::Net(_) => Outcome::None,
         }
@@ -249,6 +266,13 @@ impl Tools {
         stroke.last = cell;
         self.stroke = Some(stroke);
         match stroke.action {
+            Action::Glue(_) => {
+                let mut changed = 0;
+                for p in line(from, cell).skip(1) {
+                    changed += self.glue(world, p);
+                }
+                Outcome::Glued(changed)
+            }
             Action::Pour | Action::Scoop => {
                 // Discs half a radius apart still overlap into a solid band,
                 // and a wide brush costs a fraction of a disc per cell.
@@ -259,7 +283,7 @@ impl Tools {
                 while let Some(p) = points.next() {
                     i += 1;
                     if i % stride == 0 || points.peek().is_none() {
-                        changed += self.stamp(world, stroke.action, p);
+                        changed += self.stamp(world, p);
                     }
                 }
                 Outcome::Painted(changed)
@@ -285,27 +309,85 @@ impl Tools {
     }
 
     /// Re-applies a held paint stroke where the pointer rests, so holding
-    /// still keeps pouring. Hosts call this once per simulation tick run
-    /// (several times after a catch-up).
+    /// still keeps pouring (and keeps a rigid body being poured still).
+    /// Hosts call this once per simulation tick run (several times after a
+    /// catch-up).
     pub fn hold(&mut self, world: &mut World) -> usize {
         match self.stroke {
             Some(s) if matches!(s.action, Action::Pour | Action::Scoop) => {
-                self.stamp(world, s.action, s.last)
+                self.stamp(world, s.last)
             }
             _ => 0,
         }
     }
 
-    /// One brush disc at `c`; returns how many cells changed.
-    fn stamp(&self, world: &mut World, action: Action, c: (i64, i64)) -> usize {
-        if action == Action::Pour {
+    /// One brush disc at `c` for the stroke in progress; returns how many
+    /// cells changed. A pour adds rigid cells to the stroke's body.
+    fn stamp(&mut self, world: &mut World, c: (i64, i64)) -> usize {
+        let Some(stroke) = self.stroke.as_mut() else {
+            return 0;
+        };
+        if stroke.action == Action::Pour {
             // Built-in materials and a clipped disc: this can't fail.
-            return world
-                .paint(c.0, c.1, self.radius, self.material, Brush::Pour)
-                .unwrap_or(0);
+            let Ok((changed, body)) = world.paint_into(
+                c.0,
+                c.1,
+                self.radius,
+                self.material,
+                Brush::Pour,
+                stroke.body,
+            ) else {
+                return 0;
+            };
+            stroke.body = body;
+            return changed;
         }
         scoop(world, c, self.radius)
     }
+
+    /// Glues or frees the bodies under the brush disc at `c`, in the
+    /// stroke's direction (set by the first body it touches). Returns how
+    /// many bodies changed.
+    fn glue(&mut self, world: &mut World, c: (i64, i64)) -> usize {
+        let Some(stroke) = self.stroke.as_mut() else {
+            return 0;
+        };
+        let Action::Glue(mut way) = stroke.action else {
+            return 0;
+        };
+        let mut changed = 0;
+        for id in bodies_in_disc(world, c, self.radius) {
+            let Some(body) = world.body(id) else { continue };
+            let glue = *way.get_or_insert(!body.anchored);
+            if world.set_anchored(id, glue) {
+                changed += 1;
+            }
+        }
+        stroke.action = Action::Glue(way);
+        changed
+    }
+}
+
+/// The bodies with a cell in the disc at `c`, in id order.
+fn bodies_in_disc(world: &World, c: (i64, i64), radius: u32) -> Vec<BodyId> {
+    let r = i64::from(radius);
+    let mut ids = Vec::new();
+    for y in c.1 - r..=c.1 + r {
+        for x in c.0 - r..=c.0 + r {
+            let (dx, dy) = (x - c.0, y - c.1);
+            if dx * dx + dy * dy > r * r + r {
+                continue;
+            }
+            if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y))
+                && let Some(id) = world.body_at(x, y)
+            {
+                ids.push(id);
+            }
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// Erases a disc like [`World::paint`]'s: air above the water line and
@@ -630,7 +712,7 @@ mod tests {
     fn palette_selects_tools_and_materials() {
         let w = world();
         let items = Tools::palette(&w);
-        assert_eq!(items.len(), POUR_MATERIALS.len() + 3);
+        assert_eq!(items.len(), POUR_MATERIALS.len() + 4);
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
         t.select(PaletteItem::Tool(Tool::Inspect));

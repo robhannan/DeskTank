@@ -22,15 +22,18 @@
 //! radius = 3         # disc radius in cells (default 2)
 //! material = "sand"  # a material name from assets/materials
 //! brush = "pour"     # "pour" fills only fluid cells, "replace" overwrites (default "pour")
+//! glued = true       # a rigid material's body is glued in place (default false)
 //! ```
 //!
 //! Pours due on tick `t` are applied just before the world's `t`-th tick
-//! (counting from 0), so they show from that tick on.
+//! (counting from 0), so they show from that tick on. Each `[[pour]]` entry
+//! is one stroke: the rigid cells of all its repeats form one body, held
+//! still until its last repeat (D17).
 
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{Brush, World, WorldConfig, WorldError};
+use crate::{BodyId, Brush, World, WorldConfig, WorldError};
 
 /// Error reading or applying a script.
 #[derive(Debug, Error)]
@@ -128,6 +131,9 @@ pub struct Pour {
     /// How the disc treats the cells it covers.
     #[serde(default)]
     pub brush: BrushName,
+    /// Glue the body a rigid pour makes.
+    #[serde(default)]
+    pub glued: bool,
 }
 
 /// A brush as written in a script.
@@ -175,13 +181,42 @@ impl Script {
         }
     }
 
+    /// A player that replays this script against one world.
+    #[must_use]
+    pub fn player(&self) -> Player<'_> {
+        Player {
+            script: self,
+            bodies: vec![None; self.pours.len()],
+        }
+    }
+
+    /// Ticks the world from its current tick up to `until`, applying pours
+    /// on the way (with a fresh [`Player`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a pour names an unknown material.
+    pub fn run(&self, world: &mut World, until: u64) -> Result<(), ScriptError> {
+        self.player().run(world, until)
+    }
+}
+
+/// Replays a [`Script`] against one world, remembering the body each rigid
+/// pour is filling.
+#[derive(Clone, Debug)]
+pub struct Player<'a> {
+    script: &'a Script,
+    bodies: Vec<Option<BodyId>>,
+}
+
+impl Player<'_> {
     /// Applies the pours due on `tick` (call before the world's tick).
     ///
     /// # Errors
     ///
     /// Returns an error if a pour names an unknown material.
-    pub fn apply(&self, world: &mut World, tick: u64) -> Result<(), ScriptError> {
-        for p in &self.pours {
+    pub fn apply(&mut self, world: &mut World, tick: u64) -> Result<(), ScriptError> {
+        for (p, body) in self.script.pours.iter().zip(&mut self.bodies) {
             let Some(i) = tick.checked_sub(p.tick).filter(|&i| i < p.repeat) else {
                 continue;
             };
@@ -199,7 +234,13 @@ impl Script {
             // overflow; a disc there misses the grid either way.
             let far = 4 * i64::try_from(crate::MAX_SIDE).unwrap_or(i64::MAX / 8);
             let (x, y) = (x.clamp(-far, far), p.y.clamp(-far, far));
-            world.paint(x, y, p.radius, material, brush)?;
+            let (_, joined) = world.paint_into(x, y, p.radius, material, brush, *body)?;
+            *body = joined;
+            if p.glued
+                && let Some(id) = joined
+            {
+                world.set_anchored(id, true);
+            }
         }
         Ok(())
     }
@@ -210,7 +251,7 @@ impl Script {
     /// # Errors
     ///
     /// Returns an error if a pour names an unknown material.
-    pub fn run(&self, world: &mut World, until: u64) -> Result<(), ScriptError> {
+    pub fn run(&mut self, world: &mut World, until: u64) -> Result<(), ScriptError> {
         while world.tick_count() < until {
             self.apply(world, world.tick_count())?;
             world.tick();
