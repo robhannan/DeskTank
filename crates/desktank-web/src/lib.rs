@@ -3,7 +3,7 @@
 //! A thin [`wasm-bindgen`](https://docs.rs/wasm-bindgen) wrapper around
 //! [`desktank_sim::World`] for the GitHub Pages playground in `web/`: create
 //! a world, tick it, pour and erase materials, and read an RGBA frame. It is
-//! a showcase, not the product renderer (that is `desktank-render`).
+//! the WB0 demo; WB1 moves it onto `desktank-render` (SPEC §3.5).
 //!
 //! The bindings exist only on `wasm32`; natively the same API compiles as
 //! plain Rust, so the workspace builds and the logic is tested on every OS.
