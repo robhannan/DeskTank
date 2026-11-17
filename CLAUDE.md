@@ -2,7 +2,9 @@
 
 Lightweight virtual aquarium desktop toy in Rust: wallpaper, screensaver,
 lock screen and click-through overlay on macOS, Windows and Linux. Read
-`docs/PROGRESS.md` first (status, learnings, next increments).
+`docs/PROGRESS.md` first (status, learnings, next increments) and
+`docs/SPEC.md` for the plan and spec (display modes, architecture,
+resource budgets, work packages with acceptance criteria).
 
 - Build/test: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`.
 - Keep the simulation/rendering core OS-agnostic; platform code lives behind `cfg(target_os = …)` boundaries.
