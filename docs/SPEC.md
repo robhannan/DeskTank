@@ -1,97 +1,258 @@
 # DeskTank — Plan and Spec
 
-Status: **draft v0.2** (2026-11-17). Items marked ❓ are waiting on owner
-decisions (see [Open questions](#11-open-questions)); the defaults shown
-are what we build if nobody objects. Items marked 🔍 are technical claims
-that must be verified on real hardware, or against primary docs, before
-the work package that relies on them starts.
+Status: **draft v0.3** (2026-11-17).
+
+- ❓ marks items still waiting on owner decisions (see
+  [Open questions](#12-open-questions)). The defaults shown are what we
+  build if nobody objects.
+- 🔍 marks technical claims to verify on real hardware, or against
+  primary docs, before the work package that relies on them starts.
+- Owner decisions made so far are logged in
+  [§11](#11-decision-log).
 
 ## 1. Vision
 
-DeskTank is a calm, living aquarium for the desktop. You leave it running
-all day, so it must feel cheap: it should never appear on a "top energy
-users" list. It can run as any combination of four **display modes**:
+DeskTank is a pixel-art aquarium that lives on your desktop. It combines
+a falling-sand material simulation with a pet simulation.
+
+- **Materials:** you pour substrate, food, fertiliser, seeds and eggs into
+  the tank. Grains settle, bubbles rise, plants grow, and dead plants and
+  creatures sink and break down.
+- **Creatures:** real freshwater fish, shrimp, snails and frogs live,
+  breed and die.
+
+The tank's edges are the edges of the screen. You leave it running all
+day, so it must feel cheap: it should never appear on a "top energy
+users" list.
+
+It can run as any combination of four **display modes**:
 
 | Mode | What the user sees |
 |---|---|
 | **Wallpaper** | The tank replaces the desktop background, behind the icons. |
-| **Overlay** | Fish swim over open windows on a transparent, click-through layer. |
+| **Overlay** | The same tank drawn over open windows on a transparent, click-through layer. The water is clear (or lightly tinted) and the substrate rests along the bottom of the screen. |
 | **Screensaver** | A full-screen tank when the machine is idle. |
-| **Lock screen** | The tank on the lock screen, as far as each OS allows (§3.4, ❓ Q5). |
+| **Lock screen** | The tank on the lock screen, as far as each OS allows (§3.4). |
 
 ### Principles
 
 1. **Resources are a feature.** We have hard budgets (§6) and measure
-   them. When nobody can see the tank, it does no work.
+   them. When nobody can see the tank, it does no work. Settled material
+   costs nothing, because chunks of the grid sleep.
 2. **One tank core, thin platform shells.** The simulation and renderer
    know nothing about the OS or any event loop. Each mode/OS pairing is a
    small adapter that hands the core a surface and calls it once per
    frame.
-3. **Procedural first.** Fish, plants and light are generated from
-   parameters and shaders, not bitmaps, so the app stays small and sharp
-   on any DPI. ❓ Q1
-4. **Deterministic.** Given a seed and time step, the simulation is
-   reproducible, so it is testable and screenshots are repeatable.
-5. **Honest about platform limits.** Where an OS does not allow a mode,
-   we document it and offer the closest alternative, rather than
-   shipping fragile hacks.
+3. **A pixel-art cellular world.** Water, substrate, plants, bubbles,
+   food and detritus are cells on a grid. Creatures are pixel-art sprites
+   that move over the grid and interact with it. Everything is rendered
+   at integer scale with nearest-neighbour sampling.
+4. **Data-driven.** Materials, reactions and species are TOML data, not
+   code. Code exists only for behaviour that data can't express. This is
+   the falling-sand pattern; see
+   [`research/powder-toy.md`](research/powder-toy.md).
+5. **Deterministic.** Given a seed and a sequence of inputs, the
+   simulation is reproducible, so it is testable and screenshots are
+   repeatable.
+6. **Honest about platform limits.** Where an OS does not allow a mode,
+   we document it and offer the closest alternative.
+7. **Inspired by, never copied from.** The Powder Toy (GPL) and other
+   falling-sand games are references for ideas only. No code, element
+   tables, names or art are taken from them.
 
 ### Non-goals (v1)
 
-Mobile and web builds; 3D tanks; online features, accounts or telemetry;
-a plugin system; sound (❓ Q8).
+- Mobile and web builds.
+- 3D.
+- Online features, accounts or telemetry.
+- Progression, unlocks or currency: it is a sandbox (D9).
+- Plugin or scripting support.
 
-## 2. The tank (v1 content)
+## 2. The tank
 
-### 2.1 Scene layers (back to front)
+### 2.1 World model
 
-1. **Water**: vertical gradient with depth fog, tinted by time of day.
-2. **Light**: animated caustics and god-rays, all in a single
-   full-screen shader pass at a reduced internal resolution.
-3. **Back scenery**: rocks, sand and silhouettes of distant plants, plus
-   parallax.
-4. **Fish**: instanced quads, each fish drawn by an SDF fragment shader
-   from its species parameters, with body bend and tail and fin
-   animation. Anti-aliasing comes from the SDF, so there is no MSAA.
-5. **Front scenery**: swaying plants made of chains of segments with a
-   simple spring sway.
-6. **Particles**: bubbles from a bubbler and drifting specks; food flakes
-   when the fish are fed.
+- **Grid.** The tank is a grid of cells covering the display. Each cell
+  is a configurable number of screen pixels: 4×4 by default (2–8
+  allowed, D1), which gives 640×360 cells at 2560×1440.
+  - The screen edges are the tank walls, and the bottom edge is the
+    floor.
+  - Near the top there is a water surface, with a thin band of air above
+    it where bubbles pop and flakes float. ❓ Q2
+- **Cell.** A material ID (u8), a variant or colour-noise byte (u8), and
+  per-cell state such as age, a timer or moisture (u16). That is about
+  4 bytes per cell, or about 1 MB per display.
+- **Fields.** Coarse grids at 1/8 resolution hold the values that
+  diffuse:
+  - nutrients;
+  - CO₂;
+  - light;
+  - water current from the filter outlet;
+  - in full ecosystem mode, also ammonia, nitrate, O₂ and temperature.
+- **Chunks.** The grid is split into 64×64-cell chunks. Each chunk is
+  awake (it has moving cells or pending reactions) or asleep. Awake
+  chunks keep a dirty rectangle, in the style of Noita. Only awake
+  chunks are simulated and only dirty rectangles are uploaded to the
+  GPU.
+- **Ticks.** The simulation runs at a fixed 20 Hz (configurable).
+  Rendering runs at 30 fps, and creature motion is interpolated between
+  ticks.
 
-In overlay mode only the fish and particles are drawn, with no water
-(❓ Q3).
+### 2.2 Materials
 
-### 2.2 Fish
+Every material has a **movement class**:
 
-- **Species are data, not code**: a TOML table per species covering body
-  shape (length, height profile, tail and fin type), palette and pattern
-  (stripes, spots, gradient), size range, cruise and burst speed,
-  preferred depth band, and a schooling weight. v1 ships **5 species**
-  covering three behaviours: schooling (tetra-like), solitary cruiser
-  (angelfish-like) and bottom-dweller (catfish-like).
+| Class | Behaves like |
+|---|---|
+| solid | doesn't move |
+| powder | falls and piles up, with an angle of repose |
+| liquid | falls and spreads sideways |
+| buoyant | rises; "reverse falling sand" (bubbles) |
+| floating | stays at the surface for a while, then sinks |
+
+Materials also carry these properties:
+
+- **density**, which decides who displaces whom: a bubble rises because
+  it is lighter than water;
+- **friction and dispersion**;
+- **decay** into another material after some time;
+- **interactions with fields**: a material can consume from or emit into
+  them.
+
+A pairwise **reaction table** sets what happens when two materials
+touch: A next to B becomes C with probability p per tick, optionally
+needing a field threshold.
+
+The v1 palette (D2):
+
+| Group | Materials |
+|---|---|
+| Water and air | water (the medium, the "empty" cell), air (above the surface) |
+| Substrates | sand, gravel, aquasoil (holds nutrients), rock (solid), driftwood (solid) |
+| Food | flakes (float, then sink), sinking pellets, bloodworms (sink fast), algae wafers (for bottom feeders) |
+| Fertilisers | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), CO₂ (bubbles that dissolve into the CO₂ field and boost plant growth) |
+| Life | seeds and cuttings (become plants), moss (grows on rock and wood), algae (nuisance; grows with excess light and nutrients), eggs (one material per breeding species, which hatches into fry) |
+| Gases | air bubbles (from the bubbler, plants and creatures), CO₂ bubbles |
+| Decay | waste, dead plant matter and corpses, which sink and become **detritus**; detritus slowly disintegrates into nutrients |
+| Chaos *(hidden behind a setting, off by default)* | acid (dissolves substrate and plants), magma (boils water into steam bubbles and cools into rock), dye (tints the water), salt (harms freshwater life), blight (spreads through plants) |
+
+Plants are structures of cells: roots, stems, leaves. A plant grows by
+converting nearby water cells while it has nutrients, light and CO₂.
+Without them it wilts and drops dead plant matter.
+
+### 2.3 Ecosystem (D3)
+
+- **Simple mode** (the default):
+  - Waste and detritus become nutrients.
+  - Plants consume nutrients and light to grow.
+  - Excess nutrients plus light grow algae.
+  - A single **water quality** score falls with waste and rises with
+    plants and water changes. "Water change" is a tray action.
+- **Full mode** (optional):
+  - a nitrogen cycle: waste becomes ammonia, bacteria colonies on the
+    substrate and filter turn it into nitrite and then nitrate, and
+    plants absorb ammonia and nitrate;
+  - O₂ from plants by day, the bubbler and the surface;
+  - CO₂ from respiration and injection;
+  - a heater temperature setting.
+
+  Each species has tolerances for these values.
+
+### 2.4 Creatures
+
+- **Species are data** (D8). A TOML entry plus a sprite sheet defines:
+  - size;
+  - zone: surface, mid-water, bottom or surfaces;
+  - temperament: schooling, peaceful or territorial;
+  - diet: which food and which materials it grazes, such as algae and
+    detritus;
+  - lifespan and maturity age;
+  - breeding: egg layer (and which egg material) or livebearer;
+  - tolerances;
+  - colour variants.
+
+  v1 ships about 8 real freshwater species across fish, shrimp, snails
+  and a frog. Examples of the kind we mean: a schooling tetra, a
+  livebearer such as a guppy, a betta, a corydoras, cherry and amano-type
+  shrimp, a nerite-type and a ramshorn-type snail, and a dwarf frog that
+  surfaces to breathe. Fictional species are a stretch goal.
 - **Behaviour** is steering-based:
-  - wander (smoothed noise);
-  - boids separation, alignment and cohesion within a species, weighted
-    by species;
-  - soft tank-bound and obstacle avoidance;
-  - depth preference;
-  - turning with a natural body flip;
-  - occasional bursts.
-- **Day/night**: lighting follows local time. At night the fish slow
-  down and some rest near the bottom.
-- **Interaction** (v1):
-  - **Feed** from the tray menu: flakes sink and fish converge on them.
-  - In overlay and wallpaper modes, fish shy away from the cursor when it
-    moves fast. We only read the cursor position and never capture input.
-    ❓ Q8
-- **Population**: 8–20 fish per screen by default, configurable. ❓ Q2
-  decides whether fish persist, have needs or breed.
+  - wander;
+  - schooling for schoolers;
+  - zone preference;
+  - bottom-walking for corydoras and shrimp;
+  - surface-grazing for snails on glass, rock and plants;
+  - surfacing for frogs;
+  - finding and eating food cells, and grazing algae and detritus (the
+    clean-up crew);
+  - avoiding the cursor (optional, D8);
+  - resting at night.
 
-### 2.3 Multi-monitor
+  Creatures collide with solid cells and with the substrate surface.
+- **Life cycle.** Egg, then fry, juvenile, adult and elder. Growth
+  depends on feeding.
+  - **Breeding** needs mature, well-fed creatures and suitable
+    conditions. It slows as the tank gets crowded.
+  - **Offspring** take a parent's colour variant, with a small chance of
+    mutation. ❓ Q3
+  - A **population cap** per display (default 60 creatures,
+    configurable) protects the budget.
+- **Death** (D4) can come from old age, starvation, poor water quality,
+  wrong temperature (full mode), predation (larger fish eat fry and
+  shrimp) or chaos materials.
+  - **Easy mode** limits deaths to old age.
+  - A dead creature becomes a sinking corpse sprite, which turns into
+    detritus cells and disintegrates.
+- **Names** (D4): none by default. In interact mode, click a creature to
+  see its card (species, age, health) and give it a name.
 
-The default is one independent tank per display, each with its own seed
-and the same species mix. A single tank spanning all displays, where fish
-swim from one screen to the next, is a stretch goal. ❓ Q9
+### 2.5 Interaction (D6)
+
+- **Interact mode** turns on while a modifier key is held (default ⌥ on
+  macOS and Alt elsewhere, configurable), or with a tray toggle. While
+  it is on:
+  - the tank accepts clicks over its whole area, in wallpaper and
+    overlay modes alike;
+  - a small pixel-art palette appears in a screen corner;
+  - Esc or releasing the key (for the modifier variant) returns to
+    click-through.
+- **Tools:**
+  - **pour** the selected material: left-drag, with the scroll wheel
+    setting brush size;
+  - **scoop**: erase cells with right-drag;
+  - **net**: pick up and move a creature;
+  - **inspect**: show a creature's card and name it.
+
+  The tray menu also has quick actions: Feed (default food), Water
+  change, and Pause.
+- On Wayland, global key state isn't readable. There, the CLI
+  `desktank interact toggle` talks to the running app over IPC, so you
+  can bind it to a key in the compositor (§4.3).
+
+### 2.6 Time and persistence
+
+- **World time advances only while a tank is being simulated**: while it
+  is visible, or while the saver is running. Hidden or closed time
+  doesn't count.
+- **Optional catch-up** (D5, off by default): on resume, hidden or
+  offline time up to 24 hours is applied as a summarised step. Creatures
+  age, eat from what's available and may breed or die. Plants grow, and
+  detritus decays. This is a coarse, cheap model, not a per-cell replay.
+- **Day and night** follow local time.
+- **Persistence.** Each tank (one per display, or one spanning tank) is
+  saved to the platform data dir every 5 minutes and on exit, and the
+  format is versioned. The save holds:
+  - the grid, run-length encoded and compressed;
+  - the fields;
+  - the creatures and their names.
+
+  Wallpaper, overlay and screensaver show the **same tank** (D10). While
+  the app runs they share one simulation. Saver host processes load the
+  latest save, simulate locally and write nothing back, so there is only
+  ever one writer.
+- **Multi-monitor** (configurable): separate tanks per display (the
+  default), or one spanning tank where creatures and materials cross
+  between adjacent screen edges (stretch goal).
 
 ## 3. Display modes per platform
 
@@ -103,6 +264,7 @@ swim from one screen to the next, is a stretch goal. ❓ Q9
 | Overlay | ✅ | ✅ (compositing path 🔍) | ✅ needs a running compositor | ✅ layer-shell `overlay` (same GNOME caveat) |
 | Screensaver | ✅ `.saver` bundle ⚠️ host bugs 🔍 | ✅ `.scr` | ✅ built-in idle mode; ⚠️ XScreenSaver hack only where XScreenSaver is the saver | ✅ built-in idle mode |
 | Lock screen | ⚠️ saver shown while locked | ⚠️ static snapshot image only 🔍 | ⚠️ via saver | ⚠️ `ext-session-lock-v1` (stretch) |
+| Interact (modifier key) | ✅ modifier polling 🔍 | ✅ | ✅ | ⚠️ tray toggle or compositor key binding to the CLI |
 
 ### 3.2 Wallpaper
 
@@ -134,13 +296,13 @@ swim from one screen to the next, is a stretch goal. ❓ Q9
   layer-shell support is at best experimental, the mode reports
   "unsupported on this desktop".
 
-### 3.3 Overlay
+### 3.3 Overlay and interact input
 
 The overlay is transparent, click-through, always on top, takes no focus
 and has no taskbar or Dock entry. By default it is excluded from screen
 capture, using `NSWindow.sharingType = .none` on macOS and
 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on Windows. This is
-configurable, because some people want to show their fish off.
+configurable, because some people want to show their tank off.
 
 - **macOS**: transparent `NSWindow` at the floating window level, with
   `ignoresMouseEvents` and `canJoinAllSpaces | stationary`. It does
@@ -153,21 +315,31 @@ configurable, because some people want to show their fish off.
     premultiplied alpha. 🔍 It's unconfirmed whether wgpu's DX12
     backend exposes a composition swap chain with premultiplied alpha
     for an HWND.
-  - Click-through relies on `WS_EX_LAYERED | WS_EX_TRANSPARENT`
-    (hit-testing passes through regardless of how the window is drawn).
-  - Fallback path: render offscreen with wgpu, read back, and present
-    with `UpdateLayeredWindow` at a lower frame rate. Click-through
-    works the same way.
-  - The O1-Win spike picks one path, with pass/fail criteria (§9).
+  - Click-through relies on `WS_EX_LAYERED | WS_EX_TRANSPARENT`.
+  - Fallback path: render offscreen, read back, and present with
+    `UpdateLayeredWindow` at a lower frame rate.
+  - The O1-Win spike picks one path (§9).
 - **Linux X11**: an ARGB visual plus an empty XShape input region. This
   needs a running compositing manager (`_NET_WM_CM_S<n>` owned).
   Without one the mode reports "needs a compositor" and does not start.
 - **Linux Wayland**: a layer-shell `overlay` layer with an empty input
   region.
 - **Full-screen apps**: the overlay and wallpaper pause and hide while a
-  full-screen app is in front (§6.2 has detection details). ❓ Q3 decides
-  whether the overlay is free-roaming fish or a small floating "bowl"
-  window.
+  full-screen app is in front (§6.2 has detection details).
+- **Interact input** (§2.5). Entering interact mode makes the
+  overlay-type window accept mouse input. It shows that window over the
+  desktop if only wallpaper mode is on. Leaving interact mode makes it
+  click-through again.
+  - **macOS**: toggle `ignoresMouseEvents`. The modifier is detected by
+    polling `CGEventSourceFlagsState` at 10 Hz, only while a tank is
+    visible. 🔍 We need to confirm this needs neither Accessibility nor
+    Input Monitoring permission.
+  - **Windows**: toggle `WS_EX_TRANSPARENT`; poll the modifier with
+    `GetAsyncKeyState`.
+  - **X11**: set or clear the XShape input region; poll with
+    `XQueryKeymap`.
+  - **Wayland**: set the input region. No modifier detection; the tray
+    toggle or CLI is used instead.
 
 ### 3.4 Screensaver and lock screen
 
@@ -203,7 +375,7 @@ configurable, because some people want to show their fish off.
       reliable.
 
     Acceptance includes a leak-soak test.
-  - Until signing exists (D2), the saver is ad-hoc signed and for
+  - Until signing exists (R2), the saver is ad-hoc signed and for
     developers only. Users must clear quarantine by hand.
 - **Built-in idle mode** works on every OS. The running app detects
   idleness itself and shows its own full-screen tank windows, then
@@ -218,9 +390,8 @@ configurable, because some people want to show their fish off.
   not use XScreenSaver), and the fallback where a native saver
   misbehaves.
 - **Linux X11 XScreenSaver hack** (optional): renders into the window
-  given by `XSCREENSAVER_WINDOW` / `-window-id`, for desktops that
-  actually run XScreenSaver.
-- **Lock screen** (❓ Q5):
+  given by `XSCREENSAVER_WINDOW` / `-window-id`.
+- **Lock screen** (accepted, §11):
   - **macOS** allows no third-party lock screen. When "Require password
     after screen saver" is on, the saver keeps running over the lock
     until input. That is our lock-screen mode, and we document it.
@@ -237,9 +408,8 @@ configurable, because some people want to show their fish off.
   - **Linux Wayland** could have a real live lock through
     `ext-session-lock-v1` on sway, river, labwc and Wayfire. That means
     authenticating through PAM, which is security-critical, and a crashed
-    lock client must leave the session locked and recoverable (the
-    protocol keeps the session locked; recovery runs through the
-    compositor or a TTY). It is deferred, and is an escalation item.
+    lock client must leave the session locked and recoverable. It is
+    deferred, and is an escalation item.
 
 ## 4. Architecture
 
@@ -247,13 +417,17 @@ configurable, because some people want to show their fish off.
 
 ```
 crates/
-  desktank-sim       # pure simulation: world, species, steering, RNG, time. No GPU, no OS.
-  desktank-render    # wgpu renderer: takes a sim snapshot + a surface/target, draws a frame.
+  desktank-sim       # pure simulation: grid, chunks, materials, reactions, fields,
+                     # creatures, ecosystem, time, save format. No GPU, no OS.
+  desktank-render    # wgpu renderer: grid texture + palette shader, sprite atlas,
+                     # lighting; draws a sim snapshot to a surface/target.
   desktank-platform  # per-OS surface hosts (wallpaper/overlay/idle/saver windows),
-                     # power, visibility, full-screen and idle signals.
-  desktank           # main binary: CLI, config, tray, event loop, mode orchestration.
+                     # power, visibility, full-screen, idle and modifier-key signals,
+                     # interact input switching.
+  desktank           # main binary: CLI, config, tray, IPC, event loop, mode orchestration.
   desktank-saver     # screensaver host binary (.scr on Windows, XScreenSaver hack on X11).
   desktank-saver-mac # macOS .saver bundle (ScreenSaverView subclass).
+assets/              # materials/*.toml, reactions.toml, species/*.toml, sprites (PNG atlases + source files)
 ```
 
 Dependency direction: `sim ← render ← platform ← {desktank,
@@ -265,6 +439,9 @@ wgpu surface creation from raw handles needs `unsafe`, it moves into
 `platform`. All other `unsafe` lives in `platform` and
 `desktank-saver-mac`, at FFI boundaries, with `// SAFETY:` comments.
 
+Assets are embedded in the binary (`include_bytes!`). A user override
+directory for custom materials and species is a stretch goal.
+
 ### 4.2 Runtime model
 
 - **Loop-agnostic core.** `desktank-render` exposes a `Tank` with
@@ -274,55 +451,84 @@ wgpu surface creation from raw handles needs `unsafe`, it moves into
   - an SCTK/`calloop` loop (Wayland layer-shell);
   - `legacyScreenSaver`'s `animateOneFrame` (macOS saver);
   - the `.scr` message loop.
-
-  Each loop host implements the same pacing rules.
-- **One long-running app process**, `desktank run`. It owns one wgpu
-  `Device` shared by every surface, plus the tray icon and config. It
-  runs one tank per display per mode: wallpaper and overlay on the same
-  display share the simulation but draw different layers (❓ Q3).
+- **One long-running app process**, `desktank run`. It is a
+  single-instance app: a lock file plus an IPC endpoint. It owns one wgpu
+  `Device` shared by every surface, plus the tray icon and config.
+  Wallpaper and overlay on the same display share one simulation and
+  differ only in how the water layer is drawn.
   - **macOS, Windows and X11**: the main thread runs the winit loop
     (needed for macOS and the tray).
   - **Wayland**: the main thread runs a `calloop` loop with the SCTK
     layer-shell surfaces, and winit is not used.
-- The simulation steps on the loop thread at a fixed `dt`, with render
-  interpolation. There are no worker threads in v1, because about 20
-  fish × N displays costs microseconds.
+- **Simulation**: a fixed 20 Hz tick on the loop thread, covering only
+  awake chunks. Creatures and the ecosystem are updated every tick, and
+  the fields every 4th tick. If profiling shows a heavy pour exceeds the
+  tick budget, awake chunks can be updated in parallel in a
+  checkerboard pattern on a small rayon pool, but only in that case.
+- **Rendering**: each tick, the dirty rectangles of the cell grid are
+  copied into an `R8G8` texture (material, variant). A fragment shader
+  maps material and variant to a palette colour, then applies lighting:
+  quantised pixel-art caustics, day/night, and plant shadow. Creatures
+  are instanced sprites from an atlas, snapped to the cell grid. Water
+  is opaque in wallpaper mode and transparent or tinted in overlay mode.
 - **Frame pacing**: no continuous redraw. The loop sleeps until the next
-  frame deadline at the target fps (`ControlFlow::WaitUntil`, or a calloop
-  timer), and a frame is only requested when a surface is visible. When
-  every surface is hidden, the loop waits on OS events only, with no
-  frame timer (§6.2 lists the event sources).
+  frame deadline at the target fps (`ControlFlow::WaitUntil`, or a
+  calloop timer), and a frame is only requested when a surface is
+  visible. When every surface is hidden, the loop waits on OS events
+  only (§6.2).
 - **Screensaver hosts** are separate processes started by the OS, each
-  with its own wgpu device and its own budget (§6.1). They read the same
-  config. They optionally load a read-only tank state snapshot so the
-  saver shows *your* fish (❓ Q2).
+  with its own wgpu device and its own budget (§6.1). They read the
+  latest save and write nothing back (§2.6).
 
 ### 4.3 Configuration and control
 
 - **Config**: TOML at the platform config dir (`directories`), for
   example `~/Library/Application Support/DeskTank/config.toml`. It is
   hot-reloaded with `notify`. Every field has a default and a missing
-  file means defaults. The schema is versioned with a `version` key.
+  file means defaults. The schema is versioned with a `version` key. It
+  covers:
+  - modes;
+  - cell scale;
+  - fps and tick rate;
+  - power policy;
+  - multi-monitor layout;
+  - ecosystem mode;
+  - easy mode;
+  - chaos materials;
+  - catch-up;
+  - interact modifier;
+  - cursor avoidance;
+  - sound;
+  - overlay tint;
+  - capture exclusion;
+  - population cap.
 - **Tray / menu-bar icon** offers:
   - toggling each mode;
-  - Pause;
+  - Interact;
   - Feed;
+  - Water change;
+  - Pause;
   - Open config;
   - Start at login;
   - Quit.
 
   On macOS and Windows it uses `tray-icon`. On Linux it uses `ksni`
-  (StatusNotifierItem over D-Bus), because `tray-icon` needs a GTK main
-  loop and libappindicator there, which costs resources (🔍 confirm
-  before O2). ❓ Q7 decides whether to add a small settings window.
+  (StatusNotifierItem over D-Bus) to avoid needing a GTK loop (🔍 confirm
+  before O2). There is no settings window in v1 (§11).
 - **CLI** (`clap`):
   - `desktank run [--wallpaper] [--overlay] [--idle]`;
   - `desktank window` (a normal resizable window, for development and
     for users who want a desk-toy window);
-  - `desktank capture --seed N --time HH:MM --size WxH --frames K --out DIR`
-    (headless offscreen renders for tests, PRs and docs);
+  - `desktank interact on|off|toggle`, `desktank feed [FOOD]` and
+    `desktank pause` (sent over IPC to the running app);
+  - `desktank capture --seed N --time HH:MM --size WxH --frames K --script FILE --out DIR`
+    (headless offscreen renders; scripted pours make the output
+    reproducible);
   - `desktank bench`;
   - `desktank saver install|uninstall`.
+- **IPC**: a local socket (a Unix domain socket, or a named pipe on
+  Windows), user-only permissions, and a tiny line-based command
+  protocol.
 - **Start at login**: `SMAppService` on macOS, the `HKCU\…\Run` key on
   Windows, and an XDG autostart `.desktop` file on Linux.
 - **Logging**: `tracing`, with `tracing-appender` writing a rotating file
@@ -335,15 +541,17 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 
 | Concern | Choice | Notes |
 |---|---|---|
-| Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable |
+| Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable; `Cargo.lock` committed |
 | GPU | `wgpu` 30 | Metal, DX12 and Vulkan; offscreen rendering for capture and tests |
 | Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit majors until we choose to upgrade |
 | Wayland | `smithay-client-toolkit` 0.21 + `calloop` | Layer-shell and idle-notify |
 | macOS FFI | `objc2` 0.6 + `objc2-app-kit` / `objc2-screen-saver` | |
 | Windows FFI | `windows` 0.62 | |
 | Tray | `tray-icon` 0.26 (macOS/Windows), `ksni` (Linux) | |
-| Math | `glam` 0.34 | |
-| RNG | `rand_pcg` (seeded, reproducible) | |
+| Math / RNG | `glam` 0.34, `rand_pcg` (seeded) | |
+| Images | `png` (decoding the sprite atlas) | Atlases are built from source art; see ❓ Q1 |
+| Save format | `serde` + `postcard`, compressed with `lz4_flex` (pure Rust) | Versioned |
+| IPC | `interprocess` (local sockets) | |
 | CLI / config | `clap` 4, `serde` + `toml` 1, `directories` 6, `notify` | |
 | Errors / logs | `thiserror` 2 (libraries), `anyhow` (binaries only), `tracing` + `tracing-appender` | |
 | Supply chain | `cargo deny` (licences, advisories, duplicates) | |
@@ -353,33 +561,43 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 
 ### 6.1 Budgets
 
-Reference machine: M1 MacBook Air, one 2560×1440 display (❓ Q10).
-Windows and Linux numbers are recorded and tracked, but not gated in v1.
-Each additional display may add the per-display increment.
+Reference machine: M1 MacBook Air, one 2560×1440 display at the default
+4× cell scale (640×360 cells), with about 30 creatures. Windows and
+Linux numbers are recorded and tracked, but not gated in v1.
 
 | Metric | Main app (1 display) | Per extra display | Each saver host process |
 |---|---|---|---|
-| CPU while visible at 30 fps | ≤ 3% of one core, aiming for ≤ 1.5% | +1% | ≤ 3% |
+| CPU while visible, settled tank (no pouring) | ≤ 3% of one core, aiming for ≤ 1.5% | +1.5% | ≤ 3% |
+| CPU while interacting (pouring) | ≤ 15% of one core | — | n/a |
+| Simulation tick time: settled / heavy pour | ≤ 0.5 ms / ≤ 5 ms | — | same |
 | CPU while hidden or paused | ≤ 0.1% | — | n/a (exits) |
 | Wake-ups while hidden | ≤ 1/s (OS events only, plus polls ≤ every 10 s) | — | n/a |
 | GPU frame time at 1440p | ≤ 2 ms | +2 ms | ≤ 2 ms per display |
 | Resident memory | ≤ 80 MB, aiming for ≤ 50 MB | +10 MB | ≤ 80 MB, with no growth over 8 h |
-| Release binary size (stripped) | ≤ 15 MB | — | ≤ 15 MB |
-| Cold start to first frame | ≤ 500 ms | — | ≤ 500 ms |
+| Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
+| Cold start to first frame (including loading the save) | ≤ 500 ms | — | ≤ 500 ms |
 | Energy Impact (Activity Monitor) | "Low" while visible | — | "Low" |
 
-`desktank bench` (from T2) prints CPU per frame, GPU frame time and RSS.
-Any PR that touches the render loop, pacing or assets includes
-before-and-after numbers.
+`desktank bench` (from T2) prints, for a scripted scenario:
+- CPU per frame;
+- simulation tick time;
+- the number of awake chunks;
+- GPU frame time;
+- RSS.
+
+Any PR that touches the simulation, render loop, pacing or assets
+includes before-and-after numbers.
 
 ### 6.2 Power policy and event sources
 
 Defaults, all configurable:
 
-- 30 fps on AC power and 15 fps on battery. Rendering pauses in Low Power
-  Mode or battery saver, and below 20% battery.
-- Rendering pauses when the surface is occluded or minimised, the display
-  is asleep, or the session is locked (except for the saver).
+- 30 fps and a 20 Hz tick on AC power. On battery, 15 fps and a 10 Hz
+  tick. Rendering pauses in Low Power Mode or battery saver, and below
+  20% battery.
+- Rendering and simulation pause when the surface is occluded or
+  minimised, the display is asleep, or the session is locked (except for
+  the saver). World time stops too (§2.6).
 - Wallpaper and overlay pause while a full-screen app is in front.
 
 | Signal | macOS | Windows | Linux |
@@ -388,22 +606,39 @@ Defaults, all configurable:
 | AC / battery / level | `IOPSNotificationCreateRunLoopSource` | `RegisterPowerSettingNotification` (`GUID_ACDC_POWER_SOURCE`, battery %) | UPower over D-Bus |
 | Low power / saver | `NSProcessInfoPowerStateDidChange` | Energy saver status power setting 🔍 | UPower / power-profiles-daemon |
 | Display sleep / lock | `NSWorkspace` screens sleep/wake; `com.apple.screenIsLocked` | `WTSRegisterSessionNotification`; display-state power setting | logind `Lock`/`Unlock`, `PrepareForSleep` |
-| Full-screen app in front | Active-Space change + `CGWindowListCopyWindowInfo` bounds check (no window titles, so no Screen Recording permission) 🔍 | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` → `SHQueryUserNotificationState` | X11: `_NET_ACTIVE_WINDOW` + `_NET_WM_STATE_FULLSCREEN`; Wayland: `wlr-foreign-toplevel-management` where available, otherwise not detected (the overlay layer stays above full-screen windows) |
+| Full-screen app in front | Active-Space change + `CGWindowListCopyWindowInfo` bounds check (no window titles, so no Screen Recording permission) 🔍 | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` → `SHQueryUserNotificationState` | X11: `_NET_ACTIVE_WINDOW` + `_NET_WM_STATE_FULLSCREEN`; Wayland: `wlr-foreign-toplevel-management` where available, otherwise not detected |
+| Interact modifier | `CGEventSourceFlagsState` polled at 10 Hz while visible 🔍 | `GetAsyncKeyState` polled at 10 Hz while visible | X11 `XQueryKeymap` polled at 10 Hz while visible; Wayland: none (IPC/tray) |
 
-All of these are event-driven except the idle polls (§3.4), which run at
-most every 10 s and only while a mode that needs them is enabled.
+Everything is event-driven except the idle polls (at most every 10 s)
+and the modifier poll (10 Hz, only while a tank is visible and interact
+by modifier is enabled).
 
 ## 7. Quality, testing and CI
 
 - **Lints**: workspace `clippy::pedantic`, `unsafe_code = "deny"` except
   in FFI crates, `missing_docs` on public library APIs, and
   `rustfmt.toml`.
-- **Unit tests** in `sim`: steering maths, bounds, schooling cohesion
-  over N steps, and determinism (same seed, same state hash).
+- **Simulation tests**:
+  - determinism (same seed and input script give the same state hash);
+  - mass conservation for non-reacting materials;
+  - settled scenes put every chunk to sleep;
+  - powder angle of repose;
+  - bubbles reach the surface;
+  - each reaction rule fires;
+  - plants grow when fed and wilt when not;
+  - the life cycle (hatch, grow, breed, die for each cause, corpse
+    turns to detritus);
+  - easy mode prevents non-age deaths;
+  - save and load round-trips, plus a test that loads saves from earlier
+    schema versions;
+  - catch-up stays within bounds.
 - **Render tests**: offscreen captures compared with reference images.
   They pass when ≤ 0.5% of pixels differ by more than ΔE 2. They run in
   Linux CI on Mesa lavapipe (software Vulkan), so CI needs no GPU.
   Reference images are updated deliberately with a `--bless` flag.
+- **Benchmarks**: `criterion` benches for the simulation tick (settled,
+  heavy pour, 60 creatures). CI records the numbers; it doesn't gate on
+  them.
 - **Platform smoke tests** on each OS runner: start each available mode
   for a few seconds where the runner allows, then exit cleanly.
 - **CI** runs on macOS, Windows and Ubuntu: fmt, clippy, test, doc and
@@ -413,17 +648,20 @@ most every 10 s and only while a mode that needs them is enabled.
 
 ## 8. Distribution
 
-- GitHub Releases:
+- **Open source** (§11): the repository becomes public before the first
+  release. The code is MIT OR Apache-2.0. Art and data assets carry a
+  licence chosen in ❓ Q1.
+- **GitHub Releases**:
   - **`cargo-dist`** builds the archives, the Windows MSI (which also
-    installs the `.scr`, per-machine) and the shell and PowerShell
+    installs the `.scr` per-machine) and the shell and PowerShell
     installers.
   - **zx scripts** build `DeskTank.app` (universal binary), assemble
     `DeskTank.saver`, and package both in a `.dmg`.
   - Linux ships a tarball now, with AppImage and AUR later.
-- Signing: Developer ID signing and notarization on macOS, and
+- **Signing**: Developer ID signing and notarization on macOS, and
   Authenticode on Windows. Both cost money and need owner accounts.
-  ❓ Q6
-- Package managers later:
+  ❓ Q4. Until then, builds are unsigned and for developers.
+- **Package managers later**:
   - a Homebrew **cask** in our own tap, maintained separately (cargo-dist
     produces formulae, not casks);
   - winget;
@@ -436,8 +674,8 @@ most every 10 s and only while a mode that needs them is enabled.
 
 Each package is one PR (or a few), built by the Developer agent. A
 package is done when its acceptance criteria are met; tick it off here
-in that PR. "Within budget" means §6.1, measured with `desktank bench` on
-the reference machine and reported in the PR.
+in that PR. "Within budget" means §6.1, measured with `desktank bench`
+on the reference machine and reported in the PR.
 
 ### M0 — Foundations
 
@@ -452,53 +690,88 @@ the reference machine and reported in the PR.
   - per-user vs per-machine `.scr` install;
   - whether a Rust `cdylib` loads as a `.saver`;
   - whether wgpu supports premultiplied-alpha composition swap chains on
-    DX12.
+    DX12;
+  - whether `CGEventSourceFlagsState` needs any permission.
 
   *Accept:* each question answered yes or no, with evidence (a doc link
   or a minimal test), and the affected 🔍 marks resolved in this spec.
 
-### M1 — A tank in a window
+### M1 — A living tank in a window
 
-- [ ] **T1 Simulation core.** World, species loading from TOML, wander
-  plus bounds steering, fixed timestep and seeded RNG. *Accept:* the
-  same seed gives the same state hash after 10⁴ steps, and no fish
-  leaves the bounds in 10⁵ steps.
+- [ ] **T1 Grid, chunks and movement.** A cell grid with 64×64 chunks,
+  sleep and wake, and dirty rectangles. All five movement classes and
+  density displacement. Materials load from TOML (water, air, sand,
+  gravel, rock, air bubble). Fixed tick and seeded RNG. *Accept:*
+  - same seed and script give the same hash after 10⁴ ticks;
+  - non-reacting mass is conserved;
+  - a settled scene has 0 awake chunks within 5 s;
+  - bubbles reach the surface;
+  - sand piles at its angle of repose;
+  - tick time on a heavy-pour bench ≤ 5 ms and on a settled scene
+    ≤ 0.5 ms.
 - [ ] **T2 Renderer, `desktank window` and minimal `desktank bench`.**
-  wgpu setup, water gradient and instanced SDF fish with tail animation.
-  The loop-agnostic `Tank` API (§4.2) paces frames with an fps cap and
-  pauses when occluded or minimised. *Accept:* within the main-app budget
-  in a window; hidden-state CPU ≤ 0.1%.
-- [ ] **T3 Capture.** `desktank capture` renders offscreen to PNG or a
-  frame sequence, with render tests on lavapipe in CI at the §7
-  tolerance. *Accept:* at least 2 reference images are tested in CI, and
-  a deliberate shader change fails the test.
-- [ ] **T4 Schooling and species.** Boids weighting, 5 species and depth
-  bands. *Accept:*
-  - schoolers' mean nearest-neighbour distance is ≤ 3 body lengths for
-    ≥ 80% of 10⁴ steps;
-  - each species spends ≥ 70% of its time in its depth band;
+  Grid texture with dirty-rectangle uploads, a palette shader with
+  integer scaling, frame pacing, and a pause when occluded. *Accept:*
+  within the main-app budget in a window; hidden-state CPU ≤ 0.1%.
+- [ ] **T3 Capture.** `desktank capture` with input scripts, and render
+  tests on lavapipe in CI at the §7 tolerance. *Accept:* at least 2
+  reference images in CI, and a deliberate shader change fails the test.
+- [ ] **T4 Window-mode interaction.** The palette, and the pour, scoop,
+  net and inspect tools, with brush size and a cursor preview. *Accept:*
+  every tool works with mouse and trackpad, and pouring stays within the
+  interacting budget.
+- [ ] **T5 Creatures.** Species TOML, the sprite atlas pipeline with
+  placeholder art (❓ Q1), steering (wander, schooling, zones,
+  bottom-walking, surface-grazing, surfacing), collision with cells,
+  eating food cells, and optional cursor avoidance. *Accept:*
+  - no creature enters a solid cell in 10⁵ ticks;
+  - schoolers' mean nearest-neighbour distance stays ≤ 3 body lengths
+    for ≥ 80% of the time;
+  - each species spends ≥ 70% of its time in its zone;
+  - food is found and eaten within 10 s of simulated time;
   - a GIF is in the PR.
-- [ ] **T5 Scenery and light.** Rocks, sand, swaying plants, bubbles and
-  caustics. *Accept:* within budget, with GPU frame time ≤ T2 + 1 ms and
-  CPU ≤ T2 + 0.5%.
-- [ ] **T6 Day/night and feeding.** Lighting tied to time, night
-  behaviour, and food flakes (triggered by `desktank capture --feed` and
-  a key in window mode). *Accept:* captures at 4 times of day differ as
-  specified, and ≥ 80% of fish reach food within 10 s of simulated time.
-- [ ] **T7 Cross-OS measurement.** `desktank bench` on Windows and
-  Linux, with measurement recipes for all three OSes documented in
-  PROGRESS. *Accept:* numbers recorded for all three OSes.
+- [ ] **T6 Plants, food, fertiliser and reactions.** The reaction table;
+  plant growth (seeds and cuttings); moss and algae; the food types;
+  fertilisers (root tabs, liquid, CO₂ bubbles); and the decay chain
+  (waste and dead matter become detritus, then nutrients). *Accept:* a
+  test for each reaction; plants grow when fed and lit and wilt without;
+  detritus fully disintegrates within its configured time.
+- [ ] **T7 Simple ecosystem and day/night.** Nutrient and light fields, a
+  water-quality score, the water-change action, and lighting tied to
+  local time. *Accept:* a scripted scenario showing overfeeding leading
+  to an algae bloom and a water change bringing it back, as tests plus a
+  GIF.
+- [ ] **T8 Life cycle.** Eggs and livebearing, growth stages, breeding
+  rules, colour inheritance, every death cause, easy mode, corpses that
+  turn into detritus, the population cap, and names on the inspect card.
+  *Accept:* a test for each cause of death; easy mode allows only
+  old-age deaths; the population never exceeds the cap; a named creature
+  keeps its name across save and load.
+- [ ] **T9 Persistence and catch-up.** A versioned save format, autosave
+  and save on exit, and optional catch-up (off by default, capped at
+  24 h). *Accept:*
+  - save and load round-trip;
+  - a test with a v1-format save fixture;
+  - catch-up for 24 h runs in ≤ 200 ms and keeps the population and
+    nutrients within plausible bounds;
+  - a corrupt save is moved aside, and the app starts with a fresh tank
+    plus a logged error.
+- [ ] **T10 Cross-OS measurement.** `desktank bench` on Windows and
+  Linux, with measurement recipes for all three OSes in PROGRESS.
+  *Accept:* numbers recorded for all three OSes.
 
 ### M2 — Power, overlay and control
 
 - [ ] **O3 Power policy and event sources** (§6.2), before any
   always-on mode ships. *Accept:*
-  - on battery the frame rate drops to 15 fps;
-  - Low Power Mode, lock and display sleep pause rendering;
+  - on battery the frame rate drops to 15 fps and the tick to 10 Hz;
+  - Low Power Mode, lock and display sleep pause rendering and world
+    time;
   - hidden-state wake-ups stay within budget;
   - all verified on macOS, with Windows and Linux in their O1 PRs.
-- [ ] **O1-Mac / O1-Win / O1-Linux Overlay mode**, one PR per OS. Each
-  is accepted when:
+- [ ] **O1-Mac / O1-Win / O1-Linux Overlay mode**, one PR per OS. The
+  water is transparent or tinted and the substrate rests on the bottom
+  edge. Each is accepted when:
   - clicks reach the windows underneath;
   - the overlay never takes focus;
   - it has no Dock or taskbar entry;
@@ -507,20 +780,25 @@ the reference machine and reported in the PR.
   - it is excluded from screen capture by default;
   - it is within budget.
 
-  O1-Win starts with a spike choosing between the composition swap chain
-  and `UpdateLayeredWindow` (§3.3). The spike passes when the window
-  shows per-pixel alpha correctly, is click-through, and stays within
-  budget. O1-Linux covers X11 with a compositor and Wayland layer-shell,
-  and reports clearly when neither is available.
+  O1-Win starts with the composition-path spike (§3.3). O1-Linux covers
+  X11 with a compositor and Wayland layer-shell.
+- [ ] **O5 Global interact mode.** The modifier key, the tray toggle, and
+  the IPC CLI (`interact`, `feed`, `pause`), with switching between
+  click-through and accepting input on each OS (§3.3). *Accept:*
+  - holding the modifier enables pouring over the overlay and the
+    wallpaper;
+  - releasing it or pressing Esc restores click-through within 100 ms;
+  - Wayland works through the tray and CLI;
+  - no OS permission prompt appears (per P1).
 - [ ] **O2 Tray + config.** The tray menu (§4.3), TOML config with hot
   reload, and start at login. *Accept:* every menu item works on all
   three OSes, a config edit applies within 1 s without a restart, an
   invalid config logs an error and keeps the last good config, and start
   at login survives a reboot.
-- [ ] **O4 Multi-monitor.** One tank per display, with hot-plug and
-  per-display scale factors. *Accept:* plugging or unplugging a display,
-  or changing its scale, adds, removes or rescales its tank within 2 s
-  with no restart or leak.
+- [ ] **O4 Multi-monitor.** Separate tanks per display (each persisted),
+  with hot-plug and per-display scale factors. *Accept:* plugging or
+  unplugging a display, or changing its scale, adds, removes or rescales
+  its tank within 2 s, with no restart, leak or data loss.
 
 ### M3 — Wallpaper
 
@@ -542,12 +820,12 @@ the reference machine and reported in the PR.
   of the configured idle time, dismisses on any input, covers every
   display, and the saver windows stay within budget.
 - [ ] **S1 Windows `.scr`** with `/s`, `/p` and `/c`, and `desktank saver
-  install` (per-user). The installer hook comes with D1. *Accept:* each
+  install` (per-user). It loads the latest save read-only. *Accept:* each
   argument works from the Screen Saver dialog or the registry entry, the
   preview renders inside the dialog, and the saver exits on input.
 - [ ] **S2 macOS `.saver`.** objc2 `ScreenSaverView`, a Metal layer, the
-  leak mitigations, and `desktank saver install` (developer-only until
-  D2). *Accept:*
+  leak mitigations, read-only save loading, and `desktank saver install`
+  (developer-only until R2). *Accept:*
   - the saver runs and previews in System Settings;
   - an 8-hour soak with 50 or more activations shows `legacyScreenSaver`
     RSS growth of 20 MB or less;
@@ -571,63 +849,105 @@ the reference machine and reported in the PR.
   - the PAM unlock works;
   - killing the client leaves the session locked and recoverable.
 
-### M6 — Ship it
+### M6 — Depth
 
-- [ ] **D1 Release pipeline.** *Accept:* a tag produces, through CI, a
+- [ ] **E1 Full ecosystem mode.** Nitrogen cycle, bacteria colonies, O₂,
+  CO₂ and heater temperature; species tolerances; a config switch.
+  *Accept:*
+  - a cycling scenario test: a new tank shows ammonia, then nitrite,
+    then nitrate peaking in order;
+  - species outside their tolerances decline;
+  - simple mode is unchanged.
+- [ ] **E2 Chaos materials** behind a setting that is off by default
+  (§2.2). *Accept:* a test for each chaos reaction; nothing chaotic is
+  reachable from the palette or saves while the setting is off; turning
+  it off removes chaos materials from the palette.
+- [ ] **E3 Optional sound.** Bubbles, pouring and the filter hum, off by
+  default. Audio is only active while the tank is visible. *Accept:*
+  within budget with sound on; audio is fully released when hidden.
+
+### M7 — Ship it
+
+- [ ] **R1 Release pipeline.** *Accept:* a tag produces, through CI, a
   GitHub Release with the `.dmg` (`.app` + `.saver`), the MSI (with
   `.scr`) and a Linux tarball, and each installs and runs on a clean
   machine.
-- [ ] **D2 Signing and notarization** (needs owner accounts, ❓ Q6).
+- [ ] **R2 Signing and notarization** (needs owner accounts, ❓ Q4).
   *Accept:* the `.dmg` passes `spctl --assess`, and the MSI and `.scr`
   are Authenticode-signed with no SmartScreen "unknown publisher"
   warning, given the certificate type.
-- [ ] **D3 Package managers.** *Accept:* `brew install --cask`, `winget
+- [ ] **R3 Package managers.** *Accept:* `brew install --cask`, `winget
   install` and an AUR package each install a working release.
+- [ ] **R4 Go public.** README, CONTRIBUTING, issue templates, and
+  licence headers for assets. Make the repo public. *Accept:* the owner
+  approves, and the repo is public.
 
-Suggested order:
+### Stretch goals (unscheduled)
+
+- Open windows act as solid obstacles, so sand piles on title bars and
+  creatures swim around windows (D7).
+- One spanning tank across monitors (D9).
+- Fictional species (D8).
+- A user directory for custom materials and species.
+- A settings window.
+
+### Suggested order
 
 1. F1, then P1 and T1 in parallel.
 2. T2, T3.
-3. O3, then O1-Mac, then O2.
-4. T4, T5, T6.
-5. W1, then S3, then S2, then the rest.
+3. T4, T5, T6.
+4. T7, T8, T9.
+5. O3, then O1-Mac, then O5, then O2.
+6. W1, then S3, then S2, then the rest.
 
-Within each mode macOS comes first, then Windows, then Linux (❓ Q4).
+Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run alongside M3 and M4.
 
 ## 10. Risks
 
 | Risk | Impact | Mitigation |
 |---|---|---|
+| Falling-sand cost on an always-on app | Budget blown during activity or by a "busy" tank | Sleeping chunks, a 20/10 Hz tick, the population cap, profiling in T1; parallel chunks only if needed |
+| Pixel art supply | No art, or inconsistent art | ❓ Q1; placeholder generator from day one; a consistent palette and sprite-size spec |
+| Pet sim feels punishing | Users come back to dead tanks | Easy mode; world time only while visible; catch-up off by default; slow, gentle death curves |
+| Global modifier detection needs permissions | Permission prompts, or the feature fails | P1 verification; the tray toggle as the always-available path |
 | Windows 24H2+ WorkerW changes | Wallpaper broken on new Windows | Test matrix and snapshot fallback; study Lively's behaviour (GPL, so no code copying) |
-| macOS `legacyScreenSaver` leaks and regressions | Saver eats RAM; Apple keeps breaking it | Mitigations, soak test, and built-in idle mode as a fallback |
+| macOS `legacyScreenSaver` leaks and regressions | Saver eats RAM | Mitigations, soak test, and built-in idle mode as a fallback |
 | GNOME lacks layer-shell | No wallpaper or overlay on GNOME Wayland | Document it; X11 session works; a GNOME Shell extension is a possible later option |
 | Transparent overlays on Windows with wgpu | Alpha may not compose | P1 question plus the O1-Win spike; `UpdateLayeredWindow` fallback |
-| GPU driver baseline memory | RSS budget exceeded | Measure in T2; low-power adapter, small swapchains, no MSAA |
 | Lock-screen API needs package identity | L2 not possible unpackaged | Decided in P1: MSIX packaging, or drop L2 |
-| Unsigned builds | Gatekeeper and SmartScreen block users | Developer-only until D2; ❓ Q6 |
+| Unsigned builds | Gatekeeper and SmartScreen block users | Developer-only until R2; ❓ Q4 |
+| Save corruption or schema drift | A lost pet tank | Versioned format, atomic writes, the last 3 saves kept, fixture tests |
 
-## 11. Open questions
+## 11. Decision log
 
-1. **Art direction.** Procedural stylised vector fish (default: small,
-   crisp, no assets), pixel art, or realistic hand-made sprites?
-2. **Tank personality.** Purely ambient (default), or light pet
-   mechanics: persistent fish, names, hunger, growth, breeding,
-   unlockable species?
-3. **Overlay content.** Free-roaming fish over all windows (default), a
-   movable floating bowl window, or both?
-4. **Platform priority.** macOS → Windows → Linux (default)? Which Linux
-   desktops matter to you?
-5. **Lock screen.** Do the platform limits in §3.4 match your
-   expectations? Is a static snapshot on Windows worth doing?
-6. **Distribution.** Public open source? Will you pay for an Apple
-   Developer ID ($99/yr) and Windows code signing? Is this free, or will
-   it be sold?
-7. **Settings.** Tray menu plus config file only (default), or a small
-   settings window?
-8. **Interaction and sound.** Fish react to the cursor (default: yes,
-   gently)? Optional ambient sound (default: none)?
-9. **Multi-monitor.** One tank per display (default) or one spanning
-   tank?
-10. **Budgets.** Are the §6.1 numbers and reference machine right?
-11. **Name and identity.** Is "DeskTank" final? Do you want an icon or
-    logo direction?
+| # | Decision (2026-11-17) |
+|---|---|
+| D1 | Art: **pixel art**. Cell scale configurable, default 4×. |
+| D2 | Materials: several kinds of food and fertiliser, plus CO₂. **Chaos materials** are hidden behind a setting, off by default. |
+| D3 | Ecosystem: **simple by default**, full as an option. |
+| D4 | **Pet sim.** Death for any reasonable cause; **easy mode** limits deaths to old age. Names are optional and user-given. |
+| D5 | Offline or hidden **catch-up**: optional, **off by default**. |
+| D6 | **Interact** via a modifier key **and** a tray toggle. |
+| D7 | **Screen edges are tank edges.** Windows as solid objects is a stretch goal. |
+| D8 | **Real freshwater** fish, shrimp, snails and frogs. Fictional species are a stretch goal. Cursor reaction yes; sound optional. |
+| D9 | **Sandbox**, no progression for now. Multi-monitor layout configurable (separate by default; spanning is a stretch goal). |
+| D10 | **One shared tank** across modes. |
+| — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
+
+## 12. Open questions
+
+1. **Art source and licence.**
+   - Who makes the pixel art: you, a commissioned artist, or
+     programmer-art placeholders from me first?
+   - Which asset licence: CC BY 4.0, CC BY-SA 4.0, or the code's
+     licence?
+   - Any reference style, such as sprite size or palette?
+2. **Water surface.** A visible surface line with an air gap at the top
+   (default: about 4% of the screen height), or water all the way to the
+   top edge?
+3. **Colour inheritance and mutation.** Is it wanted, or should all
+   offspring look like their species' default?
+4. **Signing.** Will you pay for an Apple Developer ID ($99/yr) and a
+   Windows code-signing certificate before the first public release?
+5. **Name and identity.** "DeskTank" is TBC. Do you want an icon or logo
+   direction?
