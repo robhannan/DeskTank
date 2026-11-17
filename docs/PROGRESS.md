@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) done in `desktank-sim`; the other crates are stubs. D1: the sim core runs in the browser on GitHub Pages.
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) done in `desktank-sim`; the other crates are stubs. WB0: the sim core runs in the browser on GitHub Pages; the web is now a product target (D15, SPEC §3.5).
 
 ## Done
 
@@ -12,7 +12,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - F1 workspace scaffold + CI: six crate stubs (SPEC §4.1), `clap` CLI skeleton for every §4.3 subcommand, toolchain pinned at 1.100.0, workspace lints, size-tuned release profile, `deny.toml`, Dependabot, CI (fmt, clippy, test, doc on macOS/Windows/Ubuntu; `cargo deny` on Ubuntu).
 - Decided: `Cargo.lock` committed; MSRV = pinned toolchain; `forbid(unsafe_code)` in sim and render (recorded in CLAUDE.md).
 - T1 grid, chunks and movement (`desktank-sim`): 4-byte cells, 64×64 chunks with sleep/wake and dirty rectangles, five movement classes, materials from embedded TOML (`assets/materials/`), fixed 1/20 s tick, per-chunk PCG streams, FNV-1a state hash, `set_cell`/`paint`/`fill_rect` edit API, PPM/ASCII debug snapshots (`cargo run --release -p desktank-sim --example snapshot`), criterion benches (`cargo bench -p desktank-sim`). Mechanisms the spec left open are recorded in SPEC §2.1 (*T1* notes).
-- D1 browser demo (`desktank-web` + `web/`): the sim core in WebAssembly on GitHub Pages (https://robhannan.github.io/DeskTank/). Pour/erase with a brush, play/pause/step/reset, seed, stats; 20 Hz fixed tick with rAF drawing that uploads a frame only when the world changed. Built by `scripts/build-web.mjs` (zx, `pnpm build:web`); CI builds it on every PR, `pages.yml` deploys from `main`.
+- WB0 browser demo (`desktank-web` + `web/`): the sim core in WebAssembly on GitHub Pages (https://robhannan.github.io/DeskTank/). Pour/erase with a brush, play/pause/step/reset, seed, stats; 20 Hz fixed tick with rAF drawing that uploads a frame only when the world changed. Built by `scripts/build-web.mjs` (zx, `pnpm build:web`); CI builds it on every PR, `pages.yml` deploys from `main`.
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
