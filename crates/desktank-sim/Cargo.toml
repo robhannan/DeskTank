@@ -10,3 +10,17 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+rand_core = { version = "0.10", default-features = false }
+rand_pcg = { version = "0.10", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+thiserror = "2"
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "tick"
+harness = false

@@ -1,0 +1,6 @@
+id = 11
+name = "gravel"
+class = "powder"
+density = 2.4
+repose = 40.0
+colour = "#7d7468"

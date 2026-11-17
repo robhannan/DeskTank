@@ -1,0 +1,7 @@
+# The medium: the "empty" cell below the surface.
+id = 1
+name = "water"
+class = "liquid"
+density = 1.0
+dispersion = 8
+colour = "#1f4e79"
