@@ -94,3 +94,27 @@ test("reset during a lost WebGL2 context draws once restored", async ({ page }) 
   await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn()), { timeout: 10_000 }).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test("the bubbler and the new materials work from the palette", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  const canvas = page.locator("#tank");
+  const box = await canvas.boundingBox();
+  const hash = () => page.evaluate(() => window.desktank.tank.stateHash());
+
+  // A click with the bubbler places one, which keeps releasing bubbles.
+  await page.getByRole("radio", { name: "Bubbler" }).click();
+  await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
+  const placed = await hash();
+  await expect.poll(hash, { timeout: 10_000 }).not.toBe(placed);
+
+  // Liquid fertiliser pours like any material.
+  await page.getByRole("radio", { name: "Liquid fertiliser" }).click();
+  const before = await hash();
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.3);
+  await page.mouse.down();
+  await page.waitForTimeout(300);
+  await page.mouse.up();
+  expect(await hash()).not.toBe(before);
+  expect(errors).toEqual([]);
+});

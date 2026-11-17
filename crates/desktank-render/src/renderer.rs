@@ -62,22 +62,7 @@ impl Renderer {
         });
         let palette = create_palette(gpu, world);
         let hud = create_hud(d);
-        let field = world.field(FieldKind::Nutrient);
-        let fields_size = (side(field.width()), side(field.height()));
-        let fields = d.create_texture(&wgpu::TextureDescriptor {
-            label: Some("fields"),
-            size: wgpu::Extent3d {
-                width: fields_size.0,
-                height: fields_size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let (fields, fields_size) = create_fields(d, world);
         let view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("view"),
             size: VIEW_BYTES,
@@ -391,6 +376,27 @@ fn create_palette(gpu: &Gpu, world: &World) -> wgpu::Texture {
         palette_size,
     );
     palette
+}
+
+/// The field-overlay texture: one RGBA texel per field cell.
+fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32)) {
+    let field = world.field(FieldKind::Nutrient);
+    let size = (side(field.width()), side(field.height()));
+    let texture = d.create_texture(&wgpu::TextureDescriptor {
+        label: Some("fields"),
+        size: wgpu::Extent3d {
+            width: size.0,
+            height: size.1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    (texture, size)
 }
 
 /// The palette-strip texture, sized for the largest strip.
