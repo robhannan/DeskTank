@@ -69,13 +69,21 @@ jobs:
           command: check
 
   web:
-    name: web demo
+    name: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Same build as the Pages deploy, so a broken demo fails the PR.
       - uses: ./.github/actions/build-web
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Smoke test (WebGL2 and the default backend), context-loss recovery and
+      # the WebGL2 render comparison with the native reference (SPEC §7).
+      - name: Web tests
+        run: pnpm test:web
 
       - name: Clippy (wasm32)
         run: cargo clippy -p desktank-web --target wasm32-unknown-unknown --locked -- -D warnings

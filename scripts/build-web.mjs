@@ -1,7 +1,8 @@
 #!/usr/bin/env zx
-// Builds the browser demo into target/site/: the desktank-web crate for
+// Builds the web version into target/site/: the desktank-web crate for
 // wasm32, wasm-bindgen's JS glue (--target web), wasm-opt if it is on the
-// PATH, and the static files from web/.
+// PATH, and the static files from web/. Then it reports the gzip transfer
+// size of the site (wasm + JS + assets) and fails above the SPEC §6.1 budget.
 //
 //   pnpm install && pnpm build:web
 //   python3 -m http.server -d target/site 8000
@@ -9,7 +10,8 @@
 // Needs the wasm32-unknown-unknown target (added here if missing) and the
 // wasm-bindgen CLI at exactly the version in Cargo.lock:
 //   cargo install --locked wasm-bindgen-cli --version <version>
-import { $, cd, fs, path, which, echo, chalk } from "zx";
+import { gzipSync } from "node:zlib";
+import { $, cd, fs, glob, path, which, echo, chalk } from "zx";
 
 $.verbose = true;
 
@@ -55,5 +57,20 @@ if (await which("wasm-opt", { nothrow: true })) {
 
 await fs.copy(path.join(root, "web"), site);
 
-const kib = (f) => (fs.statSync(f).size / 1024).toFixed(1);
-echo(chalk.green(`Site built in ${path.relative(root, site)}/ (wasm ${kib(wasmOut)} KiB).`));
+// Transfer size (SPEC §6.1): every file as a browser would fetch it, gzipped
+// at the highest level (a static host's on-the-fly gzip is at most this good).
+const BUDGET = 3 * 1024 * 1024;
+const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
+let total = 0;
+for (const file of (await glob("**/*", { cwd: site, onlyFiles: true })).sort()) {
+  const raw = await fs.readFile(path.join(site, file));
+  const gz = gzipSync(raw, { level: 9 }).length;
+  total += gz;
+  echo(`  ${file.padEnd(28)} ${kib(raw.length).padStart(12)} raw ${kib(gz).padStart(12)} gzip`);
+}
+echo(`Transfer size (gzip): ${kib(total)} of a ${kib(BUDGET)} budget.`);
+if (total > BUDGET) {
+  echo(chalk.red("Over the web transfer-size budget (SPEC §6.1)."));
+  process.exit(1);
+}
+echo(chalk.green(`Site built in ${path.relative(root, site)}/.`));

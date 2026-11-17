@@ -522,8 +522,11 @@ dependencies = [
 name = "desktank-web"
 version = "0.1.0"
 dependencies = [
+ "desktank-render",
  "desktank-sim",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
