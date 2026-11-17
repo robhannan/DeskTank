@@ -1017,7 +1017,7 @@ Each package depends only on the packages before it.
   *Accept:* bench numbers for a 60 s settled scenario are within the
   main-app budget; CPU while minimised for 60 s is ≤ 0.1%; the wasm32 CI
   job is green.
-- [ ] **T3 Capture.** `desktank capture` with input scripts, and render
+- [x] **T3 Capture.** `desktank capture` with input scripts, and render
   tests on lavapipe in CI at the §7 tolerance. *Accept:* at least 2
   reference images in CI, and a deliberate shader change fails the test.
 - [ ] **T4 Window-mode interaction.** The palette, and the pour, scoop,
