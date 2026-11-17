@@ -1,6 +1,6 @@
 [package]
 name = "desktank-web"
-description = "Browser demo of the DeskTank simulation core (wasm-bindgen). A showcase, not the product renderer."
+description = "DeskTank web host: drives desktank-render's Tank on a canvas through wgpu (WebGPU or WebGL2), via wasm-bindgen."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,9 +17,13 @@ workspace = true
 
 [dependencies]
 desktank-sim.workspace = true
+desktank-render.workspace = true
 
-# Only the wasm build links wasm-bindgen, so native workspace builds stay
-# unchanged. Pinned exactly: the wasm-bindgen CLI must match this version
-# (CI reads it from `WASM_BINDGEN_VERSION`; scripts/build-web.mjs checks).
+# Only the wasm build links the browser bindings, so native workspace builds
+# stay unchanged. wasm-bindgen is pinned exactly: the wasm-bindgen CLI must
+# match this version (CI reads it from Cargo.lock; scripts/build-web.mjs
+# checks).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "=0.2.130", default-features = false, features = ["std"] }
+wasm-bindgen-futures = { version = "0.4.80", default-features = false, features = ["std"] }
+web-sys = { version = "0.3.107", default-features = false, features = ["std", "HtmlCanvasElement", "console"] }

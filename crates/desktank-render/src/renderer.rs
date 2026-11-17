@@ -49,7 +49,7 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let palette = create_palette(gpu, world, format);
+        let palette = create_palette(gpu, world);
         let view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("view"),
             size: VIEW_BYTES,
@@ -182,10 +182,10 @@ impl Renderer {
                 layout.scale as f32,
                 surface_row as f32,
                 DEPTH_DIM,
-                0.0,
+                if self.format.is_srgb() { 1.0 } else { 0.0 },
             ]
             .into_iter()
-            .chain(backdrop(self.format));
+            .chain(backdrop());
             let bytes: Vec<u8> = view.flat_map(f32::to_le_bytes).collect();
             gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
             self.layout = Some(layout);
@@ -213,17 +213,14 @@ impl Renderer {
     }
 }
 
-/// The palette texture for `world`'s materials, in `format`'s colour space.
-fn create_palette(gpu: &Gpu, world: &World, format: wgpu::TextureFormat) -> wgpu::Texture {
+/// The palette texture for `world`'s materials, sRGB-encoded.
+fn create_palette(gpu: &Gpu, world: &World) -> wgpu::Texture {
     let d = &gpu.device;
-    // The palette is stored in the target's colour space, so a sRGB
-    // target decodes it on load and encodes on write: colours land as
-    // authored either way.
-    let palette_format = if format.is_srgb() {
-        wgpu::TextureFormat::Rgba8UnormSrgb
-    } else {
-        wgpu::TextureFormat::Rgba8Unorm
-    };
+    // The palette holds sRGB-encoded values, read raw: the shader shades in
+    // encoded space and encodes for sRGB targets itself, so every target
+    // format (WebGL2's sRGB canvas, the Rgba8Unorm captures) gets the same
+    // pixels.
+    let palette_format = wgpu::TextureFormat::Rgba8Unorm;
     let side = side(palette::SIDE);
     let palette_size = wgpu::Extent3d {
         width: side,
@@ -295,19 +292,9 @@ fn create_pipeline(
     })
 }
 
-/// The backdrop as shader output for `format`: sRGB targets encode on
-/// write, so they get linear values.
-fn backdrop(format: wgpu::TextureFormat) -> [f32; 4] {
-    let [r, g, b] = BACKDROP.map(|c| {
-        let v = f32::from(c) / 255.0;
-        if !format.is_srgb() {
-            v
-        } else if v <= 0.040_45 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    });
+/// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).
+fn backdrop() -> [f32; 4] {
+    let [r, g, b] = BACKDROP.map(|c| f32::from(c) / 255.0);
     [r, g, b, 1.0]
 }
 
