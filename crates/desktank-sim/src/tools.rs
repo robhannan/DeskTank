@@ -213,9 +213,13 @@ impl Tools {
         changed
     }
 
-    /// A button went down at `cell`.
+    /// A button went down at `cell`. Ignored while another button's stroke
+    /// is in progress, so that stroke survives the second button.
     pub fn press(&mut self, world: &mut World, button: Button, cell: (i64, i64)) -> Outcome {
         self.pointer = Some(cell);
+        if self.stroke.is_some() {
+            return Outcome::None;
+        }
         let action = match (button, self.tool) {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
@@ -246,9 +250,17 @@ impl Tools {
         self.stroke = Some(stroke);
         match stroke.action {
             Action::Pour | Action::Scoop => {
+                // Discs half a radius apart still overlap into a solid band,
+                // and a wide brush costs a fraction of a disc per cell.
+                let stride = usize::try_from(self.radius / 2).unwrap_or(1).max(1);
                 let mut changed = 0;
-                for p in line(from, cell).skip(1) {
-                    changed += self.stamp(world, stroke.action, p);
+                let mut points = line(from, cell).skip(1).peekable();
+                let mut i = 0;
+                while let Some(p) = points.next() {
+                    i += 1;
+                    if i % stride == 0 || points.peek().is_none() {
+                        changed += self.stamp(world, stroke.action, p);
+                    }
                 }
                 Outcome::Painted(changed)
             }
@@ -273,7 +285,8 @@ impl Tools {
     }
 
     /// Re-applies a held paint stroke where the pointer rests, so holding
-    /// still keeps pouring. Hosts call this once per simulation tick.
+    /// still keeps pouring. Hosts call this once per simulation tick run
+    /// (several times after a catch-up).
     pub fn hold(&mut self, world: &mut World) -> usize {
         match self.stroke {
             Some(s) if matches!(s.action, Action::Pour | Action::Scoop) => {
@@ -476,6 +489,30 @@ mod tests {
     }
 
     #[test]
+    fn fast_drag_at_max_radius_covers_a_solid_band() {
+        let config = WorldConfig {
+            width: 320,
+            height: 120,
+            ..WorldConfig::default()
+        };
+        let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.resize(1000);
+        t.press(&mut w, Button::Primary, (30, 60));
+        t.moved(&mut w, (290, 70));
+        // Within r − 2 of the segment is all sand (the line's cells are
+        // within a cell of the true segment).
+        for x in 30..=290 {
+            let cy = 60 + (x - 30) * 10 / 260;
+            for y in cy - 22..=cy + 22 {
+                let (ux, uy) = (usize::try_from(x).unwrap(), usize::try_from(y).unwrap());
+                assert_eq!(at(&w, ux, uy), sand, "gap at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
     fn scoop_erases_to_air_above_the_surface_and_water_below() {
         let config = WorldConfig {
             width: 160,
@@ -523,8 +560,12 @@ mod tests {
         assert_eq!(t.preview(), Some((59, yi, DEFAULT_RADIUS)));
         t.release(Button::Secondary);
         assert!((40..60).all(|x| at(&w, x, y) == water));
-        // Releasing the other button doesn't end a stroke it didn't start.
+        // Releasing the other button doesn't end a stroke it didn't start,
+        // and a second button can't hijack it.
         t.press(&mut w, Button::Secondary, (40, yi));
+        t.release(Button::Primary);
+        assert!(t.stroke.is_some());
+        assert_eq!(t.press(&mut w, Button::Primary, (40, yi)), Outcome::None);
         t.release(Button::Primary);
         assert!(t.stroke.is_some());
     }

@@ -66,6 +66,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Web demo: keyboard navigation for the palette (arrow keys within the radio group) (PR #5 review).
 - Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), WB2 (web interaction on `desktank_sim::tools`) and T5.
 - T4: a drawn inspect card (pixel font) instead of the title bar, and the net carrying creatures, with T7.
+- T4: scoop turns everything (rock, gravel) into water below the line, while pour never overwrites solids; decide whether scoop should spare rock before T7 / WB2 (PR #9 review).
+- T4: a drag ends when it crosses the palette or leaves the window; keeping the stroke and resuming on re-entry is an option (PR #9 review).
 - T4: palette hover highlight and tooltips; the palette is a single strip of at most 23 slots (256-px texture).
 - Web: while running and settled, the rAF loop still wakes every vsync to call `frame` (cheap, but 60–120 wake-ups/s); it could sleep until `wake_at` with a timer. Measure page CPU in Chrome's task manager (not measured in WB1).
 - Web: measure frame intervals in Firefox and real Safari (WB1 could only drive Chrome and Playwright WebKit).

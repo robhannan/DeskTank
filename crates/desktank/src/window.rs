@@ -146,8 +146,14 @@ struct Running {
     cursor: Option<(f64, f64)>,
     tools: Tools,
     palette: Vec<PaletteItem>,
-    /// Trackpad scroll not yet turned into a brush-size step.
+    /// Trackpad scroll (pixels) not yet turned into a brush-size step.
     scroll: f64,
+    /// Wheel scroll (lines) not yet turned into a step; Windows precision
+    /// touchpads send fractions of a line.
+    scroll_lines: f64,
+    /// Palette selection last given to the tank (`usize::MAX` before the
+    /// first).
+    shown_selection: Option<usize>,
 }
 
 impl Running {
@@ -201,6 +207,8 @@ impl Running {
             tools,
             palette,
             scroll: 0.0,
+            scroll_lines: 0.0,
+            shown_selection: Some(usize::MAX),
         };
         s.sync_overlay();
         Ok(s)
@@ -289,8 +297,10 @@ impl Running {
     fn scrolled(&mut self, delta: MouseScrollDelta) {
         let steps = match delta {
             MouseScrollDelta::LineDelta(_, y) => {
-                self.scroll = 0.0;
-                f64::from(y).round()
+                self.scroll_lines += f64::from(y);
+                let steps = self.scroll_lines.trunc();
+                self.scroll_lines -= steps;
+                steps
             }
             MouseScrollDelta::PixelDelta(p) => {
                 self.scroll += p.y;
@@ -307,10 +317,15 @@ impl Running {
     /// asks for a frame if they changed.
     fn sync_overlay(&mut self) {
         let selected = self.palette.iter().position(|&i| self.tools.is_selected(i));
-        self.tank.set_palette(Some(Palette {
-            items: self.palette.clone(),
-            selected,
-        }));
+        if self.shown_selection != selected {
+            self.shown_selection = selected;
+            self.tank.set_palette(Some(Palette {
+                items: self.palette.clone(),
+                selected,
+            }));
+            // A new tool clears the last inspection from the title.
+            self.window.set_title("DeskTank");
+        }
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
             cell: (x, y),
             radius,
@@ -419,8 +434,8 @@ impl ApplicationHandler for App {
             self.demo = None;
         }
         let req = s.tank.tick(self.origin.elapsed());
-        if req.sim_ticks > 0 {
-            // Holding still keeps pouring, once per tick.
+        // Holding still keeps pouring, once per tick run.
+        for _ in 0..req.sim_ticks {
             s.tools.hold(s.tank.world_mut());
         }
         if req.redraw {
