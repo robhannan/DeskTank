@@ -22,7 +22,7 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 Early days: the falling-sand simulation core works (see the browser demo above) and renders in a window. Working commands:
 
 ```sh
-cargo run --release -p desktank -- window   # the tank in a window; left drag pours (keys 1–5 pick the material), right drag erases
+cargo run --release -p desktank -- window   # the tank in a window: click the palette (top left) or keys 1–9 for a material or tool, left drag uses it, right drag scoops, scroll sets the brush size
 cargo run --release -p desktank -- bench    # 60 s scripted pour + settle, prints CPU, tick, GPU and memory numbers
 cargo run --release -p desktank -- capture --script crates/desktank/tests/scenes/starter.toml --out shots   # headless PNG capture
 ```
