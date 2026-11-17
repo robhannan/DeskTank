@@ -1,0 +1,55 @@
+name: Build web demo
+description: Builds the browser demo (crates/desktank-web + web/) into target/site/ with scripts/build-web.mjs. Linux runners only.
+
+runs:
+  using: composite
+  steps:
+    # Installs the toolchain pinned in rust-toolchain.toml.
+    - name: Install Rust toolchain
+      shell: bash
+      run: rustup toolchain install
+
+    - name: Add wasm32 target
+      shell: bash
+      run: rustup target add wasm32-unknown-unknown
+
+    # wasm-bindgen gets its own cache below, keyed on its version.
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: web
+        cache-bin: false
+
+    # The CLI must match the crate exactly; Cargo.lock is the single source.
+    - name: Read wasm-bindgen version
+      id: wasm-bindgen
+      shell: bash
+      run: sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/version=\1/p;}' Cargo.lock >> "$GITHUB_OUTPUT"
+
+    - name: Cache wasm-bindgen CLI
+      id: wasm-bindgen-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cargo/bin/wasm-bindgen
+        key: wasm-bindgen-cli-${{ runner.os }}-${{ steps.wasm-bindgen.outputs.version }}
+
+    - name: Install wasm-bindgen CLI
+      if: steps.wasm-bindgen-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo install --locked wasm-bindgen-cli --version "${{ steps.wasm-bindgen.outputs.version }}" --bin wasm-bindgen
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+
+    # Installs the pnpm version from package.json's packageManager.
+    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      with:
+        cache: true
+
+    - name: Install zx
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build site
+      shell: bash
+      run: pnpm build:web
