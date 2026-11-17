@@ -6,7 +6,8 @@
 // owns the rAF loop, input, visibility, battery and device/context loss.
 //
 // URL parameters: ?backend=webgpu|webgl2 forces a backend; ?bench records
-// drawn-frame times in window.desktank.frameTimes.
+// rAF callback times in window.desktank.rafTimes and drawn-frame times in
+// window.desktank.frameTimes (scripts/bench-web.mjs).
 import init, { Graphics, WebTank, gridFor } from "./pkg/desktank_web.js";
 
 const FPS_AC = 30;
@@ -59,6 +60,7 @@ let fpsSince = 0;
 // Test and benchmark hooks (tests/web/).
 const hooks = {
   frameTimes: [],
+  rafTimes: [],
   get tank() {
     return tank;
   },
@@ -185,6 +187,7 @@ function updateStats() {
 function loop(now) {
   rafId = 0;
   if (hidden || !tank) return;
+  if (bench) hooks.rafTimes.push(now);
   const t0 = performance.now();
   const flags = tank.frame(now);
   if (flags >> TICKS_SHIFT) tickMs = performance.now() - t0;
@@ -346,20 +349,11 @@ function wireLifecycle() {
     recover();
   });
 
-  // The grid is fixed; resizing only changes the scale and letterbox.
-  const ro = new ResizeObserver((entries) => {
-    const e = entries[0];
-    const box = e.devicePixelContentBoxSize?.[0];
-    const size = box
-      ? [Math.max(1, box.inlineSize), Math.max(1, box.blockSize)]
-      : canvasPixels();
-    setCanvasSize(size);
-  });
-  try {
-    ro.observe(canvas, { box: "device-pixel-content-box" });
-  } catch {
-    ro.observe(canvas);
-  }
+  // The grid is fixed; resizing only changes the scale and letterbox. The
+  // size is the CSS box × devicePixelRatio, as for the initial grid
+  // (devicePixelContentBoxSize would be exact, but Chromium reports CSS
+  // pixels there under DPR emulation, as in the Playwright tests).
+  new ResizeObserver(() => setCanvasSize(canvasPixels())).observe(canvas);
 
   // 15 fps on battery where the Battery Status API exists (Chromium).
   navigator.getBattery?.().then((battery) => {

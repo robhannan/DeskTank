@@ -64,3 +64,18 @@ test("recovers from a lost WebGL2 context without a reload", async ({ page }) =>
   await expect.poll(() => framesDrawn(page)).toBeGreaterThan(drawn);
   expect(errors).toEqual([]);
 });
+
+test("reset and a new seed start a fresh tank that draws", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "Reset" }).click();
+  await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn())).toBeGreaterThan(0);
+  const hash = await page.evaluate(() => window.desktank.tank.stateHash());
+  await page.locator("#seed").fill("42");
+  await page.locator("#seed").dispatchEvent("change");
+  await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn())).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.desktank.tank.stateHash())).not.toBe(hash);
+  expect(await page.evaluate(() => window.desktank.backend)).toBe("webgl2");
+  expect(errors).toEqual([]);
+});

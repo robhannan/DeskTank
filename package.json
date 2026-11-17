@@ -10,7 +10,8 @@
   "scripts": {
     "build:web": "zx scripts/build-web.mjs",
     "serve:web": "node scripts/serve-web.mjs",
-    "test:web": "playwright test"
+    "test:web": "playwright test",
+    "bench:web": "node scripts/bench-web.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

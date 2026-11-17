@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) T2 (renderer, `desktank window`, `desktank bench`) and T3 (`desktank capture`, render tests) done; the saver crates are stubs. WB0: the sim core runs in the browser on GitHub Pages; the web is now a product target (D15, SPEC §3.5).
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) T2 (renderer, `desktank window`, `desktank bench`) and T3 (`desktank capture`, render tests) done; the saver crates are stubs. WB0 and WB1: the web version runs the real renderer (WebGPU or WebGL2) on GitHub Pages; the web is a product target (D15, SPEC §3.5).
 
 ## Done
 
@@ -15,6 +15,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - WB0 browser demo (`desktank-web` + `web/`): the sim core in WebAssembly on GitHub Pages (https://robhannan.github.io/DeskTank/). Pour/erase with a brush, play/pause/step/reset, seed, stats; 20 Hz fixed tick with rAF drawing that uploads a frame only when the world changed. Built by `scripts/build-web.mjs` (zx, `pnpm build:web`); CI builds it on every PR, `pages.yml` deploys from `main`.
 - T2 renderer and window (`desktank-render`, `desktank`): loop-agnostic `Tank` (`tick(now) -> FrameRequest`, `draw`, `render_to`) with a fixed 20 Hz tick, a 30 fps cap and frames only when the world changed; dirty rectangles (merged per chunk across ticks) uploaded to an `Rg8Unorm` texture; a palette shader (256×256 material×variant table, integer scale, letterbox, water depth tint) within WebGL2 limits (device opened with `downlevel_webgl2_defaults`; CI runs clippy for wasm32). `desktank window` (winit 0.30) sleeps with `WaitUntil`, pauses on occlusion/minimise with no timers, and has a debug brush (left pour, right erase, keys 1–5). `desktank bench [--seconds N]` runs a seeded pour then settle offscreen at 2560×1440 and prints CPU, tick time, awake chunks, GPU time (timestamp queries) and RSS. Process CPU/RSS readers in `desktank-platform`. An offscreen GPU smoke test reads pixels back (skips without an adapter).
 - T3 capture and render tests: `desktank capture` renders a seeded TOML input script (`desktank_sim::Script`: timed pours, run N ticks, frames every M ticks) offscreen to PNG (`Tank::capture` reads pixels back; `Tank::step` ticks outside real-time pacing). Render tests capture two scenes at 320×180 and compare them with references in `crates/desktank/tests/reference/` (≤ 0.5% of pixels over CIEDE2000 ΔE 2); `DESKTANK_BLESS=1` updates them. Linux CI runs them on lavapipe; GPU tests fail instead of skipping when `CI` is set. Docs: `docs/capture.md`.
+- WB1 web host on the real renderer: `desktank-web` drives `desktank-render`'s `Tank` through wgpu (`WebTank` for the world, pacing and edits, tested natively; `Graphics` for the device and canvas surface). WebGPU first, WebGL2 if there is no adapter or the device fails, `?backend=webgpu|webgl2` to force one; WebGL context loss and WebGPU device loss drop the graphics and reopen them, keeping the world. 20 Hz tick, frames only when something changed, capped at 30 fps (15 on battery via the Battery Status API), paused while the page is hidden, rAF stopped while paused and idle. Grid fixed at load with the largest integer scale giving ≥ 320 cells across (2048 max side), letterboxed on resize. `scripts/build-web.mjs` reports the gzip transfer size and fails above 3 MB; Playwright tests (`tests/web/`, `pnpm test:web`, in CI) cover pouring on WebGL2 and the default backend, context-loss recovery and a WebGL2 render of the `layers` scene against the native reference (ΔE2000 ported to JS); `pnpm bench:web` measures frame intervals.
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -43,6 +44,12 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - winit 0.30 reports `Occluded` on macOS and X11 but not on Windows or Wayland; Windows minimise shows up as a zero size, and `Window::is_minimized` is polled in `about_to_wait` as a fallback. A window fully covered on Windows, or hidden on Wayland, isn't detected yet.
 - Settled ticks cost ~25 µs because the loop still wakes at 20 Hz to tick world time; with zero awake chunks the tick could be skipped or batched once creatures exist.
 
+- WB1 numbers (M3 Max, 120 Hz display, DPR 2, 1884×1060 canvas, 376×212 cells, 60 s of pouring): Chrome 157 (WebGPU) rAF interval p50 8.3 ms / p95 9.1 ms / max 49.6 ms, drawn frames p50 50.0 / p95 50.7 ms; Playwright WebKit 27.2 (WebGPU) rAF p50 17.0 / p95 18.0 / max 58 ms, drawn p95 51 ms. Playwright's Firefox wouldn't launch in the agent sandbox, so Firefox and real Safari are unmeasured.
+- Transfer size: 1.07 MB gzip with `wasm-opt` locally, 1.17 MB in CI without it (wasm 2.7 MB / 3.8 MB raw: wgpu-core, naga's GLSL backend for WebGL2, and the sim).
+- The renderer used to shade (water depth dim) in linear space on sRGB targets and in encoded space on `Rgba8Unorm` captures, so a window or WebGL2 canvas didn't match `desktank capture` (49% of pixels over ΔE 2). It now shades in encoded space everywhere and encodes for sRGB targets in the shader; the water in the native window is a little lighter at depth than before.
+- A canvas keeps the first context type it hands out, so the WebGPU attempt opens the adapter and device before creating the surface, leaving the canvas free for the WebGL2 fallback. wgpu's default uncaptured-error handler panics (aborting the wasm module); the web host logs instead.
+- Headless Chromium under DPR emulation reports CSS pixels in `devicePixelContentBoxSize`; the page sizes the canvas from the content box × `devicePixelRatio` instead.
+- Headless Chromium on the Linux runner draws WebGL2 on SwiftShader only with `--enable-unsafe-swiftshader`; it matches the Metal reference to max ΔE 0.78.
 - References blessed on Metal (M3 Max); a 5% green cut in the fragment shader fails both scenes (28% and 36% of pixels over ΔE 2, max ΔE 7.9 and 9.8), so the tolerance catches small palette shifts.
 - `desktank capture` (debug build) renders 60 frames of 640×360 in ~3.7 s.
 
@@ -53,12 +60,13 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - `desktank capture --time` is validated but ignored until day and night (T-later) exist; the render tests should then add the 4 times of day.
 
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
-- Web demo: stop the rAF loop while paused and idle (it does no work then, but still wakes 60×/s) (PR #5 review).
 - Web demo: keyboard navigation for the palette (arrow keys within the radio group) (PR #5 review).
-- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), WB1 (web on the real renderer) and T4.
+- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), T4 and WB2.
+- Web: while running and settled, the rAF loop still wakes every vsync to call `frame` (cheap, but 60–120 wake-ups/s); it could sleep until `wake_at` with a timer. Measure page CPU in Chrome's task manager (not measured in WB1).
+- Web: measure frame intervals in Firefox and real Safari (WB1 could only drive Chrome and Playwright WebKit).
+- Web: reset reopens the GPU graphics for the new tank; a `WebTank` could hand its graphics over instead.
 - Pause detection gaps (T2): Windows fully-covered windows (DWM cloaking / present status) and Wayland (frame callbacks); winit 0.30 has no `Occluded` there.
 - Resizing the window rescales the fixed grid with letterboxing; resizing the world itself (or choosing the grid from the display, SPEC §2.1) comes with the display modes.
-- The web demo's hand-tuned palettes (`desktank-web`) and the renderer's derived shades should converge when WB1 moves the web onto `desktank-render`.
 - `desktank bench` could add a run without GPU timing, so per-frame CPU excludes the timestamp readback (PR #7 review).
 - Decide whether the §6.1 memory budget means RSS or physical footprint on macOS (the window is 90 MB RSS, 53 MB footprint).
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.

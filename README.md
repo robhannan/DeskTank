@@ -15,7 +15,7 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 - **Rust first** — idiomatic, safe Rust with platform-specific code isolated behind small, well-defined boundaries.
 - **Cross-platform** — macOS, Windows and Linux.
 
-**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation core compiled to WebAssembly. Pour sand, gravel, rock, bubbles and food into the water.
+**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water.
 
 ## Status
 
@@ -50,15 +50,18 @@ cargo test --workspace
 
 Before a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo deny check` (`cargo install --locked cargo-deny`).
 
-## Web demo
+## Web
 
-The [browser demo](https://robhannan.github.io/DeskTank/) is `crates/desktank-web` (a wasm-bindgen wrapper around `desktank-sim`) plus the static page in `web/`. It currently runs the sim core with a canvas-2D renderer; the full web version (SPEC §3.5, D15) replaces it from WB1. To build and preview it locally you need [Node](https://nodejs.org) 22+, [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
+The [web version](https://robhannan.github.io/DeskTank/) (SPEC §3.5, D15) is `crates/desktank-web`, a wasm-bindgen host that drives `desktank-render`'s `Tank` through wgpu (WebGPU first, WebGL2 as the fallback; `?backend=webgpu|webgl2` forces one), plus the static page in `web/`. To build and preview it locally you need [Node](https://nodejs.org) 22+, [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
 
 ```sh
 cargo install --locked wasm-bindgen-cli --version 0.2.130
 pnpm install
-pnpm build:web                              # builds target/site/
-python3 -m http.server -d target/site 8000  # then open http://localhost:8000
+pnpm build:web           # builds target/site/ and reports the gzip transfer size (budget 3 MB)
+pnpm serve:web           # then open http://127.0.0.1:8000
+pnpm exec playwright install chromium
+pnpm test:web            # Playwright: smoke test, context-loss recovery, render match with the native reference
+pnpm bench:web chrome 60 # p50/p95 frame intervals over 60 s of pouring at DPR 2 (also chromium, firefox, webkit)
 ```
 
 Pushes to `main` deploy it to GitHub Pages (`.github/workflows/pages.yml`).
