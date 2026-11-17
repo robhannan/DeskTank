@@ -79,3 +79,18 @@ test("reset and a new seed start a fresh tank that draws", async ({ page }) => {
   expect(await page.evaluate(() => window.desktank.backend)).toBe("webgl2");
   expect(errors).toEqual([]);
 });
+
+test("reset during a lost WebGL2 context draws once restored", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  await page.evaluate(() => {
+    window.loseExt = document.querySelector("#tank").getContext("webgl2").getExtension("WEBGL_lose_context");
+    window.loseExt.loseContext();
+  });
+  await page.getByRole("button", { name: "Reset" }).click();
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => window.desktank.tank.framesDrawn()), "the new tank waits for the context").toBe(0);
+  await page.evaluate(() => window.loseExt.restoreContext());
+  await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn()), { timeout: 10_000 }).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});

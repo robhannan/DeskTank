@@ -51,7 +51,9 @@ let pointer = null; // { x, y, erase, id } in cells while a drag is active
 let rafId = 0;
 let hidden = document.hidden;
 let maxFps = FPS_AC;
-let restoring = false;
+let restoring = false; // a graphics open is in flight
+let contextLost = false; // WebGL2 context lost, not yet restored
+let lossCount = 0; // bumped on each loss, so a stale open is discarded
 let tickMs = 0;
 let frames = 0;
 let fps = 0;
@@ -104,19 +106,31 @@ function replaceTank(next) {
   setRunning(tank.running());
 }
 
+// Opens graphics and attaches them to the current tank. An open that a
+// context loss overtook is discarded and retried once the context is back;
+// returns false if the context is lost now (the restore event reattaches).
 async function attachGraphics() {
-  const g = await Graphics.open(canvas, backend || wantBackend);
-  backend = g.backend();
-  adapter = g.adapterName();
-  tank.attach(g);
-  canvas.dataset.backend = backend;
+  for (;;) {
+    if (contextLost) return false;
+    const losses = lossCount;
+    const g = await Graphics.open(canvas, backend || wantBackend);
+    if (losses === lossCount && !contextLost) {
+      backend = g.backend();
+      adapter = g.adapterName();
+      tank.attach(g);
+      canvas.dataset.backend = backend;
+      return true;
+    }
+    g.free();
+  }
 }
 
 async function reset() {
   const [w, h] = [canvas.width, canvas.height];
   // Graphics belong to the old tank; reopen them for the new one.
   replaceTank(new WebTank(grid[1], grid[2], seed(), w, h));
-  await attachGraphics();
+  // During a loss or recovery, the recovery attaches to the new tank.
+  if (!restoring) await recover(false);
   updateStats();
   kick();
 }
@@ -211,19 +225,19 @@ function loop(now) {
 }
 
 function kick() {
-  if (!rafId && !hidden && !restoring) rafId = requestAnimationFrame(loop);
+  if (!rafId && !hidden && !restoring && !contextLost) rafId = requestAnimationFrame(loop);
 }
 
 // Device or context loss: drop the graphics and reopen them; the world is
 // unaffected.
-async function recover() {
+async function recover(lost = true) {
   if (restoring) return;
   restoring = true;
   tank.detach();
   try {
     await attachGraphics();
   } catch (err) {
-    showError(`Lost the GPU and couldn't get it back: ${err}`);
+    showError(lost ? `Lost the GPU and couldn't get it back: ${err}` : `Couldn't start the GPU renderer: ${err}`);
     return;
   } finally {
     restoring = false;
@@ -341,11 +355,13 @@ function wireLifecycle() {
   // WebGL2 context loss: stop drawing until the browser restores it.
   canvas.addEventListener("webglcontextlost", (e) => {
     e.preventDefault();
-    restoring = true;
+    contextLost = true;
+    lossCount++;
     tank?.detach();
   });
   canvas.addEventListener("webglcontextrestored", () => {
-    restoring = false;
+    contextLost = false;
+    // An open in flight retries by itself; otherwise start one.
     recover();
   });
 

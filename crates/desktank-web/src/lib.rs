@@ -249,7 +249,9 @@ impl WebTank {
     }
 
     /// Holds the brush at `(x, y)`: until [`WebTank::release`], it pours
-    /// `material` (or erases, if `None`) again on every simulation tick.
+    /// `material` (or erases, if `None`) again on each [`WebTank::frame`]
+    /// that runs simulation ticks (once per tick, except after a stall,
+    /// when several ticks catch up in one frame).
     ///
     /// # Errors
     ///

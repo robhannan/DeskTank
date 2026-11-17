@@ -65,6 +65,10 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Web: while running and settled, the rAF loop still wakes every vsync to call `frame` (cheap, but 60–120 wake-ups/s); it could sleep until `wake_at` with a timer. Measure page CPU in Chrome's task manager (not measured in WB1).
 - Web: measure frame intervals in Firefox and real Safari (WB1 could only drive Chrome and Playwright WebKit).
 - Web: reset reopens the GPU graphics for the new tank; a `WebTank` could hand its graphics over instead.
+- Web: after WebGPU device loss, recovery reopens WebGPU only; falling back to WebGL2 then needs a fresh canvas element, since a canvas keeps its first context type (PR #10 review).
+- Web: a WebGL2 context that is lost and never restored leaves the tank frozen with no message; show one after a timeout (PR #10 review).
+- Web: while no graphics are attached (failed open) a running tank still wakes every vsync, and a persistent draw `Validation` error logs on every frame; back off both (PR #10 review).
+- Web tests: replace the fixed `waitForTimeout` sleeps in `tests/web/smoke.spec.mjs` with polled conditions if they ever flake (PR #10 review).
 - Pause detection gaps (T2): Windows fully-covered windows (DWM cloaking / present status) and Wayland (frame callbacks); winit 0.30 has no `Occluded` there.
 - Resizing the window rescales the fixed grid with letterboxing; resizing the world itself (or choosing the grid from the display, SPEC §2.1) comes with the display modes.
 - `desktank bench` could add a run without GPU timing, so per-frame CPU excludes the timestamp readback (PR #7 review).
