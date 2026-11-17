@@ -51,7 +51,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - A canvas keeps the first context type it hands out, so the WebGPU attempt opens the adapter and device before creating the surface, leaving the canvas free for the WebGL2 fallback. wgpu's default uncaptured-error handler panics (aborting the wasm module); the web host logs instead.
 - Headless Chromium under DPR emulation reports CSS pixels in `devicePixelContentBoxSize`; the page sizes the canvas from the content box × `devicePixelRatio` instead.
 - Headless Chromium on the Linux runner draws WebGL2 on SwiftShader only with `--enable-unsafe-swiftshader`; it matches the Metal reference to max ΔE 0.78.
-- T4 numbers (M3 Max, release, 1280×720 pt window at 2560×1440 px): `desktank window --demo-pour 10` used 8.1% of a core over a 10 s continuous pour (budget 15%); 0.85% over the next 20 s while the sand settled. RSS 93 MB (as T2).
+- T4 numbers (M3 Max, release, 1280×720 pt window at 2560×1440 px): `desktank window --demo-pour 10` used 8.1% of a core over a 10 s continuous pour at the default radius 3 (budget 15%), and 16.5% at the maximum radius 24 (a 49-cell-wide sweep moving far more sand); 0.85% over the next 20 s while the sand settled. RSS 93 MB (as T2).
 - Synthetic mouse events (`CGEventPost`) need Accessibility permission for the posting process, which agent shells don't have, so real-input checks in `desktank window` are manual; `--demo-pour` drives the same code paths instead.
 - References blessed on Metal (M3 Max); a 5% green cut in the fragment shader fails both scenes (28% and 36% of pixels over ΔE 2, max ΔE 7.9 and 9.8), so the tolerance catches small palette shifts.
 - `desktank capture` (debug build) renders 60 frames of 640×360 in ~3.7 s.
@@ -68,6 +68,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T4: a drawn inspect card (pixel font) instead of the title bar, and the net carrying creatures, with T7.
 - T4: scoop turns everything (rock, gravel) into water below the line, while pour never overwrites solids; decide whether scoop should spare rock before T7 / WB2 (PR #9 review).
 - T4: a drag ends when it crosses the palette or leaves the window; keeping the stroke and resuming on re-entry is an option (PR #9 review).
+- T4: at brush radius 24 a 10 s sweep uses 16.5% of a core, just over the 15% budget; profile whether the sim (much more falling sand) or the stamping dominates, or cap the radius lower.
 - T4: palette hover highlight and tooltips; the palette is a single strip of at most 23 slots (256-px texture).
 - Web: while running and settled, the rAF loop still wakes every vsync to call `frame` (cheap, but 60–120 wake-ups/s); it could sleep until `wake_at` with a timer. Measure page CPU in Chrome's task manager (not measured in WB1).
 - Web: measure frame intervals in Firefox and real Safari (WB1 could only drive Chrome and Playwright WebKit).
