@@ -1,0 +1,1 @@
+//! macOS platform integration (stub).

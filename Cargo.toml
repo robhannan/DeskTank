@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# MSRV = the toolchain pinned in rust-toolchain.toml.
+rust-version = "1.100"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/robhannan/DeskTank"
+publish = false
+
+[workspace.dependencies]
+desktank-sim = { path = "crates/desktank-sim" }
+desktank-render = { path = "crates/desktank-render" }
+desktank-platform = { path = "crates/desktank-platform" }
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+
+[workspace.lints.rust]
+# Platform/FFI crates (desktank-platform, desktank-saver-mac) override this with
+# `#![allow(unsafe_code)]`; desktank-sim and desktank-render use `#![forbid(unsafe_code)]`.
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# Warn here; CI turns warnings into errors with `-D warnings`.
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+# Small, lean binaries (SPEC §6.1: ≤ 20 MB, low idle CPU). opt-level stays at 3:
+# CPU per tick matters more than the last few hundred KB.
+lto = "fat"
+codegen-units = 1
+strip = true
+# abort: no unwind tables or landing pads (smaller binary). Nothing relies on
+# catch_unwind, and a panic across an `extern "C"` boundary (the .saver bundle)
+# aborts regardless, so unwinding buys nothing.
+panic = "abort"

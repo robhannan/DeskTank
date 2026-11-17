@@ -1,0 +1,1 @@
+//! `ScreenSaverView` subclass (stub).
