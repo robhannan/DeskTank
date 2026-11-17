@@ -1,0 +1,116 @@
+//! The cell grid on the GPU: an `Rg8Unorm` texture of (material, variant),
+//! updated from the world's dirty rectangles.
+
+use desktank_sim::{CHUNK_SIZE, Cell, Rect};
+
+/// Dirty rectangles collected across simulation ticks until the next frame
+/// uploads them, merged per chunk so a busy chunk is one upload.
+#[derive(Clone, Debug)]
+pub struct DirtyRects {
+    chunks_x: usize,
+    rects: Vec<Rect>,
+    /// Upload the whole grid instead (first frame, new texture).
+    full: bool,
+}
+
+impl DirtyRects {
+    /// Tracking for a `width`×`height` grid, starting with a full upload.
+    #[must_use]
+    pub fn new(width: usize, height: usize) -> Self {
+        let chunks_x = width.div_ceil(CHUNK_SIZE);
+        Self {
+            chunks_x,
+            rects: vec![Rect::EMPTY; chunks_x * height.div_ceil(CHUNK_SIZE)],
+            full: true,
+        }
+    }
+
+    /// Adds a rectangle that lies within one chunk (as
+    /// `World::dirty_rects` yields them).
+    pub fn add(&mut self, r: Rect) {
+        let i = (r.y0 / CHUNK_SIZE) * self.chunks_x + r.x0 / CHUNK_SIZE;
+        if let Some(slot) = self.rects.get_mut(i) {
+            *slot = slot.union(r);
+        }
+    }
+
+    /// Requests a full upload.
+    pub fn mark_all(&mut self) {
+        self.full = true;
+    }
+
+    /// Whether anything is waiting.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        !self.full && self.rects.iter().all(Rect::is_empty)
+    }
+
+    /// Hands out what to upload (`None` = the whole grid) and clears.
+    pub fn take(&mut self, mut f: impl FnMut(Option<Rect>)) {
+        if self.full {
+            f(None);
+        } else {
+            for r in self.rects.iter().filter(|r| !r.is_empty()) {
+                f(Some(*r));
+            }
+        }
+        self.full = false;
+        self.rects.fill(Rect::EMPTY);
+    }
+}
+
+/// Packs the cells of `r` (row-major, `width` cells per grid row) as
+/// (material, variant) byte pairs into `out`, replacing its contents.
+pub fn pack(cells: &[Cell], width: usize, r: Rect, out: &mut Vec<u8>) {
+    out.clear();
+    out.reserve(r.area() * 2);
+    for y in r.y0..r.y1 {
+        for c in &cells[y * width + r.x0..y * width + r.x1] {
+            out.extend_from_slice(&[c.material.0, c.variant]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use desktank_sim::MaterialId;
+
+    fn rect(x0: usize, y0: usize, x1: usize, y1: usize) -> Rect {
+        Rect { x0, y0, x1, y1 }
+    }
+
+    fn collect(d: &mut DirtyRects) -> Vec<Option<Rect>> {
+        let mut v = Vec::new();
+        d.take(|r| v.push(r));
+        v
+    }
+
+    #[test]
+    fn starts_with_a_full_upload_then_tracks_rects() {
+        let mut d = DirtyRects::new(200, 100);
+        assert!(!d.is_empty());
+        assert_eq!(collect(&mut d), vec![None]);
+        assert!(d.is_empty());
+        d.add(rect(1, 1, 2, 2));
+        d.add(rect(5, 9, 6, 10));
+        d.add(rect(70, 0, 71, 1));
+        assert_eq!(
+            collect(&mut d),
+            vec![Some(rect(1, 1, 6, 10)), Some(rect(70, 0, 71, 1))]
+        );
+        assert!(d.is_empty());
+        assert_eq!(collect(&mut d), Vec::new());
+    }
+
+    #[test]
+    fn packs_material_and_variant_pairs() {
+        let w = 3;
+        let cells: Vec<Cell> = (0..9u8)
+            .map(|i| Cell::new(MaterialId(i), 100 + i))
+            .collect();
+        let mut out = Vec::new();
+        pack(&cells, w, rect(1, 1, 3, 3), &mut out);
+        assert_eq!(out, [4, 104, 5, 105, 7, 107, 8, 108]);
+    }
+}
