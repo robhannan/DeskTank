@@ -1,0 +1,655 @@
+//! Interact tools (SPEC §2.5): pour, scoop, net and inspect, driven by
+//! pointer events in cell coordinates.
+//!
+//! This is the platform-free half of interaction, shared by every host
+//! (`desktank window`, the web, later the overlay): a host maps its pointer
+//! to cells (`desktank_render::Layout::cell_at`), hit-tests its palette
+//! (`desktank_render::PaletteLayout`), and feeds the rest here. Strokes are
+//! interpolated between pointer samples, so a fast drag leaves no gaps.
+//!
+//! Net and inspect need creatures (T7). Until then the net's hit test finds
+//! nothing and inspect reports the cell's material.
+
+use crate::{Brush, MaterialId, World};
+
+/// Smallest brush radius in cells (a single cell).
+pub const MIN_RADIUS: u32 = 0;
+/// Largest brush radius in cells.
+pub const MAX_RADIUS: u32 = 24;
+/// Brush radius a new [`Tools`] starts with.
+pub const DEFAULT_RADIUS: u32 = 3;
+
+/// Materials offered for pouring, in palette order.
+pub const POUR_MATERIALS: [&str; 6] = [
+    "sand",
+    "gravel",
+    "rock",
+    "water",
+    "air_bubble",
+    "flake_food",
+];
+
+/// What the primary button does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Tool {
+    /// Pour the selected material into fluid cells.
+    Pour,
+    /// Erase: air above the water line, water below.
+    Scoop,
+    /// Pick up a creature and move it.
+    Net,
+    /// Show what is under the pointer.
+    Inspect,
+}
+
+/// One entry in the palette.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PaletteItem {
+    /// Select this material and the pour tool.
+    Material(MaterialId),
+    /// Select this tool (never [`Tool::Pour`]; pick a material for that).
+    Tool(Tool),
+}
+
+/// A pointer button, as the host maps it: left (or a one-finger touch) is
+/// primary, right (or two fingers) secondary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Button {
+    /// Uses the selected tool.
+    Primary,
+    /// Always scoops.
+    Secondary,
+}
+
+/// A creature handle. No creatures exist before T7, so none is ever made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CreatureId(pub u32);
+
+/// What inspect found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Inspection {
+    /// A cell and its material (until creatures exist).
+    Cell {
+        /// Column.
+        x: usize,
+        /// Row.
+        y: usize,
+        /// The material there.
+        material: MaterialId,
+    },
+    /// A creature (T7).
+    Creature(CreatureId),
+}
+
+/// The result of a pointer event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// Nothing visible changed.
+    None,
+    /// The brush changed this many cells.
+    Painted(usize),
+    /// Inspect found something to show.
+    Inspected(Inspection),
+}
+
+/// A stroke in progress: which button, what it does, where it last was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Stroke {
+    button: Button,
+    action: Action,
+    last: (i64, i64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    Pour,
+    Scoop,
+    /// Carrying a creature (or, before T7, nothing: the hit test missed).
+    Net(Option<CreatureId>),
+    Inspect,
+}
+
+/// The tool state machine: the selected tool and material, the brush size,
+/// the pointer and any stroke in progress.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tools {
+    tool: Tool,
+    material: MaterialId,
+    radius: u32,
+    pointer: Option<(i64, i64)>,
+    stroke: Option<Stroke>,
+}
+
+impl Tools {
+    /// Pour `material` with the default brush.
+    #[must_use]
+    pub fn new(material: MaterialId) -> Self {
+        Self {
+            tool: Tool::Pour,
+            material,
+            radius: DEFAULT_RADIUS,
+            pointer: None,
+            stroke: None,
+        }
+    }
+
+    /// The palette for `world`'s materials: the [`POUR_MATERIALS`] it has,
+    /// then scoop, net and inspect.
+    #[must_use]
+    pub fn palette(world: &World) -> Vec<PaletteItem> {
+        let materials = POUR_MATERIALS
+            .iter()
+            .filter_map(|n| world.materials().id(n))
+            .map(PaletteItem::Material);
+        let tools = [Tool::Scoop, Tool::Net, Tool::Inspect].map(PaletteItem::Tool);
+        materials.chain(tools).collect()
+    }
+
+    /// The selected tool.
+    #[must_use]
+    pub fn tool(&self) -> Tool {
+        self.tool
+    }
+
+    /// The material pour uses.
+    #[must_use]
+    pub fn material(&self) -> MaterialId {
+        self.material
+    }
+
+    /// Brush radius in cells.
+    #[must_use]
+    pub fn radius(&self) -> u32 {
+        self.radius
+    }
+
+    /// The pointer cell, if the pointer is over the tank.
+    #[must_use]
+    pub fn pointer(&self) -> Option<(i64, i64)> {
+        self.pointer
+    }
+
+    /// Whether `item` is the current selection.
+    #[must_use]
+    pub fn is_selected(&self, item: PaletteItem) -> bool {
+        match item {
+            PaletteItem::Material(m) => self.tool == Tool::Pour && m == self.material,
+            PaletteItem::Tool(t) => self.tool == t,
+        }
+    }
+
+    /// The brush outline to preview at the pointer, `(x, y, radius)` in
+    /// cells: for pour and scoop, or any stroke that paints.
+    #[must_use]
+    pub fn preview(&self) -> Option<(i64, i64, u32)> {
+        let painting = match self.stroke {
+            Some(s) => matches!(s.action, Action::Pour | Action::Scoop),
+            None => matches!(self.tool, Tool::Pour | Tool::Scoop),
+        };
+        let (x, y) = self.pointer?;
+        painting.then_some((x, y, self.radius))
+    }
+
+    /// Selects a palette item. Ends any stroke in progress.
+    pub fn select(&mut self, item: PaletteItem) {
+        match item {
+            PaletteItem::Material(m) => {
+                self.material = m;
+                self.tool = Tool::Pour;
+            }
+            PaletteItem::Tool(t) => self.tool = t,
+        }
+        self.stroke = None;
+    }
+
+    /// Grows (positive) or shrinks the brush by `steps` cells of radius,
+    /// within [`MIN_RADIUS`]..=[`MAX_RADIUS`]. Returns whether it changed.
+    pub fn resize(&mut self, steps: i32) -> bool {
+        let r = i64::from(self.radius) + i64::from(steps);
+        let r = u32::try_from(r.clamp(i64::from(MIN_RADIUS), i64::from(MAX_RADIUS)))
+            .unwrap_or(DEFAULT_RADIUS);
+        let changed = r != self.radius;
+        self.radius = r;
+        changed
+    }
+
+    /// A button went down at `cell`. Ignored while another button's stroke
+    /// is in progress, so that stroke survives the second button.
+    pub fn press(&mut self, world: &mut World, button: Button, cell: (i64, i64)) -> Outcome {
+        self.pointer = Some(cell);
+        if self.stroke.is_some() {
+            return Outcome::None;
+        }
+        let action = match (button, self.tool) {
+            (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
+            (Button::Primary, Tool::Pour) => Action::Pour,
+            (Button::Primary, Tool::Net) => Action::Net(creature_at(world, cell)),
+            (Button::Primary, Tool::Inspect) => Action::Inspect,
+        };
+        self.stroke = Some(Stroke {
+            button,
+            action,
+            last: cell,
+        });
+        match action {
+            Action::Pour | Action::Scoop => Outcome::Painted(self.stamp(world, action, cell)),
+            Action::Inspect => inspect(world, cell),
+            Action::Net(_) => Outcome::None,
+        }
+    }
+
+    /// The pointer moved to `cell`. A paint stroke covers every cell on the
+    /// way from the last sample.
+    pub fn moved(&mut self, world: &mut World, cell: (i64, i64)) -> Outcome {
+        self.pointer = Some(cell);
+        let Some(mut stroke) = self.stroke else {
+            return Outcome::None;
+        };
+        let from = stroke.last;
+        stroke.last = cell;
+        self.stroke = Some(stroke);
+        match stroke.action {
+            Action::Pour | Action::Scoop => {
+                // Discs half a radius apart still overlap into a solid band,
+                // and a wide brush costs a fraction of a disc per cell.
+                let stride = usize::try_from(self.radius / 2).unwrap_or(1).max(1);
+                let mut changed = 0;
+                let mut points = line(from, cell).skip(1).peekable();
+                let mut i = 0;
+                while let Some(p) = points.next() {
+                    i += 1;
+                    if i % stride == 0 || points.peek().is_none() {
+                        changed += self.stamp(world, stroke.action, p);
+                    }
+                }
+                Outcome::Painted(changed)
+            }
+            Action::Inspect if from != cell => inspect(world, cell),
+            // Carrying a creature moves it with the pointer (T7).
+            Action::Net(_) | Action::Inspect => Outcome::None,
+        }
+    }
+
+    /// `button` was released. Ends the stroke it started (dropping a netted
+    /// creature where the pointer is).
+    pub fn release(&mut self, button: Button) {
+        if self.stroke.is_some_and(|s| s.button == button) {
+            self.stroke = None;
+        }
+    }
+
+    /// The pointer left the tank (or the host lost it). Ends any stroke.
+    pub fn leave(&mut self) {
+        self.pointer = None;
+        self.stroke = None;
+    }
+
+    /// Re-applies a held paint stroke where the pointer rests, so holding
+    /// still keeps pouring. Hosts call this once per simulation tick run
+    /// (several times after a catch-up).
+    pub fn hold(&mut self, world: &mut World) -> usize {
+        match self.stroke {
+            Some(s) if matches!(s.action, Action::Pour | Action::Scoop) => {
+                self.stamp(world, s.action, s.last)
+            }
+            _ => 0,
+        }
+    }
+
+    /// One brush disc at `c`; returns how many cells changed.
+    fn stamp(&self, world: &mut World, action: Action, c: (i64, i64)) -> usize {
+        if action == Action::Pour {
+            // Built-in materials and a clipped disc: this can't fail.
+            return world
+                .paint(c.0, c.1, self.radius, self.material, Brush::Pour)
+                .unwrap_or(0);
+        }
+        scoop(world, c, self.radius)
+    }
+}
+
+/// Erases a disc like [`World::paint`]'s: air above the water line and
+/// water below, cell by cell.
+fn scoop(world: &mut World, c: (i64, i64), radius: u32) -> usize {
+    let table = world.materials();
+    let (Some(air), Some(water)) = (table.id("air"), table.id("water")) else {
+        return 0;
+    };
+    let r = i64::from(radius);
+    let surface = world.surface_row();
+    let mut changed = 0;
+    for y in c.1 - r..=c.1 + r {
+        for x in c.0 - r..=c.0 + r {
+            let (dx, dy) = (x - c.0, y - c.1);
+            if dx * dx + dy * dy > r * r + r {
+                continue;
+            }
+            let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+                continue;
+            };
+            let to = if y < surface { air } else { water };
+            if world.cell(x, y).is_some_and(|cell| cell.material != to)
+                && world.set_cell(x, y, to).is_ok()
+            {
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
+fn inspect(world: &World, c: (i64, i64)) -> Outcome {
+    if let Some(id) = creature_at(world, c) {
+        return Outcome::Inspected(Inspection::Creature(id));
+    }
+    let (Ok(x), Ok(y)) = (usize::try_from(c.0), usize::try_from(c.1)) else {
+        return Outcome::None;
+    };
+    world.cell(x, y).map_or(Outcome::None, |cell| {
+        Outcome::Inspected(Inspection::Cell {
+            x,
+            y,
+            material: cell.material,
+        })
+    })
+}
+
+/// The creature under `cell`. Creatures arrive in T7; until then nothing
+/// is ever hit.
+fn creature_at(_world: &World, _cell: (i64, i64)) -> Option<CreatureId> {
+    None
+}
+
+/// The cells of a line from `a` to `b` inclusive (Bresenham): 8-connected,
+/// so discs stamped along it overlap.
+fn line(a: (i64, i64), b: (i64, i64)) -> impl Iterator<Item = (i64, i64)> {
+    let (dx, dy) = ((b.0 - a.0).abs(), -(b.1 - a.1).abs());
+    let (sx, sy) = ((b.0 - a.0).signum(), (b.1 - a.1).signum());
+    let mut p = a;
+    let mut err = dx + dy;
+    let mut done = false;
+    core::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+        let out = p;
+        if p == b {
+            done = true;
+        } else {
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                p.0 += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                p.1 += sy;
+            }
+        }
+        Some(out)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MaterialTable, WorldConfig};
+
+    fn world() -> World {
+        let config = WorldConfig {
+            width: 160,
+            height: 90,
+            seed: 1,
+            ..WorldConfig::default()
+        };
+        World::new(config, MaterialTable::builtin().unwrap()).unwrap()
+    }
+
+    fn id(w: &World, name: &str) -> MaterialId {
+        w.materials().id(name).unwrap()
+    }
+
+    fn count(w: &World, m: MaterialId) -> usize {
+        w.cells().iter().filter(|c| c.material == m).count()
+    }
+
+    fn at(w: &World, x: usize, y: usize) -> MaterialId {
+        w.cell(x, y).unwrap().material
+    }
+
+    #[test]
+    fn line_is_connected_and_inclusive() {
+        let pts: Vec<_> = line((0, 0), (7, -3)).collect();
+        assert_eq!(pts.first(), Some(&(0, 0)));
+        assert_eq!(pts.last(), Some(&(7, -3)));
+        assert_eq!(pts.len(), 8);
+        for w in pts.windows(2) {
+            assert!((w[1].0 - w[0].0).abs() <= 1 && (w[1].1 - w[0].1).abs() <= 1);
+        }
+        assert_eq!(line((2, 2), (2, 2)).count(), 1);
+    }
+
+    #[test]
+    fn pour_fills_a_disc_of_the_selected_material() {
+        let mut w = world();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.resize(-1); // radius 2: 13 + 2·2 cells within r² + r
+        let out = t.press(&mut w, Button::Primary, (80, 40));
+        let n = count(&w, sand);
+        assert_eq!(out, Outcome::Painted(n));
+        assert_eq!(n, 21);
+        assert_eq!(at(&w, 80, 40), sand);
+        assert_eq!(at(&w, 82, 40), sand);
+        assert_ne!(at(&w, 83, 40), sand);
+    }
+
+    #[test]
+    fn pour_never_overwrites_solids() {
+        let mut w = world();
+        let (sand, rock) = (id(&w, "sand"), id(&w, "rock"));
+        w.set_cell(80, 40, rock).unwrap();
+        let mut t = Tools::new(sand);
+        t.press(&mut w, Button::Primary, (80, 40));
+        assert_eq!(at(&w, 80, 40), rock);
+    }
+
+    #[test]
+    fn fast_drag_leaves_no_gaps() {
+        let mut w = world();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.resize(-i32::try_from(DEFAULT_RADIUS).unwrap()); // one cell
+        // Two pointer samples 100 cells apart, as a fast flick gives.
+        t.press(&mut w, Button::Primary, (20, 30));
+        let out = t.moved(&mut w, (120, 50));
+        t.release(Button::Primary);
+        for p in line((20, 30), (120, 50)) {
+            let (x, y) = (usize::try_from(p.0).unwrap(), usize::try_from(p.1).unwrap());
+            assert_eq!(at(&w, x, y), sand, "gap at {p:?}");
+        }
+        assert_eq!(out, Outcome::Painted(100));
+        // Released: further moves do nothing.
+        assert_eq!(t.moved(&mut w, (10, 10)), Outcome::None);
+        assert_eq!(count(&w, sand), 101);
+    }
+
+    #[test]
+    fn fast_drag_with_a_wide_brush_covers_a_solid_band() {
+        let mut w = world();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.press(&mut w, Button::Primary, (10, 40));
+        t.moved(&mut w, (150, 40));
+        for x in 10..=150 {
+            for y in 37..=43 {
+                assert_eq!(at(&w, x, y), sand, "gap at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn fast_drag_at_max_radius_covers_a_solid_band() {
+        let config = WorldConfig {
+            width: 320,
+            height: 120,
+            ..WorldConfig::default()
+        };
+        let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.resize(1000);
+        t.press(&mut w, Button::Primary, (30, 60));
+        t.moved(&mut w, (290, 70));
+        // Within r − 2 of the segment is all sand (the line's cells are
+        // within a cell of the true segment).
+        for x in 30..=290 {
+            let cy = 60 + (x - 30) * 10 / 260;
+            for y in cy - 22..=cy + 22 {
+                let (ux, uy) = (usize::try_from(x).unwrap(), usize::try_from(y).unwrap());
+                assert_eq!(at(&w, ux, uy), sand, "gap at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn scoop_erases_to_air_above_the_surface_and_water_below() {
+        let config = WorldConfig {
+            width: 160,
+            height: 90,
+            water_level: 0.5,
+            ..WorldConfig::default()
+        };
+        let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        let (sand, air, water) = (id(&w, "sand"), id(&w, "air"), id(&w, "water"));
+        let s = w.surface_row();
+        let s_i = i64::try_from(s).unwrap();
+        w.fill_rect(
+            crate::Rect {
+                x0: 70,
+                y0: s - 5,
+                x1: 90,
+                y1: s + 5,
+            },
+            sand,
+            Brush::Replace,
+        )
+        .unwrap();
+        let mut t = Tools::new(sand);
+        t.select(PaletteItem::Tool(Tool::Scoop));
+        let out = t.press(&mut w, Button::Primary, (80, s_i));
+        assert!(matches!(out, Outcome::Painted(n) if n > 0));
+        assert_eq!(at(&w, 80, s - 1), air);
+        assert_eq!(at(&w, 80, s), water);
+        assert_eq!(at(&w, 80, s + 2), water);
+        assert_eq!(at(&w, 80, s - 5), sand);
+    }
+
+    #[test]
+    fn right_drag_scoops_whatever_tool_is_selected() {
+        let mut w = world();
+        let (rock, water) = (id(&w, "rock"), id(&w, "water"));
+        let y = w.surface_row() + 10;
+        for x in 40..60 {
+            w.set_cell(x, y, rock).unwrap();
+        }
+        let mut t = Tools::new(rock);
+        let yi = i64::try_from(y).unwrap();
+        t.press(&mut w, Button::Secondary, (40, yi));
+        t.moved(&mut w, (59, yi));
+        assert_eq!(t.preview(), Some((59, yi, DEFAULT_RADIUS)));
+        t.release(Button::Secondary);
+        assert!((40..60).all(|x| at(&w, x, y) == water));
+        // Releasing the other button doesn't end a stroke it didn't start,
+        // and a second button can't hijack it.
+        t.press(&mut w, Button::Secondary, (40, yi));
+        t.release(Button::Primary);
+        assert!(t.stroke.is_some());
+        assert_eq!(t.press(&mut w, Button::Primary, (40, yi)), Outcome::None);
+        t.release(Button::Primary);
+        assert!(t.stroke.is_some());
+    }
+
+    #[test]
+    fn holding_still_keeps_pouring() {
+        let mut w = world();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.press(&mut w, Button::Primary, (80, 20));
+        w.tick();
+        w.tick();
+        // The poured sand has started to fall, leaving fluid to refill.
+        assert!(t.hold(&mut w) > 0);
+        t.release(Button::Primary);
+        assert_eq!(t.hold(&mut w), 0);
+    }
+
+    #[test]
+    fn net_changes_no_cells() {
+        let mut w = world();
+        let sand = id(&w, "sand");
+        let before = w.state_hash();
+        let mut t = Tools::new(sand);
+        t.select(PaletteItem::Tool(Tool::Net));
+        assert_eq!(t.press(&mut w, Button::Primary, (80, 60)), Outcome::None);
+        assert_eq!(t.moved(&mut w, (90, 60)), Outcome::None);
+        t.release(Button::Primary);
+        assert_eq!(t.preview(), None);
+        assert_eq!(w.state_hash(), before);
+    }
+
+    #[test]
+    fn inspect_reports_the_cell_and_changes_nothing() {
+        let mut w = world();
+        let (sand, water) = (id(&w, "sand"), id(&w, "water"));
+        w.set_cell(80, 60, sand).unwrap();
+        let before = w.state_hash();
+        let mut t = Tools::new(sand);
+        t.select(PaletteItem::Tool(Tool::Inspect));
+        assert_eq!(
+            t.press(&mut w, Button::Primary, (80, 60)),
+            Outcome::Inspected(Inspection::Cell {
+                x: 80,
+                y: 60,
+                material: sand
+            })
+        );
+        assert_eq!(
+            t.moved(&mut w, (81, 60)),
+            Outcome::Inspected(Inspection::Cell {
+                x: 81,
+                y: 60,
+                material: water
+            })
+        );
+        assert_eq!(t.press(&mut w, Button::Primary, (-1, 60)), Outcome::None);
+        assert_eq!(w.state_hash(), before);
+    }
+
+    #[test]
+    fn palette_selects_tools_and_materials() {
+        let w = world();
+        let items = Tools::palette(&w);
+        assert_eq!(items.len(), POUR_MATERIALS.len() + 3);
+        let gravel = id(&w, "gravel");
+        let mut t = Tools::new(id(&w, "sand"));
+        t.select(PaletteItem::Tool(Tool::Inspect));
+        assert!(t.is_selected(PaletteItem::Tool(Tool::Inspect)));
+        t.select(PaletteItem::Material(gravel));
+        assert_eq!((t.tool(), t.material()), (Tool::Pour, gravel));
+        assert!(t.is_selected(PaletteItem::Material(gravel)));
+        assert_eq!(items.iter().filter(|&&i| t.is_selected(i)).count(), 1);
+    }
+
+    #[test]
+    fn brush_size_is_clamped() {
+        let mut t = Tools::new(MaterialId(1));
+        assert!(t.resize(2));
+        assert_eq!(t.radius(), DEFAULT_RADIUS + 2);
+        t.resize(1000);
+        assert_eq!(t.radius(), MAX_RADIUS);
+        assert!(!t.resize(1));
+        t.resize(-1000);
+        assert_eq!(t.radius(), MIN_RADIUS);
+    }
+}

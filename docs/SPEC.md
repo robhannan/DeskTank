@@ -1020,9 +1020,18 @@ Each package depends only on the packages before it.
 - [x] **T3 Capture.** `desktank capture` with input scripts, and render
   tests on lavapipe in CI at the §7 tolerance. *Accept:* at least 2
   reference images in CI, and a deliberate shader change fails the test.
-- [ ] **T4 Window-mode interaction.** The palette, and the pour, scoop,
+- [x] **T4 Window-mode interaction.** The palette, and the pour, scoop,
   net and inspect tools, with brush size and a cursor preview. Creature
-  inspection becomes usable once T7 lands. *Accept:*
+  inspection becomes usable once T7 lands. *Where it lives* (for WB2 and
+  the overlay): the tool state machine, brush, stroke interpolation and
+  pour/scoop edits are `desktank_sim::tools` (pointer events in cell
+  coordinates, no OS or GPU); pixel→cell mapping is
+  `desktank_render::Layout::cell_at`, palette hit tests
+  `desktank_render::PaletteLayout` (via `Tank::palette_layout`), and the
+  palette and brush outline are drawn by the tank shader
+  (`Tank::set_palette`, `Tank::set_cursor`). A host only maps its pointer,
+  buttons and wheel onto these. Net's creature hit test is a stub returning
+  nothing until T7, and inspect reports the cell's material. *Accept:*
   - scripted-input tests for each tool, checking the cell changes they
     make;
   - a manual checklist (mouse and trackpad) in the PR;

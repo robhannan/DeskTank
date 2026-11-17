@@ -6,18 +6,31 @@
 //! changed). While the window is occluded or minimised the tank is paused
 //! and the loop waits on OS events only, with no timers.
 //!
-//! Debug input: left drag pours the selected material (keys 1–5: sand,
-//! gravel, rock, bubbles, flakes), right drag erases. Escape closes.
+//! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
+//! left drag uses the selected tool (pour, scoop, net, inspect), right drag
+//! scoops, the scroll wheel or a two-finger trackpad scroll sets the brush
+//! size, and clicking the palette in the top-left corner (or keys 1–9)
+//! selects a material or tool. Pointer moves only redraw when the brush
+//! outline changes. Escape closes.
+//!
+//! `--demo-pour N` feeds the same code a synthetic left drag sweeping
+//! across the upper tank for N seconds, then prints the CPU it used (the
+//! T4 acceptance measurement; real input can't be scripted without
+//! accessibility permissions).
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use desktank_render::{Gpu, GpuOptions, Layout, Tank, TankConfig, TankSurface, wgpu};
-use desktank_sim::{Brush, MaterialId, MaterialTable, World, WorldConfig};
+use desktank_platform::process_stats;
+use desktank_render::{
+    BrushPreview, Gpu, GpuOptions, Palette, Tank, TankConfig, TankSurface, wgpu,
+};
+use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tools};
+use desktank_sim::{MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -28,10 +41,10 @@ use crate::scene;
 const CELL_SCALE: u32 = 4;
 /// Largest grid side: WebGL2's texture limit, kept natively too.
 const MAX_GRID_SIDE: u32 = 2048;
-/// Brush radius in cells.
-const BRUSH_RADIUS: u32 = 3;
-/// Materials on keys 1–5.
-const PALETTE: [&str; 5] = ["sand", "gravel", "rock", "air_bubble", "flake_food"];
+/// Pointer sample interval of the demo pour (a 60 Hz mouse).
+const DEMO_SAMPLE: Duration = Duration::from_micros(16_667);
+/// Trackpad scroll distance (physical pixels) per brush-size step.
+const SCROLL_STEP_PX: f64 = 24.0;
 /// World seed for the window's starter scene.
 const SEED: u64 = 7;
 
@@ -40,7 +53,7 @@ const SEED: u64 = 7;
 /// # Errors
 ///
 /// Returns an error if the event loop, window, GPU or world can't be set up.
-pub fn run() -> anyhow::Result<()> {
+pub fn run(demo_pour: Option<u64>) -> anyhow::Result<()> {
     let event_loop = EventLoop::new().context("creating the event loop")?;
     let mut app = App {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
@@ -49,6 +62,10 @@ pub fn run() -> anyhow::Result<()> {
         origin: Instant::now(),
         state: None,
         error: None,
+        demo: demo_pour.map(|secs| Demo {
+            length: Duration::from_secs(secs),
+            start: None,
+        }),
     };
     event_loop
         .run_app(&mut app)
@@ -61,6 +78,49 @@ struct App {
     origin: Instant,
     state: Option<Running>,
     error: Option<anyhow::Error>,
+    demo: Option<Demo>,
+}
+
+/// A scripted pour: a synthetic left drag for `length`.
+struct Demo {
+    length: Duration,
+    /// When it started, and the process CPU time then.
+    start: Option<(Instant, Duration)>,
+}
+
+impl Demo {
+    /// Moves the synthetic pointer; returns when to sample next, or `None`
+    /// once the pour is over.
+    fn step(&mut self, s: &mut Running) -> Option<Instant> {
+        let now = Instant::now();
+        let (width, height) = s.surface.size();
+        let Some((t0, cpu0)) = self.start else {
+            self.start = Some((now, process_stats().cpu_time));
+            s.cursor = Some((f64::from(width) * 0.15, f64::from(height) * 0.3));
+            s.pressed(Button::Primary);
+            return Some(now + DEMO_SAMPLE);
+        };
+        let t = now - t0;
+        if t >= self.length {
+            s.tools.release(Button::Primary);
+            let cpu = process_stats().cpu_time.saturating_sub(cpu0);
+            eprintln!(
+                "desktank window: demo pour {:.1} s, CPU {:.2} s = {:.1}% of a core",
+                t.as_secs_f64(),
+                cpu.as_secs_f64(),
+                100.0 * cpu.as_secs_f64() / t.as_secs_f64()
+            );
+            return None;
+        }
+        // Sweep back and forth across the middle 70%, about once per 3 s.
+        let f = (t.as_secs_f64() * 2.0).sin().mul_add(0.5, 0.5);
+        s.cursor = Some((
+            f64::from(width) * f.mul_add(0.7, 0.15),
+            f64::from(height) * 0.3,
+        ));
+        s.pointer_moved();
+        Some(now + DEMO_SAMPLE)
+    }
 }
 
 /// Why the window might not be visible.
@@ -74,13 +134,6 @@ struct Hidden {
     minimised: bool,
 }
 
-/// The debug brush while a mouse button is held.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Stroke {
-    Pour,
-    Erase,
-}
-
 struct Running {
     window: Arc<Window>,
     gpu: Gpu,
@@ -89,11 +142,18 @@ struct Running {
     hidden: Hidden,
     /// Visibility as of the last `about_to_wait`.
     was_visible: bool,
+    /// Pointer position in physical pixels.
     cursor: Option<(f64, f64)>,
-    stroke: Option<Stroke>,
-    material: MaterialId,
-    water: MaterialId,
-    air: MaterialId,
+    tools: Tools,
+    palette: Vec<PaletteItem>,
+    /// Trackpad scroll (pixels) not yet turned into a brush-size step.
+    scroll: f64,
+    /// Wheel scroll (lines) not yet turned into a step; Windows precision
+    /// touchpads send fractions of a line.
+    scroll_lines: f64,
+    /// Palette selection last given to the tank (`usize::MAX` before the
+    /// first).
+    shown_selection: Option<usize>,
 }
 
 impl Running {
@@ -123,7 +183,8 @@ impl Running {
         };
         let mut world = World::new(config, MaterialTable::builtin()?)?;
         scene::starter(&mut world, SEED)?;
-        let [material, water, air] = ["sand", "water", "air"].map(|n| scene::material(&world, n));
+        let tools = Tools::new(scene::material(&world, "sand")?);
+        let palette = Tools::palette(&world);
         let info = gpu.adapter.get_info();
         eprintln!(
             "desktank window: {} ({:?}), {}x{} cells, {}x{} px, {:?}",
@@ -135,7 +196,7 @@ impl Running {
             size.height,
             surface.format(),
         );
-        Ok(Self {
+        let mut s = Self {
             window,
             gpu,
             surface,
@@ -143,11 +204,14 @@ impl Running {
             hidden: Hidden::default(),
             was_visible: true,
             cursor: None,
-            stroke: None,
-            material: material?,
-            water: water?,
-            air: air?,
-        })
+            tools,
+            palette,
+            scroll: 0.0,
+            scroll_lines: 0.0,
+            shown_selection: Some(usize::MAX),
+        };
+        s.sync_overlay();
+        Ok(s)
     }
 
     fn visible(&self) -> bool {
@@ -167,30 +231,106 @@ impl Running {
         }
     }
 
-    /// Applies the debug brush under the cursor.
-    fn brush(&mut self) {
-        let (Some((px, py)), Some(stroke)) = (self.cursor, self.stroke) else {
+    /// The cell under the cursor, unless the cursor is over the palette.
+    fn cursor_cell(&self) -> Option<(i64, i64)> {
+        let (px, py) = self.cursor?;
+        let size = self.surface.size();
+        if self
+            .tank
+            .palette_layout(size)
+            .is_some_and(|p| p.contains(px, py))
+        {
+            return None;
+        }
+        Some(self.tank.layout(size).cell_at(px, py))
+    }
+
+    fn pointer_moved(&mut self) {
+        match self.cursor_cell() {
+            Some(cell) => {
+                let out = self.tools.moved(self.tank.world_mut(), cell);
+                self.show(out);
+            }
+            // Over the palette (or gone): hide the outline; a stroke ends.
+            None => self.tools.leave(),
+        }
+    }
+
+    fn pressed(&mut self, button: Button) {
+        let size = self.surface.size();
+        if let (Some((px, py)), Some(p)) = (self.cursor, self.tank.palette_layout(size)) {
+            if let Some(&item) = p.hit(px, py).and_then(|i| self.palette.get(i)) {
+                self.tools.select(item);
+                return;
+            }
+            if p.contains(px, py) {
+                return;
+            }
+        }
+        if let Some(cell) = self.cursor_cell() {
+            let out = self.tools.press(self.tank.world_mut(), button, cell);
+            self.show(out);
+        }
+    }
+
+    /// Reports an inspection in the title bar (the creature card is T7).
+    fn show(&self, out: Outcome) {
+        let Outcome::Inspected(found) = out else {
             return;
         };
-        let world = self.tank.world();
-        let grid = (
-            u32::try_from(world.width()).unwrap_or(u32::MAX),
-            u32::try_from(world.height()).unwrap_or(u32::MAX),
-        );
-        let (cx, cy) = Layout::fit(grid, self.surface.size()).cell_at(px, py);
-        let (material, brush) = if stroke == Stroke::Pour {
-            (self.material, Brush::Pour)
-        } else if usize::try_from(cy).unwrap_or(0) < world.surface_row() {
-            (self.air, Brush::Replace)
-        } else {
-            (self.water, Brush::Replace)
+        let text = match found {
+            Inspection::Cell { x, y, material } => {
+                let name = self
+                    .tank
+                    .world()
+                    .materials()
+                    .get(material)
+                    .map_or("?", |m| m.name.as_str());
+                format!("{name} at ({x}, {y})")
+            }
+            Inspection::Creature(id) => format!("creature {}", id.0),
         };
-        // Brushes clip to the grid and the materials are built in, so this
-        // can't fail; ignore the count.
-        let _ = self
-            .tank
-            .world_mut()
-            .paint(cx, cy, BRUSH_RADIUS, material, brush);
+        self.window.set_title(&format!("DeskTank — {text}"));
+    }
+
+    /// Scroll up grows the brush, down shrinks it.
+    fn scrolled(&mut self, delta: MouseScrollDelta) {
+        let steps = match delta {
+            MouseScrollDelta::LineDelta(_, y) => {
+                self.scroll_lines += f64::from(y);
+                let steps = self.scroll_lines.trunc();
+                self.scroll_lines -= steps;
+                steps
+            }
+            MouseScrollDelta::PixelDelta(p) => {
+                self.scroll += p.y;
+                let steps = (self.scroll / SCROLL_STEP_PX).trunc();
+                self.scroll -= steps * SCROLL_STEP_PX;
+                steps
+            }
+        };
+        #[allow(clippy::cast_possible_truncation)] // clamped to a small range
+        self.tools.resize(steps.clamp(-100.0, 100.0) as i32);
+    }
+
+    /// Pushes the palette selection and brush outline to the tank; it only
+    /// asks for a frame if they changed.
+    fn sync_overlay(&mut self) {
+        let selected = self.palette.iter().position(|&i| self.tools.is_selected(i));
+        if self.shown_selection != selected {
+            self.shown_selection = selected;
+            self.tank.set_palette(Some(Palette {
+                items: self.palette.clone(),
+                selected,
+            }));
+            // A new tool clears the last inspection from the title.
+            self.window.set_title("DeskTank");
+        }
+        let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
+            cell: (x, y),
+            radius,
+        });
+        self.tank.set_cursor(cursor);
     }
 }
 
@@ -230,36 +370,40 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 s.cursor = Some((position.x, position.y));
+                s.pointer_moved();
             }
-            WindowEvent::CursorLeft { .. } => s.cursor = None,
+            WindowEvent::CursorLeft { .. } => {
+                s.cursor = None;
+                s.tools.leave();
+            }
             WindowEvent::MouseInput { state, button, .. } => {
-                let stroke = match button {
-                    MouseButton::Left => Stroke::Pour,
-                    MouseButton::Right => Stroke::Erase,
+                let button = match button {
+                    MouseButton::Left => Button::Primary,
+                    MouseButton::Right => Button::Secondary,
                     _ => return,
                 };
                 if state == ElementState::Pressed {
-                    s.stroke = Some(stroke);
-                } else if s.stroke == Some(stroke) {
-                    s.stroke = None;
+                    s.pressed(button);
+                } else {
+                    s.tools.release(button);
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
                     Key::Character(c) => {
                         let slot = c.parse::<usize>().ok().and_then(|n| n.checked_sub(1));
-                        if let Some(name) = slot.and_then(|i| PALETTE.get(i))
-                            && let Ok(id) = scene::material(s.tank.world(), name)
-                        {
-                            s.material = id;
+                        if let Some(&item) = slot.and_then(|i| s.palette.get(i)) {
+                            s.tools.select(item);
                         }
                     }
                     _ => {}
                 }
             }
-            _ => {}
+            _ => return,
         }
+        s.sync_overlay();
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -281,11 +425,24 @@ impl ApplicationHandler for App {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
         }
-        s.brush();
+        let demo_wake = self.demo.as_mut().and_then(|d| {
+            let wake = d.step(s);
+            s.sync_overlay();
+            wake
+        });
+        if demo_wake.is_none() {
+            self.demo = None;
+        }
         let req = s.tank.tick(self.origin.elapsed());
+        // Holding still keeps pouring, once per tick run.
+        for _ in 0..req.sim_ticks {
+            s.tools.hold(s.tank.world_mut());
+        }
         if req.redraw {
             s.window.request_redraw();
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.origin + req.wake_at));
+        let wake = self.origin + req.wake_at;
+        let wake = demo_wake.map_or(wake, |d| d.min(wake));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
 }

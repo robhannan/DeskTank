@@ -1,6 +1,7 @@
 // The cell grid drawn as pixel art: each fragment finds its cell (integer
 // scale, nearest by construction), looks up (material, variant) in the
-// palette and darkens water with depth. WebGL2-safe: textureLoad on 8-bit
+// palette and darkens water with depth. The interact overlay (palette strip
+// and brush outline) is drawn on top. WebGL2-safe: textureLoad on 8-bit
 // unorm textures, one uniform buffer, no storage buffers.
 
 struct View {
@@ -19,11 +20,26 @@ struct View {
     srgb_target: f32,
     // Letterbox colour, sRGB-encoded.
     backdrop: vec4<f32>,
+    // Palette: top-left in target pixels, target pixels per palette pixel,
+    // and 1 if shown.
+    hud: vec4<f32>,
+    // Palette image size in palette pixels (xy).
+    hud_size: vec4<f32>,
+    // Brush outline: centre cell, radius in cells, and 1 if shown.
+    cursor: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var cells: texture_2d<f32>;
 @group(0) @binding(2) var palette: texture_2d<f32>;
+@group(0) @binding(3) var hud: texture_2d<f32>;
+
+// Whether `cell` is inside the brush disc (the same test as World::paint).
+fn in_brush(cell: vec2<f32>) -> bool {
+    let d = cell - view.cursor.xy;
+    let r = view.cursor.z;
+    return dot(d, d) <= r * r + r;
+}
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -34,6 +50,15 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if view.hud.w > 0.5 {
+        let p = floor((pos.xy - view.hud.xy) / view.hud.z);
+        if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy) {
+            let h = textureLoad(hud, vec2<i32>(p), 0);
+            if h.a > 0.5 {
+                return out(h.rgb);
+            }
+        }
+    }
     let cell = floor((pos.xy - view.offset) / view.scale);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
         return out(view.backdrop.rgb);
@@ -43,7 +68,16 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let c = textureLoad(palette, idx, 0);
     let depth = clamp((cell.y - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
     let light = 1.0 - view.depth_dim * depth * c.a;
-    return out(c.rgb * light);
+    var rgb = c.rgb * light;
+    // Brush outline: disc cells with a 4-neighbour outside the disc.
+    if view.cursor.w > 0.5 && in_brush(cell) {
+        let edge = !(in_brush(cell + vec2<f32>(1.0, 0.0)) && in_brush(cell - vec2<f32>(1.0, 0.0))
+            && in_brush(cell + vec2<f32>(0.0, 1.0)) && in_brush(cell - vec2<f32>(0.0, 1.0)));
+        if edge {
+            rgb = mix(rgb, vec3<f32>(1.0), 0.6);
+        }
+    }
+    return out(rgb);
 }
 
 // An sRGB-encoded colour as the target expects it. Shading happens in

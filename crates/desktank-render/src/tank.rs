@@ -6,6 +6,8 @@ use desktank_sim::{TICKS_PER_SECOND, World};
 use thiserror::Error;
 
 use crate::grid::DirtyRects;
+use crate::hud::{self, BrushPreview, Palette, PaletteLayout};
+use crate::layout::Layout;
 use crate::pacing::{FrameRequest, Pacer};
 use crate::renderer::Renderer;
 use crate::timer::GpuTimer;
@@ -44,6 +46,12 @@ pub struct Tank {
     renderer: Option<Renderer>,
     timer: Option<GpuTimer>,
     gpu_time: Option<Duration>,
+    /// The interact palette, if shown.
+    palette: Option<Palette>,
+    /// The palette image needs uploading.
+    palette_dirty: bool,
+    /// The brush outline, if shown.
+    cursor: Option<BrushPreview>,
 }
 
 impl Tank {
@@ -59,7 +67,50 @@ impl Tank {
             renderer: None,
             timer: None,
             gpu_time: None,
+            palette: None,
+            palette_dirty: false,
+            cursor: None,
         }
+    }
+
+    /// Shows (or with `None`, hides) the interact palette. A change asks
+    /// for a frame; setting the same palette again costs nothing.
+    pub fn set_palette(&mut self, palette: Option<Palette>) {
+        if self.palette != palette {
+            self.palette = palette;
+            self.palette_dirty = true;
+            self.needs_frame = true;
+        }
+    }
+
+    /// Shows (or hides) the brush outline. A change asks for a frame.
+    pub fn set_cursor(&mut self, cursor: Option<BrushPreview>) {
+        if self.cursor != cursor {
+            self.cursor = cursor;
+            self.needs_frame = true;
+        }
+    }
+
+    /// Where the palette is drawn in a `target`-pixel surface, for hit
+    /// tests; `None` if no palette is shown.
+    #[must_use]
+    pub fn palette_layout(&self, target: (u32, u32)) -> Option<PaletteLayout> {
+        let p = self.palette.as_ref()?;
+        Some(PaletteLayout::fit(
+            target,
+            &self.layout(target),
+            p.items.len(),
+        ))
+    }
+
+    /// Where the grid is drawn in a `target`-pixel surface.
+    #[must_use]
+    pub fn layout(&self, target: (u32, u32)) -> Layout {
+        let side = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Layout::fit(
+            (side(self.world.width()), side(self.world.height())),
+            target,
+        )
     }
 
     /// The world.
@@ -213,11 +264,21 @@ impl Tank {
         {
             self.renderer = Some(Renderer::new(gpu, &self.world, format));
             self.dirty.mark_all();
+            self.palette_dirty = true;
         }
+        let palette = self.palette_layout(size);
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
         renderer.upload(gpu, &self.world, &mut self.dirty);
+        if self.palette_dirty {
+            if let Some(p) = &self.palette {
+                let (image, image_size) = hud::build(p, self.world.materials());
+                renderer.upload_hud(gpu, &image, image_size);
+            }
+            self.palette_dirty = false;
+        }
+
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -229,6 +290,7 @@ impl Tank {
             target,
             size,
             self.world.surface_row(),
+            (palette, self.cursor),
             self.timer.as_ref(),
         );
         if let Some(t) = &self.timer {

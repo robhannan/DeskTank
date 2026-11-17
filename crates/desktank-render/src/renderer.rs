@@ -4,6 +4,7 @@
 use desktank_sim::World;
 
 use crate::grid::{self, DirtyRects};
+use crate::hud::{self, BrushPreview, PaletteLayout};
 use crate::layout::Layout;
 use crate::palette;
 use crate::{Gpu, timer::GpuTimer};
@@ -12,7 +13,7 @@ use crate::{Gpu, timer::GpuTimer};
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 48;
+const VIEW_BYTES: u64 = 96;
 
 /// Letterbox colour around the grid (sRGB).
 const BACKDROP: [u8; 3] = [0x05, 0x0a, 0x12];
@@ -25,8 +26,10 @@ pub struct Renderer {
     bind_group: wgpu::BindGroup,
     view_buffer: wgpu::Buffer,
     cells: wgpu::Texture,
-    /// Layout the uniforms were last written for.
-    layout: Option<Layout>,
+    /// The palette strip image (top-left corner of a fixed-size texture).
+    hud: wgpu::Texture,
+    /// Uniform bytes last written.
+    view: Vec<u8>,
     scratch: Vec<u8>,
 }
 
@@ -50,6 +53,7 @@ impl Renderer {
             view_formats: &[],
         });
         let palette = create_palette(gpu, world);
+        let hud = create_hud(d);
         let view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("view"),
             size: VIEW_BYTES,
@@ -81,10 +85,12 @@ impl Renderer {
                 },
                 texture_entry(1),
                 texture_entry(2),
+                texture_entry(3),
             ],
         });
         let cells_view = cells.create_view(&wgpu::TextureViewDescriptor::default());
         let palette_view = palette.create_view(&wgpu::TextureViewDescriptor::default());
+        let hud_view = hud.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tank"),
             layout: &bind_layout,
@@ -101,6 +107,10 @@ impl Renderer {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&palette_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&hud_view),
+                },
             ],
         });
         let pipeline = create_pipeline(d, &bind_layout, format);
@@ -111,7 +121,8 @@ impl Renderer {
             bind_group,
             view_buffer,
             cells,
-            layout: None,
+            hud,
+            view: Vec::new(),
             scratch: Vec::new(),
         }
     }
@@ -161,7 +172,30 @@ impl Renderer {
         });
     }
 
-    /// Records the draw into `target` (`size` pixels).
+    /// Uploads the palette strip image (`size` palette pixels, RGBA rows).
+    pub fn upload_hud(&self, gpu: &Gpu, image: &[u8], size: (u32, u32)) {
+        if size.0 == 0 || size.1 == 0 {
+            return;
+        }
+        gpu.queue.write_texture(
+            self.hud.as_image_copy(),
+            image,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size.0 * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// Records the draw into `target` (`size` pixels), with the palette at
+    /// `palette` and the brush outline at `cursor` if given.
+    #[allow(clippy::too_many_arguments)] // one frame's inputs
     pub fn encode(
         &mut self,
         gpu: &Gpu,
@@ -169,10 +203,32 @@ impl Renderer {
         target: &wgpu::TextureView,
         size: (u32, u32),
         surface_row: usize,
+        overlay: (Option<PaletteLayout>, Option<BrushPreview>),
         timer: Option<&GpuTimer>,
     ) {
         let layout = Layout::fit(self.grid, size);
-        if self.layout != Some(layout) {
+        let (palette, cursor) = overlay;
+        #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
+        let extra = {
+            let hud = palette.map_or([0.0; 8], |p| {
+                let (w, h) = hud::image_size(p.slots);
+                [
+                    p.origin.0 as f32,
+                    p.origin.1 as f32,
+                    p.scale as f32,
+                    1.0,
+                    w as f32,
+                    h as f32,
+                    0.0,
+                    0.0,
+                ]
+            });
+            let cursor = cursor.map_or([0.0; 4], |c| {
+                [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
+            });
+            hud.into_iter().chain(cursor)
+        };
+        {
             #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
             let view = [
                 self.grid.0 as f32,
@@ -185,10 +241,13 @@ impl Renderer {
                 if self.format.is_srgb() { 1.0 } else { 0.0 },
             ]
             .into_iter()
-            .chain(backdrop());
+            .chain(backdrop())
+            .chain(extra);
             let bytes: Vec<u8> = view.flat_map(f32::to_le_bytes).collect();
-            gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
-            self.layout = Some(layout);
+            if bytes != self.view {
+                gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
+                self.view = bytes;
+            }
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("tank"),
@@ -248,6 +307,25 @@ fn create_palette(gpu: &Gpu, world: &World) -> wgpu::Texture {
         palette_size,
     );
     palette
+}
+
+/// The palette-strip texture, sized for the largest strip.
+fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
+    d.create_texture(&wgpu::TextureDescriptor {
+        label: Some("hud"),
+        size: wgpu::Extent3d {
+            width: hud::MAX_SIZE.0,
+            height: hud::MAX_SIZE.1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // sRGB-encoded, read raw like the palette.
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
 }
 
 /// The full-screen-triangle pipeline drawing into `format`.

@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) T2 (renderer, `desktank window`, `desktank bench`) and T3 (`desktank capture`, render tests) done; the saver crates are stubs. WB0 and WB1: the web version runs the real renderer (WebGPU or WebGL2) on GitHub Pages; the web is a product target (D15, SPEC §3.5).
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement), T2 (renderer, `desktank window`, `desktank bench`), T3 (`desktank capture`, render tests) and T4 (window-mode interaction) done; the saver crates are stubs. WB0 and WB1: the web version runs the real renderer (WebGPU or WebGL2) on GitHub Pages; the web is a product target (D15, SPEC §3.5).
 
 ## Done
 
@@ -16,6 +16,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T2 renderer and window (`desktank-render`, `desktank`): loop-agnostic `Tank` (`tick(now) -> FrameRequest`, `draw`, `render_to`) with a fixed 20 Hz tick, a 30 fps cap and frames only when the world changed; dirty rectangles (merged per chunk across ticks) uploaded to an `Rg8Unorm` texture; a palette shader (256×256 material×variant table, integer scale, letterbox, water depth tint) within WebGL2 limits (device opened with `downlevel_webgl2_defaults`; CI runs clippy for wasm32). `desktank window` (winit 0.30) sleeps with `WaitUntil`, pauses on occlusion/minimise with no timers, and has a debug brush (left pour, right erase, keys 1–5). `desktank bench [--seconds N]` runs a seeded pour then settle offscreen at 2560×1440 and prints CPU, tick time, awake chunks, GPU time (timestamp queries) and RSS. Process CPU/RSS readers in `desktank-platform`. An offscreen GPU smoke test reads pixels back (skips without an adapter).
 - T3 capture and render tests: `desktank capture` renders a seeded TOML input script (`desktank_sim::Script`: timed pours, run N ticks, frames every M ticks) offscreen to PNG (`Tank::capture` reads pixels back; `Tank::step` ticks outside real-time pacing). Render tests capture two scenes at 320×180 and compare them with references in `crates/desktank/tests/reference/` (≤ 0.5% of pixels over CIEDE2000 ΔE 2); `DESKTANK_BLESS=1` updates them. Linux CI runs them on lavapipe; GPU tests fail instead of skipping when `CI` is set. Docs: `docs/capture.md`.
 - WB1 web host on the real renderer: `desktank-web` drives `desktank-render`'s `Tank` through wgpu (`WebTank` for the world, pacing and edits, tested natively; `Graphics` for the device and canvas surface). WebGPU first, WebGL2 if there is no adapter or the device fails, `?backend=webgpu|webgl2` to force one; WebGL context loss and WebGPU device loss drop the graphics and reopen them, keeping the world. 20 Hz tick, frames only when something changed, capped at 30 fps (15 on battery via the Battery Status API), paused while the page is hidden, rAF stopped while paused and idle. Grid fixed at load with the largest integer scale giving ≥ 320 cells across (2048 max side), letterboxed on resize. `scripts/build-web.mjs` reports the gzip transfer size and fails above 3 MB; Playwright tests (`tests/web/`, `pnpm test:web`, in CI) cover pouring on WebGL2 and the default backend, context-loss recovery and a WebGL2 render of the `layers` scene against the native reference (ΔE2000 ported to JS); `pnpm bench:web` measures frame intervals.
+- T4 window-mode interaction: platform-free tools in `desktank_sim::tools` (pour, scoop, net, inspect; brush radius 0–24 on the wheel; Bresenham stroke interpolation so fast drags leave no gaps; holding still re-pours once per tick), pixel→cell and palette hit tests in `desktank-render` (`Layout`, `PaletteLayout`), and a pixel-art palette strip plus brush outline drawn by the tank shader (one extra 256×16 texture, uniforms only; redraws only when the selection or outline changes). `desktank window`: left drag uses the tool, right drag scoops, click the palette or keys 1–9; inspect shows the material in the title bar. `desktank window --demo-pour N` scripts a drag and prints CPU. Net and inspect wait for creatures (T7).
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -50,6 +51,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - A canvas keeps the first context type it hands out, so the WebGPU attempt opens the adapter and device before creating the surface, leaving the canvas free for the WebGL2 fallback. wgpu's default uncaptured-error handler panics (aborting the wasm module); the web host logs instead.
 - Headless Chromium under DPR emulation reports CSS pixels in `devicePixelContentBoxSize`; the page sizes the canvas from the content box × `devicePixelRatio` instead.
 - Headless Chromium on the Linux runner draws WebGL2 on SwiftShader only with `--enable-unsafe-swiftshader`; it matches the Metal reference to max ΔE 0.78.
+- T4 numbers (M3 Max, release, 1280×720 pt window at 2560×1440 px): `desktank window --demo-pour 10` used 8.1% of a core over a 10 s continuous pour at the default radius 3 (budget 15%), and 16.5% at the maximum radius 24 (a 49-cell-wide sweep moving far more sand); 0.85% over the next 20 s while the sand settled. RSS 93 MB (as T2).
+- Synthetic mouse events (`CGEventPost`) need Accessibility permission for the posting process, which agent shells don't have, so real-input checks in `desktank window` are manual; `--demo-pour` drives the same code paths instead.
 - References blessed on Metal (M3 Max); a 5% green cut in the fragment shader fails both scenes (28% and 36% of pixels over ΔE 2, max ΔE 7.9 and 9.8), so the tolerance catches small palette shifts.
 - `desktank capture` (debug build) renders 60 frames of 640×360 in ~3.7 s.
 
@@ -61,7 +64,12 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
 - Web demo: keyboard navigation for the palette (arrow keys within the radio group) (PR #5 review).
-- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), T4 and WB2.
+- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), WB2 (web interaction on `desktank_sim::tools`) and T5.
+- T4: a drawn inspect card (pixel font) instead of the title bar, and the net carrying creatures, with T7.
+- T4: scoop turns everything (rock, gravel) into water below the line, while pour never overwrites solids; decide whether scoop should spare rock before T7 / WB2 (PR #9 review).
+- T4: a drag ends when it crosses the palette or leaves the window; keeping the stroke and resuming on re-entry is an option (PR #9 review).
+- T4: at brush radius 24 a 10 s sweep uses 16.5% of a core, just over the 15% budget; profile whether the sim (much more falling sand) or the stamping dominates, or cap the radius lower.
+- T4: palette hover highlight and tooltips; the palette is a single strip of at most 23 slots (256-px texture).
 - Web: while running and settled, the rAF loop still wakes every vsync to call `frame` (cheap, but 60–120 wake-ups/s); it could sleep until `wake_at` with a timer. Measure page CPU in Chrome's task manager (not measured in WB1).
 - Web: measure frame intervals in Firefox and real Safari (WB1 could only drive Chrome and Playwright WebKit).
 - Web: reset reopens the GPU graphics for the new tank; a `WebTank` could hand its graphics over instead.
