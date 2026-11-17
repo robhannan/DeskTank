@@ -79,3 +79,7 @@ jobs:
 
       - name: Clippy (wasm32)
         run: cargo clippy -p desktank-web --target wasm32-unknown-unknown --locked -- -D warnings
+
+      # The renderer must build for the web and stay within WebGL2 (SPEC §3.5).
+      - name: Clippy desktank-render (wasm32)
+        run: cargo clippy -p desktank-render --target wasm32-unknown-unknown --locked -- -D warnings
