@@ -18,6 +18,7 @@
 
 mod gpu;
 mod grid;
+mod hud;
 mod layout;
 mod offscreen;
 mod pacing;
@@ -32,6 +33,7 @@ mod timer;
 pub use wgpu;
 
 pub use gpu::{Gpu, GpuError, GpuOptions};
+pub use hud::{BrushPreview, Palette, PaletteLayout};
 pub use layout::Layout;
 pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;
