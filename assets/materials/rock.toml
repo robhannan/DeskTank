@@ -1,5 +1,5 @@
 id = 12
 name = "rock"
-class = "solid"
+class = "rigid"
 density = 2.6
 colour = "#55524d"

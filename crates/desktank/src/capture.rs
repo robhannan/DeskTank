@@ -58,11 +58,12 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
     let mut tank = Tank::new(world, TankConfig::default());
     fs::create_dir_all(&opts.out).with_context(|| format!("creating {}", opts.out.display()))?;
 
+    let mut player = script.player();
     let mut until = script.ticks;
     for frame in 0..opts.frames {
         while tank.world().tick_count() < until {
             let t = tank.world().tick_count();
-            script.apply(tank.world_mut(), t)?;
+            player.apply(tank.world_mut(), t)?;
             tank.step();
         }
         let pixels = tank.capture(&gpu, opts.size)?;

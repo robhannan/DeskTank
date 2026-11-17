@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement), T2 (renderer, `desktank window`, `desktank bench`), T3 (`desktank capture`, render tests) and T4 (window-mode interaction) done; the saver crates are stubs. WB0 and WB1: the web version runs the real renderer (WebGPU or WebGL2) on GitHub Pages; the web is a product target (D15, SPEC §3.5).
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement), T2 (renderer, `desktank window`, `desktank bench`), T3 (`desktank capture`, render tests), T4 (window-mode interaction) and T4b (rigid bodies and glue, D17) done; the saver crates are stubs. WB0 and WB1: the web version runs the real renderer (WebGPU or WebGL2) on GitHub Pages; the web is a product target (D15, SPEC §3.5).
 
 ## Done
 
@@ -17,6 +17,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T3 capture and render tests: `desktank capture` renders a seeded TOML input script (`desktank_sim::Script`: timed pours, run N ticks, frames every M ticks) offscreen to PNG (`Tank::capture` reads pixels back; `Tank::step` ticks outside real-time pacing). Render tests capture two scenes at 320×180 and compare them with references in `crates/desktank/tests/reference/` (≤ 0.5% of pixels over CIEDE2000 ΔE 2); `DESKTANK_BLESS=1` updates them. Linux CI runs them on lavapipe; GPU tests fail instead of skipping when `CI` is set. Docs: `docs/capture.md`.
 - WB1 web host on the real renderer: `desktank-web` drives `desktank-render`'s `Tank` through wgpu (`WebTank` for the world, pacing and edits, tested natively; `Graphics` for the device and canvas surface). WebGPU first, WebGL2 if there is no adapter or the device fails, `?backend=webgpu|webgl2` to force one; WebGL context loss and WebGPU device loss drop the graphics and reopen them, keeping the world. 20 Hz tick, frames only when something changed, capped at 30 fps (15 on battery via the Battery Status API), paused while the page is hidden, rAF stopped while paused and idle. Grid fixed at load with the largest integer scale giving ≥ 320 cells across (2048 max side), letterboxed on resize. `scripts/build-web.mjs` reports the gzip transfer size and fails above 3 MB; Playwright tests (`tests/web/`, `pnpm test:web`, in CI) cover pouring on WebGL2 and the default backend, context-loss recovery and a WebGL2 render of the `layers` scene against the native reference (ΔE2000 ported to JS); `pnpm bench:web` measures frame intervals.
 - T4 window-mode interaction: platform-free tools in `desktank_sim::tools` (pour, scoop, net, inspect; brush radius 0–24 on the wheel; Bresenham stroke interpolation so fast drags leave no gaps; holding still re-pours once per tick), pixel→cell and palette hit tests in `desktank-render` (`Layout`, `PaletteLayout`), and a pixel-art palette strip plus brush outline drawn by the tank shader (one extra 256×16 texture, uniforms only; redraws only when the selection or outline changes). `desktank window`: left drag uses the tool, right drag scoops, click the palette or keys 1–9; inspect shows the material in the title bar. `desktank window --demo-pour N` scripts a drag and prints CPU. Net and inspect wait for creatures (T7).
+- T4b rigid bodies and glue (D17): a `rigid` movement class (rock); each pour or stroke of rock is one body (cells carry the body id in `state`, a `BTreeMap` body table in `World`) that sinks a row per tick through lighter fluids, or rises through heavier ones, as one piece, resting on powders, other bodies and the floor. Scooped bodies split into 4-connected pieces at the next tick. A body being poured into is held still until the stroke ends. A glue tool (palette slot 10, key 0 in `desktank window`) toggles bodies static; glued cells carry a variant bit the palette shades amber. Input scripts gained `glued = true`, and `Script::player()` keeps one body per `[[pour]]`. The web demo pours one body per drag. Tests in `crates/desktank-sim/tests/bodies.rs`; the `layers` reference was re-blessed (its rock ledge is now glued, so it shows the tint instead of sinking).
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -55,8 +56,17 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Synthetic mouse events (`CGEventPost`) need Accessibility permission for the posting process, which agent shells don't have, so real-input checks in `desktank window` are manual; `--demo-pour` drives the same code paths instead.
 - References blessed on Metal (M3 Max); a 5% green cut in the fragment shader fails both scenes (28% and 36% of pixels over ΔE 2, max ΔE 7.9 and 9.8), so the tolerance catches small palette shifts.
 - `desktank capture` (debug build) renders 60 frames of 640×360 in ~3.7 s.
+- T4b bench (M3 Max): heavy pour 1.43 / 1.55 ms and settled 3.4 µs per tick (unchanged from T1); a radius-12 rock sinking through water 37 µs per tick; a settled tank with 13 resting rocks 3.5 µs.
+- A rigid body's glued flag lives in the low bit of the variant byte so the renderer needs no third texture channel: every palette shade range starts on an even byte, so the bit never changes a cell's shade.
+- A sand pillar can't hold up anything for long: it slumps to its angle of repose. Tests that need a support use a glued rock.
 
 ## Next increments
+
+- T4b: splits apply at the next tick, so gluing in the same frame as a cut toggles the whole pre-cut body. Harmless with real input (a tick passes between strokes); a script or WB2 sequence should tick between them.
+- T4b: bodies move one row per tick whatever their density; a density-derived rate (driftwood rising slowly) could come with T5's driftwood.
+- T4b: bodies don't move sideways, slide off slopes or rotate; a body resting on a single grain stays put. A tipping or sliding rule is a later option.
+- T4b: the web demo has no glue tool yet; WB2 moves the web onto `desktank_sim::tools`, which brings it.
+- T4b: save files (T8) can rebuild the body table from the grid (id in `state`, glued in the variant bit); the next id counter should be saved or recomputed.
 
 - `desktank capture` leaves stale `frame_NNNN.png` files from an earlier, longer run in `--out`; consider a warning or `--clean` (PR #8 review).
 - `Tank::capture` allocates a target and readback buffer per frame; reuse them for long frame sequences, and give the web its own async readback (it blocks on `poll`) (PR #8 review).

@@ -1,7 +1,10 @@
 //! The cell world: grid, chunk sleep and wake, dirty rectangles, the
-//! movement pass, the edit API and the state hash (SPEC §2.1).
+//! movement pass, rigid bodies, the edit API and the state hash (SPEC §2.1).
+
+mod bodies;
 
 use core::mem;
+use std::collections::BTreeMap;
 
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
@@ -9,8 +12,11 @@ use thiserror::Error;
 
 use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
-use crate::material::{MAX_RUN, MaterialId, MaterialTable, MovementClass};
+use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, MovementClass};
+
 use crate::rng::{chunk_stream, splitmix64};
+use bodies::Body;
+pub use bodies::{BodyId, BodyInfo};
 
 /// Side of a square chunk, in cells.
 pub const CHUNK_SIZE: usize = 64;
@@ -155,6 +161,10 @@ pub struct World {
     chunks: Vec<Chunk>,
     rngs: Vec<Pcg32>,
     last_change_tick: u64,
+    /// Rigid bodies by id (D17).
+    bodies: BTreeMap<u16, Body>,
+    /// Next body id to try (ids are 1..=65535).
+    next_body: u16,
 }
 
 impl World {
@@ -260,6 +270,8 @@ impl World {
             chunks,
             rngs,
             last_change_tick: 0,
+            bodies: BTreeMap::new(),
+            next_body: 1,
         })
     }
 
@@ -365,7 +377,9 @@ impl World {
     }
 
     /// Sets one cell to `material` (fresh state, deterministic colour
-    /// noise) and wakes its chunk and any neighbour within reach.
+    /// noise) and wakes its chunk and any neighbour within reach. A rigid
+    /// material makes a new one-cell body; a cell already of that rigid
+    /// material is left as it is (in its body).
     ///
     /// # Errors
     ///
@@ -376,12 +390,18 @@ impl World {
         if x >= self.width || y >= self.height {
             return Err(WorldError::OutOfBounds { x, y });
         }
-        self.write_cell(x, y, material);
+        let current = self.cells[y * self.width + x].material;
+        if current == material && self.props[usize::from(material.0)].class == MovementClass::Rigid
+        {
+            return Ok(());
+        }
+        self.write_cell(x, y, material, &mut None);
         Ok(())
     }
 
     /// Paints a disc of `radius` cells centred on `(cx, cy)`, clipped to the
-    /// grid. Returns how many cells changed.
+    /// grid. Returns how many cells changed. Rigid cells it writes form one
+    /// new body.
     ///
     /// # Errors
     ///
@@ -394,7 +414,34 @@ impl World {
         material: MaterialId,
         brush: Brush,
     ) -> Result<usize, WorldError> {
+        self.paint_into(cx, cy, radius, material, brush, None)
+            .map(|(changed, _)| changed)
+    }
+
+    /// [`World::paint`] continuing a stroke: rigid cells join `body` if it
+    /// still exists and is of `material`, otherwise a new body. Returns how
+    /// many cells changed and the body the stroke now pours into (pass it
+    /// to the next call). A body being poured into is held still until two
+    /// ticks after the last call, so a stroke can draw a shape before it
+    /// drops.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the material is unknown.
+    pub fn paint_into(
+        &mut self,
+        cx: i64,
+        cy: i64,
+        radius: u32,
+        material: MaterialId,
+        brush: Brush,
+        body: Option<BodyId>,
+    ) -> Result<(usize, Option<BodyId>), WorldError> {
         self.check_material(material)?;
+        let mut body = body.map(|b| b.0);
+        if let Some(id) = body {
+            self.hold(id);
+        }
         // A radius beyond the grid diagonal covers it all; clamping keeps the
         // i64 maths far from overflow and the loop clipped to the grid.
         #[allow(clippy::cast_possible_wrap)] // MAX_SIDE is small
@@ -413,17 +460,17 @@ impl World {
                     continue;
                 }
                 if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y))
-                    && self.brush_cell(x, y, material, brush)
+                    && self.brush_cell(x, y, material, brush, &mut body)
                 {
                     changed += 1;
                 }
             }
         }
-        Ok(changed)
+        Ok((changed, body.map(BodyId)))
     }
 
     /// Fills a rectangle (clipped to the grid). Returns how many cells
-    /// changed.
+    /// changed. Rigid cells it writes form one new body.
     ///
     /// # Errors
     ///
@@ -442,9 +489,10 @@ impl World {
             y1: self.height,
         });
         let mut changed = 0;
+        let mut body = None;
         for y in r.y0..r.y1 {
             for x in r.x0..r.x1 {
-                if self.brush_cell(x, y, material, brush) {
+                if self.brush_cell(x, y, material, brush, &mut body) {
                     changed += 1;
                 }
             }
@@ -464,6 +512,8 @@ impl World {
                 self.rngs[i] = chunk_stream(self.seed, self.tick, i as u64);
             }
         }
+        // Rigid bodies first: whole objects, one cell per tick.
+        self.update_bodies();
         // Even ticks sweep rows left to right, odd ticks right to left.
         let rightward = self.tick.is_multiple_of(2);
         // Falling materials: bottom-up, so a column falls together.
@@ -507,20 +557,42 @@ impl World {
             .ok_or(WorldError::UnknownMaterial(material))
     }
 
-    fn brush_cell(&mut self, x: usize, y: usize, material: MaterialId, brush: Brush) -> bool {
+    fn brush_cell(
+        &mut self,
+        x: usize,
+        y: usize,
+        material: MaterialId,
+        brush: Brush,
+        body: &mut Option<u16>,
+    ) -> bool {
         let current = self.cells[y * self.width + x].material;
         if current == material
             || (brush == Brush::Pour && !self.props[usize::from(current.0)].class.is_fluid())
         {
             return false;
         }
-        self.write_cell(x, y, material);
+        self.write_cell(x, y, material, body);
         true
     }
 
-    fn write_cell(&mut self, x: usize, y: usize, material: MaterialId) {
+    /// Writes a fresh cell. Overwriting a body's cell marks the body for a
+    /// split; a rigid cell joins `body` (see [`World::paint_into`]).
+    fn write_cell(&mut self, x: usize, y: usize, material: MaterialId, body: &mut Option<u16>) {
         let i = y * self.width + x;
-        self.cells[i] = Cell::new(material, variant(self.seed, self.tick, i));
+        let old = self.cells[i];
+        if self.props[usize::from(old.material.0)].class == MovementClass::Rigid {
+            self.body_removed(old.state);
+        }
+        let mut cell = Cell::new(material, variant(self.seed, self.tick, i));
+        if self.props[usize::from(material.0)].class == MovementClass::Rigid {
+            cell.variant &= !GLUED_VARIANT_BIT;
+            let id = self.join_body(body, material);
+            cell.state = id;
+            if id != 0 && self.body_added(id, i) {
+                cell.variant |= GLUED_VARIANT_BIT;
+            }
+        }
+        self.cells[i] = cell;
         self.mark_changed(x, y);
     }
 

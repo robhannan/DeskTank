@@ -51,6 +51,30 @@ fn bench_tick(c: &mut Criterion) {
         settled.awake_chunks() > 0
     } {}
     g.bench_function("settled", |b| b.iter(|| black_box(&mut settled).tick()));
+    // A rock body sinking through the water (D17), and the tank once it
+    // and a dozen more rocks rest on the pile and the floor.
+    let rock = settled.materials().id("rock").expect("rock");
+    let mut rocks = settled.clone();
+    rocks
+        .paint(120, 40, 12, rock, Brush::Replace)
+        .expect("rock");
+    let sinking = advance(rocks.clone(), 5);
+    g.bench_function("body_sinking", |b| {
+        b.iter_batched_ref(|| sinking.clone(), World::tick, BatchSize::LargeInput);
+    });
+    for i in 0..12 {
+        rocks
+            .paint(30 + i * 50, 20, 6, rock, Brush::Replace)
+            .expect("rock");
+    }
+    while {
+        rocks.tick();
+        rocks.awake_chunks() > 0
+    } {}
+    assert_eq!(rocks.bodies().count(), 13);
+    g.bench_function("settled_with_bodies", |b| {
+        b.iter(|| black_box(&mut rocks).tick());
+    });
     g.finish();
 }
 

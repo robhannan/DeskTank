@@ -9,7 +9,9 @@ pub struct Cell {
     pub material: MaterialId,
     /// Variant or colour-noise byte, used by the renderer.
     pub variant: u8,
-    /// Per-material state: for floating materials, ticks spent floating.
+    /// Per-material state: for floating materials, ticks spent floating;
+    /// for rigid materials, the id of the body the cell belongs to (0 for
+    /// none: static).
     pub state: u16,
 }
 
