@@ -11,6 +11,7 @@ pub mod material;
 mod rng;
 pub mod script;
 pub mod snapshot;
+pub mod tools;
 mod world;
 
 pub use grid::{Cell, Rect};
