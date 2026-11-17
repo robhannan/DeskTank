@@ -129,11 +129,15 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
+// The cell under the pointer, clamped to just outside the grid so a
+// captured drag far off the canvas doesn't emit a long run of stamps.
 function cellAt(event) {
   const rect = canvas.getBoundingClientRect();
+  const pad = brushRadius();
+  const clamp = (v, len) => Math.max(-pad, Math.min(len - 1 + pad, Math.floor(v)));
   return {
-    x: Math.floor(((event.clientX - rect.left) / rect.width) * canvas.width),
-    y: Math.floor(((event.clientY - rect.top) / rect.height) * canvas.height),
+    x: clamp(((event.clientX - rect.left) / rect.width) * canvas.width, canvas.width),
+    y: clamp(((event.clientY - rect.top) / rect.height) * canvas.height, canvas.height),
   };
 }
 
@@ -163,22 +167,23 @@ function buildPalette() {
 
 function wireInput() {
   canvas.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 && e.button !== 2) return;
+    // One stroke at a time: extra fingers are ignored.
+    if (pointer || (e.button !== 0 && e.button !== 2)) return;
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     const c = cellAt(e);
-    pointer = { ...c, erase: e.button === 2 };
+    pointer = { ...c, id: e.pointerId, erase: e.button === 2 };
     stamp(c.x, c.y, pointer.erase);
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (!pointer) return;
+    if (pointer?.id !== e.pointerId) return;
     const c = cellAt(e);
     stroke(pointer.x, pointer.y, c.x, c.y, pointer.erase);
     pointer.x = c.x;
     pointer.y = c.y;
   });
-  const end = () => {
-    pointer = null;
+  const end = (e) => {
+    if (pointer?.id === e.pointerId) pointer = null;
   };
   canvas.addEventListener("pointerup", end);
   canvas.addEventListener("pointercancel", end);

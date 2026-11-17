@@ -22,7 +22,7 @@ const wasmIn = path.join(root, "target", TARGET, "release", "desktank_web.wasm")
 
 // The CLI and the crate must agree exactly, or the glue won't load.
 const lock = await fs.readFile("Cargo.lock", "utf8");
-const want = lock.match(/name = "wasm-bindgen"\nversion = "([^"]+)"/)?.[1];
+const want = lock.match(/name = "wasm-bindgen"\r?\nversion = "([^"]+)"/)?.[1];
 if (!want) throw new Error("wasm-bindgen not found in Cargo.lock");
 const cli = await which("wasm-bindgen", { nothrow: true });
 const have = cli ? (await $`wasm-bindgen --version`.quiet()).stdout.trim().split(" ")[1] : null;

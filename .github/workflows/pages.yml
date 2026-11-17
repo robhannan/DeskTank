@@ -31,6 +31,8 @@ jobs:
 
   deploy:
     needs: build
+    # A manual run from another branch builds but never deploys.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read

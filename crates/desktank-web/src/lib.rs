@@ -53,7 +53,8 @@ pub struct Demo {
     /// Brightness per row for depth-tinted materials, in 1/256.
     row_light: Vec<u32>,
     frame: Vec<u8>,
-    /// The tick the frame shows, or `None` if it is stale.
+    /// The world's last change tick when the frame was drawn, or `None`
+    /// after an edit.
     frame_tick: Option<u64>,
 }
 
@@ -196,16 +197,20 @@ impl Demo {
     /// water below the configured surface, air above. Returns how many
     /// cells changed.
     pub fn erase(&mut self, x: i32, y: i32, radius: u32) -> u32 {
-        let (cx, cy, r) = (i64::from(x), i64::from(y), i64::from(radius));
+        let (cx, cy) = (i64::from(x), i64::from(y));
+        // As in `World::paint`: a radius past the grid covers it all, and the
+        // loop is clipped to the grid, so the maths stays far from overflow.
+        let r = i64::from(radius.min(2 * MAX_DEMO_SIDE));
+        let (width, height) = (i64::from(self.width()), i64::from(self.height()));
         let surface = self.world.surface_row();
         let mut changed = 0;
-        for dy in -r..=r {
-            for dx in -r..=r {
-                // Same disc test as `World::paint`.
+        for py in (cy - r).max(0)..=(cy + r).min(height - 1) {
+            for px in (cx - r).max(0)..=(cx + r).min(width - 1) {
+                let (dx, dy) = (px - cx, py - cy);
                 if dx * dx + dy * dy > r * r + r {
                     continue;
                 }
-                let (Ok(px), Ok(py)) = (usize::try_from(cx + dx), usize::try_from(cy + dy)) else {
+                let (Ok(px), Ok(py)) = (usize::try_from(px), usize::try_from(py)) else {
                     continue;
                 };
                 let Some(cell) = self.world.cell(px, py) else {
@@ -223,10 +228,11 @@ impl Demo {
         changed
     }
 
-    /// Redraws the RGBA frame if the world changed since the last call.
-    /// Returns whether it did, so the caller can skip the canvas upload.
+    /// Redraws the RGBA frame if any cell changed since the last call (a
+    /// settled tank is not redrawn). Returns whether it did, so the caller
+    /// can skip the canvas upload.
     pub fn render(&mut self) -> bool {
-        let tick = self.world.tick_count();
+        let tick = self.world.last_change_tick();
         if self.frame_tick == Some(tick) {
             return false;
         }
@@ -400,7 +406,24 @@ mod tests {
         let floor = pixel(&d, 5, 71);
         assert!(floor[2] < top[2], "{floor:?} vs {top:?}");
         d.tick();
-        assert!(d.render(), "a tick invalidates the frame");
+        assert!(!d.render(), "a still tank isn't redrawn");
+        d.pour("sand", 64, 5, 2).unwrap();
+        assert!(d.render(), "an edit invalidates the frame");
+        d.tick();
+        assert!(d.render(), "falling sand changes cells");
+    }
+
+    #[test]
+    fn huge_erase_radius_clears_everything_without_overflow() {
+        let mut d = demo();
+        d.pour("sand", 64, 50, 6).unwrap();
+        assert!(
+            d.erase(-5, i32::MAX, u32::MAX) == 0,
+            "disc far below the grid"
+        );
+        assert!(d.erase(64, 36, u32::MAX) > 0);
+        let sand = d.world().materials().id("sand").unwrap();
+        assert_eq!(d.world().material_counts()[usize::from(sand.0)], 0);
     }
 
     #[test]

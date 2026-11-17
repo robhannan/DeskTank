@@ -39,6 +39,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 ## Next increments
 
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
+- Web demo: stop the rAF loop while paused and idle (it does no work then, but still wakes 60×/s) (PR #5 review).
+- Web demo: keyboard navigation for the palette (arrow keys within the radio group) (PR #5 review).
 - Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T2.
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
 - Displaced-liquid chains cross chunks within one tick; design the optional parallel pass (SPEC §4.2) around them before enabling it.
