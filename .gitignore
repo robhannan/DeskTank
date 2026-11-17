@@ -26,3 +26,7 @@ rustc-ice-*.txt
 
 # macOS
 .DS_Store
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
