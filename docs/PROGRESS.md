@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) and T2 (renderer, `desktank window`, `desktank bench`) done; the saver crates are stubs. WB0: the sim core runs in the browser on GitHub Pages; the web is now a product target (D15, SPEC §3.5).
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) T2 (renderer, `desktank window`, `desktank bench`) and T3 (`desktank capture`, render tests) done; the saver crates are stubs. WB0: the sim core runs in the browser on GitHub Pages; the web is now a product target (D15, SPEC §3.5).
 
 ## Done
 
@@ -14,6 +14,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T1 grid, chunks and movement (`desktank-sim`): 4-byte cells, 64×64 chunks with sleep/wake and dirty rectangles, five movement classes, materials from embedded TOML (`assets/materials/`), fixed 1/20 s tick, per-chunk PCG streams, FNV-1a state hash, `set_cell`/`paint`/`fill_rect` edit API, PPM/ASCII debug snapshots (`cargo run --release -p desktank-sim --example snapshot`), criterion benches (`cargo bench -p desktank-sim`). Mechanisms the spec left open are recorded in SPEC §2.1 (*T1* notes).
 - WB0 browser demo (`desktank-web` + `web/`): the sim core in WebAssembly on GitHub Pages (https://robhannan.github.io/DeskTank/). Pour/erase with a brush, play/pause/step/reset, seed, stats; 20 Hz fixed tick with rAF drawing that uploads a frame only when the world changed. Built by `scripts/build-web.mjs` (zx, `pnpm build:web`); CI builds it on every PR, `pages.yml` deploys from `main`.
 - T2 renderer and window (`desktank-render`, `desktank`): loop-agnostic `Tank` (`tick(now) -> FrameRequest`, `draw`, `render_to`) with a fixed 20 Hz tick, a 30 fps cap and frames only when the world changed; dirty rectangles (merged per chunk across ticks) uploaded to an `Rg8Unorm` texture; a palette shader (256×256 material×variant table, integer scale, letterbox, water depth tint) within WebGL2 limits (device opened with `downlevel_webgl2_defaults`; CI runs clippy for wasm32). `desktank window` (winit 0.30) sleeps with `WaitUntil`, pauses on occlusion/minimise with no timers, and has a debug brush (left pour, right erase, keys 1–5). `desktank bench [--seconds N]` runs a seeded pour then settle offscreen at 2560×1440 and prints CPU, tick time, awake chunks, GPU time (timestamp queries) and RSS. Process CPU/RSS readers in `desktank-platform`. An offscreen GPU smoke test reads pixels back (skips without an adapter).
+- T3 capture and render tests: `desktank capture` renders a seeded TOML input script (`desktank_sim::Script`: timed pours, run N ticks, frames every M ticks) offscreen to PNG (`Tank::capture` reads pixels back; `Tank::step` ticks outside real-time pacing). Render tests capture two scenes at 320×180 and compare them with references in `crates/desktank/tests/reference/` (≤ 0.5% of pixels over CIEDE2000 ΔE 2); `DESKTANK_BLESS=1` updates them. Linux CI runs them on lavapipe; GPU tests fail instead of skipping when `CI` is set. Docs: `docs/capture.md`.
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -42,16 +43,20 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - winit 0.30 reports `Occluded` on macOS and X11 but not on Windows or Wayland; Windows minimise shows up as a zero size, and `Window::is_minimized` is polled in `about_to_wait` as a fallback. A window fully covered on Windows, or hidden on Wayland, isn't detected yet.
 - Settled ticks cost ~25 µs because the loop still wakes at 20 Hz to tick world time; with zero awake chunks the tick could be skipped or batched once creatures exist.
 
+- References blessed on Metal (M3 Max); a 5% green cut in the fragment shader fails both scenes (28% and 36% of pixels over ΔE 2, max ΔE 7.9 and 9.8), so the tolerance catches small palette shifts.
+- `desktank capture` (debug build) renders 60 frames of 640×360 in ~3.7 s.
+
 ## Next increments
+
+- `desktank capture --time` is validated but ignored until day and night (T-later) exist; the render tests should then add the 4 times of day.
 
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
 - Web demo: stop the rAF loop while paused and idle (it does no work then, but still wakes 60×/s) (PR #5 review).
 - Web demo: keyboard navigation for the palette (arrow keys within the radio group) (PR #5 review).
-- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T3 (capture).
+- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), WB1 (web on the real renderer) and T4.
 - Pause detection gaps (T2): Windows fully-covered windows (DWM cloaking / present status) and Wayland (frame callbacks); winit 0.30 has no `Occluded` there.
 - Resizing the window rescales the fixed grid with letterboxing; resizing the world itself (or choosing the grid from the display, SPEC §2.1) comes with the display modes.
 - The web demo's hand-tuned palettes (`desktank-web`) and the renderer's derived shades should converge when WB1 moves the web onto `desktank-render`.
-- The offscreen GPU smoke test skips when no adapter exists; once T3's lavapipe render tests land, make CI fail instead of skipping (PR #7 review).
 - `desktank bench` could add a run without GPU timing, so per-frame CPU excludes the timestamp readback (PR #7 review).
 - Decide whether the §6.1 memory budget means RSS or physical footprint on macOS (the window is 90 MB RSS, 53 MB footprint).
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
@@ -59,7 +64,6 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Cap total cells (not just each side): 8192×8192 would allocate about 512 MB (PR #4 review).
 - A differential sleep test (force-wake every chunk vs. asleep, tick once, compare) as a regression guard for missed wakes (PR #4 review).
 - CI could run `cargo bench -p desktank-sim` and record the numbers (SPEC §7), without gating.
-- Capture mode for screenshots/recordings so PRs can show visuals, including a frame-sequence recorder for GIFs (SPEC T3).
 - Add `.gitattributes` (`* text=auto eol=lf`) to guard Windows `core.autocrlf` checkouts (PR #3 review).
 - Dependabot: add `groups` / `open-pull-requests-limit` once real dependencies land (PR #3 review).
 - Release symbolication: consider `strip = "debuginfo"` plus split debug info (dSYM/PDB) kept out of the release archive, so crash reports can be symbolicated (PR #3 review).
