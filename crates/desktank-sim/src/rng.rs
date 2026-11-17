@@ -1,7 +1,8 @@
 //! Deterministic randomness: one PCG stream per chunk per tick (SPEC §2.1).
 //!
-//! A stream depends only on `(seed, tick, chunk id)`, never on update order,
-//! so a later parallel chunk pass gives the same results as the serial one.
+//! A stream depends only on `(seed, tick, chunk id)`, never on update order.
+//! That is one prerequisite for a deterministic parallel chunk pass; the
+//! cross-chunk row sweep and displaced-liquid chains (SPEC §2.1) are others.
 
 use rand_pcg::Pcg32;
 

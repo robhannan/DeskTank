@@ -45,7 +45,8 @@ fn settle(w: &mut World, limit: u32) {
 }
 
 /// A deterministic input script: pours of every test material.
-fn scripted_run(seed: u64, ticks: u64) -> u64 {
+/// Returns the state hash and the material of every cell.
+fn scripted_run(seed: u64, ticks: u64) -> (u64, Vec<MaterialId>) {
     let mut w = world(128, 128, seed, 0.9);
     let names = [
         "sand",
@@ -66,7 +67,10 @@ fn scripted_run(seed: u64, ticks: u64) -> u64 {
         }
         w.tick();
     }
-    w.state_hash()
+    (
+        w.state_hash(),
+        w.cells().iter().map(|c| c.material).collect(),
+    )
 }
 
 #[test]
@@ -74,8 +78,9 @@ fn same_seed_and_script_give_the_same_hash_after_10k_ticks() {
     let a = scripted_run(42, 10_000);
     let b = scripted_run(42, 10_000);
     assert_eq!(a, b);
-    // The hash covers the random choices: another seed diverges.
-    assert_ne!(a, scripted_run(43, 10_000));
+    // The random choices matter: another seed moves cells differently (the
+    // materials, not just the seeded colour noise, differ).
+    assert_ne!(a.1, scripted_run(43, 10_000).1);
 }
 
 #[test]
@@ -102,10 +107,18 @@ fn non_reacting_mass_is_conserved() {
     w.paint(80, 30, 6, gravel, Brush::Pour).unwrap();
     w.paint(120, 2, 2, water, Brush::Pour).unwrap();
     let before = w.material_counts();
+    let start = w.cells().to_vec();
     for _ in 0..1500 {
         w.tick();
         assert_eq!(w.material_counts(), before);
     }
+    // Not vacuous: things moved.
+    let moved = start
+        .iter()
+        .zip(w.cells())
+        .filter(|(a, b)| a.material != b.material)
+        .count();
+    assert!(moved > 500, "only {moved} cells changed");
 }
 
 #[test]
@@ -138,10 +151,13 @@ fn settled_scene_sleeps_within_one_second_of_the_last_change() {
     // Asleep means no work: further ticks change nothing.
     let hash = w.state_hash();
     let cells = w.cells().to_vec();
-    w.tick();
+    for _ in 0..2 * SLEEP_TICKS {
+        w.tick();
+        assert_eq!(w.awake_chunks(), 0);
+        assert_eq!(w.dirty_rects().count(), 0);
+    }
     assert_eq!(w.cells(), &cells[..]);
     assert_ne!(hash, w.state_hash(), "the hash includes the tick");
-    assert_eq!(w.dirty_rects().count(), 0);
 }
 
 fn release_bubbles(water_level: f32) {
@@ -275,6 +291,16 @@ fn flake_floats_for_its_float_time_then_sinks() {
         "floated {floated} s, float_time {float_time} s"
     );
     assert_eq!(positions(&w, flake), vec![(32, 63)], "sank to the floor");
+}
+
+#[test]
+fn huge_brush_is_clipped_to_the_grid() {
+    let mut w = world(64, 64, 1, 1.0);
+    let sand = id(&w, "sand");
+    assert_eq!(
+        w.paint(32, 32, u32::MAX, sand, Brush::Pour).unwrap(),
+        64 * 64
+    );
 }
 
 #[test]

@@ -246,8 +246,9 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
     let floating = d.class == MovementClass::Floating;
     let (float_time, float_density) = match (floating, d.float_time, d.float_density) {
         (true, Some(t), Some(fd)) => {
-            if !(t > 0.0 && t <= MAX_FLOAT_TIME) {
-                return Err(invalid("float_time must be within (0, 3000] seconds"));
+            // At least one 1/20 s tick, so a floater always floats.
+            if !(0.05..=MAX_FLOAT_TIME).contains(&t) {
+                return Err(invalid("float_time must be within 0.05..=3000 seconds"));
             }
             if !(fd.is_finite() && fd > 0.0) {
                 return Err(invalid("float_density must be finite and > 0"));

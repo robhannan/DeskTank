@@ -395,17 +395,24 @@ impl World {
         brush: Brush,
     ) -> Result<usize, WorldError> {
         self.check_material(material)?;
-        let r = i64::from(radius);
+        // A radius beyond the grid diagonal covers it all; clamping keeps the
+        // i64 maths far from overflow and the loop clipped to the grid.
+        #[allow(clippy::cast_possible_wrap)] // MAX_SIDE is small
+        let r = i64::from(radius).min(2 * MAX_SIDE as i64);
+        #[allow(clippy::cast_possible_wrap)] // sides are at most MAX_SIDE
+        let clip = |c: i64, len: usize| {
+            let lo = (c - r).max(0);
+            let hi = (c + r).min(len as i64 - 1);
+            lo..=hi
+        };
         let mut changed = 0;
-        for y in (cy - r)..=(cy + r) {
-            for x in (cx - r)..=(cx + r) {
+        for y in clip(cy, self.height) {
+            for x in clip(cx, self.width) {
                 let (dx, dy) = (x - cx, y - cy);
                 if dx * dx + dy * dy > r * r + r {
                     continue;
                 }
                 if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y))
-                    && x < self.width
-                    && y < self.height
                     && self.brush_cell(x, y, material, brush)
                 {
                     changed += 1;

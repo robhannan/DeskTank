@@ -118,7 +118,8 @@ It can run as any combination of four **display modes**:
     vertically per tick, and a liquid spreads at most its `dispersion`
     (≤ 8 cells) sideways. So a change can only affect the chunk it is in
     and its direct neighbours.
-    - *T1:* this bounds each cell's **own** move. A liquid displaced by
+    - *T1:* this bounds each cell's **own** move, and so which chunks a
+      change wakes. A liquid displaced by
       a mover can be displaced again in the same tick (so a column of
       sand falls through water together, and the water it displaces
       rises the whole column), but it never acts itself twice. A

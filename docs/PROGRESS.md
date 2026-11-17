@@ -36,6 +36,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T2.
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
 - Displaced-liquid chains cross chunks within one tick; design the optional parallel pass (SPEC §4.2) around them before enabling it.
+- Cap total cells (not just each side): 8192×8192 would allocate about 512 MB (PR #4 review).
+- A differential sleep test (force-wake every chunk vs. asleep, tick once, compare) as a regression guard for missed wakes (PR #4 review).
 - CI could run `cargo bench -p desktank-sim` and record the numbers (SPEC §7), without gating.
 - Capture mode for screenshots/recordings so PRs can show visuals, including a frame-sequence recorder for GIFs (SPEC T3).
 - Add `.gitattributes` (`* text=auto eol=lf`) to guard Windows `core.autocrlf` checkouts (PR #3 review).
