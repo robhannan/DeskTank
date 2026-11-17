@@ -1,7 +1,7 @@
 //! GPU resources for one grid and one target format: the cell texture, the
 //! palette, the uniforms and the pipeline.
 
-use desktank_sim::World;
+use desktank_sim::{FieldKind, World};
 
 use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, PaletteLayout};
@@ -14,6 +14,9 @@ const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
 const VIEW_BYTES: u64 = 96;
+
+/// Field value shown at full strength by the overlay (light is 0–1).
+const FIELD_SHOW_MAX: f32 = 2.0;
 
 /// Letterbox colour around the grid (sRGB).
 const BACKDROP: [u8; 3] = [0x05, 0x0a, 0x12];
@@ -28,6 +31,11 @@ pub struct Renderer {
     cells: wgpu::Texture,
     /// The palette strip image (top-left corner of a fixed-size texture).
     hud: wgpu::Texture,
+    /// Nutrient, CO₂ and light per field cell (RGB), for the debug overlay.
+    fields: wgpu::Texture,
+    fields_size: (u32, u32),
+    /// Field version last uploaded.
+    fields_version: Option<u64>,
     /// Uniform bytes last written.
     view: Vec<u8>,
     scratch: Vec<u8>,
@@ -54,6 +62,22 @@ impl Renderer {
         });
         let palette = create_palette(gpu, world);
         let hud = create_hud(d);
+        let field = world.field(FieldKind::Nutrient);
+        let fields_size = (side(field.width()), side(field.height()));
+        let fields = d.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fields"),
+            size: wgpu::Extent3d {
+                width: fields_size.0,
+                height: fields_size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
         let view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("view"),
             size: VIEW_BYTES,
@@ -86,11 +110,13 @@ impl Renderer {
                 texture_entry(1),
                 texture_entry(2),
                 texture_entry(3),
+                texture_entry(4),
             ],
         });
         let cells_view = cells.create_view(&wgpu::TextureViewDescriptor::default());
         let palette_view = palette.create_view(&wgpu::TextureViewDescriptor::default());
         let hud_view = hud.create_view(&wgpu::TextureViewDescriptor::default());
+        let fields_view = fields.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tank"),
             layout: &bind_layout,
@@ -111,6 +137,10 @@ impl Renderer {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&hud_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&fields_view),
+                },
             ],
         });
         let pipeline = create_pipeline(d, &bind_layout, format);
@@ -122,6 +152,9 @@ impl Renderer {
             view_buffer,
             cells,
             hud,
+            fields,
+            fields_size,
+            fields_version: None,
             view: Vec::new(),
             scratch: Vec::new(),
         }
@@ -172,6 +205,45 @@ impl Renderer {
         });
     }
 
+    /// Uploads the fields for the overlay if they changed since the last
+    /// upload.
+    pub fn upload_fields(&mut self, gpu: &Gpu, world: &World) {
+        if self.fields_version == Some(world.fields_version()) {
+            return;
+        }
+        self.fields_version = Some(world.fields_version());
+        let [n, c, l] = FieldKind::ALL.map(|k| world.field(k).values());
+        let byte = |v: f32| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped
+            let b = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            b
+        };
+        let texels: Vec<u8> = (0..n.len())
+            .flat_map(|i| {
+                [
+                    byte(n[i] / FIELD_SHOW_MAX),
+                    byte(c[i] / FIELD_SHOW_MAX),
+                    byte(l[i]),
+                    255,
+                ]
+            })
+            .collect();
+        gpu.queue.write_texture(
+            self.fields.as_image_copy(),
+            &texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.fields_size.0 * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: self.fields_size.0,
+                height: self.fields_size.1,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     /// Uploads the palette strip image (`size` palette pixels, RGBA rows).
     pub fn upload_hud(&self, gpu: &Gpu, image: &[u8], size: (u32, u32)) {
         if size.0 == 0 || size.1 == 0 {
@@ -194,7 +266,8 @@ impl Renderer {
     }
 
     /// Records the draw into `target` (`size` pixels), with the palette at
-    /// `palette` and the brush outline at `cursor` if given.
+    /// `palette`, the brush outline at `cursor` and the field overlay
+    /// `field` if given.
     #[allow(clippy::too_many_arguments)] // one frame's inputs
     pub fn encode(
         &mut self,
@@ -203,14 +276,25 @@ impl Renderer {
         target: &wgpu::TextureView,
         size: (u32, u32),
         surface_row: usize,
-        overlay: (Option<PaletteLayout>, Option<BrushPreview>),
+        overlay: (
+            Option<PaletteLayout>,
+            Option<BrushPreview>,
+            Option<FieldKind>,
+        ),
         timer: Option<&GpuTimer>,
     ) {
         let layout = Layout::fit(self.grid, size);
-        let (palette, cursor) = overlay;
+        let (palette, cursor, field) = overlay;
+        // 0 = none; 1, 2, 3 = nutrient, CO₂, light (the texture's channels).
+        let field_mode = match field {
+            None => 0.0,
+            Some(FieldKind::Nutrient) => 1.0,
+            Some(FieldKind::Co2) => 2.0,
+            Some(FieldKind::Light) => 3.0,
+        };
         #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
         let extra = {
-            let hud = palette.map_or([0.0; 8], |p| {
+            let hud = palette.map_or([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, field_mode, 0.0], |p| {
                 let (w, h) = hud::image_size(p.slots);
                 [
                     p.origin.0 as f32,
@@ -219,7 +303,7 @@ impl Renderer {
                     1.0,
                     w as f32,
                     h as f32,
-                    0.0,
+                    field_mode,
                     0.0,
                 ]
             });

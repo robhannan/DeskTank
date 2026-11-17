@@ -617,7 +617,8 @@ impl World {
     /// carries, so a jet through clear water changes no cells and wakes no
     /// chunks. Dense liquids (liquid fertiliser) only trade places with
     /// dense liquids, never air, so they stay in the water; a floater rides
-    /// along on either. The sweep runs upstream, so a carried cell moves at
+    /// along the air at the surface, or through water while submerged, so
+    /// it never lifts water into the air. The sweep runs upstream, so a carried cell moves at
     /// most once per tick and a blob moves together.
     #[allow(clippy::many_single_char_names)] // cell maths
     fn run_current(&mut self) {
@@ -650,9 +651,19 @@ impl World {
                         continue;
                     };
                     let t = self.cells[j].material;
+                    let t_watery = self.life.flags[usize::from(t.0)] & WATERY != 0;
+                    // A floater keeps to its layer: along the air at the
+                    // surface, through water when submerged.
+                    let submerged = self.at(x, y, 0, -1).is_some_and(|a| {
+                        self.life.flags[usize::from(self.cells[a].material.0)] & WATERY != 0
+                    });
                     let ok = t != m
                         && self.props[usize::from(t.0)].class == MovementClass::Liquid
-                        && (floating || self.life.flags[usize::from(t.0)] & WATERY != 0);
+                        && if floating {
+                            t_watery == submerged
+                        } else {
+                            t_watery
+                        };
                     if ok && self.life.chance(p) {
                         self.swap(i, j);
                     }

@@ -103,6 +103,9 @@ struct CaptureArgs {
     /// Input script of timed pours (TOML; see docs/capture.md).
     #[arg(long, value_name = "FILE")]
     script: Option<PathBuf>,
+    /// Tint the tank by a field (debug overlay): nutrient, co2 or light.
+    #[arg(long, value_name = "FIELD", value_parser = capture::parse_field)]
+    field: Option<desktank_sim::FieldKind>,
     /// Directory to write frames to (`frame.png`, or `frame_NNNN.png` for several).
     #[arg(long, value_name = "DIR")]
     out: PathBuf,
@@ -148,6 +151,7 @@ fn main() -> ExitCode {
             size: args.size,
             frames: args.frames,
             script: args.script.clone(),
+            field: args.field,
             out: args.out.clone(),
         }),
         other => {
@@ -197,6 +201,8 @@ mod tests {
                     "3",
                     "--script",
                     "pour.toml",
+                    "--field",
+                    "nutrient",
                     "--out",
                     "shots",
                 ],

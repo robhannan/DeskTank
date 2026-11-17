@@ -23,7 +23,9 @@
 use core::time::Duration;
 
 use desktank_render::{Layout, Tank, TankConfig};
-use desktank_sim::{BodyId, Brush, MaterialId, MaterialTable, Script, World, WorldConfig};
+use desktank_sim::{
+    BodyId, Brush, MaterialId, MaterialTable, Placeable, Script, World, WorldConfig,
+};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -242,6 +244,27 @@ impl WebTank {
     pub fn pour(&mut self, material: &str, x: i32, y: i32, radius: u32) -> Result<u32, String> {
         let id = self.material(material)?;
         Ok(self.stamp(Some(id), x, y, radius))
+    }
+
+    /// Places the device whose material is `device` (`"bubbler"` or
+    /// `"filter_outlet"`) centred on `(x, y)`. Returns how many cells
+    /// changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if `device` isn't a placeable.
+    pub fn place(&mut self, device: &str, x: i32, y: i32) -> Result<u32, String> {
+        let what =
+            Placeable::from_name(device).ok_or_else(|| format!("unknown device {device:?}"))?;
+        let changed = self
+            .tank
+            .world_mut()
+            .place(what, i64::from(x), i64::from(y))
+            .map_err(|e| e.to_string())?;
+        if changed > 0 && !self.running {
+            self.tank.cells_edited();
+        }
+        Ok(count(changed))
     }
 
     /// Erases a disc of `radius` cells at `(x, y)` back to the empty tank:
@@ -559,6 +582,19 @@ mod tests {
         let names = tank().materials();
         for m in ["water", "air", "sand", "gravel", "rock", "air_bubble"] {
             assert!(names.iter().any(|n| n == m), "{m} missing");
+        }
+    }
+
+    #[test]
+    fn places_devices_and_rejects_unknown_ones() {
+        let mut t = tank();
+        let outlet = id(&t, "filter_outlet");
+        assert_eq!(t.place("filter_outlet", 10, 30), Ok(9));
+        assert_eq!(t.tank().world().cell(10, 30).unwrap().material, outlet);
+        assert!(t.place("heater", 10, 30).is_err());
+        // Every pour material in the page's list exists.
+        for m in desktank_sim::tools::POUR_MATERIALS {
+            assert!(t.pour(m, 60, 10, 1).is_ok(), "{m}");
         }
     }
 

@@ -10,8 +10,10 @@
 //! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
 //! drag scoops, the scroll wheel or a two-finger trackpad scroll sets the
 //! brush size, and clicking the palette in the top-left corner (or keys 1–9,
-//! then 0 for the tenth slot) selects a material or tool. Pointer moves only redraw when the brush
-//! outline changes. Escape closes.
+//! then 0 for the tenth slot) selects a material, device or tool. A device
+//! (bubbler, filter outlet) is placed once per click. `F` cycles a debug
+//! tint of the nutrient, CO₂ and light fields. Pointer moves only redraw
+//! when the brush outline changes. Escape closes.
 //!
 //! `--demo-pour N` feeds the same code a synthetic left drag sweeping
 //! across the upper tank for N seconds, then prints the CPU it used (the
@@ -27,7 +29,7 @@ use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Palette, Tank, TankConfig, TankSurface, wgpu,
 };
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tools};
-use desktank_sim::{MaterialTable, World, WorldConfig};
+use desktank_sim::{FieldKind, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -392,6 +394,19 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
+                    Key::Character(c) if c.eq_ignore_ascii_case("f") => {
+                        let next = match s.tank.field_overlay() {
+                            None => Some(FieldKind::Nutrient),
+                            Some(FieldKind::Nutrient) => Some(FieldKind::Co2),
+                            Some(FieldKind::Co2) => Some(FieldKind::Light),
+                            Some(FieldKind::Light) => None,
+                        };
+                        s.tank.set_field_overlay(next);
+                        let title = next.map_or("DeskTank".to_owned(), |f| {
+                            format!("DeskTank — {} field", f.name())
+                        });
+                        s.window.set_title(&title);
+                    }
                     Key::Character(c) => {
                         // 1–9 are the first nine slots, 0 the tenth.
                         let slot = c.parse::<usize>().ok().map(|n| (n + 9) % 10);

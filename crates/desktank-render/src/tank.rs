@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use desktank_sim::{TICKS_PER_SECOND, World};
+use desktank_sim::{FieldKind, TICKS_PER_SECOND, World};
 use thiserror::Error;
 
 use crate::grid::DirtyRects;
@@ -52,6 +52,10 @@ pub struct Tank {
     palette_dirty: bool,
     /// The brush outline, if shown.
     cursor: Option<BrushPreview>,
+    /// The field tinted over the tank (debug overlay), if any.
+    field_overlay: Option<FieldKind>,
+    /// Field version last drawn with the overlay.
+    fields_drawn: u64,
 }
 
 impl Tank {
@@ -70,7 +74,24 @@ impl Tank {
             palette: None,
             palette_dirty: false,
             cursor: None,
+            field_overlay: None,
+            fields_drawn: 0,
         }
+    }
+
+    /// Tints the tank by a field's value (a debug overlay), or with `None`
+    /// turns the tint off. While on, a field change asks for a frame.
+    pub fn set_field_overlay(&mut self, field: Option<FieldKind>) {
+        if self.field_overlay != field {
+            self.field_overlay = field;
+            self.needs_frame = true;
+        }
+    }
+
+    /// The field overlay shown, if any.
+    #[must_use]
+    pub fn field_overlay(&self) -> Option<FieldKind> {
+        self.field_overlay
     }
 
     /// Shows (or with `None`, hides) the interact palette. A change asks
@@ -151,6 +172,9 @@ impl Tank {
         self.world.tick();
         for r in self.world.dirty_rects() {
             self.dirty.add(r);
+        }
+        if self.field_overlay.is_some() && self.world.fields_version() != self.fields_drawn {
+            self.needs_frame = true;
         }
     }
 
@@ -271,6 +295,10 @@ impl Tank {
             return;
         };
         renderer.upload(gpu, &self.world, &mut self.dirty);
+        if self.field_overlay.is_some() {
+            renderer.upload_fields(gpu, &self.world);
+            self.fields_drawn = self.world.fields_version();
+        }
         if self.palette_dirty {
             if let Some(p) = &self.palette {
                 let (image, image_size) = hud::build(p, self.world.materials());
@@ -290,7 +318,7 @@ impl Tank {
             target,
             size,
             self.world.surface_row(),
-            (palette, self.cursor),
+            (palette, self.cursor, self.field_overlay),
             self.timer.as_ref(),
         );
         if let Some(t) = &self.timer {

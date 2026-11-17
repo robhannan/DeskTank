@@ -23,7 +23,8 @@ struct View {
     // Palette: top-left in target pixels, target pixels per palette pixel,
     // and 1 if shown.
     hud: vec4<f32>,
-    // Palette image size in palette pixels (xy).
+    // Palette image size in palette pixels (xy), and the field overlay (z):
+    // 0 none, 1 nutrient, 2 CO2, 3 light.
     hud_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
@@ -33,6 +34,23 @@ struct View {
 @group(0) @binding(1) var cells: texture_2d<f32>;
 @group(0) @binding(2) var palette: texture_2d<f32>;
 @group(0) @binding(3) var hud: texture_2d<f32>;
+// Nutrient, CO2 and light per 8x8-cell field cell, for the overlay.
+@group(0) @binding(4) var fields: texture_2d<f32>;
+
+// The fields at `cell`, interpolated between field-cell centres.
+fn field_at(cell: vec2<f32>) -> vec3<f32> {
+    let size = vec2<i32>(textureDimensions(fields));
+    let f = (cell + 0.5) / 8.0 - 0.5;
+    let base = floor(f);
+    let t = f - base;
+    let lo = clamp(vec2<i32>(base), vec2<i32>(0), size - 1);
+    let hi = clamp(vec2<i32>(base) + 1, vec2<i32>(0), size - 1);
+    let a = textureLoad(fields, vec2<i32>(lo.x, lo.y), 0).rgb;
+    let b = textureLoad(fields, vec2<i32>(hi.x, lo.y), 0).rgb;
+    let c = textureLoad(fields, vec2<i32>(lo.x, hi.y), 0).rgb;
+    let d = textureLoad(fields, vec2<i32>(hi.x, hi.y), 0).rgb;
+    return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
 
 // Whether `cell` is inside the brush disc (the same test as World::paint).
 fn in_brush(cell: vec2<f32>) -> bool {
@@ -69,6 +87,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let depth = clamp((cell.y - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
     let light = 1.0 - view.depth_dim * depth * c.a;
     var rgb = c.rgb * light;
+    // Debug overlay: tint by a field's value.
+    let mode = view.hud_size.z;
+    if mode > 0.5 {
+        let f = field_at(cell);
+        if mode < 1.5 {
+            rgb = mix(rgb, vec3<f32>(0.35, 1.0, 0.3), 0.75 * f.r);
+        } else if mode < 2.5 {
+            rgb = mix(rgb, vec3<f32>(0.85, 0.5, 1.0), 0.75 * f.g);
+        } else {
+            rgb = rgb * mix(0.15, 1.0, f.b);
+        }
+    }
     // Brush outline: disc cells with a 4-neighbour outside the disc.
     if view.cursor.w > 0.5 && in_brush(cell) {
         let edge = !(in_brush(cell + vec2<f32>(1.0, 0.0)) && in_brush(cell - vec2<f32>(1.0, 0.0))

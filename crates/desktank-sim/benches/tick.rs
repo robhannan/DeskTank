@@ -49,7 +49,7 @@ fn settled_living() -> World {
         w.tick();
         w.awake_chunks() > 0
     } {}
-    assert!(w.random_tick_stats().visited == w.random_tick_budget());
+    assert_eq!(w.random_tick_stats().visited, w.random_tick_budget());
     w
 }
 
