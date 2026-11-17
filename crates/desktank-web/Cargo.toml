@@ -1,0 +1,25 @@
+[package]
+name = "desktank-web"
+description = "Browser demo of the DeskTank simulation core (wasm-bindgen). A showcase, not the product renderer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+# cdylib for wasm-bindgen; rlib so native tests and docs build.
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+desktank-sim.workspace = true
+
+# Only the wasm build links wasm-bindgen, so native workspace builds stay
+# unchanged. Pinned exactly: the wasm-bindgen CLI must match this version
+# (CI reads it from `WASM_BINDGEN_VERSION`; scripts/build-web.mjs checks).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "=0.2.130", default-features = false, features = ["std"] }

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeskTank sand tank</title>
+  <meta name="description" content="DeskTank's falling-sand and water simulation core, running in the browser via WebAssembly.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>DeskTank <span>sand tank</span></h1>
+    </header>
+
+    <div class="tank">
+      <canvas id="tank" width="320" height="180" aria-label="Simulation: drag to pour the selected material"></canvas>
+      <p id="status" class="status" role="status">Loading the simulation…</p>
+    </div>
+
+    <p id="stats" class="stats" aria-live="off">fps – · tick – · awake chunks – · tick time –</p>
+
+    <section class="controls" aria-label="Tools">
+      <div id="palette" class="palette" role="radiogroup" aria-label="Material"></div>
+      <label class="brush">Brush <input id="brush" type="range" min="1" max="12" value="3"> <output id="brush-out">3</output></label>
+    </section>
+
+    <section class="controls" aria-label="Simulation">
+      <button id="play" type="button">Pause</button>
+      <button id="step" type="button" disabled>Step</button>
+      <button id="reset" type="button">Reset</button>
+      <label class="seed">Seed <input id="seed" type="number" min="0" max="4294967295" step="1" value="1"></label>
+    </section>
+
+    <p class="hint">Left-drag (or touch-drag) pours · right-drag or the eraser removes · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
+
+    <section class="about">
+      <h2>What is this?</h2>
+      <p><a href="https://github.com/robhannan/DeskTank">DeskTank</a> is a desktop aquarium in progress: a pixel-art falling-sand tank that will run as your wallpaper, screensaver or a click-through overlay on macOS, Windows and Linux. This page is its sand and water simulation core, compiled from Rust to WebAssembly and running in your browser at a fixed 20 ticks per second. Fish, plants and the real renderer come later.</p>
+    </section>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

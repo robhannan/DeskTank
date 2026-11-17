@@ -14,4 +14,5 @@ resource budgets, work packages with acceptance criteria).
 - `Cargo.lock` is committed (binary project); CI builds with `--locked`.
 - `desktank-sim` and `desktank-render` use `#![forbid(unsafe_code)]`. The workspace denies `unsafe_code`; only `desktank-platform` and `desktank-saver-mac` allow it, at FFI boundaries with `// SAFETY:` comments.
 - Lints live in the root `Cargo.toml` (`clippy::pedantic` warn, `-D warnings` in CI); every crate sets `[lints] workspace = true`.
+- Web demo (`crates/desktank-web`, `web/`): `pnpm install && pnpm build:web` builds `target/site/` (needs the wasm-bindgen CLI at the `Cargo.lock` version). It is a showcase, not a product target.
 - Work in small increments; update `docs/PROGRESS.md` in the same PR.
