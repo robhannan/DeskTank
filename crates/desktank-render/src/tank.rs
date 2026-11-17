@@ -79,10 +79,7 @@ impl Tank {
     pub fn tick(&mut self, now: Duration) -> FrameRequest {
         let sim_ticks = self.pacer.due_ticks(now);
         for _ in 0..sim_ticks {
-            self.world.tick();
-            for r in self.world.dirty_rects() {
-                self.dirty.add(r);
-            }
+            self.step();
         }
         let wanted = self.needs_frame || !self.dirty.is_empty();
         let redraw = wanted && self.pacer.frame_allowed(now);
@@ -93,6 +90,16 @@ impl Tank {
             redraw,
             wake_at: self.pacer.wake_at(now, wanted && !redraw),
             sim_ticks,
+        }
+    }
+
+    /// Runs one simulation tick now, outside the real-time pacing, and
+    /// records what changed for the next frame. For headless hosts such as
+    /// `desktank capture`, which step world time themselves.
+    pub fn step(&mut self) {
+        self.world.tick();
+        for r in self.world.dirty_rects() {
+            self.dirty.add(r);
         }
     }
 
