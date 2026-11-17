@@ -8,12 +8,16 @@
 // needs a `// SAFETY:` comment (SPEC §4.1).
 #![allow(unsafe_code)]
 
+mod stats;
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
+
+pub use stats::{ProcessStats, process_stats};
 
 // Dependency edge from SPEC §4.1, kept ahead of first use.
 use desktank_render as _;

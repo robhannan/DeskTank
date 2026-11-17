@@ -4,8 +4,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-// Dependency edge from SPEC §4.1, kept ahead of first use.
-use desktank_platform as _;
+mod bench;
+mod scene;
+mod window;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -38,7 +39,7 @@ enum Command {
     /// Render frames headlessly to image files.
     Capture(CaptureArgs),
     /// Run a scripted scenario and print performance numbers.
-    Bench,
+    Bench(BenchArgs),
     /// Install or uninstall the screensaver.
     Saver {
         #[command(subcommand)]
@@ -57,6 +58,13 @@ struct RunArgs {
     /// Show the tank when the machine is idle.
     #[arg(long)]
     idle: bool,
+}
+
+#[derive(Debug, Args)]
+struct BenchArgs {
+    /// Length of the run in seconds of wall time.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    seconds: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -109,7 +117,7 @@ impl Command {
             Self::Feed { .. } => "feed",
             Self::Pause => "pause",
             Self::Capture(_) => "capture",
-            Self::Bench => "bench",
+            Self::Bench(_) => "bench",
             Self::Saver {
                 action: SaverAction::Install,
             } => "saver install",
@@ -122,8 +130,21 @@ impl Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    eprintln!("desktank {}: not yet implemented", cli.command.name());
-    ExitCode::FAILURE
+    let result = match &cli.command {
+        Command::Window => window::run(),
+        Command::Bench(args) => bench::run(args.seconds),
+        other => {
+            eprintln!("desktank {}: not yet implemented", other.name());
+            return ExitCode::FAILURE;
+        }
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("desktank {}: {e:#}", cli.command.name());
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]
@@ -164,6 +185,7 @@ mod tests {
                 "capture",
             ),
             (&["bench"], "bench"),
+            (&["bench", "--seconds", "5"], "bench"),
             (&["saver", "install"], "saver install"),
             (&["saver", "uninstall"], "saver uninstall"),
         ];
