@@ -33,6 +33,7 @@ It can run as any combination of four **display modes**:
 | **Overlay** | The same tank drawn over open windows on a transparent, click-through layer. The water is clear (or lightly tinted) and the substrate rests along the bottom of the screen. |
 | **Screensaver** | A full-screen tank when the machine is idle. |
 | **Lock screen** | The tank on the lock screen, as far as each OS allows (§3.4). |
+| **Web** | The same tank, full-page in a browser tab on desktop or mobile, hosted on GitHub Pages (§3.5, D15). |
 
 ### Principles
 
@@ -62,9 +63,8 @@ It can run as any combination of four **display modes**:
 
 ### Non-goals (v1)
 
-- Mobile and web builds as product targets. A browser *demo of the sim
-  core* exists (§9, D1) as a showcase and playground; it is not a
-  DeskTank build and doesn't drive the design.
+- Native mobile apps. Mobile browsers are covered by the web version
+  (D15).
 - 3D.
 - Online features, accounts or telemetry.
 - Progression, unlocks or currency: it is a sandbox (D9).
@@ -564,6 +564,46 @@ configurable, because some people want to show their tank off.
     lock client must leave the session locked and recoverable. It is
     deferred, and is an escalation item.
 
+### 3.5 Web (D15)
+
+The web version is a full product target: the same simulation, renderer
+and save format running in a browser tab. It is the natural home for
+mobile too. It has no wallpaper, overlay, screensaver or lock-screen
+modes; it is a "window mode" in a page.
+
+- **Host**: `desktank-web` (wasm-bindgen) owns the page lifecycle and
+  drives the loop-agnostic `Tank` (§4.2) from `requestAnimationFrame`,
+  with a fixed 20 Hz simulation tick.
+- **Rendering**: `desktank-render` on wgpu's browser backends. WebGPU is
+  used where available, with WebGL2 as the fallback. From T2 on, the
+  renderer must therefore stay within wgpu's WebGL2 downlevel limits:
+  - no compute shaders on the critical path;
+  - only texture formats WebGL2 supports (e.g. `Rg8Unorm`, not integer
+    formats sampled with filtering);
+  - no storage buffers in fragment shaders.
+- **Input**: pointer and touch events. The page is always interactive,
+  with no click-through, so the interact tools (§2.5) are simply
+  available. Touch maps drag to pour, two-finger drag to scoop, and
+  long-press to inspect. The cell scale adapts to the screen's DPI and
+  size.
+- **Controls**: an in-page menu replaces the tray, with the same actions
+  as §4.3. Settings live in a small in-page panel, saved to
+  `localStorage`. There is no config file on the web, so this is the
+  web's equivalent of D7's "tray + config", not a settings window for
+  native.
+- **Persistence**: the same envelope and payload as §2.6, stored in
+  IndexedDB. The page calls `navigator.storage.persist()` to resist
+  eviction, and offers export/import of a save file.
+  - Tank ownership uses the Web Locks API (`navigator.locks`), so only
+    one tab simulates and writes. Other tabs show "open in another tab".
+- **Time and power**: hidden tabs pause through the Page Visibility API,
+  so world time stops (§2.6). Optional catch-up works as on native. The
+  browser's own rAF throttling covers battery saving.
+- **Sound** (E3): WebAudio, started only after a user gesture, as
+  browsers require.
+- **Offline / install**: a web app manifest and service worker make it an
+  installable PWA that works offline (WB4).
+
 ## 4. Architecture
 
 ### 4.1 Crates
@@ -580,12 +620,18 @@ crates/
   desktank           # main binary: CLI, config, tray, IPC, event loop, mode orchestration.
   desktank-saver     # screensaver host binary (.scr on Windows, XScreenSaver hack on X11).
   desktank-saver-mac # macOS .saver bundle (ScreenSaverView subclass).
+  desktank-web       # web host (wasm-bindgen): page lifecycle, rAF loop, input, IndexedDB,
+                     # in-page menu. Today a canvas-2D demo of the sim (WB0).
 assets/              # materials/*.toml, reactions.toml, species/*.toml, sprites (PNG atlases + source files)
 ```
 
 Dependency direction: `sim ← render ← platform ← {desktank,
-desktank-saver}`, and `sim ← render ← desktank-saver-mac`. The saver
-binary reuses `platform` for its windows and input detection.
+desktank-saver}`, `sim ← render ← desktank-saver-mac`, and
+`sim ← render ← desktank-web`. The saver binary reuses `platform` for its
+windows and input detection.
+
+`desktank-sim` and `desktank-render` must build for `wasm32-unknown-unknown`,
+and CI checks this. Platform-specific code never goes into them.
 
 `desktank-sim` and `desktank-render` use `#![forbid(unsafe_code)]`. If
 wgpu surface creation from raw handles needs `unsafe`, it moves into
@@ -707,7 +753,8 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 | Concern | Choice | Notes |
 |---|---|---|
 | Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable; `Cargo.lock` committed |
-| GPU | `wgpu` 30 | Metal, DX12 and Vulkan; offscreen rendering for capture and tests |
+| GPU | `wgpu` 30 | Metal, DX12 and Vulkan natively; WebGPU with a WebGL2 fallback on the web; offscreen rendering for capture and tests |
+| Web | `wasm-bindgen`, `web-sys`, `js-sys` | wasm-bindgen CLI pinned to the crate version; built by `scripts/build-web.mjs` |
 | Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit minor and major updates (0.x minors are breaking) until we choose to upgrade |
 | Wayland | `smithay-client-toolkit` 0.21 + `calloop` | Layer-shell and idle-notify |
 | macOS FFI | `objc2` 0.6 + `objc2-app-kit` / `objc2-screen-saver` | |
@@ -743,6 +790,7 @@ Linux numbers are recorded and tracked, but not gated in v1.
 | GPU frame time at 1440p | ≤ 2 ms | +2 ms | ≤ 2 ms per display |
 | Resident memory | ≤ 80 MB, aiming for ≤ 50 MB | +10 MB | ≤ 80 MB, with growth ≤ 20 MB over 8 h |
 | Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
+| Web transfer size (wasm + JS + assets, compressed) | ≤ 3 MB | — | — |
 | Cold start to first frame (including loading the save) | ≤ 500 ms | — | ≤ 500 ms |
 | Energy Impact (Activity Monitor) | "Low" while visible | — | "Low" |
 
@@ -801,6 +849,9 @@ by modifier is enabled).
   - save and load round-trips, plus a test that loads saves from earlier
     schema versions;
   - catch-up stays within bounds.
+- **Web smoke test**: from WB1 on, a Playwright test in CI loads the
+  built site in headless Chromium with WebGL2, pours, checks that cells
+  changed, and fails on console errors.
 - **Render tests**: offscreen captures compared with reference images.
   They pass when ≤ 0.5% of pixels differ by more than CIEDE2000 ΔE 2. They run in
   Linux CI on Mesa lavapipe (software Vulkan), so CI needs no GPU.
@@ -1120,15 +1171,40 @@ Each package depends only on the packages before it.
   licence headers for assets. Make the repo public. *Accept:* the owner
   approves, and the repo is public.
 
-### Showcase
+### MW — Web
 
-- [x] **D1 Browser demo of the sim core.** `desktank-web` wraps
+- [x] **WB0 Browser demo of the sim core.** `desktank-web` wraps
   `desktank-sim` with wasm-bindgen; a plain HTML/CSS/JS page in `web/`
   pours and erases materials at a fixed 20 Hz tick, built by
   `scripts/build-web.mjs` and deployed to GitHub Pages
   (https://robhannan.github.io/DeskTank/) from `main`. Not the product
   renderer. *Accept:* the demo builds in CI on every PR, and the page
   loads and pours on desktop and mobile.
+- [ ] **WB1 Web host on the real renderer** (after T3). `desktank-web`
+  drives `desktank-render` through wgpu, using WebGPU with a WebGL2
+  fallback, and replaces the canvas-2D demo. Adds the Playwright smoke
+  test. *Accept:*
+  - the page renders the same scene as a native capture (within the §7
+    tolerance) on WebGL2;
+  - it runs at 30 fps on the reference Mac in Chrome, Safari and
+    Firefox;
+  - the smoke test is green in CI;
+  - the transfer size is within budget.
+- [ ] **WB2 Web interaction and in-page controls** (after T4). The
+  interact tools with pointer and touch, the in-page menu, and the
+  settings panel (`localStorage`). *Accept:* each tool works with mouse
+  and touch (scripted Playwright input plus a manual phone check in the
+  PR), and settings persist across reloads.
+- [ ] **WB3 Web persistence and ownership** (after T8). IndexedDB saves
+  using the §2.6 format, `navigator.storage.persist()`, export/import,
+  Web Locks single-tab ownership, and a visibility pause. *Accept:*
+  - a reload restores the same state hash;
+  - a second tab shows "open in another tab" and never writes;
+  - an exported native save imports on the web, and vice versa;
+  - a hidden tab does no simulation work.
+- [ ] **WB4 Installable PWA** (after WB3). Manifest, icons (placeholder)
+  and a service worker. *Accept:* Lighthouse reports the page
+  installable, and it loads and runs offline after the first visit.
 
 ### Stretch goals (unscheduled)
 
@@ -1142,7 +1218,8 @@ Each package depends only on the packages before it.
 ### Suggested order
 
 1. F1, then P1 and T1 in parallel.
-2. T2, T3, then T4 to T10 in order.
+2. T2, T3, then T4 to T10 in order. WB1 slots in after T3, WB2 after
+   T4, and WB3 and WB4 after T8.
 3. O3, then O1-Mac, then O2, then O5.
 4. W1, then S3, then S2, then the rest.
 
@@ -1163,6 +1240,9 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | Lock-screen API needs package identity | L2 not possible unpackaged | Decided in P1: MSIX packaging, or drop L2 |
 | Unsigned builds (D14) | Gatekeeper and SmartScreen warn or block users | Clear README steps (R2); Homebrew and winget channels; signing can be added later |
 | Save corruption or schema drift | A lost pet tank | Versioned format, atomic writes, the last 3 saves kept, fixture tests |
+| WebGL2 limits constrain the renderer | Native features blocked, or web broken | Renderer kept within WebGL2 downlevel limits from T2; CI builds render for wasm32; the WB1 smoke test |
+| Browser storage eviction | A lost web tank | `navigator.storage.persist()`, export/import, a visible "last saved" indicator |
+| Mobile browser performance | Janky or hot phones | Cell scale adapts to screen size; the population cap; profile in WB1 and WB2 |
 
 ## 11. Decision log
 
@@ -1182,6 +1262,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D12 | **Water level configurable**; species declare depth and surface needs. |
 | D13 | **Colour genetics**: offspring inherit morphs; mixed lines revert to wildtype (e.g. neocaridina). |
 | D14 | **No code signing** for now. |
+| D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
