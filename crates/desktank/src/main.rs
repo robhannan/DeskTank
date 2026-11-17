@@ -24,7 +24,7 @@ enum Command {
     /// Start the long-running app in the chosen display modes.
     Run(RunArgs),
     /// Open the tank in a normal resizable window.
-    Window,
+    Window(WindowArgs),
     /// Turn interact mode on or off in the running app.
     Interact {
         /// What to do with interact mode.
@@ -59,6 +59,14 @@ struct RunArgs {
     /// Show the tank when the machine is idle.
     #[arg(long)]
     idle: bool,
+}
+
+#[derive(Debug, Args)]
+struct WindowArgs {
+    /// Drive a scripted pour (a synthetic left drag sweeping across the
+    /// tank) for this many seconds, then print the CPU it used.
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=600))]
+    demo_pour: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -113,7 +121,7 @@ impl Command {
     fn name(&self) -> &'static str {
         match self {
             Self::Run(_) => "run",
-            Self::Window => "window",
+            Self::Window(_) => "window",
             Self::Interact { .. } => "interact",
             Self::Feed { .. } => "feed",
             Self::Pause => "pause",
@@ -132,7 +140,7 @@ impl Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
-        Command::Window => window::run(),
+        Command::Window(args) => window::run(args.demo_pour),
         Command::Bench(args) => bench::run(args.seconds),
         Command::Capture(args) => capture::run(&capture::Options {
             seed: args.seed,
@@ -171,6 +179,7 @@ mod tests {
         let cases: &[(&[&str], &str)] = &[
             (&["run", "--wallpaper", "--overlay", "--idle"], "run"),
             (&["window"], "window"),
+            (&["window", "--demo-pour", "10"], "window"),
             (&["interact", "toggle"], "interact"),
             (&["feed"], "feed"),
             (&["feed", "pellets"], "feed"),
