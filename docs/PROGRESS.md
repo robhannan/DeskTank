@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) done in `desktank-sim`; the other crates are stubs. WB0: the sim core runs in the browser on GitHub Pages; the web is now a product target (D15, SPEC §3.5).
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) and T2 (renderer, `desktank window`, `desktank bench`) done; the saver crates are stubs. WB0: the sim core runs in the browser on GitHub Pages; the web is now a product target (D15, SPEC §3.5).
 
 ## Done
 
@@ -13,6 +13,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Decided: `Cargo.lock` committed; MSRV = pinned toolchain; `forbid(unsafe_code)` in sim and render (recorded in CLAUDE.md).
 - T1 grid, chunks and movement (`desktank-sim`): 4-byte cells, 64×64 chunks with sleep/wake and dirty rectangles, five movement classes, materials from embedded TOML (`assets/materials/`), fixed 1/20 s tick, per-chunk PCG streams, FNV-1a state hash, `set_cell`/`paint`/`fill_rect` edit API, PPM/ASCII debug snapshots (`cargo run --release -p desktank-sim --example snapshot`), criterion benches (`cargo bench -p desktank-sim`). Mechanisms the spec left open are recorded in SPEC §2.1 (*T1* notes).
 - WB0 browser demo (`desktank-web` + `web/`): the sim core in WebAssembly on GitHub Pages (https://robhannan.github.io/DeskTank/). Pour/erase with a brush, play/pause/step/reset, seed, stats; 20 Hz fixed tick with rAF drawing that uploads a frame only when the world changed. Built by `scripts/build-web.mjs` (zx, `pnpm build:web`); CI builds it on every PR, `pages.yml` deploys from `main`.
+- T2 renderer and window (`desktank-render`, `desktank`): loop-agnostic `Tank` (`tick(now) -> FrameRequest`, `draw`, `render_to`) with a fixed 20 Hz tick, a 30 fps cap and frames only when the world changed; dirty rectangles (merged per chunk across ticks) uploaded to an `Rg8Unorm` texture; a palette shader (256×256 material×variant table, integer scale, letterbox, water depth tint) within WebGL2 limits (device opened with `downlevel_webgl2_defaults`; CI runs clippy for wasm32). `desktank window` (winit 0.30) sleeps with `WaitUntil`, pauses on occlusion/minimise with no timers, and has a debug brush (left pour, right erase, keys 1–5). `desktank bench [--seconds N]` runs a seeded pour then settle offscreen at 2560×1440 and prints CPU, tick time, awake chunks, GPU time (timestamp queries) and RSS. Process CPU/RSS readers in `desktank-platform`. An offscreen GPU smoke test reads pixels back (skips without an adapter).
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -36,12 +37,21 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - The release profile's `strip = true` removes the `target_features` section wasm-bindgen reads, so the web build overrides it with `strip = "debuginfo"`. Demo wasm: 280 KiB, 218 KiB after `wasm-opt -Oz`.
 - In the demo (Apple Silicon, Chrome, release wasm) a 320×180 pour ticks in about 1.5 ms; settled ticks about 0.1 ms.
 
+- T2 numbers on the dev Mac (M3 Max, release; the SPEC reference is an M1 Air): `desktank bench` settled CPU 0.19% of a core, settled tick 0.027 ms, pour CPU 5.4%, pour tick 0.65 ms mean, GPU 0.03 ms mean / 0.16 ms p95 at 2560×1440, RSS 21 MB (offscreen). `desktank window` settled: 0.25% CPU over 60 s; hidden 60 s: 0.00 s CPU, 1 wake-up per 20 s. Window memory: footprint 53 MB (Activity Monitor), but `ps` RSS 90 MB because it counts ~40 MB of clean shared framework pages; the swapchain's IOSurfaces are 29 MB of the footprint.
+- wgpu 30: `SurfaceConfiguration` gained `color_space` (use `Auto`), `get_current_texture` returns a `CurrentSurfaceTexture` enum, and `InstanceDescriptor` takes the winit `OwnedDisplayHandle` (needed for GLES on Wayland). Timestamp queries work on Apple Silicon Metal.
+- winit 0.30 reports `Occluded` on macOS and X11 but not on Windows or Wayland; Windows minimise shows up as a zero size, and `Window::is_minimized` is polled in `about_to_wait` as a fallback. A window fully covered on Windows, or hidden on Wayland, isn't detected yet.
+- Settled ticks cost ~25 µs because the loop still wakes at 20 Hz to tick world time; with zero awake chunks the tick could be skipped or batched once creatures exist.
+
 ## Next increments
 
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
 - Web demo: stop the rAF loop while paused and idle (it does no work then, but still wakes 60×/s) (PR #5 review).
 - Web demo: keyboard navigation for the palette (arrow keys within the radio group) (PR #5 review).
-- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T2.
+- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T3 (capture).
+- Pause detection gaps (T2): Windows fully-covered windows (DWM cloaking / present status) and Wayland (frame callbacks); winit 0.30 has no `Occluded` there.
+- Resizing the window rescales the fixed grid with letterboxing; resizing the world itself (or choosing the grid from the display, SPEC §2.1) comes with the display modes.
+- The web demo's hand-tuned palettes (`desktank-web`) and the renderer's derived shades should converge when WB1 moves the web onto `desktank-render`.
+- Decide whether the §6.1 memory budget means RSS or physical footprint on macOS (the window is 90 MB RSS, 53 MB footprint).
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
 - Displaced-liquid chains cross chunks within one tick; design the optional parallel pass (SPEC §4.2) around them before enabling it.
 - Cap total cells (not just each side): 8192×8192 would allocate about 512 MB (PR #4 review).

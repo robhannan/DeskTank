@@ -682,7 +682,11 @@ directory for custom materials and species is a stretch goal.
 
 - **Loop-agnostic core.** `desktank-render` exposes a `Tank` with
   `tick(now) -> FrameRequest` and `draw(surface)`. Whatever loop owns the
-  surface calls them:
+  surface calls them. *(T2: `now` is a `Duration` on the host's monotonic
+  clock, since `std::time::Instant` panics on wasm32; `FrameRequest` carries
+  `redraw` and `wake_at`. The host creates the `wgpu::Instance` and
+  `Surface` and wraps it in a `TankSurface`; `Tank::render_to` draws to any
+  texture view for offscreen use.)* The hosts are:
   - the winit loop (macOS and Windows windows, plus X11);
   - an SCTK/`calloop` loop (Wayland layer-shell);
   - `legacyScreenSaver`'s `animateOneFrame` (macOS saver);
@@ -1004,7 +1008,7 @@ Each package depends only on the packages before it.
   - the criterion bench gives a tick time ≤ 5 ms for a heavy pour (a
     20%-of-grid sand column falling into water) and ≤ 0.5 ms for a
     settled scene.
-- [ ] **T2 Renderer, `desktank window` and minimal `desktank bench`.**
+- [x] **T2 Renderer, `desktank window` and minimal `desktank bench`.**
   Grid texture with dirty-rectangle uploads, a palette shader with
   integer scaling, frame pacing, and a pause when occluded. Window mode
   uses winit on every OS, Wayland included. `desktank-render` stays
