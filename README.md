@@ -15,9 +15,11 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 - **Rust first** — idiomatic, safe Rust with platform-specific code isolated behind small, well-defined boundaries.
 - **Cross-platform** — macOS, Windows and Linux.
 
+**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation core compiled to WebAssembly. Pour sand, gravel, rock, bubbles and food into the water.
+
 ## Status
 
-Early days: the workspace builds, but every command is a stub that prints "not yet implemented".
+Early days: the falling-sand simulation core works (see the browser demo above), but every `desktank` command is still a stub that prints "not yet implemented".
 
 ## Building
 
@@ -37,6 +39,19 @@ cargo test --workspace
 ```
 
 Before a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo deny check` (`cargo install --locked cargo-deny`).
+
+## Web demo
+
+The [browser demo](https://robhannan.github.io/DeskTank/) is `crates/desktank-web` (a wasm-bindgen wrapper around `desktank-sim`) plus the static page in `web/`. It is a showcase of the sim core, not a DeskTank build. To build and preview it locally you need [Node](https://nodejs.org) 22+, [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
+
+```sh
+cargo install --locked wasm-bindgen-cli --version 0.2.130
+pnpm install
+pnpm build:web                              # builds target/site/
+python3 -m http.server -d target/site 8000  # then open http://localhost:8000
+```
+
+Pushes to `main` deploy it to GitHub Pages (`.github/workflows/pages.yml`).
 
 ## License
 

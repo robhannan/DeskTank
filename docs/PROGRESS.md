@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) done in `desktank-sim`; the other crates are stubs.
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) done in `desktank-sim`; the other crates are stubs. D1: the sim core runs in the browser on GitHub Pages.
 
 ## Done
 
@@ -12,6 +12,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - F1 workspace scaffold + CI: six crate stubs (SPEC §4.1), `clap` CLI skeleton for every §4.3 subcommand, toolchain pinned at 1.100.0, workspace lints, size-tuned release profile, `deny.toml`, Dependabot, CI (fmt, clippy, test, doc on macOS/Windows/Ubuntu; `cargo deny` on Ubuntu).
 - Decided: `Cargo.lock` committed; MSRV = pinned toolchain; `forbid(unsafe_code)` in sim and render (recorded in CLAUDE.md).
 - T1 grid, chunks and movement (`desktank-sim`): 4-byte cells, 64×64 chunks with sleep/wake and dirty rectangles, five movement classes, materials from embedded TOML (`assets/materials/`), fixed 1/20 s tick, per-chunk PCG streams, FNV-1a state hash, `set_cell`/`paint`/`fill_rect` edit API, PPM/ASCII debug snapshots (`cargo run --release -p desktank-sim --example snapshot`), criterion benches (`cargo bench -p desktank-sim`). Mechanisms the spec left open are recorded in SPEC §2.1 (*T1* notes).
+- D1 browser demo (`desktank-web` + `web/`): the sim core in WebAssembly on GitHub Pages (https://robhannan.github.io/DeskTank/). Pour/erase with a brush, play/pause/step/reset, seed, stats; 20 Hz fixed tick with rAF drawing that uploads a frame only when the world changed. Built by `scripts/build-web.mjs` (zx, `pnpm build:web`); CI builds it on every PR, `pages.yml` deploys from `main`.
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -31,8 +32,13 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Diagonal-only powder slides give 45° piles; a per-row run pattern derived from `repose` gives any angle from 15° to 45° exactly.
 - Falling-sand engines such as The Powder Toy appear (inferred, unmeasured) to process every live particle each frame; DeskTank must use sleeping chunks + dirty rects and a sim tick below the render rate to meet its budgets.
 
+- wasm-bindgen's generated `unsafe` doesn't trip the workspace `unsafe_code = "deny"` lint (it comes from an external proc macro), so `desktank-web` needs no allow; CI runs clippy for `wasm32` to catch a change.
+- The release profile's `strip = true` removes the `target_features` section wasm-bindgen reads, so the web build overrides it with `strip = "debuginfo"`. Demo wasm: 280 KiB, 218 KiB after `wasm-opt -Oz`.
+- In the demo (Apple Silicon, Chrome, release wasm) a 320×180 pour ticks in about 1.5 ms; settled ticks about 0.1 ms.
+
 ## Next increments
 
+- Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
 - Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T2.
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
 - Displaced-liquid chains cross chunks within one tick; design the optional parallel pass (SPEC §4.2) around them before enabling it.

@@ -62,7 +62,9 @@ It can run as any combination of four **display modes**:
 
 ### Non-goals (v1)
 
-- Mobile and web builds.
+- Mobile and web builds as product targets. A browser *demo of the sim
+  core* exists (§9, D1) as a showcase and playground; it is not a
+  DeskTank build and doesn't drive the design.
 - 3D.
 - Online features, accounts or telemetry.
 - Progression, unlocks or currency: it is a sandbox (D9).
@@ -1117,6 +1119,16 @@ Each package depends only on the packages before it.
 - [ ] **R4 Go public.** README, CONTRIBUTING, issue templates, and
   licence headers for assets. Make the repo public. *Accept:* the owner
   approves, and the repo is public.
+
+### Showcase
+
+- [x] **D1 Browser demo of the sim core.** `desktank-web` wraps
+  `desktank-sim` with wasm-bindgen; a plain HTML/CSS/JS page in `web/`
+  pours and erases materials at a fixed 20 Hz tick, built by
+  `scripts/build-web.mjs` and deployed to GitHub Pages
+  (https://robhannan.github.io/DeskTank/) from `main`. Not the product
+  renderer. *Accept:* the demo builds in CI on every PR, and the page
+  loads and pours on desktop and mobile.
 
 ### Stretch goals (unscheduled)
 
