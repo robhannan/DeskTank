@@ -42,7 +42,7 @@ Before a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --all
 
 ## Web demo
 
-The [browser demo](https://robhannan.github.io/DeskTank/) is `crates/desktank-web` (a wasm-bindgen wrapper around `desktank-sim`) plus the static page in `web/`. It is a showcase of the sim core, not a DeskTank build. To build and preview it locally you need [Node](https://nodejs.org) 22+, [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
+The [browser demo](https://robhannan.github.io/DeskTank/) is `crates/desktank-web` (a wasm-bindgen wrapper around `desktank-sim`) plus the static page in `web/`. It currently runs the sim core with a canvas-2D renderer; the full web version (SPEC §3.5, D15) replaces it from WB1. To build and preview it locally you need [Node](https://nodejs.org) 22+, [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
 
 ```sh
 cargo install --locked wasm-bindgen-cli --version 0.2.130
