@@ -45,9 +45,10 @@ dx = 1             # move the centre this many cells per repeat (default 0)
 radius = 3         # disc radius in cells (default 2)
 material = "sand"  # a material name from assets/materials
 brush = "pour"     # "pour" fills only fluid cells; "replace" overwrites (default "pour")
+glued = true       # glue the rigid body this pour makes (rock), so it never moves (default false)
 ```
 
-Pours due on tick `t` are applied just before that tick runs. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.
+Pours due on tick `t` are applied just before that tick runs. Each `[[pour]]` entry is one stroke: the rigid cells (rock) of all its repeats form one body, held still until its last repeat and then free to sink. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.
 
 ## Render tests
 

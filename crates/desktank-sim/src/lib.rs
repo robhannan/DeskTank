@@ -15,8 +15,11 @@ pub mod tools;
 mod world;
 
 pub use grid::{Cell, Rect};
-pub use material::{Material, MaterialError, MaterialId, MaterialTable, MovementClass};
-pub use script::{Script, ScriptError};
+pub use material::{
+    GLUED_VARIANT_BIT, Material, MaterialError, MaterialId, MaterialTable, MovementClass,
+};
+pub use script::{Player, Script, ScriptError};
 pub use world::{
-    Brush, CHUNK_SIZE, MAX_SIDE, SLEEP_TICKS, TICKS_PER_SECOND, World, WorldConfig, WorldError,
+    BodyId, BodyInfo, Brush, CHUNK_SIZE, MAX_SIDE, SLEEP_TICKS, TICKS_PER_SECOND, World,
+    WorldConfig, WorldError,
 };

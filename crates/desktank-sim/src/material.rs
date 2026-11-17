@@ -19,6 +19,11 @@ pub struct MaterialId(pub u8);
 pub enum MovementClass {
     /// Never moves, and is never displaced.
     Solid,
+    /// Part of a rigid body (D17): the cells of one pour move together as
+    /// one object, sinking through lighter fluids (or rising through
+    /// heavier ones) without rotating, and resting on powders, other
+    /// bodies and the floor. Never displaced; glued bodies never move.
+    Rigid,
     /// Falls and piles up at its angle of repose.
     Powder,
     /// Falls and spreads sideways up to its dispersion.
@@ -33,8 +38,8 @@ pub enum MovementClass {
 
 impl MovementClass {
     /// Whether moving cells can swap into cells of this class. Only liquids
-    /// (water, and air above the surface) are displaced; solids, powders,
-    /// floaters and buoyant cells are not.
+    /// (water, and air above the surface) are displaced; solids, rigid
+    /// bodies, powders, floaters and buoyant cells are not.
     #[must_use]
     pub fn is_displaceable(self) -> bool {
         self == Self::Liquid
@@ -47,6 +52,12 @@ impl MovementClass {
         matches!(self, Self::Liquid | Self::Buoyant)
     }
 }
+
+/// Rigid cells: the low bit of the variant byte mirrors the body's glued
+/// flag, so the renderer can shade glued bodies (D17) without a third
+/// texture channel. The colour shade comes from the other bits, so every
+/// shade range of `desktank_render`'s palette starts on an even byte.
+pub const GLUED_VARIANT_BIT: u8 = 1;
 
 /// Largest allowed `dispersion`, in cells per tick (SPEC §2.1).
 pub const MAX_DISPERSION: u8 = 8;

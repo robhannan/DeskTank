@@ -32,6 +32,9 @@ const SCOOP: [&str; 8] = [
 const NET: [&str; 8] = [
     "..####..", ".#.#.##.", "#.#.#.#.", ".#.#.##.", "..####..", ".....#..", "......#.", ".......#",
 ];
+const GLUE: [&str; 8] = [
+    "...##...", "..####..", "..#..#..", ".######.", ".#....#.", ".#.##.#.", ".#....#.", ".######.",
+];
 const INSPECT: [&str; 8] = [
     ".####...", "#....#..", "#.#..#..", "#....#..", ".####...", "....##..", ".....##.", "......##",
 ];
@@ -185,6 +188,7 @@ fn slot_pixel(item: PaletteItem, materials: &MaterialTable, x: u32, y: u32) -> [
                 Tool::Scoop | Tool::Pour => SCOOP,
                 Tool::Net => NET,
                 Tool::Inspect => INSPECT,
+                Tool::Glue => GLUE,
             };
             let ink = icon[y as usize].as_bytes().get(x as usize) == Some(&b'#');
             if ink { ICON_FG } else { ICON_BG }

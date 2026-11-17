@@ -1,4 +1,4 @@
-# An empty tank: a rock ledge, gravel and sand poured on it, and bubbles.
+# An empty tank: a glued rock ledge, gravel and sand poured on it, and bubbles.
 ticks = 160
 
 [world]
@@ -10,6 +10,7 @@ y = 70
 radius = 10
 material = "rock"
 brush = "replace"
+glued = true
 
 [[pour]]
 tick = 0
