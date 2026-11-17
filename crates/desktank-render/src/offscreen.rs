@@ -38,8 +38,15 @@ impl Tank {
         gpu: &Gpu,
         (width, height): (u32, u32),
     ) -> Result<Vec<u8>, CaptureError> {
-        let max = gpu.device.limits().max_texture_dimension_2d;
-        if width == 0 || height == 0 || width > max || height > max {
+        let limits = gpu.device.limits();
+        let max = limits.max_texture_dimension_2d;
+        let padded = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        if width == 0
+            || height == 0
+            || width > max
+            || height > max
+            || u64::from(padded) * u64::from(height) > limits.max_buffer_size
+        {
             return Err(CaptureError::BadSize(width, height));
         }
         let size = wgpu::Extent3d {
@@ -61,7 +68,6 @@ impl Tank {
         self.render_to(gpu, &view, FORMAT, (width, height));
 
         let row = width * 4;
-        let padded = row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("capture readback"),
             size: u64::from(padded) * u64::from(height),

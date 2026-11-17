@@ -74,7 +74,7 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
         let path = opts.out.join(name);
         write_png(&path, opts.size, &pixels)?;
         println!("{}", path.display());
-        until += script.frame_every;
+        until = until.saturating_add(script.frame_every);
     }
     Ok(())
 }

@@ -48,6 +48,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 ## Next increments
 
+- `desktank capture` leaves stale `frame_NNNN.png` files from an earlier, longer run in `--out`; consider a warning or `--clean` (PR #8 review).
+- `Tank::capture` allocates a target and readback buffer per frame; reuse them for long frame sequences, and give the web its own async readback (it blocks on `poll`) (PR #8 review).
 - `desktank capture --time` is validated but ignored until day and night (T-later) exist; the render tests should then add the 4 times of day.
 
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.

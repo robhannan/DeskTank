@@ -6,7 +6,7 @@
 //! `DESKTANK_BLESS=1 cargo test -p desktank --test render`.
 //!
 //! Without a GPU adapter the tests are skipped locally, but fail when `CI`
-//! is set: Linux CI renders on Mesa lavapipe, macOS on Metal and Windows on
+//! or `DESKTANK_BLESS` is set: Linux CI renders on Mesa lavapipe, macOS on Metal and Windows on
 //! WARP.
 
 mod support;
@@ -55,7 +55,10 @@ fn capture(scene: &str) -> Option<PathBuf> {
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        if stderr.contains("no suitable GPU adapter") && std::env::var_os("CI").is_none() {
+        if stderr.contains("no suitable GPU adapter")
+            && std::env::var_os("CI").is_none()
+            && std::env::var_os("DESKTANK_BLESS").is_none()
+        {
             eprintln!("skipping {scene}: {stderr}");
             return None;
         }

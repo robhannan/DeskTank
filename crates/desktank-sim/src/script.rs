@@ -35,6 +35,9 @@ use crate::{Brush, World, WorldConfig, WorldError};
 /// Error reading or applying a script.
 #[derive(Debug, Error)]
 pub enum ScriptError {
+    /// `frame_every` is zero.
+    #[error("frame_every must be at least 1")]
+    ZeroFrameEvery,
     /// The TOML didn't parse or has unknown keys.
     #[error("bad script: {0}")]
     Parse(#[from] toml::de::Error),
@@ -47,7 +50,7 @@ pub enum ScriptError {
 }
 
 /// A parsed input script.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Script {
     /// Ticks to run before the first frame.
@@ -62,6 +65,17 @@ pub struct Script {
     /// Timed pours.
     #[serde(default, rename = "pour")]
     pub pours: Vec<Pour>,
+}
+
+impl Default for Script {
+    fn default() -> Self {
+        Self {
+            ticks: 0,
+            frame_every: 1,
+            world: WorldSpec::default(),
+            pours: Vec::new(),
+        }
+    }
 }
 
 /// The `[world]` table.
@@ -140,9 +154,14 @@ impl Script {
     ///
     /// # Errors
     ///
-    /// Returns an error if the TOML is malformed or has unknown keys.
+    /// Returns an error if the TOML is malformed, has unknown keys, or sets
+    /// `frame_every` to zero.
     pub fn parse(source: &str) -> Result<Self, ScriptError> {
-        Ok(toml::from_str(source)?)
+        let script: Self = toml::from_str(source)?;
+        if script.frame_every == 0 {
+            return Err(ScriptError::ZeroFrameEvery);
+        }
+        Ok(script)
     }
 
     /// The world configuration for `seed`.
@@ -176,7 +195,11 @@ impl Script {
             };
             let x =
                 p.x.saturating_add(p.dx.saturating_mul(i64::try_from(i).unwrap_or(i64::MAX)));
-            world.paint(x, p.y, p.radius, material, brush)?;
+            // Clamped far outside any grid, so `paint`'s clipping maths can't
+            // overflow; a disc there misses the grid either way.
+            let far = 4 * i64::try_from(crate::MAX_SIDE).unwrap_or(i64::MAX / 8);
+            let (x, y) = (x.clamp(-far, far), p.y.clamp(-far, far));
+            world.paint(x, y, p.radius, material, brush)?;
         }
         Ok(())
     }
@@ -250,6 +273,25 @@ mod tests {
         assert_eq!(a.state_hash(), b.state_hash());
         let sand = a.materials().id("sand").unwrap();
         assert!(a.material_counts()[usize::from(sand.0)] > 50);
+    }
+
+    #[test]
+    fn rejects_zero_frame_every_and_survives_extreme_coordinates() {
+        assert!(matches!(
+            Script::parse("frame_every = 0"),
+            Err(ScriptError::ZeroFrameEvery)
+        ));
+        assert_eq!(Script::default().frame_every, 1);
+        let s = Script::parse(&format!(
+            "[[pour]]\nx = {}\ny = {}\nmaterial = \"sand\"\n[[pour]]\nx = {}\ny = 0\ndx = {}\nrepeat = 3\nmaterial = \"sand\"",
+            i64::MAX,
+            i64::MIN,
+            i64::MIN,
+            i64::MAX
+        ))
+        .unwrap();
+        let mut w = world(&s, 1);
+        s.run(&mut w, 3).unwrap();
     }
 
     #[test]
