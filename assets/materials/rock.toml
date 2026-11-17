@@ -1,0 +1,5 @@
+id = 12
+name = "rock"
+class = "solid"
+density = 2.6
+colour = "#55524d"

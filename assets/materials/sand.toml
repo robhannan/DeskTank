@@ -1,0 +1,7 @@
+id = 10
+name = "sand"
+class = "powder"
+density = 1.6
+# Angle of repose in degrees.
+repose = 35.0
+colour = "#d8c08a"

@@ -1,0 +1,8 @@
+# The band above the water surface. Modelled as a very light liquid: things
+# fall through it, and water falls into any air trapped below the surface.
+id = 2
+name = "air"
+class = "liquid"
+density = 0.0012
+dispersion = 4
+colour = "#c9e4f2"
