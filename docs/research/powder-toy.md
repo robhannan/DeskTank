@@ -2,87 +2,83 @@
 
 Inspected 2026-11-17 with REA + Hopper on the locally installed macOS build
 (`The Powder Toy.app/Contents/MacOS/powder`, x86_64, SHA-256
-`379d43c6…7f05f`). The Powder Toy is open source under the GPL. **DeskTank
-uses it for ideas only: no code, element tables, names or art are copied.**
-We reimplement everything from scratch under our own licence.
+`379d43c6…7f05f`). The Powder Toy is open source under the GPL.
+
+**DeskTank uses it for ideas only.** This note deliberately records
+architecture and mechanism categories. It doesn't record identifiers,
+element names, property values, in-game text or code. Nothing here is to
+be copied into DeskTank; we design our own materials, names and values.
 
 Each finding is labelled:
 
-- **Observed**: seen in the binary (symbol names, decompiled constructors).
-- **Inferred**: our reading of what that means.
+- **Observed**: seen in the binary through symbol names or decompiled
+  structure.
+- **Inferred**: our interpretation of what was observed.
 
 ## Architecture
 
-- **One particle per cell on a fixed grid** (observed). Element `update`
-  callbacks are typed against a particle map `int pmap[384][612]` in their
-  signatures, and the decoration layer is a `PlaneAdapter<array<u32,
-  241536>, 629, 384>`. Inferred: the playfield is roughly 612×384 cells
-  plus a border.
-- **Data-driven element table with optional behaviour callbacks**
-  (observed).
-  - Each `Element_XXXX()` constructor fills a property struct: an
-    identifier string such as `DEFAULT_PT_SAND`, a colour (SAND
-    `0xFFD090`, SEED `0x88E788`), numeric physics coefficients, flags and
-    a description string.
-  - Most elements stop there: SAND sets no callbacks.
-  - Elements with special behaviour set `update`, `create` and
-    `graphics` function pointers. SEED sets all three.
-  - Inferred: the generic engine handles powder, liquid and gas motion
-    from the coefficients, and callbacks handle reactions such as
-    growing, burning, dissolving and decaying.
-- **Separate field layers on coarser grids** (observed: `Air::update_air`,
-  `Air::update_airh`, `Air::ApproximateBlockAirMaps`). There is an air
-  pressure and velocity field, and an air-heat field, that particles
-  interact with. Walls are a separate layer (`CreateWalls`,
-  `CreateWallLine`).
-- **Newtonian gravity on a worker thread** (observed: `GravityImpl::Init`
-  spawns a `std::thread`, `Gravity::Exchange(GravityOutput&,
-  GravityInput&)`). It is a double-buffered field computed off the main
-  thread, toggled by `EnableNewtonianGravity`.
-- **Core particle operations** (observed): `PlanMove` and `do_move`
-  (movement and displacement), `kill_part`, `delete_part`, `flood_water`,
-  `RecalcFreeParticles` (a free-list of particle slots), `BeforeSim`, and
-  `Snapshot`/`Restore` (undo). `Save` and `Load` work on a `GameSave`, and
-  the `.cps`/`.stm` document types are registered in Info.plist.
-- **Painting** (observed): `CreateParts`, `CreateLine` and `CreateBox`
-  take a `Brush`. Tools implement `DrawLine`, `DrawRect`, `DrawFill` and
-  `Click`. A separate **decoration** colour layer has point, line and
-  fill operations.
-- **Scripting** (observed): LuaJIT is embedded, with Lua bindings for
-  gravity, air mode, ambient temperature and more. Inferred: custom
-  elements can be scripted.
+- **Grid of cells, one particle per cell.**
+  - Observed: per-material update callbacks take a fixed-size 2D
+    particle map in their signatures, and the colour-decoration layer is
+    a fixed-size plane.
+  - Inferred: the playfield is a fixed grid of roughly 600×400 cells.
+- **Data-driven material table with optional callbacks.**
+  - Observed: each material has a constructor that fills one property
+    record: an identifier, a colour, numeric coefficients, flags and a
+    description.
+  - Observed: some constructors also install update, create and graphics
+    callbacks, and others install none.
+  - Inferred: a generic engine moves materials from their properties
+    alone (powder, liquid or gas behaviour), and callbacks exist only for
+    special reactions such as growth, burning or decay.
+- **Field layers on coarser grids.**
+  - Observed: separate air-pressure/velocity and air-heat update
+    routines, plus a block-approximation routine.
+  - Observed: a separate wall layer.
+  - Inferred: particles read from and write to these fields.
+- **Optional gravity field on a worker thread.**
+  - Observed: the gravity implementation spawns a thread and exchanges
+    double-buffered input and output with the simulation.
+- **Core operations.**
+  - Observed: routines to plan and perform particle moves, kill and
+    delete particles, flood-fill, recalculate free particle slots, run a
+    pre-simulation step, and snapshot/restore for undo.
+  - Observed: save and load of a game-save object.
+  - Inferred: particles are stored in a slot array with a free list.
+- **Painting.**
+  - Observed: create-particles, line and box operations take a brush.
+  - Observed: tools implement click, line, rectangle and fill.
+  - Observed: a separate colour-decoration layer has its own point, line
+    and fill operations.
+- **Scripting.**
+  - Observed: an embedded LuaJIT with bindings for simulation settings.
+  - Inferred: users can script custom materials.
 
-## Inventory
+## Scope (counts only)
 
-- **About 220 elements** (observed constructors). They fall into roughly
-  these families, grouped from their names and description strings:
-  - **powders**: sand, dust, salt, sawdust, snow, clay dust, seeds;
-  - **liquids**: water and its variants (salt, distilled, carbonated),
-    oil, acid, lava, mercury, soap;
-  - **gases**: steam, smoke, CO₂, O₂, H₂, fog;
-  - **solids**: stone, glass, metals, wood, plant, vine, sponge, ice;
-  - **life**: plant ("drinks water and grows"), vine ("grows along
-    wood"), seed ("put on sand and add water to grow a tree"), yeast
-    ("grows when warm"), virus ("turns everything it touches into
-    virus"), soap ("creates bubbles… cures virus");
-  - **reactions**: fire, explosives, electricity, sensors, radiation.
-- **11 simulation tools** (observed `SimTool::Tool_*`): heat, cool, air
-  (push), vacuum, positive and negative gravity, mix, cycle, ambient heat
-  ±, and wind.
+- Observed: about 220 material constructors.
+- Inferred from their description text: they span powders, liquids,
+  gases, solids, living or growing materials (plants, climbing plants,
+  seeds, spreading organisms), reactive materials (fire, explosives,
+  acids) and electronics.
+- Observed: 11 simulation tools that act on the fields or particles:
+  heating, cooling, air push and pull, gravity, mixing, ambient
+  temperature, and wind.
 
-## Ideas for DeskTank
+## Ideas for DeskTank (our design, not theirs)
 
-| TPT mechanism | DeskTank use |
+| Mechanism category | DeskTank use |
 |---|---|
-| Grid of cells, one material per cell | The tank is a pixel grid at a fraction of screen resolution. Fits the pixel-art style. |
-| Generic powder/liquid/gas motion from properties | Substrates (gravel, sand, soil) fall and pile up. Bubbles are a light "gas" that rises ("reverse falling sand"). |
-| Optional per-material callbacks | Plants grow, fertiliser feeds them, eggs hatch, detritus decays. |
-| Decay transitions | Dead fish and plants sink, then break down into detritus, then nutrients. |
-| Brush + click tools | Click to pour substrate, fertiliser, eggs or food. |
-| Coarse field layers | Water currents (filter outflow) and a nutrient/oxygen field on a coarse grid, not per cell. |
-| Off-thread field solve | Not needed at our scale; keep everything on one thread for low resource use. |
+| Fixed grid, one material per cell | The tank is a pixel grid at a fraction of screen resolution, which fits the pixel-art style |
+| Generic motion from properties | Substrates fall and pile up; bubbles are a buoyant class that rises ("reverse falling sand") |
+| Optional per-material behaviour | Plants grow, fertiliser feeds them, eggs hatch, detritus decays |
+| Decay transitions | Dead creatures and plants sink, become detritus, then nutrients |
+| Brush + click tools | Pour substrate, fertiliser, eggs or food in interact mode |
+| Coarse field layers | Nutrients, CO₂, light and water current at 1/8 resolution |
+| Off-thread field solve | Not needed at our scale. DeskTank defaults to one thread; a parallel chunk pass is an option only if profiling needs it (SPEC §4.2) |
 
-Resource caution: TPT updates every particle every frame, which is fine
-for a foreground toy but not for an always-on desktop app. DeskTank needs
-sleeping/dirty-chunk updates, so settled substrate costs nothing, and a
-simulation tick below the render rate.
+**Resource caution** (inferred, not measured): the engine appears to
+process every live particle each frame. That suits a foreground toy, but
+not an always-on desktop app. DeskTank instead uses sleeping chunks with
+dirty rectangles, random ticks for slow processes, and a simulation tick
+below the render rate (SPEC §2.1).

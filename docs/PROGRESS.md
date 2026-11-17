@@ -8,7 +8,7 @@ Repository created; no code yet.
 
 - Repository, licences (MIT OR Apache-2.0), README.
 - Developer agent brief (`.claude/agents/developer.md`) and `CLAUDE.md`.
-- Plan and spec (`docs/SPEC.md` v0.3): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
+- Plan and spec (`docs/SPEC.md` v0.4): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -18,7 +18,7 @@ Repository created; no code yet.
 - Reported, unverified: macOS `legacyScreenSaver` (Sonoma–Tahoe) never deallocates `ScreenSaverView`s ([cocoa-dev](https://lists.apple.com/archives/cocoa-dev/2024/Sep/msg00001.html)); see SPEC §3.4 for mitigations.
 - GNOME's mutter has at most experimental wlr-layer-shell support, so Wayland wallpaper/overlay target wlroots compositors and KDE first.
 - winit 0.31 is still in beta (Nov 2026); use 0.30.
-- Falling-sand engines (e.g. The Powder Toy) update every particle every frame; DeskTank must use sleeping chunks + dirty rects and a sim tick below the render rate to meet its budgets.
+- Falling-sand engines such as The Powder Toy appear (inferred, unmeasured) to process every live particle each frame; DeskTank must use sleeping chunks + dirty rects and a sim tick below the render rate to meet its budgets.
 
 ## Next increments
 
