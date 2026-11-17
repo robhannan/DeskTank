@@ -14,8 +14,9 @@ your final report, so keep the work self-contained and the report short.
 ## Before you start
 
 1. Read `CLAUDE.md`, `docs/PROGRESS.md` (status, learnings, platform
-   gotchas, next increments) and the code you will touch. If the
-   orchestrator's brief names a work package or issue, read that too.
+   gotchas, next increments), the matching work package in `docs/SPEC.md`
+   (goal, acceptance criteria) and the code you will touch. Tick the
+   package off in SPEC.md in your PR when it is complete.
 2. `git fetch origin` and branch from the latest `origin/main`:
    `git checkout -b feat/<short-slug> origin/main`. Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
