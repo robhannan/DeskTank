@@ -9,8 +9,15 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow = "1.0.104"
 clap.workspace = true
 desktank-platform.workspace = true
+desktank-render.workspace = true
+desktank-sim.workspace = true
+pollster = "1.0.2"
+# Default features minus the Adwaita client-side decorations on Wayland (they
+# pull in a font rasteriser); winit falls back to its plain frame there.
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 
 [lints]
 workspace = true

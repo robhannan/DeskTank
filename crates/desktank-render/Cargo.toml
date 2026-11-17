@@ -10,6 +10,27 @@ publish.workspace = true
 
 [dependencies]
 desktank-sim.workspace = true
+thiserror = "2"
+# Default features trimmed: WGSL shaders only, and each target below adds just
+# the backends it needs (Cargo unifies the feature lists).
+wgpu = { version = "30.0.2", default-features = false, features = ["std", "wgsl"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { version = "30.0.2", default-features = false, features = ["metal"] }
+
+[target.'cfg(windows)'.dependencies]
+wgpu = { version = "30.0.2", default-features = false, features = ["dx12"] }
+
+# Linux and the BSDs: Vulkan, with OpenGL (EGL) for machines without it.
+[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_arch = "wasm32")))'.dependencies]
+wgpu = { version = "30.0.2", default-features = false, features = ["vulkan", "gles"] }
+
+# Browsers: WebGPU where available, WebGL2 as the fallback (SPEC §3.5).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30.0.2", default-features = false, features = ["webgpu", "webgl"] }
+
+[dev-dependencies]
+pollster = "1.0.2"
 
 [lints]
 workspace = true

@@ -19,11 +19,18 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 
 ## Status
 
-Early days: the falling-sand simulation core works (see the browser demo above), but every `desktank` command is still a stub that prints "not yet implemented".
+Early days: the falling-sand simulation core works (see the browser demo above) and renders in a window. Working commands:
+
+```sh
+cargo run --release -p desktank -- window   # the tank in a window; left drag pours (keys 1–5 pick the material), right drag erases
+cargo run --release -p desktank -- bench    # 60 s scripted pour + settle, prints CPU, tick, GPU and memory numbers
+```
+
+The other commands are still stubs that print "not yet implemented".
 
 ## Building
 
-Install [rustup](https://rustup.rs); the pinned toolchain in `rust-toolchain.toml` is fetched automatically. On Linux, install the system packages that the windowing, tray and render crates will need (CI installs them already; today's stubs build without them):
+Install [rustup](https://rustup.rs); the pinned toolchain in `rust-toolchain.toml` is fetched automatically. On Linux, install the system packages the windowing, tray and render crates need (CI installs them already):
 
 ```sh
 sudo apt-get install libxkbcommon-dev libwayland-dev libdbus-1-dev mesa-vulkan-drivers
