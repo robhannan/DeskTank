@@ -19,6 +19,10 @@ your final report, so keep the work self-contained and the report short.
 2. `git fetch origin` and branch from the latest `origin/main`:
    `git checkout -b feat/<short-slug> origin/main`. Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
+3. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
+   must be the scaffold (workspace, toolchain, lints, `deny.toml`, CI);
+   don't build features until it has merged. Install missing tools such as
+   `cargo-deny` with `cargo install --locked`.
 
 ## Build
 
@@ -57,7 +61,7 @@ your final report, so keep the work self-contained and the report short.
 ## Show it working
 
 Check visuals in the real app, in every display mode your change touches.
-Put scratch output under `target/shots/`:
+Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 
 - Use the app's capture mode if `CLAUDE.md` documents one; otherwise
   `screencapture -x target/shots/x.png` (macOS). For motion, record
@@ -106,7 +110,8 @@ Put scratch output under `target/shots/`:
 ## Review
 
 1. Spawn an adversarial reviewer with the Agent tool (`model: "haiku"`,
-   general-purpose). Give it the diff command, context and focus areas
+   general-purpose). Give it the diff command
+   (`git diff origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
    tell it to post ONE PR comment whose first line is exactly
    `>! 🤖 Haiku Reviewbot`, followed by a blank line, a bold heading, then
@@ -114,7 +119,8 @@ Put scratch output under `target/shots/`:
    Ask it to label each finding **in scope** (a defect in this PR's
    changes) or **out of scope** (pre-existing, new feature, or a
    nice-to-have).
-   It must not modify, commit or push anything. If you cannot spawn agents,
+   It must post with `GITHUB_TOKEN= gh pr comment <n> --body-file <file>`
+   and must not modify, commit or push anything. If you cannot spawn agents,
    say so in your report instead of skipping the review.
 2. Verify each finding against the code before acting; reviewers can be
    wrong.
