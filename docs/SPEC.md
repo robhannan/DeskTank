@@ -219,7 +219,9 @@ It can run as any combination of four desktop **display modes**, or in a browser
       stroke stays one body even where it is only diagonally connected.
     - **Sleep.** A body is checked only if it moved, was created, split,
       released or unglued, or a chunk it overlaps has work this tick. A
-      resting body costs nothing, and its chunks sleep as usual.
+      resting body costs a bounds check against its chunks per tick (13
+      resting rocks: settled tick 3.5 µs vs 3.4 µs without) and never
+      wakes them, so its chunks sleep as usual.
     - The old `solid` class stays for truly static materials (none built
       in yet; unknown IDs behave as solid).
   - **Units:** density is relative to water (1.0); times are in seconds

@@ -337,14 +337,41 @@ fn settled_scene_with_bodies_sleeps() {
     w.paint(70, 2, 4, rock, Brush::Replace).unwrap();
     settle(&mut w, 1000);
     assert_eq!(w.bodies().count(), 5);
-    let hash = w.state_hash();
+    let bodies: Vec<_> = w.bodies().collect();
     let cells = w.cells().to_vec();
     for _ in 0..100 {
         w.tick();
         assert_eq!(w.awake_chunks(), 0);
     }
     assert_eq!(w.cells(), &cells[..]);
-    assert_ne!(hash, w.state_hash(), "the hash includes the tick");
+    assert_eq!(w.bodies().collect::<Vec<_>>(), bodies);
+}
+
+#[test]
+fn set_cell_on_a_body_keeps_it_whole() {
+    let mut w = world(64, 64, 12, 1.0);
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(10, 58, 30, 64), rock, Brush::Replace)
+        .unwrap();
+    w.set_cell(20, 60, rock).unwrap();
+    w.tick();
+    assert_eq!(w.bodies().count(), 1);
+}
+
+#[test]
+fn painting_with_every_body_id_taken_stays_cheap() {
+    // 65 535 one-cell bodies fill the id space; more rock is then static.
+    let mut w = world(256, 260, 13, 0.0);
+    let rock = id(&w, "rock");
+    for i in 0..usize::from(u16::MAX) {
+        w.set_cell(i % 256, i / 256, rock).unwrap();
+    }
+    assert_eq!(w.bodies().count(), usize::from(u16::MAX));
+    let start = std::time::Instant::now();
+    w.fill_rect(rect(0, 259, 256, 260), rock, Brush::Replace)
+        .unwrap();
+    assert!(start.elapsed().as_secs() < 5, "id exhaustion is slow");
+    assert_eq!(w.cell(5, 259).unwrap().state, 0, "static, no body");
 }
 
 /// A scene that pours, glues, cuts and drops bodies; returns the hash.

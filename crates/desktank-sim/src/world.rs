@@ -378,7 +378,8 @@ impl World {
 
     /// Sets one cell to `material` (fresh state, deterministic colour
     /// noise) and wakes its chunk and any neighbour within reach. A rigid
-    /// material makes a new one-cell body.
+    /// material makes a new one-cell body; a cell already of that rigid
+    /// material is left as it is (in its body).
     ///
     /// # Errors
     ///
@@ -388,6 +389,11 @@ impl World {
         self.check_material(material)?;
         if x >= self.width || y >= self.height {
             return Err(WorldError::OutOfBounds { x, y });
+        }
+        let current = self.cells[y * self.width + x].material;
+        if current == material && self.props[usize::from(material.0)].class == MovementClass::Rigid
+        {
+            return Ok(());
         }
         self.write_cell(x, y, material, &mut None);
         Ok(())

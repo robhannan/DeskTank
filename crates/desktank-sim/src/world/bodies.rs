@@ -16,7 +16,8 @@
 //!
 //! A body is only checked when something could have changed its support:
 //! it moved, was created, split or unglued, or a chunk it overlaps has work
-//! this tick. So a resting body costs nothing and its chunks can sleep.
+//! this tick. So a resting body costs a bounds check against its chunks per
+//! tick, never wakes them, and its chunks can sleep.
 
 use crate::grid::Rect;
 use crate::material::{GLUED_VARIANT_BIT, MaterialId, MovementClass};
@@ -184,6 +185,10 @@ impl World {
 
     /// A fresh, empty body; 0 if every id is taken.
     fn new_body(&mut self, material: MaterialId, anchored: bool) -> u16 {
+        // Every id taken: fail at once rather than scanning per cell.
+        if self.bodies.len() >= usize::from(u16::MAX) {
+            return 0;
+        }
         for _ in 0..u16::MAX {
             let id = self.next_body;
             self.next_body = self.next_body.checked_add(1).unwrap_or(1);
