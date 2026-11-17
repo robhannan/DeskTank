@@ -1,0 +1,9 @@
+# Injected CO₂. Rises like an air bubble, and dissolves into the CO₂ field
+# on the way up (`assets/reactions.toml`).
+id = 21
+name = "co2_bubble"
+class = "buoyant"
+density = 0.0015
+dispersion = 1
+pops_into = "air"
+colour = "#cfe8d8"

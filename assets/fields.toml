@@ -1,0 +1,38 @@
+# Fields and devices (SPEC §2.1, T5). Our own invented values. Fields are
+# 1/8 of the cell resolution and step every 4th tick (0.2 s).
+# Diffusion is in cells² per second (at most 80), decay per second.
+
+[nutrient]
+diffusion = 16.0
+decay = 0.0
+
+[co2]
+diffusion = 24.0
+# Outgassing at the surface, spread over the whole tank.
+decay = 0.01
+
+# Light is not diffused: each field cell gets the light left after the
+# field cells above it. `water` is the fraction a field cell of water
+# absorbs, `opaque` the fraction a field cell full of solids, substrate or
+# food blocks (scaled by how full it is).
+[light]
+surface = 1.0
+water = 0.04
+opaque = 0.9
+
+# The filter outlet's jet: `speed` in cells per second at the nozzle,
+# fading to nothing over `reach` cells, and widening by one field row on
+# each side every `spread` field cells. It points away from the nearer side
+# wall.
+[current]
+material = "filter_outlet"
+speed = 10.0
+reach = 160
+spread = 4
+
+# The bubbler releases `emits` from each top cell with water above, at
+# `rate` per second per cell.
+[bubbler]
+material = "bubbler"
+emits = "air_bubble"
+rate = 0.7

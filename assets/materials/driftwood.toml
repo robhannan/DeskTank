@@ -1,0 +1,7 @@
+# Waterlogged wood for scaping: a rigid body (D17). Lighter than water, so a
+# piece floats up and rests at the surface unless it is glued down.
+id = 14
+name = "driftwood"
+class = "rigid"
+density = 0.7
+colour = "#6b4a2f"

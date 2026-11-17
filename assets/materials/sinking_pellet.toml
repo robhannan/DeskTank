@@ -1,0 +1,7 @@
+# Sinks straight to the bottom; rots into detritus if nothing eats it.
+id = 31
+name = "sinking_pellet"
+class = "powder"
+density = 1.4
+repose = 40.0
+colour = "#a8743a"

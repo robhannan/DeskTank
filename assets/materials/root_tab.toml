@@ -1,0 +1,9 @@
+# A fertiliser capsule. Heavy, so it stays where it lands; bury it by
+# pouring substrate over it. Feeds the nutrient field around it, then
+# crumbles into sand (`assets/reactions.toml`).
+id = 40
+name = "root_tab"
+class = "powder"
+density = 2.2
+repose = 45.0
+colour = "#c9b27a"
