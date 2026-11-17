@@ -2,7 +2,7 @@
 
 ## Status
 
-M0 in progress: F1 workspace scaffold and CI done; all crates are stubs.
+M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movement) done in `desktank-sim`; the other crates are stubs.
 
 ## Done
 
@@ -11,6 +11,7 @@ M0 in progress: F1 workspace scaffold and CI done; all crates are stubs.
 - Plan and spec (`docs/SPEC.md` v0.4): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
 - F1 workspace scaffold + CI: six crate stubs (SPEC §4.1), `clap` CLI skeleton for every §4.3 subcommand, toolchain pinned at 1.100.0, workspace lints, size-tuned release profile, `deny.toml`, Dependabot, CI (fmt, clippy, test, doc on macOS/Windows/Ubuntu; `cargo deny` on Ubuntu).
 - Decided: `Cargo.lock` committed; MSRV = pinned toolchain; `forbid(unsafe_code)` in sim and render (recorded in CLAUDE.md).
+- T1 grid, chunks and movement (`desktank-sim`): 4-byte cells, 64×64 chunks with sleep/wake and dirty rectangles, five movement classes, materials from embedded TOML (`assets/materials/`), fixed 1/20 s tick, per-chunk PCG streams, FNV-1a state hash, `set_cell`/`paint`/`fill_rect` edit API, PPM/ASCII debug snapshots (`cargo run --release -p desktank-sim --example snapshot`), criterion benches (`cargo bench -p desktank-sim`). Mechanisms the spec left open are recorded in SPEC §2.1 (*T1* notes).
 - Research: The Powder Toy inspected with REA/Hopper (`docs/research/powder-toy.md`) — ideas only, GPL, no code copied.
 
 ## Learnings
@@ -24,11 +25,18 @@ M0 in progress: F1 workspace scaffold and CI done; all crates are stubs.
 - Release profile uses `panic = "abort"` (smaller binaries, and a panic across the `.saver`'s `extern "C"` boundary aborts anyway). Revisit if a host ever needs `catch_unwind` to survive a panic.
 - Stub release binaries on macOS: `desktank` 0.5 MB, `desktank-saver` 0.3 MB.
 - winit 0.31 is still in beta (Nov 2026); use 0.30.
+- T1 bench on the dev Mac (Apple Silicon, release): heavy pour 1.43 ms/tick early, 1.56 ms later (budget 5 ms); settled 4 µs (budget 0.5 ms). The pour settles after ~3100 ticks (155 s of world time).
+- If two classes can each initiate the same exchange (water falling into a bubble, the bubble rising into water), the pair moves twice per tick and drifts sideways. Only liquids are displaceable; buoyant cells move themselves.
+- A liquid that wanders sideways with no drop in reach never settles (chunks stay awake forever). Liquids only move towards a reachable drop, which leaves terraces of one cell per `LEVEL_REACH` columns.
+- Diagonal-only powder slides give 45° piles; a per-row run pattern derived from `repose` gives any angle from 15° to 45° exactly.
 - Falling-sand engines such as The Powder Toy appear (inferred, unmeasured) to process every live particle each frame; DeskTank must use sleeping chunks + dirty rects and a sim tick below the render rate to meet its budgets.
 
 ## Next increments
 
-- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then M1.
+- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then T2.
+- Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
+- Displaced-liquid chains cross chunks within one tick; design the optional parallel pass (SPEC §4.2) around them before enabling it.
+- CI could run `cargo bench -p desktank-sim` and record the numbers (SPEC §7), without gating.
 - Capture mode for screenshots/recordings so PRs can show visuals, including a frame-sequence recorder for GIFs (SPEC T3).
 - Add `.gitattributes` (`* text=auto eol=lf`) to guard Windows `core.autocrlf` checkouts (PR #3 review).
 - Dependabot: add `groups` / `open-pull-requests-limit` once real dependencies land (PR #3 review).

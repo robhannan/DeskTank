@@ -98,16 +98,34 @@ It can run as any combination of four **display modes**:
   is awake or asleep.
   - A chunk is **awake** if any cell in it moved or changed during the
     last tick, or something wakes it: a pour, a creature or reaction
-    editing a cell, or a cell changing within 1 cell of its border, which
+    editing a cell, or a cell changing within reach of its border, which
     wakes the neighbour. A chunk falls asleep after 1 s of world time
-    with no changes.
+    (20 ticks) with no changes.
+  - *Implementation (T1):* each change at `(x, y)` adds its **reach**,
+    the cells that read it next tick, to the next tick's work rectangle
+    of every chunk the reach overlaps, and wakes them. The reach is ±1
+    row and ±`reach_x` columns, where `reach_x` is the longest sideways
+    look of any material: [`LEVEL_REACH`](#liquid-levelling) (32) when a
+    liquid or buoyant material disperses, otherwise the longest powder
+    slide. 32 ≤ half a chunk, so a change still reaches only the direct
+    neighbours. A tick updates only the cells in each chunk's work
+    rectangle; an awake chunk with an empty one costs nothing.
   - Awake chunks keep a dirty rectangle, in the style of Noita. Only
     awake chunks run the movement pass, and only dirty rectangles are
-    uploaded to the GPU.
+    uploaded to the GPU. *(T1: `World::dirty_rects()` gives the cells
+    that changed in the last tick, separate from the work rectangle.)*
   - Movement per tick is bounded. A cell moves at most 1 cell
     vertically per tick, and a liquid spreads at most its `dispersion`
     (≤ 8 cells) sideways. So a change can only affect the chunk it is in
     and its direct neighbours.
+    - *T1:* this bounds each cell's **own** move. A liquid displaced by
+      a mover can be displaced again in the same tick (so a column of
+      sand falls through water together, and the water it displaces
+      rises the whole column), but it never acts itself twice. A
+      per-cell "moved this tick" stamp (a separate `u32` per cell, about
+      0.9 MB at 640×360) enforces that. The optional parallel pass must
+      account for these chains, for example by keeping each chain in its
+      own checkerboard phase.
 - **Slow processes don't keep chunks awake.** Plant growth, decay, algae,
   moss and root tabs run as **random ticks**: each tick, a fixed budget
   of cells (default 256 per display) is sampled from the list of
@@ -127,14 +145,43 @@ It can run as any combination of four **display modes**:
   - A cell swaps with the neighbour in its direction of travel if that
     neighbour is lighter (when falling) or heavier (when rising). Equal
     densities never swap.
+    - *T1:* only **liquids** are ever displaced. Solids, powders,
+      floaters and buoyant cells are not, so each liquid–bubble exchange
+      is made once, by the bubble. **Air** above the surface is a very
+      light liquid (density 0.0012), so everything falls through it and
+      water falls into air trapped below the surface.
   - Powders that are blocked below try the two diagonals in random order.
     How readily they slide is set by the `repose` property; the default
     gives a pile angle of about 35°.
+    - *T1 mechanism:* `repose` is an angle in degrees (15–45°). Its mean
+      run `k = 1/tan(repose)` (in 1/256 cells) gives a sideways run per
+      row, `⌊(y+1)k⌋ − ⌊yk⌋`, which alternates between ⌊k⌋ and ⌈k⌉
+      (1 and 2 at 35°). A grain blocked below and on both diagonals steps
+      one cell sideways if the row below has a free cell within that run
+      along a free path. A pile settles when each row overhangs the one
+      below by at least its run, so the mean slope is exactly the repose
+      angle, deterministically and on both flanks (measured 34.8–34.9°).
   - Liquids that are blocked below spread sideways.
+    - <a id="liquid-levelling"></a>*T1:* after down and the two
+      diagonals, a liquid looks sideways along a free path up to
+      `LEVEL_REACH` (32) cells for the nearest cell it can fall from, and
+      moves up to its `dispersion` towards it. With nowhere to fall it
+      stays put, so a surface settles (level to within one cell per 32
+      columns) instead of jittering forever. Buoyant materials do the
+      same upside down.
   - Floating materials stay at the surface for their `float_time`, then
     become falling.
+    - *T1:* while floating, a cell moves at its `float_density` (between
+      air and water), so it falls through air and rises through water.
+      Each tick it rests, its state counts up; at `float_time` it moves
+      as a powder at its `density` and `repose`.
+  - Buoyant materials with `pops_into` turn into that material when they
+    touch it from below, or the top edge: a bubble pops into air at the
+    water surface, or under the lid of a full tank.
   - **Units:** density is relative to water (1.0); times are in seconds
     of world time; rates are per world second.
+  - **Water level** (T1): `WorldConfig::water_level` is a fraction of the
+    height from the floor; a new world is water up to it and air above.
 - **Ticks and determinism.**
   - The simulation advances in fixed ticks of **1/20 s of world time**.
     Power state never changes the tick length, only how often frames
@@ -149,6 +196,10 @@ It can run as any combination of four **display modes**:
     update order, which also covers the optional parallel pass (§4.2).
   - Every collection iterated in the simulation has a defined order:
     vectors or `BTreeMap`, never `HashMap` iteration.
+  - *T1:* each chunk's stream is a `rand_pcg::Pcg32` seeded from a
+    SplitMix64 mix of `(seed, tick, chunk id)`, with the chunk id as the
+    stream. The state hash is 64-bit FNV-1a over the grid size, tick and
+    every cell (std's hasher is randomly seeded).
 
 ### 2.2 Materials
 
@@ -843,7 +894,7 @@ machines.
 
 Each package depends only on the packages before it.
 
-- [ ] **T1 Grid, chunks and movement.** The cell grid, chunk sleep and
+- [x] **T1 Grid, chunks and movement.** The cell grid, chunk sleep and
   wake, dirty rectangles and the movement rules (§2.1). All five movement
   classes are covered, with test materials water, air, sand, gravel,
   rock, air bubble and one floating flake. Material TOML with units, a
