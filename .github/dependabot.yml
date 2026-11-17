@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # Stay on winit 0.30 until we choose to upgrade (SPEC §5). For 0.x crates
+      # a 0.30 -> 0.31 bump is breaking but Dependabot labels it "minor", so
+      # ignore both; patch releases still come through.
+      - dependency-name: winit
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

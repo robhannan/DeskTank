@@ -1,0 +1,21 @@
+[package]
+name = "desktank-saver-mac"
+description = "DeskTank macOS .saver bundle (ScreenSaverView subclass)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+desktank-render.workspace = true
+
+# objc2 / objc2-screen-saver go here (macOS only).
+[target.'cfg(target_os = "macos")'.dependencies]
+
+[lints]
+workspace = true

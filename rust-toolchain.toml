@@ -1,0 +1,5 @@
+# Pinned exactly; this is also the MSRV (SPEC §5). Bump deliberately in its own PR.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
