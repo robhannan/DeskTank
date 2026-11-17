@@ -1,0 +1,8 @@
+# Rises through water and becomes air when it touches air or the tank lid.
+id = 20
+name = "air_bubble"
+class = "buoyant"
+density = 0.0012
+dispersion = 1
+pops_into = "air"
+colour = "#e8f6ff"
