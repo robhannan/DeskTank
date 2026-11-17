@@ -829,7 +829,7 @@ Linux numbers are recorded and tracked, but not gated in v1.
 | CPU while hidden or paused | ≤ 0.1% | — | n/a (exits) |
 | Wake-ups while hidden | ≤ 1/s (OS events only, plus polls ≤ every 10 s) | — | n/a |
 | GPU frame time at 1440p | ≤ 2 ms | +2 ms | ≤ 2 ms per display |
-| Resident memory | ≤ 80 MB, aiming for ≤ 50 MB | +10 MB | ≤ 80 MB, with growth ≤ 20 MB over 8 h |
+| Resident memory (raw RSS, as `ps` reports it, including shared GPU-driver pages; D16) | ≤ 100 MB, aiming for ≤ 60 MB | +10 MB | ≤ 100 MB, with growth ≤ 20 MB over 8 h |
 | Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
 | Web transfer size (wasm + JS + assets, gzip, as reported by `scripts/build-web.mjs`) | ≤ 3 MB | — | — |
 | Web on the reference phone (🔍 to be chosen in WB2: a 2021-era mid-range iPhone or Android) | p95 frame interval ≤ 50 ms, no thermal throttling within 10 min | — | — |
@@ -1324,6 +1324,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D13 | **Colour genetics**: offspring inherit morphs; mixed lines revert to wildtype (e.g. neocaridina). |
 | D14 | **No code signing** for now. |
 | D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal. |
+| D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
