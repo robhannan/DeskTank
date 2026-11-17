@@ -23,7 +23,7 @@
 use core::time::Duration;
 
 use desktank_render::{Layout, Tank, TankConfig};
-use desktank_sim::{Brush, MaterialId, MaterialTable, Script, World, WorldConfig};
+use desktank_sim::{BodyId, Brush, MaterialId, MaterialTable, Script, World, WorldConfig};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -87,6 +87,9 @@ pub struct WebTank {
     air: MaterialId,
     running: bool,
     hold: Option<Hold>,
+    /// The rigid body (rock) the current stroke pours into, until
+    /// [`WebTank::release`]: one stroke makes one body (D17).
+    body: Option<BodyId>,
     /// Canvas size in device pixels.
     size: (u32, u32),
     frames: u32,
@@ -273,9 +276,10 @@ impl WebTank {
         Ok(())
     }
 
-    /// Lifts the held brush.
+    /// Lifts the held brush, ending the stroke.
     pub fn release(&mut self) {
         self.hold = None;
+        self.body = None;
     }
 
     /// Advances to `now_ms` (`performance.now()`): runs the simulation ticks
@@ -362,6 +366,7 @@ impl WebTank {
             air,
             running: true,
             hold: None,
+            body: None,
             size: (size.0.max(1), size.1.max(1)),
             frames: 0,
             #[cfg(target_arch = "wasm32")]
@@ -387,11 +392,17 @@ impl WebTank {
     /// re-uploads the grid so it shows without a tick.
     fn stamp(&mut self, material: Option<MaterialId>, x: i32, y: i32, radius: u32) -> u32 {
         let changed = match material {
-            Some(id) => self
-                .tank
-                .world_mut()
-                .paint(i64::from(x), i64::from(y), radius, id, Brush::Pour)
-                .unwrap_or(0),
+            Some(id) => {
+                let (x, y) = (i64::from(x), i64::from(y));
+                let world = self.tank.world_mut();
+                match world.paint_into(x, y, radius, id, Brush::Pour, self.body) {
+                    Ok((changed, body)) => {
+                        self.body = body;
+                        changed
+                    }
+                    Err(_) => 0,
+                }
+            }
             None => self.erase_disc(x, y, radius),
         };
         if changed > 0 && !self.running {
@@ -620,6 +631,20 @@ mod tests {
         assert_eq!(t.erase(10, 1, 1), 9, "a radius-1 disc is 3×3");
         assert_eq!(t.tank().world().cell(10, 1).unwrap().material, air);
         assert_eq!(t.erase(10, 1, 1), 0, "already empty");
+    }
+
+    #[test]
+    fn a_rock_stroke_makes_one_body_until_release() {
+        let mut t = tank();
+        for x in (20..60).step_by(4) {
+            t.pour("rock", x, 30, 3).unwrap();
+        }
+        t.step();
+        assert_eq!(t.tank().world().bodies().count(), 1);
+        t.release();
+        t.pour("rock", 100, 30, 3).unwrap();
+        t.step();
+        assert_eq!(t.tank().world().bodies().count(), 2);
     }
 
     #[test]

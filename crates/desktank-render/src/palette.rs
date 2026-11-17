@@ -1,7 +1,7 @@
 //! The palette: a 256×256 RGBA table indexed by (material, variant) that the
 //! fragment shader reads with `textureLoad`.
 
-use desktank_sim::{MaterialTable, MovementClass};
+use desktank_sim::{GLUED_VARIANT_BIT, MaterialTable, MovementClass};
 
 /// Table side: one column per material ID, one row per variant byte.
 pub const SIDE: usize = 256;
@@ -14,10 +14,17 @@ const SHADES: [u32; 4] = [256, 240, 274, 225];
 /// Colour of unknown material IDs: loud magenta, so a gap is obvious.
 const UNKNOWN: [u8; 3] = [0xff, 0x00, 0xff];
 
+/// Glued rigid cells (odd variants, D17) mix this much of [`GLUE_TINT`]
+/// into their shade, in 1/256: a subtle amber cast.
+const GLUE_MIX: u32 = 44;
+/// The colour glued cells lean towards, sRGB.
+const GLUE_TINT: [u8; 3] = [0xd9, 0xa4, 0x41];
+
 /// Liquids at least this dense darken with depth (water, not air).
 const DEPTH_TINT_DENSITY: f32 = 0.5;
 
-/// Which shade a variant byte picks.
+/// Which shade a variant byte picks. Every range starts on an even byte,
+/// so a rigid cell's glued bit ([`GLUED_VARIANT_BIT`]) never changes it.
 #[must_use]
 pub fn shade(variant: u8) -> usize {
     match variant {
@@ -30,24 +37,42 @@ pub fn shade(variant: u8) -> usize {
 
 /// Builds the RGBA table, row-major with rows = variants. Alpha is 255 for
 /// materials that darken with depth and 0 otherwise (the shader's flag;
-/// output is opaque).
+/// output is opaque). Rigid materials shade odd variants (glued bodies)
+/// with an amber tint.
 #[must_use]
 pub fn build(materials: &MaterialTable) -> Vec<u8> {
     let mut columns = [[UNKNOWN; 4]; SIDE];
     let mut tinted = [false; SIDE];
+    let mut rigid = [false; SIDE];
     for m in materials.iter() {
         let i = usize::from(m.id.0);
         columns[i] = SHADES.map(|k| m.colour.map(|c| scale(c, k)));
         tinted[i] = m.class == MovementClass::Liquid && m.density >= DEPTH_TINT_DENSITY;
+        rigid[i] = m.class == MovementClass::Rigid;
     }
     let mut out = vec![0; SIDE * SIDE * 4];
     for (variant, row) in out.as_chunks_mut::<{ SIDE * 4 }>().0.iter_mut().enumerate() {
         #[allow(clippy::cast_possible_truncation)] // variant < 256
         let s = shade(variant as u8);
+        #[allow(clippy::cast_possible_truncation)] // variant < 256
+        let glued = variant as u8 & GLUED_VARIANT_BIT != 0;
         for (material, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            let [r, g, b] = columns[material][s];
+            let mut rgb = columns[material][s];
+            if glued && rigid[material] {
+                rgb = glue(rgb);
+            }
+            let [r, g, b] = rgb;
             px.copy_from_slice(&[r, g, b, if tinted[material] { 255 } else { 0 }]);
         }
+    }
+    out
+}
+
+fn glue(rgb: [u8; 3]) -> [u8; 3] {
+    let mut out = rgb;
+    for (o, (c, t)) in out.iter_mut().zip(rgb.into_iter().zip(GLUE_TINT)) {
+        let v = (u32::from(c) * (256 - GLUE_MIX) + u32::from(t) * GLUE_MIX) / 256;
+        *o = u8::try_from(v).unwrap_or(u8::MAX);
     }
     out
 }
@@ -84,6 +109,24 @@ mod tests {
         assert!(texel(&table, id, 150)[0] < base);
         assert!(texel(&table, id, 200)[0] > base);
         assert!(texel(&table, id, 250)[0] < base);
+    }
+
+    #[test]
+    fn glued_rigid_cells_get_a_tint_and_keep_their_shade() {
+        let mats = MaterialTable::builtin().unwrap();
+        let table = build(&mats);
+        let rock = mats.id("rock").unwrap().0;
+        let sand = mats.id("sand").unwrap().0;
+        for v in (0..=254u8).step_by(2) {
+            assert_eq!(shade(v), shade(v | GLUED_VARIANT_BIT));
+            let (free, glued) = (texel(&table, rock, v), texel(&table, rock, v + 1));
+            assert_ne!(free, glued);
+            // Subtle: within 40 levels per channel, and warmer.
+            assert!(free.iter().zip(glued).all(|(a, b)| a.abs_diff(b) <= 40));
+            assert!(glued[0] > free[0] && glued[2] <= free[2]);
+            // Other classes ignore the bit.
+            assert_eq!(texel(&table, sand, v), texel(&table, sand, v + 1));
+        }
     }
 
     #[test]

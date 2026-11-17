@@ -7,10 +7,10 @@
 //! and the loop waits on OS events only, with no timers.
 //!
 //! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
-//! left drag uses the selected tool (pour, scoop, net, inspect), right drag
-//! scoops, the scroll wheel or a two-finger trackpad scroll sets the brush
-//! size, and clicking the palette in the top-left corner (or keys 1–9)
-//! selects a material or tool. Pointer moves only redraw when the brush
+//! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
+//! drag scoops, the scroll wheel or a two-finger trackpad scroll sets the
+//! brush size, and clicking the palette in the top-left corner (or keys 1–9,
+//! then 0 for the tenth slot) selects a material or tool. Pointer moves only redraw when the brush
 //! outline changes. Escape closes.
 //!
 //! `--demo-pour N` feeds the same code a synthetic left drag sweeping
@@ -393,7 +393,8 @@ impl ApplicationHandler for App {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
                     Key::Character(c) => {
-                        let slot = c.parse::<usize>().ok().and_then(|n| n.checked_sub(1));
+                        // 1–9 are the first nine slots, 0 the tenth.
+                        let slot = c.parse::<usize>().ok().map(|n| (n + 9) % 10);
                         if let Some(&item) = slot.and_then(|i| s.palette.get(i)) {
                             s.tools.select(item);
                         }
