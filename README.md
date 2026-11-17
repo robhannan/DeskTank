@@ -17,7 +17,26 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 
 ## Status
 
-Early days — nothing to run yet.
+Early days: the workspace builds, but every command is a stub that prints "not yet implemented".
+
+## Building
+
+Install [rustup](https://rustup.rs); the pinned toolchain in `rust-toolchain.toml` is fetched automatically. On Linux, first install the system packages:
+
+```sh
+sudo apt-get install libxkbcommon-dev libwayland-dev libdbus-1-dev mesa-vulkan-drivers
+```
+
+Then:
+
+```sh
+cargo build --workspace            # debug build of every crate
+cargo run -p desktank -- --help    # list the commands
+cargo build --release --workspace  # small, stripped release binaries
+cargo test --workspace
+```
+
+Before a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo deny check` (`cargo install --locked cargo-deny`).
 
 ## License
 

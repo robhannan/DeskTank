@@ -805,7 +805,7 @@ machines.
 
 ### M0 — Foundations
 
-- [ ] **F1 Workspace scaffold + CI.** Crates from §4.1 as stubs, a
+- [x] **F1 Workspace scaffold + CI.** Crates from §4.1 as stubs, a
   toolchain file, lints, `deny.toml` and Dependabot (ignoring winit
   majors), with CI on three OSes.
   - Platform dependencies are gated with `[target.'cfg(...)'.dependencies]`.
