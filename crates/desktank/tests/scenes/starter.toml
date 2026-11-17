@@ -1,0 +1,15 @@
+# The starter scene with a sweep of sand poured in, then left to settle.
+ticks = 240
+frame_every = 2
+
+[world]
+starter = true
+
+[[pour]]
+tick = 0
+repeat = 60
+x = 30
+y = 12
+dx = 1
+radius = 2
+material = "sand"

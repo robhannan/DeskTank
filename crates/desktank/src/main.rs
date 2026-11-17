@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod bench;
+mod capture;
 mod scene;
 mod window;
 
@@ -80,21 +81,21 @@ enum InteractState {
 #[derive(Debug, Args)]
 struct CaptureArgs {
     /// World seed.
-    #[arg(long)]
-    seed: Option<u64>,
-    /// Local time of day in the tank, as HH:MM.
-    #[arg(long, value_name = "HH:MM")]
-    time: Option<String>,
+    #[arg(long, default_value_t = 1)]
+    seed: u64,
+    /// Local time of day in the tank, as HH:MM (no effect until day and night exist).
+    #[arg(long, value_name = "HH:MM", value_parser = capture::parse_time)]
+    time: Option<u16>,
     /// Output size in pixels, as width x height (for example 640x360).
-    #[arg(long, value_name = "WxH")]
-    size: Option<String>,
-    /// Number of frames to render.
-    #[arg(long)]
-    frames: Option<u32>,
-    /// Script of pours and other inputs to replay.
+    #[arg(long, value_name = "WxH", default_value = "640x360", value_parser = capture::parse_size)]
+    size: (u32, u32),
+    /// Number of frames to render, `frame_every` ticks apart (see the script).
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=10_000))]
+    frames: u32,
+    /// Input script of timed pours (TOML; see docs/capture.md).
     #[arg(long, value_name = "FILE")]
     script: Option<PathBuf>,
-    /// Directory to write frames to.
+    /// Directory to write frames to (`frame.png`, or `frame_NNNN.png` for several).
     #[arg(long, value_name = "DIR")]
     out: PathBuf,
 }
@@ -133,6 +134,14 @@ fn main() -> ExitCode {
     let result = match &cli.command {
         Command::Window => window::run(),
         Command::Bench(args) => bench::run(args.seconds),
+        Command::Capture(args) => capture::run(&capture::Options {
+            seed: args.seed,
+            time: args.time,
+            size: args.size,
+            frames: args.frames,
+            script: args.script.clone(),
+            out: args.out.clone(),
+        }),
         other => {
             eprintln!("desktank {}: not yet implemented", other.name());
             return ExitCode::FAILURE;

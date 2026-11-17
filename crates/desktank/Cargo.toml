@@ -14,6 +14,7 @@ clap.workspace = true
 desktank-platform.workspace = true
 desktank-render.workspace = true
 desktank-sim.workspace = true
+png = "0.18.1"
 pollster = "1.0.2"
 # Default features minus the Adwaita client-side decorations on Wayland (they
 # pull in a font rasteriser); winit falls back to its plain frame there.

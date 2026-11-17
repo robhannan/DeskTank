@@ -19,6 +19,7 @@
 mod gpu;
 mod grid;
 mod layout;
+mod offscreen;
 mod pacing;
 mod palette;
 mod renderer;
@@ -32,6 +33,7 @@ pub use wgpu;
 
 pub use gpu::{Gpu, GpuError, GpuOptions};
 pub use layout::Layout;
+pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;
 pub use surface::{SurfaceError, TankSurface};
 pub use tank::{DrawError, Tank, TankConfig};

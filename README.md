@@ -24,9 +24,12 @@ Early days: the falling-sand simulation core works (see the browser demo above) 
 ```sh
 cargo run --release -p desktank -- window   # the tank in a window; left drag pours (keys 1–5 pick the material), right drag erases
 cargo run --release -p desktank -- bench    # 60 s scripted pour + settle, prints CPU, tick, GPU and memory numbers
+cargo run --release -p desktank -- capture --script crates/desktank/tests/scenes/starter.toml --out shots   # headless PNG capture
 ```
 
 The other commands are still stubs that print "not yet implemented".
+
+Capture scripts and the render tests are described in [docs/capture.md](docs/capture.md).
 
 ## Building
 

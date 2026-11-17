@@ -1,0 +1,38 @@
+# An empty tank: a rock ledge, gravel and sand poured on it, and bubbles.
+ticks = 160
+
+[world]
+water_level = 0.8
+
+[[pour]]
+x = 60
+y = 70
+radius = 10
+material = "rock"
+brush = "replace"
+
+[[pour]]
+tick = 0
+repeat = 30
+x = 50
+y = 25
+dx = 1
+radius = 2
+material = "gravel"
+
+[[pour]]
+tick = 30
+repeat = 40
+x = 110
+y = 25
+dx = -1
+radius = 2
+material = "sand"
+
+[[pour]]
+tick = 100
+x = 130
+y = 85
+radius = 3
+material = "air_bubble"
+brush = "replace"
