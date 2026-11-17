@@ -53,12 +53,17 @@ jobs:
       - name: Docs
         run: cargo doc --workspace --no-deps --locked
 
+      - name: CLI help
+        run: cargo run --locked -q -p desktank -- --help
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The action's container reads rust-toolchain.toml and installs the pinned
+      # toolchain on each run (a "not installed" log line first is expected).
       - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2.1.2
         with:
           command: check

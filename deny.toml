@@ -5,8 +5,10 @@
 all-features = true
 
 [advisories]
-# Every vulnerability, unmaintained and unsound advisory fails; ignore entries
-# need an advisory ID and a reason.
+# In cargo-deny's v2 config, vulnerability and unsound advisories always fail;
+# unmaintained ones fail for every crate in the graph (set explicitly below).
+# Ignore entries need an advisory ID and a reason.
+unmaintained = "all"
 yanked = "deny"
 ignore = []
 

@@ -30,3 +30,6 @@ M0 in progress: F1 workspace scaffold and CI done; all crates are stubs.
 
 - Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), then M1.
 - Capture mode for screenshots/recordings so PRs can show visuals, including a frame-sequence recorder for GIFs (SPEC T3).
+- Add `.gitattributes` (`* text=auto eol=lf`) to guard Windows `core.autocrlf` checkouts (PR #3 review).
+- Dependabot: add `groups` / `open-pull-requests-limit` once real dependencies land (PR #3 review).
+- Release symbolication: consider `strip = "debuginfo"` plus split debug info (dSYM/PDB) kept out of the release archive, so crash reports can be symbolicated (PR #3 review).

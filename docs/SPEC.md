@@ -654,7 +654,7 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 |---|---|---|
 | Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable; `Cargo.lock` committed |
 | GPU | `wgpu` 30 | Metal, DX12 and Vulkan; offscreen rendering for capture and tests |
-| Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit majors until we choose to upgrade |
+| Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit minor and major updates (0.x minors are breaking) until we choose to upgrade |
 | Wayland | `smithay-client-toolkit` 0.21 + `calloop` | Layer-shell and idle-notify |
 | macOS FFI | `objc2` 0.6 + `objc2-app-kit` / `objc2-screen-saver` | |
 | Windows FFI | `windows` 0.62 | |
@@ -807,14 +807,16 @@ machines.
 
 - [x] **F1 Workspace scaffold + CI.** Crates from §4.1 as stubs, a
   toolchain file, lints, `deny.toml` and Dependabot (ignoring winit
-  majors), with CI on three OSes.
+  minor and major updates), with CI on three OSes.
   - Platform dependencies are gated with `[target.'cfg(...)'.dependencies]`.
   - The Rust version is pinned exactly.
   - Linux CI installs the system packages it needs: libxkbcommon,
     wayland, libdbus and mesa-vulkan-drivers (lavapipe).
 
   *Accept:* CI is green on all three OSes, `cargo run -p desktank --
-  --help` works, and each platform crate builds only on its own OS.
+  --help` works, and each platform crate builds only on its own OS
+  (elsewhere it compiles to an empty crate, so `cargo build --workspace`
+  works on every OS).
 - [ ] **P1 Packaging and identity spike** (findings go in PROGRESS, no
   product code). Answer:
   - whether `LockScreen.SetImageFileAsync` works unpackaged;

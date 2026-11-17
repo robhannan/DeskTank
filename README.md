@@ -21,7 +21,7 @@ Early days: the workspace builds, but every command is a stub that prints "not y
 
 ## Building
 
-Install [rustup](https://rustup.rs); the pinned toolchain in `rust-toolchain.toml` is fetched automatically. On Linux, first install the system packages:
+Install [rustup](https://rustup.rs); the pinned toolchain in `rust-toolchain.toml` is fetched automatically. On Linux, install the system packages that the windowing, tray and render crates will need (CI installs them already; today's stubs build without them):
 
 ```sh
 sudo apt-get install libxkbcommon-dev libwayland-dev libdbus-1-dev mesa-vulkan-drivers
