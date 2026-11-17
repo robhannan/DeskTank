@@ -12,9 +12,13 @@ publish.workspace = true
 desktank-render.workspace = true
 
 # Per-OS dependencies go in these tables so other targets never build them.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2.191", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 
 [target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 
