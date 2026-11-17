@@ -44,6 +44,11 @@ impl Pacer {
         }
     }
 
+    /// Changes the frame-rate cap.
+    pub fn set_max_fps(&mut self, max_fps: u32) {
+        self.frame_interval = Duration::from_secs(1) / max_fps.max(1);
+    }
+
     /// Simulation ticks due at `now`. The first call after creation or a
     /// pause starts the clock and runs none.
     pub fn due_ticks(&mut self, now: Duration) -> u32 {
@@ -142,5 +147,14 @@ mod tests {
         assert_eq!(p.wake_at(20 * MS, true), Duration::from_secs(1) / 30);
         assert_eq!(p.wake_at(20 * MS, false), 50 * MS);
         assert!(p.frame_allowed(34 * MS));
+    }
+
+    #[test]
+    fn lowers_the_cap_on_battery() {
+        let mut p = Pacer::new(20, 30);
+        p.set_max_fps(15);
+        p.frame_drawn(Duration::ZERO);
+        assert!(!p.frame_allowed(60 * MS));
+        assert!(p.frame_allowed(67 * MS));
     }
 }

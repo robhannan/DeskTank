@@ -33,3 +33,7 @@ rustc-ice-*.txt
 
 # pnpm (zx scripts)
 node_modules/
+
+# Playwright output
+/test-results/
+/playwright-report/

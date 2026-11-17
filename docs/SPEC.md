@@ -1227,7 +1227,7 @@ Each package depends only on the packages before it.
   (https://robhannan.github.io/DeskTank/) from `main`. Not the product
   renderer. *Accept:* the demo builds in CI on every PR, and the page
   loads and pours on desktop and mobile.
-- [ ] **WB1 Web host on the real renderer** (after T3). `desktank-web`
+- [x] **WB1 Web host on the real renderer** (after T3). `desktank-web`
   drives `desktank-render` through wgpu, with backend selection and
   device-loss recovery (§3.5), and replaces the canvas-2D demo. It adds
   the Playwright smoke test and a transfer-size report in the build
@@ -1241,6 +1241,11 @@ Each package depends only on the packages before it.
   - the transfer size reported by the build script is within budget;
   - a forced context loss (`WEBGL_lose_context`) recovers without a
     reload.
+
+  *(WB1: the "frame interval" is the page's rAF cadence; drawn frames
+  follow the 20 Hz tick until something moves between ticks, so they are
+  50 ms apart. The renderer now shades in sRGB-encoded space on every
+  target, so sRGB canvases and windows match the `Rgba8Unorm` captures.)*
 - [ ] **WB2 Web interaction and in-page controls** (after T4). The
   interact tools with pointer and touch, the in-page menu, the settings
   panel (`localStorage`) and per-device cell scale (§3.5). *Accept:*

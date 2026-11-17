@@ -81,7 +81,7 @@ impl Tank {
         for _ in 0..sim_ticks {
             self.step();
         }
-        let wanted = self.needs_frame || !self.dirty.is_empty();
+        let wanted = self.frame_wanted();
         let redraw = wanted && self.pacer.frame_allowed(now);
         if redraw {
             self.pacer.frame_drawn(now);
@@ -111,6 +111,36 @@ impl Tank {
 
     /// Asks for a frame even if the world hasn't changed (resize, expose).
     pub fn invalidate(&mut self) {
+        self.needs_frame = true;
+    }
+
+    /// Re-uploads the whole grid with the next frame, so edits made through
+    /// [`Tank::world_mut`] show without a simulation tick (while paused).
+    pub fn cells_edited(&mut self) {
+        self.dirty.mark_all();
+    }
+
+    /// Whether a frame is waiting: the world changed since the last frame,
+    /// or the target was invalidated.
+    #[must_use]
+    pub fn frame_wanted(&self) -> bool {
+        self.needs_frame || !self.dirty.is_empty()
+    }
+
+    /// Changes the frame-rate cap (SPEC §6.2: 15 fps on battery). The
+    /// simulation tick is unaffected.
+    pub fn set_max_fps(&mut self, max_fps: u32) {
+        self.pacer.set_max_fps(max_fps);
+    }
+
+    /// Drops every GPU resource (after device or context loss). The world is
+    /// untouched; the next frame, drawn with a new [`Gpu`], rebuilds the
+    /// renderer and uploads the whole grid.
+    pub fn release_gpu(&mut self) {
+        self.renderer = None;
+        self.timer = None;
+        self.gpu_time = None;
+        self.dirty.mark_all();
         self.needs_frame = true;
     }
 
