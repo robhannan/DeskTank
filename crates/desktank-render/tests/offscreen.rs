@@ -1,6 +1,7 @@
 //! Smoke test: draw a tiny world offscreen and read pixels back. Skipped
-//! (with a message) on machines without a GPU adapter; CI has Metal,
-//! WARP/DX12 and lavapipe. Full reference-image tests are T3.
+//! (with a message) on machines without a GPU adapter, but fails when `CI`
+//! is set: CI has Metal, WARP/DX12 and lavapipe. Reference-image tests are
+//! in `crates/desktank/tests/render.rs`.
 
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
 use desktank_sim::{MaterialTable, World, WorldConfig};
@@ -13,10 +14,11 @@ fn gpu() -> Option<Gpu> {
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     match pollster::block_on(Gpu::new(&instance, None, GpuOptions::default())) {
         Ok(g) => Some(g),
-        Err(e) => {
+        Err(e) if std::env::var_os("CI").is_none() => {
             eprintln!("skipping: {e}");
             None
         }
+        Err(e) => panic!("no GPU in CI: {e}"),
     }
 }
 
