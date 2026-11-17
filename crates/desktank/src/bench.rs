@@ -2,6 +2,11 @@
 //! (SPEC §6.1). A seeded sand pour into the starter scene, then the tank
 //! settles; rendering goes to an offscreen 2560×1440 target at the default
 //! 4× cell scale, paced in real time exactly like the window.
+//!
+//! GPU timing reads timestamps back after each frame, which blocks that
+//! frame on the GPU (waiting costs little CPU). "CPU per frame" is process
+//! CPU time across the tick and the draw. The settled phase draws no frames,
+//! so its numbers are the production path.
 
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -49,6 +54,8 @@ pub fn run(seconds: u64) -> anyhow::Result<()> {
     let mut settled: Option<Phase> = None;
     let mut gpu_times = Samples::default();
     let mut max_awake = 0;
+    // The last tick poured into, so each tick gets exactly one disc.
+    let mut poured = None;
     loop {
         let now = start.elapsed();
         if now >= duration {
@@ -57,7 +64,8 @@ pub fn run(seconds: u64) -> anyhow::Result<()> {
         // The scripted pour: a disc of sand each tick, sweeping sideways.
         let world = tank.world();
         let tick = world.tick_count();
-        if tick < POUR_TICKS {
+        if tick < POUR_TICKS && poured != Some(tick) {
+            poured = Some(tick);
             let w = i64::try_from(world.width()).unwrap_or(0);
             let x = w / 2 + i64::try_from(tick).unwrap_or(0) * 2 - 100;
             let y = i64::try_from(world.surface_row()).unwrap_or(0) + 10;

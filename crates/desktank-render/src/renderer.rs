@@ -12,7 +12,10 @@ use crate::{Gpu, timer::GpuTimer};
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 32;
+const VIEW_BYTES: u64 = 48;
+
+/// Letterbox colour around the grid (sRGB).
+const BACKDROP: [u8; 3] = [0x05, 0x0a, 0x12];
 
 #[derive(Debug)]
 pub struct Renderer {
@@ -180,8 +183,10 @@ impl Renderer {
                 surface_row as f32,
                 DEPTH_DIM,
                 0.0,
-            ];
-            let bytes: Vec<u8> = view.iter().flat_map(|v| v.to_le_bytes()).collect();
+            ]
+            .into_iter()
+            .chain(backdrop(self.format));
+            let bytes: Vec<u8> = view.flat_map(f32::to_le_bytes).collect();
             gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
             self.layout = Some(layout);
         }
@@ -288,6 +293,22 @@ fn create_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The backdrop as shader output for `format`: sRGB targets encode on
+/// write, so they get linear values.
+fn backdrop(format: wgpu::TextureFormat) -> [f32; 4] {
+    let [r, g, b] = BACKDROP.map(|c| {
+        let v = f32::from(c) / 255.0;
+        if !format.is_srgb() {
+            v
+        } else if v <= 0.040_45 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    });
+    [r, g, b, 1.0]
 }
 
 /// A grid or texture side as `u32`. Sides are at most

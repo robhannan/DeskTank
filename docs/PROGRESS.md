@@ -51,6 +51,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Pause detection gaps (T2): Windows fully-covered windows (DWM cloaking / present status) and Wayland (frame callbacks); winit 0.30 has no `Occluded` there.
 - Resizing the window rescales the fixed grid with letterboxing; resizing the world itself (or choosing the grid from the display, SPEC §2.1) comes with the display modes.
 - The web demo's hand-tuned palettes (`desktank-web`) and the renderer's derived shades should converge when WB1 moves the web onto `desktank-render`.
+- The offscreen GPU smoke test skips when no adapter exists; once T3's lavapipe render tests land, make CI fail instead of skipping (PR #7 review).
+- `desktank bench` could add a run without GPU timing, so per-frame CPU excludes the timestamp readback (PR #7 review).
 - Decide whether the §6.1 memory budget means RSS or physical footprint on macOS (the window is 90 MB RSS, 53 MB footprint).
 - Surface levelling: a heavy pour can leave the water surface a few cells higher over the pour (terraces of one cell per 32 columns). A slow random-tick leveller (SPEC §2.1 random ticks) could flatten it fully.
 - Displaced-liquid chains cross chunks within one tick; design the optional parallel pass (SPEC §4.2) around them before enabling it.

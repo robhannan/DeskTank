@@ -72,25 +72,25 @@ impl GpuTimer {
         self.readback.map_async(wgpu::MapMode::Read, .., move |r| {
             flag.store(r.is_ok(), Ordering::Release);
         });
-        gpu.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(Duration::from_secs(1)),
-            })
-            .ok()?;
-        if !done.load(Ordering::Acquire) {
-            return None;
-        }
-        let ticks = {
-            let view = self.readback.get_mapped_range(..).ok()?;
-            let word = |i: usize| {
-                let mut b = [0; 8];
-                b.copy_from_slice(&view[i * 8..i * 8 + 8]);
-                u64::from_le_bytes(b)
-            };
-            word(1).saturating_sub(word(0))
-        };
+        let waited = gpu.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(Duration::from_secs(1)),
+        });
+        let ticks = (waited.is_ok() && done.load(Ordering::Acquire))
+            .then(|| self.readback.get_mapped_range(..).ok())
+            .flatten()
+            .map(|view| {
+                let word = |i: usize| {
+                    let mut b = [0; 8];
+                    b.copy_from_slice(&view[i * 8..i * 8 + 8]);
+                    u64::from_le_bytes(b)
+                };
+                word(1).saturating_sub(word(0))
+            });
+        // Always unmap (or cancel a pending map), so the next frame's copy
+        // into the buffer stays valid even after a failed read.
         self.readback.unmap();
+        let ticks = ticks?;
         #[allow(clippy::cast_precision_loss)] // GPU ticks over one frame
         let ns = ticks as f64 * self.period_ns;
         Some(Duration::from_secs_f64(ns / 1e9))

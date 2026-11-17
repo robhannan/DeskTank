@@ -15,14 +15,13 @@ struct View {
     // Darkening of tinted materials at the floor (0 = none).
     depth_dim: f32,
     _pad: f32,
+    // Letterbox colour, already in the target's encoding.
+    backdrop: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var cells: texture_2d<f32>;
 @group(0) @binding(2) var palette: texture_2d<f32>;
-
-// Letterbox around the grid.
-const BACKDROP = vec4<f32>(0.02, 0.04, 0.07, 1.0);
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -35,7 +34,7 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let cell = floor((pos.xy - view.offset) / view.scale);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
-        return BACKDROP;
+        return view.backdrop;
     }
     let mv = textureLoad(cells, vec2<i32>(cell), 0).rg;
     let idx = vec2<i32>(round(mv * 255.0));

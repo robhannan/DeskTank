@@ -20,9 +20,8 @@ fn gpu() -> Option<Gpu> {
     }
 }
 
-/// Renders `tank` into a `W`×`H` RGBA target and returns tightly packed rows.
-fn render(gpu: &Gpu, tank: &mut Tank) -> Vec<u8> {
-    let format = wgpu::TextureFormat::Rgba8Unorm;
+/// Renders `tank` into a `W`×`H` RGBA target of `format` and returns tightly packed rows.
+fn render(gpu: &Gpu, tank: &mut Tank, format: wgpu::TextureFormat) -> Vec<u8> {
     let size = wgpu::Extent3d {
         width: W,
         height: H,
@@ -94,7 +93,7 @@ fn draws_cells_scaled_and_letterboxed() {
     let mut world = World::new(config, materials).unwrap();
     world.set_cell(3, 5, rock).unwrap();
     let mut tank = Tank::new(world, TankConfig::default());
-    let img = render(&gpu, &mut tank);
+    let img = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
 
     // 16×8 cells in 80×32 px: scale 4, centred with an 8 px letterbox.
     let backdrop = px(&img, 2, 10);
@@ -115,4 +114,27 @@ fn draws_cells_scaled_and_letterboxed() {
     // Water around it is blue.
     let [wr, _, wb] = px(&img, 9, 1);
     assert!(wb > wr);
+}
+
+#[test]
+fn srgb_targets_show_the_same_colours() {
+    let Some(gpu) = gpu() else { return };
+    let materials = MaterialTable::builtin().unwrap();
+    let config = WorldConfig {
+        width: 16,
+        height: 8,
+        seed: 1,
+        water_level: 1.0,
+    };
+    let world = World::new(config, materials).unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    let linear = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    let srgb = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8UnormSrgb);
+    // Backdrop and a water cell match within rounding.
+    for (x, y) in [(2, 10), (9, 1)] {
+        let (a, b) = (px(&linear, x, y), px(&srgb, x, y));
+        for (p, q) in a.iter().zip(b) {
+            assert!(p.abs_diff(q) <= 2, "({x}, {y}): {a:?} vs {b:?}");
+        }
+    }
 }

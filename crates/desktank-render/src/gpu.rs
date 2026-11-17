@@ -36,7 +36,9 @@ pub struct Gpu {
 impl Gpu {
     /// Picks a low-power adapter that can present to `surface` (required on
     /// WebGL2) and opens a device limited to WebGL2's downlevel limits, so a
-    /// native run catches anything the web fallback couldn't do.
+    /// native run catches anything the web fallback couldn't do. The
+    /// exception is texture size, taken from the adapter so surfaces larger
+    /// than 2048 px work; hosts cap the grid at 2048 cells themselves.
     ///
     /// # Errors
     ///
