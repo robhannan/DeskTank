@@ -87,7 +87,8 @@ It can run as any combination of four desktop **display modes**, or in a browser
     card and the log, when the current level doesn't suit a species
     living in it.
 - **Cell.** A material ID (u8), a variant or colour-noise byte (u8), and
-  per-cell state such as age, a timer or moisture (u16). That is about
+  per-cell state such as age, a timer, moisture or a rigid cell's body id
+  (u16). That is about
   4 bytes per cell, or about 1 MB per display.
 - **Fields.** Coarse grids at 1/8 resolution hold the values that
   diffuse:
@@ -181,6 +182,46 @@ It can run as any combination of four desktop **display modes**, or in a browser
   - Buoyant materials with `pops_into` turn into that material when they
     touch it from below, or the top edge: a bubble pops into air at the
     water surface, or under the lid of a full tank.
+  - <a id="rigid-bodies"></a>**Rigid bodies** (D17, T4b). Rigid materials
+    (rock, later driftwood) form **bodies**: objects that move as one piece
+    and don't rotate.
+    - A body is the set of rigid cells whose state holds its id (1–65535).
+      The world keeps a body table (id → material, cells, bounds, glued
+      flag) in a `BTreeMap`, so passes over it run in id order. The table
+      can be rebuilt from the grid: the id is in each cell's state and the
+      glued flag in the low bit of its variant byte, which the renderer
+      reads to shade glued bodies.
+    - **Making bodies.** Each edit call (`paint`, `fill_rect`, `set_cell`)
+      puts the rigid cells it writes into one new body. A stroke (a tool
+      drag, a script `[[pour]]` entry with `repeat`, a web drag) continues
+      one body with `World::paint_into`. A body being poured into is
+      **held still** until two ticks after the last stamp, so a stroke can
+      draw a shape and it drops when released.
+    - **Motion.** Once per tick, before the movement pass, a body that
+      isn't glued or held moves **one cell down** if every cell directly
+      under it is a fluid (liquid or buoyant) lighter than it; otherwise
+      **one cell up** if every cell directly above it is a heavier fluid.
+      Each body cell swaps with the cell beyond it, leading edge first,
+      so the displaced fluid passes to the cells the body vacates: mass is
+      conserved and the shape kept. One cell per tick is the falling speed
+      of every other class (§2.1 *Movement per tick*). Bodies move lowest
+      first, so a stack falls together.
+    - **Support.** Powders, floaters, solids, other bodies, the floor and
+      the walls hold a body; it rests on sand rather than tunnelling. A
+      body lighter than water (driftwood) rises until its top meets air at
+      the surface. Bodies are never displaced, so powder and liquid
+      falling onto a body rest on it.
+    - **Splitting.** Overwriting a body's cells (scoop, a replace brush)
+      marks it; at the next tick its remaining cells are split into
+      4-connected pieces. The piece holding the lowest cell index keeps
+      the id; the others get new ids in order of their lowest cell and
+      inherit the glued flag. Adding cells never splits a body, so a
+      stroke stays one body even where it is only diagonally connected.
+    - **Sleep.** A body is checked only if it moved, was created, split,
+      released or unglued, or a chunk it overlaps has work this tick. A
+      resting body costs nothing, and its chunks sleep as usual.
+    - The old `solid` class stays for truly static materials (none built
+      in yet; unknown IDs behave as solid).
   - **Units:** density is relative to water (1.0); times are in seconds
     of world time; rates are per world second.
   - **Water level** (T1): `WorldConfig::water_level` is a fraction of the
@@ -211,6 +252,7 @@ Every material has a **movement class**:
 | Class | Behaves like |
 |---|---|
 | solid | doesn't move |
+| rigid | moves as one body with the rest of its pour: sinks through lighter fluids, rises through heavier ones, rests on powders and bodies (§2.1 [Rigid bodies](#rigid-bodies)) |
 | powder | falls and piles up, with an angle of repose |
 | liquid | falls and spreads sideways |
 | buoyant | rises; "reverse falling sand" (bubbles) |
@@ -234,7 +276,7 @@ The v1 palette (D2):
 | Group | Materials |
 |---|---|
 | Water and air | water (the medium, the "empty" cell), air (above the surface) |
-| Substrates | sand, gravel, aquasoil (holds nutrients), rock (solid), driftwood (solid) |
+| Substrates | sand, gravel, aquasoil (holds nutrients), rock (rigid), driftwood (rigid, lighter than water) |
 | Food | flakes (float, then sink), sinking pellets, bloodworms (sink fast), algae wafers (for bottom feeders) |
 | Fertilisers | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), CO₂ (bubbles that dissolve into the CO₂ field and boost plant growth) |
 | Life | seeds and cuttings (become plants), moss (grows on rock and wood), algae (nuisance; grows with excess light and nutrients), eggs (one material per breeding species, which hatches into fry) |
@@ -342,6 +384,10 @@ Without them it wilts and drops dead plant matter.
   - **pour** the selected material: left-drag, with the scroll wheel
     setting brush size;
   - **scoop**: erase cells with right-drag;
+  - **glue** (D17): click or drag over rigid bodies to glue them in place
+    (static) or free them. The first body a stroke touches is toggled and
+    sets the way for the rest of the stroke. Glued cells are drawn with a
+    subtle amber cast;
   - **net**: pick up and move a creature;
   - **inspect**: show a creature's card and name it.
 
@@ -1036,6 +1082,26 @@ Each package depends only on the packages before it.
     make;
   - a manual checklist (mouse and trackpad) in the PR;
   - CPU stays ≤ 15% during a scripted 10 s continuous pour.
+- [x] **T4b Rigid bodies and the glue tool** (D17). The `rigid` movement
+  class (rock), the body table, body motion, splitting and holding
+  (§2.1 [Rigid bodies](#rigid-bodies)); the glue tool in
+  `desktank_sim::tools` with the palette slot and key 0 in
+  `desktank window`; the glued shade in the palette (no new texture or
+  channel, WebGL2-safe); `glued` in input scripts; one body per stroke on
+  the web. *Accept:*
+  - a rock body sinks through water as one piece, keeping its shape and
+    moving at most a row per tick, and comes to rest on sand or the
+    floor;
+  - mass is conserved while bodies sink;
+  - a glued body stays put while the water and sand under it are
+    scooped, and drops once unglued;
+  - scooping a rock in half gives two bodies that move independently;
+  - same seed and input give the same state hash, and a settled scene
+    with bodies reaches 0 awake chunks;
+  - the T1 bench budgets still hold, with a resting-bodies case in the
+    criterion bench;
+  - a GIF in the PR of a rock sinking as one piece and a glued one
+    hanging in place.
 - [ ] **T5 Materials, reactions and fields.** The reaction table; the
   nutrient, CO₂ and light fields; water current from a filter-outlet
   placeable and a bubbler placeable (which emits bubbles); food types;
@@ -1293,7 +1359,7 @@ Each package depends only on the packages before it.
 ### Suggested order
 
 1. F1, then P1 and T1 in parallel.
-2. T2, T3, then T4 to T10 in order. WB1 slots in after T3, WB2 after
+2. T2, T3, then T4, T4b and T5 to T10 in order. WB1 slots in after T3, WB2 after
    T4, and WB3 and WB4 after T8.
 3. O3, then O1-Mac, then O2, then O5.
 4. W1, then S3, then S2, then the rest.
@@ -1339,6 +1405,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D14 | **No code signing** for now. |
 | D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal. |
 | D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
+| D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole without rotating and rests on substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
