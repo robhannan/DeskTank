@@ -1,5 +1,6 @@
 //! Starting scenes shared by `desktank window` and `desktank bench`.
 
+use desktank_sim::species::Zone;
 use desktank_sim::{Brush, MAX_CREATURES, MaterialId, Rect, World, WorldError};
 
 /// A built-in material's ID. The built-in table always has these.
@@ -47,7 +48,7 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
 }
 
 /// Adds `count` creatures (stopping at [`MAX_CREATURES`]), cycling through the
-/// species, each placed at a seeded spot in the middle of its zone (or the
+/// fish species, each placed at a seeded spot in the middle of its zone (or the
 /// nearest free water). Returns how many were added.
 ///
 /// # Errors
@@ -55,7 +56,12 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
 /// Returns an error if the world rejects a creature for a reason other
 /// than having no room at its spot.
 pub fn stock(world: &mut World, count: usize, seed: u64) -> anyhow::Result<usize> {
-    let species: Vec<_> = world.species().iter().map(|s| s.id).collect();
+    let species: Vec<_> = world
+        .species()
+        .iter()
+        .filter(|s| s.zone != Zone::Surfaces)
+        .map(|s| s.id)
+        .collect();
     if species.is_empty() {
         return Ok(0);
     }
@@ -116,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn stock_adds_every_species_up_to_the_cap() {
+    fn stock_adds_every_fish_species_up_to_the_cap() {
         let config = WorldConfig {
             width: 320,
             height: 180,
@@ -133,7 +139,7 @@ mod tests {
                     .iter()
                     .filter(|c| c.species() == s.id)
                     .count(),
-                10
+                if s.zone == Zone::Surfaces { 0 } else { 10 }
             );
         }
         assert_eq!(stock(&mut world, 1000, 7).unwrap(), MAX_CREATURES - 30);

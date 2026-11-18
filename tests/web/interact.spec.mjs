@@ -325,6 +325,7 @@ test("settings persist across reloads", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.desktank.grid[0])).toBe(scale);
   await page.locator("#set-fps").selectOption("15");
   await page.locator("#set-field").selectOption("co2");
+  await page.getByLabel("Fish avoid the pointer").check();
   await page.locator("#set-stats").uncheck();
   await page.locator("#seed").fill("42");
   await page.locator("#seed").dispatchEvent("change");
@@ -339,6 +340,7 @@ test("settings persist across reloads", async ({ page }) => {
     fps: "15",
     field: "co2",
     stats: false,
+    avoidCursor: true,
     seed: 42,
     radius: 7,
   });

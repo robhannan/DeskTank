@@ -70,7 +70,7 @@ struct WindowArgs {
     /// Local time of day to light the tank for, as HH:MM (default 12:00).
     #[arg(long, value_name = "HH:MM", value_parser = capture::parse_time)]
     time: Option<u16>,
-    /// Stock the tank with this many creatures (every species in turn).
+    /// Stock the tank with this many fish (every fish species in turn).
     #[arg(long, value_name = "N", default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=60))]
     fish: u16,
 }
@@ -80,7 +80,7 @@ struct BenchArgs {
     /// Length of the run in seconds of wall time.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
     seconds: u64,
-    /// Creatures swimming in the tank (every species in turn; SPEC §6.1's
+    /// Fish swimming in the tank (every fish species in turn; SPEC §6.1's
     /// reference tank has about 30).
     #[arg(long, value_name = "N", default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=60))]
     fish: u16,

@@ -38,10 +38,11 @@ pub enum Zone {
     Mid,
     /// Near the floor.
     Bottom,
+    /// Submerged faces of hardscape, plants and tank walls.
+    Surfaces,
 }
 
-/// How a species gets on with others (SPEC §2.4). Data only until
-/// schooling (T7b) and territories need it.
+/// How a species gets on with others (SPEC §2.4). Schoolers follow their own kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Temperament {
@@ -174,6 +175,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/neon_tetra.toml"),
     include_str!("../../../assets/species/corydoras.toml"),
     include_str!("../../../assets/species/betta.toml"),
+    include_str!("../../../assets/species/nerite.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -423,8 +425,8 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 3);
-        for name in ["neon_tetra", "corydoras", "betta"] {
+        assert_eq!(t.len(), 4);
+        for name in ["neon_tetra", "corydoras", "betta", "nerite"] {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert!(!s.diet.is_empty(), "{name} eats something");
             assert!(s.sprite.frames.len() >= 2, "{name} animates");

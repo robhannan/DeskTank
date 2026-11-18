@@ -139,3 +139,10 @@ fn planted_scene_matches_reference_at_four_times_of_day() {
 fn creatures_scene_matches_reference() {
     check("creatures");
 }
+
+/// Turned crawlers (T7b): nerites with their feet on a rock pillar, under
+/// its overhanging arm and on both panes of glass.
+#[test]
+fn climbing_scene_matches_reference() {
+    check("climbing");
+}

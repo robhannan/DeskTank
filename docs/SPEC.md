@@ -430,7 +430,9 @@ target computes the same bits.
   - schooling for schoolers;
   - zone preference;
   - bottom-walking for corydoras and shrimp;
-  - surface-grazing for snails on glass, rock and plants;
+  - surface-grazing for snails on glass, rock and plants, turned in
+    quarter turns so the foot rests on the face they hold (walls,
+    overhangs), with the collision box turned too;
   - surfacing for frogs;
   - finding and eating food cells, and grazing algae and detritus (the
     clean-up crew);
@@ -1433,7 +1435,7 @@ Each package depends only on the packages before it.
     its frame cap, and it draws nothing on battery or while hidden;
   - with sway off, a settled planted tank draws no extra frames (a
     frame-count test).
-- [ ] **T7 Creatures.** Species TOML (including depth and surface
+- [x] **T7 Creatures.** Species TOML (including depth and surface
   needs), the sprite atlas pipeline with placeholder art (D11), steering
   (wander, schooling, zones, bottom-walking, surface-grazing,
   surfacing), collision with cells, eating food cells, grazing algae and
@@ -1444,6 +1446,22 @@ Each package depends only on the packages before it.
   - each species spends ≥ 70% of its time in its zone;
   - food is found and eaten within 10 s of simulated time;
   - a GIF is in the PR.
+
+  *Done:* Species TOML selects the movement and diet. Tetras follow the oldest
+  unheld schoolmate and separate from close neighbours. Corydoras follow
+  one-cell substrate steps. Nerites trace submerged contours, including the
+  underside of rock, turning in quarter turns so the foot rests on the face
+  they hold (at outside corners, held only diagonally, they keep their turn
+  until a face is found); the body box turns with the sprite, and the turn
+  is sim state. Air-breathing bettas return to the air interface every
+  20 simulated seconds and skim there for 3 seconds. Grazing a cell gives
+  the same satiety as one food cell. Cursor avoidance starts off in both hosts.
+  In seeded tests the school met the spacing limit on 97.0% of ticks,
+  minimum zone occupancy was 96.4%, food was eaten within 7.85 s, and all
+  four species cleared the 100,000-tick collision run. On an M3 Max the
+  30-fish settled and active-grazing cases took 7.37 and 28.04 µs/tick.
+  Rendering the settled 30-fish tank at 2560×1440 used 0.72% of one core.
+
 - [ ] **T8 Persistence.** The save envelope and format, ownership lock,
   atomic writes keeping the last 3, autosave and save on exit (§2.6).
   *Accept:*

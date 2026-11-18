@@ -161,6 +161,7 @@ struct Running {
     was_visible: bool,
     /// Pointer position in physical pixels.
     cursor: Option<(f64, f64)>,
+    avoid_cursor: bool,
     tools: Tools,
     palette: Vec<PaletteItem>,
     /// Trackpad scroll (pixels) not yet turned into a brush-size step.
@@ -221,6 +222,7 @@ impl Running {
             hidden: Hidden::default(),
             was_visible: true,
             cursor: None,
+            avoid_cursor: false,
             tools,
             palette,
             scroll: 0.0,
@@ -367,6 +369,8 @@ impl Running {
             // A new tool clears the last inspection from the title.
             self.window.set_title("DeskTank");
         }
+        let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
+        self.tank.world_mut().set_creature_cursor(pointer);
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
             cell: (x, y),
             radius,
@@ -444,6 +448,12 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
+                    Key::Character(c) if c.eq_ignore_ascii_case("a") && !event.repeat => {
+                        s.avoid_cursor = !s.avoid_cursor;
+                        let state = if s.avoid_cursor { "on" } else { "off" };
+                        s.window
+                            .set_title(&format!("DeskTank — cursor avoidance {state}"));
+                    }
                     Key::Character(c) if c.eq_ignore_ascii_case("f") => {
                         let next = match s.tank.field_overlay() {
                             None => Some(FieldKind::Nutrient),
