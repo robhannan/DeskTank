@@ -1370,7 +1370,7 @@ Each package depends only on the packages before it.
   follow the 20 Hz tick until something moves between ticks, so they are
   50 ms apart. The renderer now shades in sRGB-encoded space on every
   target, so sRGB canvases and windows match the `Rgba8Unorm` captures.)*
-- [ ] **WB2 Web interaction and in-page controls** (after T4). The
+- [x] **WB2 Web interaction and in-page controls** (after T4). The
   interact tools with pointer and touch, the in-page menu, the settings
   panel (`localStorage`) and per-device cell scale (§3.5). *Accept:*
   - Playwright scripts each tool with mouse and with emulated touch,
@@ -1379,6 +1379,13 @@ Each package depends only on the packages before it.
   - settings persist across reloads;
   - a manual check on the reference phone is in the PR, within the
     phone budget (§6.1).
+
+  *(WB2: the palette is DOM buttons from `Tools::palette` rather than the
+  shader strip, for touch-sized targets and a keyboard radio group; the
+  shader draws the brush outline. Touch strokes start once a finger moves
+  8 CSS px, so a long-press (500 ms) or a second finger never pours first;
+  a tap uses the tool once. The reference-phone check is left to the
+  owner, see PROGRESS.)*
 - [ ] **WB3 Web persistence and ownership** (after T8). IndexedDB saves
   using the §2.6 format, save on hide and `pagehide`, autosave,
   `navigator.storage.persist()`, export/import, Web Locks ownership with
