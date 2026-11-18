@@ -1,0 +1,67 @@
+# A Thai micro crab, Limnopilos naiyanetri (placeholder art, D11): a tiny
+# translucent grey-brown crab, its carapace well under 1 cm and its hairy
+# legs spanning about 1.5–2 cm, the smallest creature here. It clings
+# to plants, roots, wood and rock (and walks the bottom) as a surface
+# crawler, and filter-feeds: its leg fans take drifting food and mulm from
+# two cells away.
+id = 7
+name = "thai_micro_crab"
+zone = "surfaces"
+depth = [0.0, 1.0]
+min_depth = 6
+# Real-world body length in cm (here the carapace), at two cells per cm.
+length_cm = 0.5
+temperament = "peaceful"
+speed = 1.5
+max_speed = 1.5
+reach = 2
+diet = ["flake_food", "detritus"]
+
+[sprite]
+# Left-right symmetric, so it reads as walking sideways whichever way it
+# goes; two texels per cell side. A carapace 2 texels across (0.5 cm at
+# two cells per cm) with spindly legs spanning the 6x6-texel (3x3-cell,
+# 1.5 cm) sprite, odd in cells as a crawler's body must be. Four frames:
+# the hairy legs step and flicker.
+colours = { l = "#8a7b68", h = "#b3a48e", c = "#a39380", k = "#3a3028" }
+frames = [
+    [
+        "l....l",
+        ".l..l.",
+        "hlkklh",
+        "..cc..",
+        ".l..l.",
+        "l....l",
+    ],
+    [
+        "h....h",
+        ".l..l.",
+        "lhkkhl",
+        "..cc..",
+        ".h..h.",
+        ".l..l.",
+    ],
+    [
+        "l....l",
+        ".h..h.",
+        "lhkkhl",
+        "..cc..",
+        ".l..l.",
+        "l....l",
+    ],
+    [
+        "h....h",
+        ".l..l.",
+        "hlkklh",
+        "..cc..",
+        ".h..h.",
+        ".l..l.",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "l...l",
+    "hlklh",
+    ".lcl.",
+    "l...l",
+]
