@@ -8,6 +8,7 @@ use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, PaletteLayout};
 use crate::layout::Layout;
 use crate::palette;
+use crate::plants::{self, PlantTints};
 use crate::sprites::{self, Atlas};
 use crate::{Gpu, timer::GpuTimer};
 
@@ -49,6 +50,9 @@ pub struct Renderer {
     fields_size: (u32, u32),
     /// Field version last uploaded.
     fields_version: Option<u64>,
+    /// Health tint per plant id (T6b), and its CPU copy.
+    plants: wgpu::Texture,
+    plant_tints: PlantTints,
     /// Uniform bytes last written.
     view: Vec<u8>,
     scratch: Vec<u8>,
@@ -69,11 +73,14 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rg8Unorm,
+            // Material, variant and the state's two bytes (a plant id).
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
         let palette = create_palette(gpu, world);
+        let plant_tints = PlantTints::default();
+        let plants = create_plants(gpu, &plant_tints);
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
         let atlas = Atlas::build(world.species());
@@ -95,7 +102,7 @@ impl Renderer {
             d,
             &bind_layout,
             &view_buffer,
-            [&cells, &palette, &hud, &fields, &atlas_texture],
+            [&cells, &palette, &hud, &fields, &atlas_texture, &plants],
         );
         let (pipeline, sprite_pipeline) = create_pipelines(d, &bind_layout, format);
         Self {
@@ -115,6 +122,8 @@ impl Renderer {
             fields,
             fields_size,
             fields_version: None,
+            plants,
+            plant_tints,
             view: Vec::new(),
             scratch: Vec::new(),
         }
@@ -153,7 +162,7 @@ impl Renderer {
                 scratch,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(side(r.x1 - r.x0) * 2),
+                    bytes_per_row: Some(side((r.x1 - r.x0) * grid::TEXEL_BYTES)),
                     rows_per_image: None,
                 },
                 wgpu::Extent3d {
@@ -163,6 +172,40 @@ impl Renderer {
                 },
             );
         });
+    }
+
+    /// Uploads the rows of the plant tint texture whose plants changed
+    /// since the last upload. Returns how many bytes it wrote.
+    pub fn upload_plants(&mut self, gpu: &Gpu, world: &World) -> usize {
+        let texture = &self.plants;
+        let mut bytes = 0;
+        self.plant_tints.update(world, |row, texels| {
+            bytes += texels.len();
+            gpu.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: side(row),
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(side(texels.len())),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: side(plants::SIDE),
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        });
+        bytes
     }
 
     /// Writes one sprite instance per creature, if they changed since the
@@ -381,6 +424,37 @@ fn create_palette(gpu: &Gpu, world: &World) -> wgpu::Texture {
     palette
 }
 
+/// The per-plant tint texture, filled from `tints` (untinted at first).
+fn create_plants(gpu: &Gpu, tints: &PlantTints) -> wgpu::Texture {
+    let n = side(plants::SIDE);
+    let size = wgpu::Extent3d {
+        width: n,
+        height: n,
+        depth_or_array_layers: 1,
+    };
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("plants"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        texture.as_image_copy(),
+        tints.image(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(n * 4),
+            rows_per_image: None,
+        },
+        size,
+    );
+    texture
+}
+
 /// The field-overlay texture: one RGBA texel per field cell.
 fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32)) {
     let field = world.field(FieldKind::Nutrient);
@@ -403,7 +477,7 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32))
 }
 
 /// The one bind group layout both pipelines share: the view uniform and
-/// five textures (cells, palette, HUD, fields, sprite atlas).
+/// six textures (cells, palette, HUD, fields, sprite atlas, plant tints).
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
     let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -434,16 +508,17 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
             texture_entry(3),
             texture_entry(4),
             texture_entry(5),
+            texture_entry(6),
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–5.
+/// The bind group: `view` at binding 0, then `textures` at 1–6.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 5],
+    textures: [&wgpu::Texture; 6],
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {

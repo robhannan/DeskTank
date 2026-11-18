@@ -23,6 +23,8 @@
 //! material = "sand"  # a material name from assets/materials
 //! brush = "pour"     # "pour" fills only fluid cells, "replace" overwrites (default "pour")
 //! glued = true       # a rigid material's body is glued in place (default false)
+//! # plant = "rotala" # instead of a material: pour this plant species' seeds
+//!                    # or cuttings (assets/plants), as the palette's plants slot does
 //!
 //! [[place]]
 //! tick = 0           # tick to place on (default 0)
@@ -74,6 +76,9 @@ pub enum ScriptError {
     /// A `[[creature]]` entry names a species the table doesn't have.
     #[error("unknown species {0:?}")]
     UnknownSpecies(String),
+    /// A pour names a plant species the table doesn't have.
+    #[error("unknown plant species {0:?}")]
+    UnknownPlantSpecies(String),
     /// A `[[creature]]` entry asks for more creatures than a tank holds.
     #[error("count {0} is more than a tank holds")]
     TooMany(u32),
@@ -168,8 +173,12 @@ pub struct Pour {
     /// Disc radius in cells.
     #[serde(default = "two")]
     pub radius: u32,
-    /// Material name.
+    /// Material name (unused when `plant` is set).
+    #[serde(default)]
     pub material: String,
+    /// Plant species name: pour its seeds or cuttings instead.
+    #[serde(default)]
+    pub plant: Option<String>,
     /// How the disc treats the cells it covers.
     #[serde(default)]
     pub brush: BrushName,
@@ -331,6 +340,20 @@ impl Player<'_> {
             let Some(i) = tick.checked_sub(p.tick).filter(|&i| i < p.repeat) else {
                 continue;
             };
+            let x =
+                p.x.saturating_add(p.dx.saturating_mul(i64::try_from(i).unwrap_or(i64::MAX)));
+            // Clamped far outside any grid, so `paint`'s clipping maths can't
+            // overflow; a disc there misses the grid either way.
+            let far = 4 * i64::try_from(crate::MAX_SIDE).unwrap_or(i64::MAX / 8);
+            let (x, y) = (x.clamp(-far, far), p.y.clamp(-far, far));
+            if let Some(name) = &p.plant {
+                let species = world
+                    .plant_species()
+                    .id(name)
+                    .ok_or_else(|| ScriptError::UnknownPlantSpecies(name.clone()))?;
+                world.paint_plant(x, y, p.radius, species)?;
+                continue;
+            }
             let material = world
                 .materials()
                 .id(&p.material)
@@ -339,12 +362,6 @@ impl Player<'_> {
                 BrushName::Pour => Brush::Pour,
                 BrushName::Replace => Brush::Replace,
             };
-            let x =
-                p.x.saturating_add(p.dx.saturating_mul(i64::try_from(i).unwrap_or(i64::MAX)));
-            // Clamped far outside any grid, so `paint`'s clipping maths can't
-            // overflow; a disc there misses the grid either way.
-            let far = 4 * i64::try_from(crate::MAX_SIDE).unwrap_or(i64::MAX / 8);
-            let (x, y) = (x.clamp(-far, far), p.y.clamp(-far, far));
             let (_, joined) = world.paint_into(x, y, p.radius, material, brush, *body)?;
             *body = joined;
             if p.glued

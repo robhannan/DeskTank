@@ -47,6 +47,8 @@ radius = 3         # disc radius in cells (default 2)
 material = "sand"  # a material name from assets/materials
 brush = "pour"     # "pour" fills only fluid cells; "replace" overwrites (default "pour")
 glued = true       # glue the rigid body this pour makes (rock), so it never moves (default false)
+# plant = "rotala" # instead of a material: pour this plant species' seeds or cuttings
+                   # (assets/plants), as the palette's plants slot does (T6b)
 
 [[place]]          # any number of these: one device each
 tick = 0           # tick to place on (default 0)
@@ -74,4 +76,4 @@ Water changes, placements, pours and creatures due on tick `t` are applied, in t
 
 - Linux CI renders on Mesa lavapipe (software Vulkan), macOS CI on Metal and Windows CI on WARP. With `CI` set, a missing GPU adapter fails the test; locally it is skipped with a message.
 - After a deliberate visual change, update the references and commit them: `DESKTANK_BLESS=1 cargo test -p desktank --test render`. Look at the new PNGs before committing.
-- To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it. `check_at("<name>", "HH:MM")` captures it lit for a time of day against `<name>_HHMM.png`; the `planted` scene (T6: cuttings, seeds and moss grown for 6 minutes) is checked at 00:00, 06:30, 12:00 and 20:30. The `creatures` scene captures a tetra school, bottom-walking corydoras, surfacing bettas and a nerite grazing a rock after 30 s. The `climbing` scene shows nerites turned onto a rock pillar, upside down under its arm and on both panes of glass.
+- To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it. `check_at("<name>", "HH:MM")` captures it lit for a time of day against `<name>_HHMM.png`; the `planted` scene (T6: cuttings, seeds and moss grown for 6 minutes; from T6b each is a plant of a species) is checked at 00:00, 06:30, 12:00 and 20:30. The `creatures` scene captures a tetra school, bottom-walking corydoras, surfacing bettas and a nerite grazing a rock after 30 s. The `climbing` scene shows nerites turned onto a rock pillar, upside down under its arm and on both panes of glass.

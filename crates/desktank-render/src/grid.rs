@@ -1,5 +1,7 @@
-//! The cell grid on the GPU: an `Rg8Unorm` texture of (material, variant),
-//! updated from the world's dirty rectangles.
+//! The cell grid on the GPU: an `Rgba8Unorm` texture of (material,
+//! variant, state low byte, state high byte), updated from the world's
+//! dirty rectangles. The state bytes give the shader a plant cell's plant
+//! id (T6b, SPEC §2.7), which it looks up in the per-plant tint texture.
 
 use desktank_sim::{CHUNK_SIZE, Cell, Rect};
 
@@ -59,14 +61,19 @@ impl DirtyRects {
     }
 }
 
+/// Bytes per cell texel.
+pub const TEXEL_BYTES: usize = 4;
+
 /// Packs the cells of `r` (row-major, `width` cells per grid row) as
-/// (material, variant) byte pairs into `out`, replacing its contents.
+/// (material, variant, state low, state high) texels into `out`, replacing
+/// its contents.
 pub fn pack(cells: &[Cell], width: usize, r: Rect, out: &mut Vec<u8>) {
     out.clear();
-    out.reserve(r.area() * 2);
+    out.reserve(r.area() * TEXEL_BYTES);
     for y in r.y0..r.y1 {
         for c in &cells[y * width + r.x0..y * width + r.x1] {
-            out.extend_from_slice(&[c.material.0, c.variant]);
+            let [lo, hi] = c.state.to_le_bytes();
+            out.extend_from_slice(&[c.material.0, c.variant, lo, hi]);
         }
     }
 }
@@ -104,13 +111,19 @@ mod tests {
     }
 
     #[test]
-    fn packs_material_and_variant_pairs() {
+    fn packs_material_variant_and_state() {
         let w = 3;
         let cells: Vec<Cell> = (0..9u8)
-            .map(|i| Cell::new(MaterialId(i), 100 + i))
+            .map(|i| Cell {
+                state: u16::from(i) * 0x101,
+                ..Cell::new(MaterialId(i), 100 + i)
+            })
             .collect();
         let mut out = Vec::new();
         pack(&cells, w, rect(1, 1, 3, 3), &mut out);
-        assert_eq!(out, [4, 104, 5, 105, 7, 107, 8, 108]);
+        assert_eq!(
+            out,
+            [4, 104, 4, 4, 5, 105, 5, 5, 7, 107, 7, 7, 8, 108, 8, 8]
+        );
     }
 }

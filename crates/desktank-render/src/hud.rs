@@ -10,7 +10,7 @@
 //! exactly as it is drawn.
 
 use desktank_sim::tools::{PaletteItem, Tool};
-use desktank_sim::{MaterialTable, Placeable, SpeciesTable};
+use desktank_sim::{MaterialTable, Placeable, PlantSpeciesId, PlantSpeciesTable, SpeciesTable};
 
 use crate::Layout;
 
@@ -54,6 +54,13 @@ const OUTLET: [&str; 8] = [
 ];
 const BUBBLE: [u8; 3] = [0xe8, 0xf6, 0xff];
 
+/// The plants slot: a sprout, `#` in the picked species' colour, `s` its
+/// stem, `o` a seed.
+const SPROUT: [&str; 8] = [
+    "...##...", "..#s##..", ".##s.#..", "...s....", ".#.s.##.", "..#s#...", "...s....", ".oo.oo..",
+];
+const SEED: [u8; 3] = [0xc8, 0xa8, 0x5a];
+
 /// The palette as the host shows it: the group tabs, the open group's items
 /// and the selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +75,8 @@ pub struct Palette {
     /// The selection: its group's tab and its index in that group. Framed
     /// in the item row while its group is open, marked on its tab when not.
     pub selected: Option<(usize, usize)>,
+    /// The plant species the plants slot pours, which colours its icon.
+    pub plant: Option<PlantSpeciesId>,
 }
 
 /// The brush outline to draw: centre cell and radius, as
@@ -193,7 +202,13 @@ pub fn build(
     palette: &Palette,
     materials: &MaterialTable,
     species: &SpeciesTable,
+    plants: &PlantSpeciesTable,
 ) -> (Vec<u8>, (u32, u32)) {
+    let plant = palette
+        .plant
+        .and_then(|id| plants.get(id))
+        .or_else(|| plants.default_species())
+        .map(|s| (s.colour(), s.colours.stem[s.colours.stem.len() / 2]));
     let (w, h) = image_size(palette.tabs.len(), palette.items.len());
     let mut img = vec![0u8; (w * h * 4) as usize];
     let mut put = |x: u32, y: u32, c: [u8; 3]| {
@@ -232,11 +247,11 @@ pub fn build(
             }
             for y in 0..SLOT - 2 {
                 for x in 0..SLOT - 2 {
-                    put(
-                        x0 + 1 + x,
-                        top + 1 + y,
-                        slot_pixel(*item, materials, species, x, y),
-                    );
+                    let px = match item {
+                        PaletteItem::Tool(Tool::Plant) => sprout(plant, x, y),
+                        _ => slot_pixel(*item, materials, species, x, y),
+                    };
+                    put(x0 + 1 + x, top + 1 + y, px);
                 }
             }
             // A closed tab holding the selection: a mark on its bottom edge.
@@ -248,6 +263,17 @@ pub fn build(
         }
     }
     (img, (w, h))
+}
+
+/// Pixel `(x, y)` of the plants slot's face, in `colours` (leaf, stem).
+fn sprout(colours: Option<([u8; 3], [u8; 3])>, x: u32, y: u32) -> [u8; 3] {
+    let (leaf, stem) = colours.unwrap_or((ICON_FG, ICON_FG));
+    match SPROUT[y as usize].as_bytes().get(x as usize) {
+        Some(b'#') => leaf,
+        Some(b's') => stem,
+        Some(b'o') => SEED,
+        _ => ICON_BG,
+    }
 }
 
 /// Pixel `(x, y)` of a slot's 8×8 face.
@@ -289,7 +315,9 @@ fn slot_pixel(
         }
         PaletteItem::Tool(t) => {
             let icon = match t {
-                Tool::Scoop | Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) => SCOOP,
+                Tool::Scoop | Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) | Tool::Plant => {
+                    SCOOP
+                }
                 Tool::Net => NET,
                 Tool::Inspect => INSPECT,
                 Tool::Glue => GLUE,
@@ -370,6 +398,7 @@ mod tests {
             [img[i], img[i + 1], img[i + 2], img[i + 3]]
         };
         let species = desktank_sim::SpeciesTable::builtin_for(&mats).unwrap();
+        let plants = PlantSpeciesTable::builtin_for(&mats).unwrap();
         let mut palette = Palette {
             tabs: vec![
                 PaletteItem::Tool(Tool::Scoop),
@@ -379,8 +408,9 @@ mod tests {
             open: 1,
             items: vec![PaletteItem::Material(sand), PaletteItem::Tool(Tool::Net)],
             selected: Some((1, 1)),
+            plant: None,
         };
-        let (img, (w, h)) = build(&palette, &mats, &species);
+        let (img, (w, h)) = build(&palette, &mats, &species, &plants);
         assert_eq!((w, h), (34, 23));
         let rgb = |x, y| {
             let p = px(&img, w, x, y);
@@ -399,7 +429,7 @@ mod tests {
 
         // Another group open: the selection marks its tab instead.
         palette.open = 2;
-        let (img, _) = build(&palette, &mats, &species);
+        let (img, _) = build(&palette, &mats, &species, &plants);
         assert_eq!(
             px(&img, w, 16, 10)[..3],
             SELECTED,
@@ -410,5 +440,17 @@ mod tests {
             FRAME,
             "nothing selected in this group"
         );
+
+        // The plants slot shows the picked species: the default, then moss.
+        palette.items = vec![PaletteItem::Tool(Tool::Plant)];
+        let leaf = |palette: &Palette| {
+            let (img, (w, _)) = build(palette, &mats, &species, &plants);
+            let p = px(&img, w, GAP + 1 + 3, ROW + GAP + 1);
+            [p[0], p[1], p[2]]
+        };
+        assert_eq!(leaf(&palette), plants.default_species().unwrap().colour());
+        palette.plant = plants.id("java_moss");
+        let moss = plants.get(palette.plant.unwrap()).unwrap();
+        assert_eq!(leaf(&palette), moss.colour());
     }
 }

@@ -127,3 +127,33 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   expect(await cells("liquid_fertiliser")).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test("the plants slot pours the species picked beside it", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  const tank = (f, ...a) => page.evaluate(([f, a]) => window.desktank.tank[f](...a), [f, a]);
+  const picker = page.locator("#plant-species");
+  const names = await tank("plantSpecies");
+  await expect(picker.locator("option")).toHaveCount(names.length);
+  // Picking a species selects the plants slot and colours its swatch.
+  await picker.selectOption({ label: "Java moss" });
+  const slot = page.getByRole("radio", { name: "Plants" });
+  await expect(slot).toHaveAttribute("aria-checked", "true");
+  const moss = names.findIndex((n) => n.startsWith("java_moss "));
+  expect(await tank("plantSpeciesSelected")).toBe(moss);
+  const swatch = await slot.locator("i").evaluate((el) => el.style.getPropertyValue("--c"));
+  const colours = await tank("paletteColours");
+  const entries = await tank("palette");
+  expect(swatch).toBe(colours[entries.indexOf("plant plants")]);
+  // A click pours its cuttings.
+  const canvas = page.locator("#tank");
+  await canvas.scrollIntoViewIfNeeded();
+  const b = await canvas.boundingBox();
+  await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
+  expect(await tank("materialCount", "cutting")).toBeGreaterThan(0);
+  // The pick survives a reset.
+  await page.getByRole("button", { name: "Reset" }).click();
+  await expect.poll(() => tank("plantSpeciesSelected")).toBe(moss);
+  await expect(picker).toHaveValue(String(moss));
+  expect(errors).toEqual([]);
+});
