@@ -1,0 +1,33 @@
+# A betta (placeholder art, D11): a labyrinth fish that keeps near the
+# surface and gulps air there. Eats flakes, bloodworms and pellets.
+id = 3
+name = "betta"
+zone = "surface"
+depth = [0.0, 0.3]
+min_depth = 16
+breathes_air = true
+temperament = "territorial"
+speed = 3.5
+max_speed = 8.0
+diet = ["flake_food", "bloodworm", "sinking_pellet"]
+
+[sprite]
+colours = { r = "#c4243a", m = "#7d1530", p = "#e85a6a", k = "#0c1016" }
+frames = [
+    [
+        "mm..r...",
+        "mmmrrr..",
+        "mmprrrrr",
+        "mmmrrrrk",
+        "mm.prrr.",
+        "m...p...",
+    ],
+    [
+        ".m..r...",
+        "mmmrrr..",
+        "mmprrrrr",
+        "mmmrrrrk",
+        ".m.prrr.",
+        "....p...",
+    ],
+]

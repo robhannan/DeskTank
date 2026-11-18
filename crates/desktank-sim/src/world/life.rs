@@ -41,6 +41,8 @@ const MIN_CURRENT: f32 = 0.25;
 
 const LIVING: u8 = 1;
 const DEVICE: u8 = 2;
+/// A material some species eats (T7).
+const FOOD: u8 = 4;
 /// A dense liquid such as water (not air).
 const WATERY: u8 = 8;
 /// Liquids at least this dense count as water for light and current.
@@ -145,6 +147,8 @@ pub(super) struct Life {
     flags: Vec<u8>,
     living: Registry,
     devices: Registry,
+    /// Food cells, for creatures to find (T7).
+    food: Registry,
     budget: usize,
     cursor: usize,
     stats: RandomTickStats,
@@ -182,6 +186,7 @@ impl Life {
         height: usize,
         chunks: usize,
         seed: u64,
+        foods: &[MaterialId],
     ) -> Self {
         let mut flags = vec![0u8; 256];
         // Unknown IDs behave as solid (see `World`), so they block light.
@@ -200,6 +205,9 @@ impl Life {
             if m.class == MovementClass::Liquid && m.density >= WATERY_DENSITY {
                 *f |= WATERY;
             }
+            if foods.contains(&m.id) {
+                *f |= FOOD;
+            }
         }
         let field = Field::new(width, height);
         let blocks = field.width() * field.height();
@@ -208,6 +216,7 @@ impl Life {
             flags,
             living: Registry::new(LIVING, chunks),
             devices: Registry::new(DEVICE, chunks),
+            food: Registry::new(FOOD, chunks),
             budget: RANDOM_TICK_BUDGET,
             cursor: 0,
             stats: RandomTickStats::default(),
@@ -246,6 +255,17 @@ impl Life {
         }
     }
 
+    /// Food cells in the tank (T7).
+    pub(super) fn food_cells(&self) -> usize {
+        self.food.total
+    }
+
+    /// The food cells' indices, one list per chunk. Refreshed after each
+    /// tick's movement, so a cell may have been eaten since: check it.
+    pub(super) fn food_lists(&self) -> &[Vec<u32>] {
+        &self.food.lists
+    }
+
     fn chance(&mut self, p: f64) -> bool {
         f64::from(self.rng.next_u32()) < p * 4_294_967_296.0
     }
@@ -264,6 +284,7 @@ impl World {
         ecology: Ecology,
     ) -> Result<Self, WorldError> {
         let mut w = Self::new(config, materials)?;
+        let foods = super::Creatures::foods(w.species());
         w.life = Life::new(
             &w.materials,
             ecology,
@@ -271,6 +292,7 @@ impl World {
             w.height,
             w.chunks.len(),
             w.seed,
+            &foods,
         );
         w.init_life();
         Ok(w)
@@ -477,6 +499,8 @@ impl World {
         {
             life.devices_dirty = true;
         }
+        life.food
+            .refresh(ci, r, self.width, &self.cells, &life.flags);
         let fw = life.light.width();
         for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
             for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {

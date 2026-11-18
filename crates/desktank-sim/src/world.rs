@@ -16,11 +16,15 @@ use crate::hash::Fnv64;
 use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, MovementClass};
 
 use crate::rng::{chunk_stream, splitmix64};
+use crate::species::SpeciesId;
 use bodies::Body;
 pub use bodies::{BodyId, BodyInfo};
 
+mod creatures;
 mod life;
 
+use creatures::Creatures;
+pub use creatures::{Creature, CreatureId, MAX_CREATURES, UnmetNeed};
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
 
@@ -85,6 +89,18 @@ pub enum WorldError {
     /// The built-in reaction table or field settings are invalid.
     #[error("ecology: {0}")]
     Ecology(String),
+    /// The built-in species are invalid.
+    #[error("species: {0}")]
+    Species(String),
+    /// The species ID isn't in the table.
+    #[error("unknown species id {}", .0.0)]
+    UnknownSpecies(SpeciesId),
+    /// The tank already holds the most creatures it may.
+    #[error("the tank is full ({0} creatures)")]
+    PopulationCap(usize),
+    /// There is no free water near the spot to put a creature in.
+    #[error("no room for a creature there")]
+    NoRoom,
     /// The cell is outside the grid.
     #[error("cell ({x}, {y}) is outside the grid")]
     OutOfBounds {
@@ -176,6 +192,8 @@ pub struct World {
     next_body: u16,
     /// Random ticks, devices and fields (T5).
     life: Life,
+    /// Species and creatures (T7).
+    creatures: Creatures,
 }
 
 impl World {
@@ -238,34 +256,23 @@ impl World {
             }
         }
 
-        let chunks_x = width.div_ceil(CHUNK_SIZE);
-        let chunks_y = height.div_ceil(CHUNK_SIZE);
-        let mut chunks = Vec::with_capacity(chunks_x * chunks_y);
-        for cy in 0..chunks_y {
-            for cx in 0..chunks_x {
-                let bounds = Rect {
-                    x0: cx * CHUNK_SIZE,
-                    y0: cy * CHUNK_SIZE,
-                    x1: ((cx + 1) * CHUNK_SIZE).min(width),
-                    y1: ((cy + 1) * CHUNK_SIZE).min(height),
-                };
-                chunks.push(Chunk {
-                    bounds,
-                    work: Rect::EMPTY,
-                    work_next: Rect::EMPTY,
-                    changed: Rect::EMPTY,
-                    changed_next: Rect::EMPTY,
-                    idle_ticks: SLEEP_TICKS,
-                    awake: false,
-                });
-            }
-        }
+        let (chunks_x, chunks_y) = (width.div_ceil(CHUNK_SIZE), height.div_ceil(CHUNK_SIZE));
+        let chunks = asleep_chunks(width, height);
         let rngs = (0..chunks.len() as u64)
             .map(|c| chunk_stream(seed, 0, c))
             .collect();
         let ecology =
             Ecology::builtin_for(&materials).map_err(|e| WorldError::Ecology(e.to_string()))?;
-        let life = Life::new(&materials, ecology, width, height, chunks.len(), seed);
+        let (creatures, foods) = Creatures::builtin(&materials, water, air)?;
+        let life = Life::new(
+            &materials,
+            ecology,
+            width,
+            height,
+            chunks.len(),
+            seed,
+            &foods,
+        );
 
         let mut world = Self {
             width,
@@ -287,6 +294,7 @@ impl World {
             bodies: BTreeMap::new(),
             next_body: 1,
             life,
+            creatures,
         };
         world.init_life();
         Ok(world)
@@ -379,8 +387,8 @@ impl World {
         counts
     }
 
-    /// A stable 64-bit hash of the size, tick, every cell and the nutrient
-    /// and CO₂ fields.
+    /// A stable 64-bit hash of the size, tick, every cell, the nutrient
+    /// and CO₂ fields and the creatures.
     #[must_use]
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::new();
@@ -392,6 +400,7 @@ impl World {
             h.write(&[c.material.0, c.variant, s0, s1]);
         }
         self.hash_life(&mut h);
+        self.hash_creatures(&mut h);
         h.finish()
     }
 
@@ -568,6 +577,7 @@ impl World {
             self.last_change_tick = self.tick;
         }
         self.after_tick();
+        self.update_creatures();
     }
 
     fn check_material(&self, material: MaterialId) -> Result<(), WorldError> {
@@ -854,6 +864,32 @@ impl World {
             }
         }
     }
+}
+
+/// Every chunk of a `width × height` grid, row-major, asleep.
+fn asleep_chunks(width: usize, height: usize) -> Vec<Chunk> {
+    let (chunks_x, chunks_y) = (width.div_ceil(CHUNK_SIZE), height.div_ceil(CHUNK_SIZE));
+    let mut chunks = Vec::with_capacity(chunks_x * chunks_y);
+    for cy in 0..chunks_y {
+        for cx in 0..chunks_x {
+            let bounds = Rect {
+                x0: cx * CHUNK_SIZE,
+                y0: cy * CHUNK_SIZE,
+                x1: ((cx + 1) * CHUNK_SIZE).min(width),
+                y1: ((cy + 1) * CHUNK_SIZE).min(height),
+            };
+            chunks.push(Chunk {
+                bounds,
+                work: Rect::EMPTY,
+                work_next: Rect::EMPTY,
+                changed: Rect::EMPTY,
+                changed_next: Rect::EMPTY,
+                idle_ticks: SLEEP_TICKS,
+                awake: false,
+            });
+        }
+    }
+    chunks
 }
 
 /// `256 / tan(repose)`: the mean sideways run per row of drop, in 1/256

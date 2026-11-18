@@ -210,6 +210,32 @@ fn inspect_reports_the_cell_and_net_changes_nothing() {
 }
 
 #[test]
+fn creatures_are_added_inspected_netted_and_lifted_out() {
+    let mut t = paused();
+    t.select(slot(&t, "creature neon_tetra"));
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.creatures(), 1);
+    // Inspect names the species, the creature and the cell under it.
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.take_inspection(), "creature neon_tetra 1 water 60 40");
+    // The net carries it; let go in the water it stays, above it it's out.
+    t.select(slot(&t, "tool net"));
+    down(&mut t, PRIMARY, 60, 40);
+    drag(&mut t, 80, 30);
+    assert_eq!(t.pointer_up(PRIMARY), 0);
+    assert_eq!(t.creatures(), 1);
+    down(&mut t, PRIMARY, 80, 30);
+    drag(&mut t, 80, 0);
+    assert_eq!(t.pointer_up(PRIMARY), 1, "lifted out");
+    assert_eq!(t.creatures(), 0);
+    // Adding or removing a creature asks for a frame even while paused.
+    assert_ne!(t.frame(0.0) & FRAME_WANTED, 0);
+}
+
+#[test]
 fn long_press_inspects_and_keeps_the_selection() {
     let mut t = paused();
     let gravel = slot(&t, "material gravel");

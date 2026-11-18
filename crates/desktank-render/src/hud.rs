@@ -7,7 +7,7 @@
 //! with [`PaletteLayout`], which places it exactly as it is drawn.
 
 use desktank_sim::tools::{PaletteItem, Tool};
-use desktank_sim::{MaterialTable, Placeable};
+use desktank_sim::{MaterialTable, Placeable, SpeciesTable};
 
 use crate::Layout;
 
@@ -141,7 +141,11 @@ pub fn image_size(slots: usize) -> (u32, u32) {
 /// Draws the palette as RGBA rows (alpha 255 = drawn, 0 = transparent).
 /// Slots that don't fit [`MAX_SIZE`] are left out.
 #[must_use]
-pub fn build(palette: &Palette, materials: &MaterialTable) -> (Vec<u8>, (u32, u32)) {
+pub fn build(
+    palette: &Palette,
+    materials: &MaterialTable,
+    species: &SpeciesTable,
+) -> (Vec<u8>, (u32, u32)) {
     let (w, h) = image_size(palette.items.len());
     let mut img = vec![0u8; (w * h * 4) as usize];
     let mut put = |x: u32, y: u32, c: [u8; 3]| {
@@ -173,7 +177,11 @@ pub fn build(palette: &Palette, materials: &MaterialTable) -> (Vec<u8>, (u32, u3
         }
         for y in 0..SLOT - 2 {
             for x in 0..SLOT - 2 {
-                put(x0 + 1 + x, GAP + 1 + y, slot_pixel(*item, materials, x, y));
+                put(
+                    x0 + 1 + x,
+                    GAP + 1 + y,
+                    slot_pixel(*item, materials, species, x, y),
+                );
             }
         }
     }
@@ -181,8 +189,18 @@ pub fn build(palette: &Palette, materials: &MaterialTable) -> (Vec<u8>, (u32, u3
 }
 
 /// Pixel `(x, y)` of a slot's 8×8 face.
-fn slot_pixel(item: PaletteItem, materials: &MaterialTable, x: u32, y: u32) -> [u8; 3] {
+fn slot_pixel(
+    item: PaletteItem,
+    materials: &MaterialTable,
+    species: &SpeciesTable,
+    x: u32,
+    y: u32,
+) -> [u8; 3] {
     match item {
+        // The species' sprite, centred.
+        PaletteItem::Tool(Tool::AddCreature(s)) => {
+            crate::sprites::icon(species, s, x, y).unwrap_or(ICON_BG)
+        }
         PaletteItem::Material(id) => {
             let c = materials.get(id).map_or([0xff, 0, 0xff], |m| m.colour);
             // A few darker and lighter specks, like the grid's variants.
@@ -209,7 +227,7 @@ fn slot_pixel(item: PaletteItem, materials: &MaterialTable, x: u32, y: u32) -> [
         }
         PaletteItem::Tool(t) => {
             let icon = match t {
-                Tool::Scoop | Tool::Pour | Tool::Place(_) => SCOOP,
+                Tool::Scoop | Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) => SCOOP,
                 Tool::Net => NET,
                 Tool::Inspect => INSPECT,
                 Tool::Glue => GLUE,
@@ -279,7 +297,8 @@ mod tests {
             items: vec![PaletteItem::Material(sand), PaletteItem::Tool(Tool::Net)],
             selected: Some(1),
         };
-        let (img, (w, h)) = build(&palette, &mats);
+        let species = desktank_sim::SpeciesTable::builtin_for(&mats).unwrap();
+        let (img, (w, h)) = build(&palette, &mats, &species);
         assert_eq!((w, h), (23, 12));
         let px = |x: u32, y: u32| {
             let i = ((y * w + x) * 4) as usize;

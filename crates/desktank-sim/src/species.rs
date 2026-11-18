@@ -1,0 +1,491 @@
+//! Creature species, loaded from TOML (SPEC §2.4, D8): size, depth zone,
+//! surface needs, speed, diet and placeholder pixel art (D11).
+//!
+//! Each species is one file in `assets/species/`. Its sprite is pixel art
+//! written as rows of characters, one per texel, with a colour key; the
+//! renderer packs every species' frames into one atlas texture. The sprite
+//! also sets the creature's body: the cells it covers and collides with.
+//!
+//! Units (SPEC §2.1): speeds are in cells per second of world time, depths
+//! in cells or as a fraction of the water column (0 the surface, 1 the
+//! floor).
+
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+use thiserror::Error;
+
+use crate::material::{MaterialId, MaterialTable};
+
+/// Index of a species in the [`SpeciesTable`]; fixed in each species' TOML
+/// file so saves stay stable when species are added.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SpeciesId(pub u8);
+
+/// Largest sprite side, in texels (= cells).
+pub const MAX_SPRITE_SIDE: usize = 16;
+/// Fastest allowed speed, in cells per second: under one cell per tick, so
+/// a body never skips past a cell it would collide with.
+pub const MAX_SPEED: f32 = 16.0;
+
+/// The part of the tank a species lives in (SPEC §2.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Zone {
+    /// Just under the surface.
+    Surface,
+    /// Open water.
+    Mid,
+    /// Near the floor.
+    Bottom,
+}
+
+/// How a species gets on with others (SPEC §2.4). Data only until
+/// schooling (T7b) and territories need it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Temperament {
+    /// Swims in a group of its own kind.
+    Schooling,
+    /// Gets on with everyone.
+    Peaceful,
+    /// Defends a patch of the tank.
+    Territorial,
+}
+
+/// Pixel art for a species, facing right: `frames` of `width × height`
+/// RGBA texels (sRGB; alpha 0 or 255), row-major from the top left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sprite {
+    /// Width in texels.
+    pub width: usize,
+    /// Height in texels.
+    pub height: usize,
+    /// Animation frames.
+    pub frames: Vec<Vec<[u8; 4]>>,
+}
+
+/// One species, validated.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Species {
+    /// Stable ID.
+    pub id: SpeciesId,
+    /// Unique name, e.g. `"neon_tetra"`.
+    pub name: String,
+    /// The zone it lives in.
+    pub zone: Zone,
+    /// The band of the water column it keeps to, as fractions from the
+    /// surface (0) to the floor (1); `depth[0] < depth[1]`.
+    pub depth: [f32; 2],
+    /// Water depth it needs, in cells (SPEC §2.1).
+    pub min_depth: usize,
+    /// Whether it needs to reach air at the surface to breathe.
+    pub breathes_air: bool,
+    /// Temperament.
+    pub temperament: Temperament,
+    /// Cruising speed, cells per second.
+    pub speed: f32,
+    /// Top speed (chasing food), cells per second.
+    pub max_speed: f32,
+    /// Materials it eats.
+    pub diet: Vec<MaterialId>,
+    /// Its pixel art; the sprite size is the body size.
+    pub sprite: Sprite,
+    /// Its main colour (the commonest in the first frame), for swatches.
+    pub colour: [u8; 3],
+}
+
+impl Species {
+    /// Body size in cells, `(width, height)`.
+    #[must_use]
+    pub fn size(&self) -> (usize, usize) {
+        (self.sprite.width, self.sprite.height)
+    }
+
+    /// Whether it eats `material`.
+    #[must_use]
+    pub fn eats(&self, material: MaterialId) -> bool {
+        self.diet.contains(&material)
+    }
+}
+
+/// Error loading or validating species.
+#[derive(Debug, Error)]
+pub enum SpeciesError {
+    /// A TOML source didn't parse or didn't match the schema.
+    #[error("species source {index}: {source}")]
+    Parse {
+        /// Index of the source in the list passed in.
+        index: usize,
+        /// The parse error.
+        #[source]
+        source: toml::de::Error,
+    },
+    /// Two species share an ID.
+    #[error("duplicate species id {0}")]
+    DuplicateId(u8),
+    /// Two species share a name.
+    #[error("duplicate species name {0:?}")]
+    DuplicateName(String),
+    /// A property is out of range.
+    #[error("species {name:?}: {reason}")]
+    Invalid {
+        /// Species name.
+        name: String,
+        /// What is wrong.
+        reason: &'static str,
+    },
+    /// The diet names a material that doesn't exist.
+    #[error("species {name:?}: unknown food {food:?}")]
+    UnknownFood {
+        /// Species name.
+        name: String,
+        /// The missing material.
+        food: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeciesDef {
+    id: u8,
+    name: String,
+    zone: Zone,
+    depth: [f32; 2],
+    min_depth: usize,
+    #[serde(default)]
+    breathes_air: bool,
+    temperament: Temperament,
+    speed: f32,
+    max_speed: f32,
+    diet: Vec<String>,
+    sprite: SpriteDef,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpriteDef {
+    colours: BTreeMap<String, String>,
+    frames: Vec<Vec<String>>,
+}
+
+/// The species embedded in the binary (T7a placeholders, D11).
+const BUILTIN: &[&str] = &[
+    include_str!("../../../assets/species/neon_tetra.toml"),
+    include_str!("../../../assets/species/corydoras.toml"),
+    include_str!("../../../assets/species/betta.toml"),
+];
+
+/// All species, ordered by ID.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpeciesTable {
+    species: Vec<Species>,
+}
+
+impl SpeciesTable {
+    /// The species embedded from `assets/species/*.toml`, with diets looked
+    /// up in `materials`. Foods the table lacks (a test's own material set)
+    /// are left out of the diets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an embedded file is invalid (a build defect,
+    /// covered by tests).
+    pub fn builtin_for(materials: &MaterialTable) -> Result<Self, SpeciesError> {
+        Self::load(BUILTIN, materials, true)
+    }
+
+    /// Parses one TOML document per species and validates the set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a source doesn't parse, a property is invalid,
+    /// IDs or names clash, or a diet names an unknown material.
+    pub fn from_toml_sources(
+        sources: &[&str],
+        materials: &MaterialTable,
+    ) -> Result<Self, SpeciesError> {
+        Self::load(sources, materials, false)
+    }
+
+    fn load(
+        sources: &[&str],
+        materials: &MaterialTable,
+        skip_unknown_food: bool,
+    ) -> Result<Self, SpeciesError> {
+        let mut defs = Vec::with_capacity(sources.len());
+        for (index, src) in sources.iter().enumerate() {
+            let def: SpeciesDef =
+                toml::from_str(src).map_err(|source| SpeciesError::Parse { index, source })?;
+            defs.push(def);
+        }
+        defs.sort_by_key(|d| d.id);
+        for pair in defs.windows(2) {
+            if pair[0].id == pair[1].id {
+                return Err(SpeciesError::DuplicateId(pair[0].id));
+            }
+        }
+        for (i, d) in defs.iter().enumerate() {
+            if defs[..i].iter().any(|o| o.name == d.name) {
+                return Err(SpeciesError::DuplicateName(d.name.clone()));
+            }
+        }
+        let species = defs
+            .iter()
+            .map(|d| validate(d, materials, skip_unknown_food))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { species })
+    }
+
+    /// The species with this ID, if any.
+    #[must_use]
+    pub fn get(&self, id: SpeciesId) -> Option<&Species> {
+        self.species
+            .binary_search_by_key(&id, |s| s.id)
+            .ok()
+            .map(|i| &self.species[i])
+    }
+
+    /// The ID of the species with this name, if any.
+    #[must_use]
+    pub fn id(&self, name: &str) -> Option<SpeciesId> {
+        self.species.iter().find(|s| s.name == name).map(|s| s.id)
+    }
+
+    /// All species, ordered by ID.
+    pub fn iter(&self) -> impl Iterator<Item = &Species> {
+        self.species.iter()
+    }
+
+    /// Number of species.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.species.len()
+    }
+
+    /// Whether there are no species.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.species.is_empty()
+    }
+}
+
+fn validate(
+    d: &SpeciesDef,
+    materials: &MaterialTable,
+    skip_unknown_food: bool,
+) -> Result<Species, SpeciesError> {
+    let invalid = |reason| SpeciesError::Invalid {
+        name: d.name.clone(),
+        reason,
+    };
+    let [top, bottom] = d.depth;
+    if !(0.0..=1.0).contains(&top) || !(0.0..=1.0).contains(&bottom) || top >= bottom {
+        return Err(invalid(
+            "depth must be [top, bottom] within 0..=1 with top < bottom",
+        ));
+    }
+    if !(d.speed.is_finite() && d.speed > 0.0 && d.speed <= d.max_speed) {
+        return Err(invalid("speed must be > 0 and at most max_speed"));
+    }
+    if d.max_speed > MAX_SPEED {
+        return Err(invalid("max_speed must be at most 16 cells per second"));
+    }
+    let mut diet = Vec::with_capacity(d.diet.len());
+    for food in &d.diet {
+        match materials.id(food) {
+            Some(id) => diet.push(id),
+            None if skip_unknown_food => {}
+            None => {
+                return Err(SpeciesError::UnknownFood {
+                    name: d.name.clone(),
+                    food: food.clone(),
+                });
+            }
+        }
+    }
+    let sprite = sprite(&d.sprite).map_err(invalid)?;
+    let colour = main_colour(&sprite);
+    Ok(Species {
+        id: SpeciesId(d.id),
+        name: d.name.clone(),
+        zone: d.zone,
+        depth: d.depth,
+        min_depth: d.min_depth,
+        breathes_air: d.breathes_air,
+        temperament: d.temperament,
+        speed: d.speed,
+        max_speed: d.max_speed,
+        diet,
+        sprite,
+        colour,
+    })
+}
+
+/// Turns character rows into RGBA frames.
+fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
+    let mut key = BTreeMap::new();
+    for (k, v) in &def.colours {
+        let mut chars = k.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else {
+            return Err("sprite colour keys must be one character");
+        };
+        if c == '.' {
+            return Err("'.' is transparent and can't be a colour key");
+        }
+        let rgb = crate::material::parse_colour(v).ok_or("sprite colours must be \"#rrggbb\"")?;
+        key.insert(c, [rgb[0], rgb[1], rgb[2], 255]);
+    }
+    let first = def
+        .frames
+        .first()
+        .ok_or("a sprite needs at least one frame")?;
+    let height = first.len();
+    let width = first.first().map_or(0, |r| r.chars().count());
+    if !(1..=MAX_SPRITE_SIDE).contains(&width) || !(1..=MAX_SPRITE_SIDE).contains(&height) {
+        return Err("sprite sides must be 1..=16 texels");
+    }
+    let mut frames = Vec::with_capacity(def.frames.len());
+    for rows in &def.frames {
+        if rows.len() != height {
+            return Err("every sprite frame must be the same size");
+        }
+        let mut texels = Vec::with_capacity(width * height);
+        for row in rows {
+            if row.chars().count() != width {
+                return Err("every sprite row must be the same width");
+            }
+            for c in row.chars() {
+                texels.push(match c {
+                    '.' => [0; 4],
+                    c => *key
+                        .get(&c)
+                        .ok_or("sprite uses a character with no colour")?,
+                });
+            }
+        }
+        frames.push(texels);
+    }
+    Ok(Sprite {
+        width,
+        height,
+        frames,
+    })
+}
+
+/// The commonest opaque colour of the first frame (the first one wins a
+/// tie).
+fn main_colour(sprite: &Sprite) -> [u8; 3] {
+    let mut counts: Vec<([u8; 4], usize)> = Vec::new();
+    for t in sprite.frames.first().into_iter().flatten() {
+        if t[3] == 0 {
+            continue;
+        }
+        match counts.iter_mut().find(|(c, _)| c == t) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((*t, 1)),
+        }
+    }
+    let mut best = ([0x80, 0x80, 0x80, 255], 0);
+    for &(c, n) in &counts {
+        if n > best.1 {
+            best = (c, n);
+        }
+    }
+    [best.0[0], best.0[1], best.0[2]]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn materials() -> MaterialTable {
+        MaterialTable::builtin().unwrap()
+    }
+
+    const OK: &str = r##"
+        id = 9
+        name = "test_fish"
+        zone = "mid"
+        depth = [0.2, 0.6]
+        min_depth = 10
+        temperament = "peaceful"
+        speed = 2.0
+        max_speed = 4.0
+        diet = ["flake_food"]
+        [sprite]
+        colours = { a = "#102030", b = "#405060" }
+        frames = [["aab", ".a."], ["aab", "a.a"]]
+    "##;
+
+    #[test]
+    #[allow(clippy::many_single_char_names)]
+    fn builtin_species_load() {
+        let m = materials();
+        let t = SpeciesTable::builtin_for(&m).unwrap();
+        assert_eq!(t.len(), 3);
+        for name in ["neon_tetra", "corydoras", "betta"] {
+            let s = t.get(t.id(name).unwrap()).unwrap();
+            assert!(!s.diet.is_empty(), "{name} eats something");
+            assert!(s.sprite.frames.len() >= 2, "{name} animates");
+            let (w, h) = s.size();
+            assert!(w <= 8 && h <= 8, "{name} fits a palette slot");
+        }
+        // Between them they eat every T5 food.
+        for food in ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer"] {
+            let id = m.id(food).unwrap();
+            assert!(t.iter().any(|s| s.eats(id)), "nobody eats {food}");
+        }
+        let betta = t.get(t.id("betta").unwrap()).unwrap();
+        assert!(betta.breathes_air);
+        assert_eq!(betta.zone, Zone::Surface);
+    }
+
+    #[test]
+    fn parses_sprites_and_colours() {
+        let t = SpeciesTable::from_toml_sources(&[OK], &materials()).unwrap();
+        let s = t.get(SpeciesId(9)).unwrap();
+        assert_eq!(s.size(), (3, 2));
+        assert_eq!(s.sprite.frames[0][0], [0x10, 0x20, 0x30, 255]);
+        assert_eq!(s.sprite.frames[0][3], [0; 4]);
+        assert_eq!(s.colour, [0x10, 0x20, 0x30]);
+    }
+
+    #[test]
+    fn rejects_bad_definitions() {
+        let m = materials();
+        let bad = |from: &str, to: &str| {
+            let src = OK.replace(from, to);
+            assert_ne!(src, OK, "{from:?} not in the template");
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        assert!(matches!(
+            bad("[0.2, 0.6]", "[0.6, 0.2]"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(matches!(
+            bad("max_speed = 4.0", "max_speed = 40.0"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(matches!(
+            bad("[\"flake_food\"]", "[\"cake\"]"),
+            Err(SpeciesError::UnknownFood { .. })
+        ));
+        assert!(matches!(
+            bad("\"a.a\"", "\"a.\""),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(matches!(
+            bad("\"a.a\"", "\"a.z\""),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(matches!(
+            bad("zone = \"mid\"", "zone = \"sky\""),
+            Err(SpeciesError::Parse { .. })
+        ));
+        assert!(matches!(
+            SpeciesTable::from_toml_sources(&[OK, OK], &m),
+            Err(SpeciesError::DuplicateId(9))
+        ));
+    }
+}

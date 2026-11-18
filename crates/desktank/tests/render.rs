@@ -132,3 +132,10 @@ fn planted_scene_matches_reference_at_four_times_of_day() {
         check_at("planted", time);
     }
 }
+
+/// Creatures (T7a): sprites of every species over the starter bed, after
+/// they have swum for 30 s and come for food.
+#[test]
+fn creatures_scene_matches_reference() {
+    check("creatures");
+}

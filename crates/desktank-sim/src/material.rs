@@ -97,6 +97,9 @@ pub struct Material {
     /// How much of the light reaching a cell it blocks, 0–1: 0 for fluids
     /// and 1 for other classes unless set (plant tissue lets some through).
     pub opacity: f32,
+    /// Powders and floaters: small loose particles (food, waste, detritus)
+    /// that creatures swim through instead of colliding with (T7).
+    pub passable: bool,
     /// Placeholder palette colour (sRGB).
     pub colour: [u8; 3],
 }
@@ -151,6 +154,8 @@ struct MaterialDef {
     float_density: Option<f32>,
     pops_into: Option<String>,
     opacity: Option<f32>,
+    #[serde(default)]
+    passable: bool,
     colour: String,
 }
 
@@ -319,6 +324,9 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         Some(o) if o.is_finite() && (0.0..=1.0).contains(&o) => o,
         Some(_) => return Err(invalid("opacity must be within 0..=1")),
     };
+    if d.passable && !slides {
+        return Err(invalid("passable only applies to powder and floating"));
+    }
     Ok(Material {
         id: MaterialId(d.id),
         name: d.name.clone(),
@@ -330,11 +338,12 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         float_density,
         pops_into,
         opacity,
+        passable: d.passable,
         colour,
     })
 }
 
-fn parse_colour(s: &str) -> Option<[u8; 3]> {
+pub(crate) fn parse_colour(s: &str) -> Option<[u8; 3]> {
     let hex = s.strip_prefix('#')?;
     if hex.len() != 6 || !hex.is_ascii() {
         return None;

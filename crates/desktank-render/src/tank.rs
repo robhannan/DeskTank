@@ -58,6 +58,8 @@ pub struct Tank {
     fields_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
     time_of_day: u16,
+    /// Creatures version last drawn (`None` before the first frame).
+    creatures_drawn: Option<u64>,
 }
 
 impl Tank {
@@ -79,6 +81,7 @@ impl Tank {
             field_overlay: None,
             fields_drawn: 0,
             time_of_day: daylight::NOON,
+            creatures_drawn: None,
         }
     }
 
@@ -217,11 +220,15 @@ impl Tank {
         self.dirty.mark_all();
     }
 
-    /// Whether a frame is waiting: the world changed since the last frame,
-    /// or the target was invalidated.
+    /// Whether a frame is waiting: the world changed since the last frame
+    /// (cells, or a creature moved), or the target was invalidated. A tank
+    /// with swimming creatures wants a frame every tick (20 a second, under
+    /// the frame cap) even when every chunk sleeps.
     #[must_use]
     pub fn frame_wanted(&self) -> bool {
-        self.needs_frame || !self.dirty.is_empty()
+        self.needs_frame
+            || !self.dirty.is_empty()
+            || self.creatures_drawn != Some(self.world.creatures_version())
     }
 
     /// Changes the frame-rate cap (SPEC §6.2: 15 fps on battery). The
@@ -317,13 +324,16 @@ impl Tank {
             return;
         };
         renderer.upload(gpu, &self.world, &mut self.dirty);
+        renderer.upload_sprites(gpu, &self.world);
+        self.creatures_drawn = Some(self.world.creatures_version());
         if self.field_overlay.is_some() {
             renderer.upload_fields(gpu, &self.world);
             self.fields_drawn = self.world.fields_version();
         }
         if self.palette_dirty {
             if let Some(p) = &self.palette {
-                let (image, image_size) = hud::build(p, self.world.materials());
+                let (image, image_size) =
+                    hud::build(p, self.world.materials(), self.world.species());
                 renderer.upload_hud(gpu, &image, image_size);
             }
             self.palette_dirty = false;

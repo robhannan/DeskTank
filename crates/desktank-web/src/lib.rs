@@ -207,7 +207,8 @@ impl WebTank {
 
     /// The palette, in order, as `"<kind> <name>"`: kind `material` (pour
     /// it; the name is the material's), `tool` (`scoop`, `glue`, `net`,
-    /// `inspect`) or `device` (place it; the name is its material's).
+    /// `inspect`), `device` (place it; the name is its material's) or
+    /// `creature` (add one; the name is the species').
     #[must_use]
     pub fn palette(&self) -> Vec<String> {
         self.palette
@@ -219,27 +220,47 @@ impl WebTank {
             .collect()
     }
 
-    /// Swatch colour of each palette item as `#rrggbb` (the material's
-    /// colour), or `""` for tools.
+    /// Swatch colour of each palette item as `#rrggbb` (the material's, or
+    /// a species' main colour), or `""` for tools.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = paletteColours))]
     #[must_use]
     pub fn palette_colours(&self) -> Vec<String> {
-        let table = self.tank.world().materials();
+        let world = self.tank.world();
+        let table = world.materials();
         self.palette
             .iter()
             .map(|&item| {
-                let id = match item {
-                    PaletteItem::Material(m) => Some(m),
-                    PaletteItem::Tool(Tool::Place(p)) => table.id(p.material_name()),
+                let colour = match item {
+                    PaletteItem::Material(m) => table.get(m).map(|m| m.colour),
+                    PaletteItem::Tool(Tool::Place(p)) => table
+                        .id(p.material_name())
+                        .and_then(|id| table.get(id))
+                        .map(|m| m.colour),
+                    PaletteItem::Tool(Tool::AddCreature(s)) => {
+                        world.species().get(s).map(|s| s.colour)
+                    }
                     PaletteItem::Tool(_) => None,
                 };
-                id.and_then(|id| table.get(id))
-                    .map_or_else(String::new, |m| {
-                        let [r, g, b] = m.colour;
-                        format!("#{r:02x}{g:02x}{b:02x}")
-                    })
+                colour.map_or_else(String::new, |[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"))
             })
             .collect()
+    }
+
+    /// Species names, ordered by ID.
+    #[must_use]
+    pub fn species(&self) -> Vec<String> {
+        self.tank
+            .world()
+            .species()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect()
+    }
+
+    /// Creatures in the tank.
+    #[must_use]
+    pub fn creatures(&self) -> u32 {
+        count(self.tank.world().creatures().len())
     }
 
     /// Index of the selected palette item.
@@ -307,20 +328,24 @@ impl WebTank {
         self.outcome(out)
     }
 
-    /// `button` was released, ending the stroke it started.
+    /// `button` was released, ending the stroke it started (letting a
+    /// netted creature go, or lifting it out above the water). Returns 1 if
+    /// a creature was lifted out, else 0.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerUp))]
-    pub fn pointer_up(&mut self, button: u32) {
-        if let Some(button) = to_button(button) {
-            self.tools.release(button);
-            self.sync_cursor();
-        }
+    pub fn pointer_up(&mut self, button: u32) -> u32 {
+        let Some(button) = to_button(button) else {
+            return 0;
+        };
+        let out = self.tools.release(self.tank.world_mut(), button);
+        self.sync_cursor();
+        u32::from(matches!(out, Outcome::Removed(_)))
     }
 
     /// The pointer left the canvas (or was lost): ends any stroke and hides
     /// the brush outline.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerLeave))]
     pub fn pointer_leave(&mut self) {
-        self.tools.leave();
+        self.tools.leave(self.tank.world_mut());
         self.sync_cursor();
     }
 
@@ -339,7 +364,7 @@ impl WebTank {
         let out = self
             .tools
             .press(self.tank.world_mut(), Button::Primary, cell);
-        self.tools.release(Button::Primary);
+        self.tools.release(self.tank.world_mut(), Button::Primary);
         self.outcome(out);
         if let Some(item) = keep {
             self.tools.select(item);
@@ -349,7 +374,8 @@ impl WebTank {
     }
 
     /// What inspect found since the last call, once: `"cell <material>
-    /// <column> <row>"`, `"creature <id>"` (T7), or `""` if nothing new.
+    /// <column> <row>"`, `"creature <species> <id> <material> <column>
+    /// <row>"`, or `""` if nothing new.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
     pub fn take_inspection(&mut self) -> String {
         core::mem::take(&mut self.inspection)
@@ -632,6 +658,14 @@ impl WebTank {
                 table.get(m).map_or_else(String::new, |m| m.name.clone()),
             ),
             PaletteItem::Tool(Tool::Place(p)) => ("device", p.material_name().to_owned()),
+            PaletteItem::Tool(Tool::AddCreature(s)) => (
+                "creature",
+                self.tank
+                    .world()
+                    .species()
+                    .get(s)
+                    .map_or_else(String::new, |s| s.name.clone()),
+            ),
             PaletteItem::Tool(t) => (
                 "tool",
                 match t {
@@ -639,7 +673,7 @@ impl WebTank {
                     Tool::Glue => "glue",
                     Tool::Net => "net",
                     Tool::Inspect => "inspect",
-                    Tool::Pour | Tool::Place(_) => "pour",
+                    Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) => "pour",
                 }
                 .to_owned(),
             ),
@@ -659,11 +693,33 @@ impl WebTank {
                         let name = table.get(material).map_or("?", |m| m.name.as_str());
                         format!("cell {name} {x} {y}")
                     }
-                    Inspection::Creature(id) => format!("creature {}", id.0),
+                    Inspection::Creature {
+                        id,
+                        species,
+                        x,
+                        y,
+                        material,
+                    } => {
+                        let world = self.tank.world();
+                        let name = world
+                            .species()
+                            .get(species)
+                            .map_or("?", |s| s.name.as_str());
+                        let over = world
+                            .materials()
+                            .get(material)
+                            .map_or("?", |m| m.name.as_str());
+                        format!("creature {name} {} {over} {x} {y}", id.0)
+                    }
                 };
                 0
             }
-            Outcome::None => 0,
+            // Creatures aren't cells: their frames follow the sprites.
+            Outcome::Caught(_)
+            | Outcome::Dropped(_)
+            | Outcome::Removed(_)
+            | Outcome::Added(_)
+            | Outcome::None => 0,
         };
         self.edited(changed);
         self.sync_cursor();
