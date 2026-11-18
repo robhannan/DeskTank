@@ -1,6 +1,6 @@
 //! DeskTank platform layer: per-OS surface hosts (wallpaper, overlay, idle and
 //! saver windows), power, visibility, full-screen, idle and modifier-key
-//! signals, and interact input switching.
+//! signals, interact input switching, and where and how tanks are saved.
 //!
 //! Each OS lives in its own `cfg(target_os = …)` module; on other targets the
 //! module is not compiled, so the crate builds everywhere.
@@ -9,6 +9,7 @@
 #![allow(unsafe_code)]
 
 mod stats;
+mod store;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -18,6 +19,7 @@ mod macos;
 mod windows;
 
 pub use stats::{ProcessStats, process_stats};
+pub use store::{KEEP, Loaded, SaveStore, data_dir};
 
 // Dependency edge from SPEC §4.1, kept ahead of first use.
 use desktank_render as _;
