@@ -46,6 +46,7 @@ use crate::plants::{
     Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable, plant_position,
     plant_variant,
 };
+use crate::save::{SaveError, v1};
 
 /// Most plants a tank holds by default (SPEC §2.7 *Cap*), set from
 /// measurement in T6b: a settled tank with 528 plants ticks in about
@@ -390,6 +391,93 @@ impl World {
             generation: p.generation,
             limit: p.limit,
         }
+    }
+
+    /// The plant table as saved (T8), bookkeeping included, so a loaded
+    /// tank updates its plants exactly when the saved one would have.
+    pub(super) fn save_plants(&self) -> v1::Plants {
+        let plants = &self.plants;
+        v1::Plants {
+            next_id: plants.next_id,
+            cursor: plants.cursor,
+            any_pending: plants.any_pending,
+            cap: u32::try_from(plants.cap).unwrap_or(u32::MAX),
+            table: plants
+                .table
+                .iter()
+                .map(|(&id, p)| v1::Plant {
+                    id,
+                    species: p.species.0,
+                    born: p.born,
+                    health: p.health,
+                    energy: p.energy,
+                    parts: p.parts,
+                    #[allow(clippy::cast_possible_truncation)] // cells < MAX_SIDE²
+                    base: p.base as u32,
+                    bounds: super::persist::rect_v1(p.bounds),
+                    parent: p.parent,
+                    generation: p.generation,
+                    stress: p.stress,
+                    limit: limit_v1(p.limit),
+                    last_update: p.last_update,
+                    sums: p.sums,
+                    counts: p.counts,
+                    pending: p.pending,
+                    idle: p.idle,
+                })
+                .collect(),
+        }
+    }
+
+    /// Restores the plant table from a save.
+    pub(super) fn load_plants(&mut self, saved: v1::Plants) -> Result<(), SaveError> {
+        let mut table = BTreeMap::new();
+        for p in saved.table {
+            let invalid = |what: &str| SaveError::Invalid(format!("plant {}: {what}", p.id));
+            if p.id == 0 || table.contains_key(&p.id) {
+                return Err(invalid("id 0 or repeated"));
+            }
+            let species = PlantSpeciesId(p.species);
+            if self.plants.species.get(species).is_none() {
+                return Err(invalid("unknown species"));
+            }
+            let finite = [p.health, p.energy, p.stress]
+                .into_iter()
+                .chain(p.sums)
+                .all(f32::is_finite);
+            if !finite {
+                return Err(invalid("not a number"));
+            }
+            table.insert(
+                p.id,
+                Plant {
+                    species,
+                    born: p.born,
+                    health: p.health,
+                    energy: p.energy,
+                    parts: p.parts,
+                    base: self.cell_index(p.base, "a plant's base")?,
+                    bounds: super::persist::rect_from_v1(p.bounds, self.width, self.height)?,
+                    parent: p.parent,
+                    generation: p.generation,
+                    stress: p.stress,
+                    limit: limit_from_v1(p.limit),
+                    last_update: p.last_update,
+                    sums: p.sums,
+                    counts: p.counts,
+                    pending: p.pending,
+                    idle: p.idle,
+                },
+            );
+        }
+        let plants = &mut self.plants;
+        plants.table = table;
+        plants.next_id = saved.next_id.max(1);
+        plants.cursor = saved.cursor;
+        plants.any_pending = saved.any_pending;
+        plants.cap = saved.cap as usize;
+        plants.version += 1;
+        Ok(())
     }
 
     pub(super) fn hash_plants(&self, h: &mut Fnv64) {
@@ -1157,5 +1245,37 @@ fn point(x: usize, y: usize) -> Rect {
         y0: y,
         x1: x + 1,
         y1: y + 1,
+    }
+}
+
+fn factor_v1(f: Factor) -> v1::Factor {
+    match f {
+        Factor::Light => v1::Factor::Light,
+        Factor::Nutrient => v1::Factor::Nutrient,
+        Factor::Co2 => v1::Factor::Co2,
+    }
+}
+
+fn factor_from_v1(f: v1::Factor) -> Factor {
+    match f {
+        v1::Factor::Light => Factor::Light,
+        v1::Factor::Nutrient => Factor::Nutrient,
+        v1::Factor::Co2 => Factor::Co2,
+    }
+}
+
+fn limit_v1(l: Limit) -> v1::Limit {
+    match l {
+        Limit::None => v1::Limit::None,
+        Limit::TooLow(f) => v1::Limit::TooLow(factor_v1(f)),
+        Limit::TooHigh(f) => v1::Limit::TooHigh(factor_v1(f)),
+    }
+}
+
+fn limit_from_v1(l: v1::Limit) -> Limit {
+    match l {
+        v1::Limit::None => Limit::None,
+        v1::Limit::TooLow(f) => Limit::TooLow(factor_from_v1(f)),
+        v1::Limit::TooHigh(f) => Limit::TooHigh(factor_from_v1(f)),
     }
 }

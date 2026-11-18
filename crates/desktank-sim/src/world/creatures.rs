@@ -39,6 +39,7 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
+use crate::save::{SaveError, v1};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
 
 /// Most creatures a world holds (SPEC §2.4: the default population cap per
@@ -553,6 +554,88 @@ impl World {
             });
         }
         (s.breathes_air && self.surface_row == 0).then_some(UnmetNeed::Air)
+    }
+
+    /// The creatures as saved (T8). The host's cursor isn't saved.
+    pub(super) fn save_creatures(&self) -> v1::Creatures {
+        v1::Creatures {
+            next_id: self.creatures.next_id,
+            list: self
+                .creatures
+                .list
+                .iter()
+                .map(|c| v1::Creature {
+                    id: c.id.0,
+                    species: c.species.0,
+                    x: c.x,
+                    y: c.y,
+                    vx: c.vx,
+                    vy: c.vy,
+                    tx: c.tx,
+                    ty: c.ty,
+                    retarget: c.retarget,
+                    satiety: c.satiety,
+                    food: c.food,
+                    ignore: c.ignore,
+                    facing_left: c.facing_left,
+                    turn: c.turn,
+                    held_until: c.held_until,
+                    next_breath: c.next_breath,
+                    eaten: c.eaten,
+                })
+                .collect(),
+        }
+    }
+
+    /// Restores the creatures from a save.
+    pub(super) fn load_creatures(&mut self, saved: v1::Creatures) -> Result<(), SaveError> {
+        let (w, h) = (
+            to_i64(self.width) * i64::from(ONE),
+            to_i64(self.height) * i64::from(ONE),
+        );
+        let mut list = Vec::with_capacity(saved.list.len());
+        for c in saved.list {
+            let invalid = |what: &str| SaveError::Invalid(format!("creature {}: {what}", c.id));
+            let species = SpeciesId(c.species);
+            if self.kind(species).is_none() {
+                return Err(invalid("unknown species"));
+            }
+            let inside =
+                |x: i32, y: i32| (0..=w).contains(&i64::from(x)) && (0..=h).contains(&i64::from(y));
+            let slow = |v: i32| v.abs() <= 16 * ONE;
+            if !(inside(c.x, c.y) && inside(c.tx, c.ty) && slow(c.vx) && slow(c.vy) && c.turn < 4) {
+                return Err(invalid("position, speed or turn out of range"));
+            }
+            for i in [c.food, c.ignore].into_iter().flatten() {
+                self.cell_index(i, "a creature's food")?;
+            }
+            list.push(Creature {
+                id: CreatureId(c.id),
+                species,
+                x: c.x,
+                y: c.y,
+                vx: c.vx,
+                vy: c.vy,
+                tx: c.tx,
+                ty: c.ty,
+                retarget: c.retarget,
+                satiety: c.satiety,
+                food: c.food,
+                ignore: c.ignore,
+                facing_left: c.facing_left,
+                turn: c.turn,
+                held_until: c.held_until,
+                next_breath: c.next_breath,
+                eaten: c.eaten,
+            });
+        }
+        if list.len() > MAX_CREATURES {
+            return Err(SaveError::Invalid(format!("{} creatures", list.len())));
+        }
+        self.creatures.list = list;
+        self.creatures.next_id = saved.next_id.max(1);
+        self.creatures.version += 1;
+        Ok(())
     }
 
     pub(super) fn hash_creatures(&self, h: &mut Fnv64) {

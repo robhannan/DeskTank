@@ -6,6 +6,9 @@
 //! ([`TURN`]); `sin`/`cos` come from a table built at compile time from an
 //! integer Taylor series, never from the platform's maths library.
 
+use crate::save::{SaveError, v1};
+use crate::world::MAX_SIDE;
+
 /// One cell in position units.
 pub(super) const ONE: i64 = 256;
 /// A full turn in angle units.
@@ -150,6 +153,50 @@ impl Shape {
             radius: isqrt(r2max).div_euclid(ONE) + 1,
         };
         (shape, (to_i64(x0), to_i64(y0)))
+    }
+
+    /// The shape as saved (T8).
+    #[allow(clippy::cast_possible_truncation)] // within MAX_SIDE
+    pub(super) fn to_v1(&self) -> v1::Shape {
+        v1::Shape {
+            w: self.w as u32,
+            h: self.h as u32,
+            grid: self.grid.clone(),
+            n: self.n,
+            com: self.com,
+            inertia: self.inertia,
+            radius: self.radius,
+        }
+    }
+
+    /// A saved shape, checked for consistency: the bitmap's size and cell
+    /// count, and a centre and reach within the grid's scale.
+    pub(super) fn from_v1(s: v1::Shape) -> Result<Self, SaveError> {
+        let (w, h) = (s.w as usize, s.h as usize);
+        let side = to_i64(MAX_SIDE);
+        let cells = s.grid.iter().filter(|&&v| v != 0).count();
+        let sane = w <= MAX_SIDE
+            && h <= MAX_SIDE
+            && s.grid.len() == w * h
+            && to_i64(cells) == s.n
+            && (0..=2 * side).contains(&s.radius)
+            && s.com.0.abs() <= side * ONE
+            && s.com.1.abs() <= side * ONE
+            && s.inertia >= 0;
+        if !sane {
+            return Err(SaveError::Invalid(
+                "a body's shape is inconsistent".to_owned(),
+            ));
+        }
+        Ok(Self {
+            w,
+            h,
+            grid: s.grid,
+            n: s.n,
+            com: s.com,
+            inertia: s.inertia,
+            radius: s.radius,
+        })
     }
 
     /// The variant + 1 of local cell `(i, j)`, 0 if empty or outside.
