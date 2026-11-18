@@ -430,7 +430,9 @@ target computes the same bits.
   - schooling for schoolers;
   - zone preference;
   - bottom-walking for corydoras and shrimp;
-  - surface-grazing for snails on glass, rock and plants;
+  - surface-grazing for snails on glass, rock and plants, turned in
+    quarter turns so the foot rests on the face they hold (walls,
+    overhangs), with the collision box turned too;
   - surfacing for frogs;
   - finding and eating food cells, and grazing algae and detritus (the
     clean-up crew);
@@ -1448,7 +1450,8 @@ Each package depends only on the packages before it.
   *Done:* Species TOML selects the movement and diet. Tetras follow the oldest
   unheld schoolmate and separate from close neighbours. Corydoras follow
   one-cell substrate steps. Nerites trace submerged contours, including the
-  underside of rock. Air-breathing bettas return to the air interface every
+  underside of rock, turning in quarter turns so the foot rests on the face
+  they hold; the body box turns with the sprite, and the turn is sim state. Air-breathing bettas return to the air interface every
   20 simulated seconds and skim there for 3 seconds. Grazing a cell gives
   the same satiety as one food cell. Cursor avoidance starts off in both hosts.
   In seeded tests the school met the spacing limit on 97.0% of ticks,
