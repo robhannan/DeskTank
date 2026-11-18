@@ -74,6 +74,7 @@ const brushInput = $("brush");
 const paletteEl = $("palette");
 const groupsEl = $("groups");
 const plantPickEl = $("plant-species");
+const propagulePickEl = $("plant-propagule");
 
 let settings = loadSettings();
 let tank;
@@ -378,10 +379,12 @@ function label(name) {
   return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replaceAll("_", " ");
 }
 
-// The plants slot pours the species picked here (the sim's list).
+// The plants slot pours the species picked here (the sim's list), as the
+// propagule picked in the second picker (only the species' own methods).
 function buildPlantPicker() {
-  // A new tank keeps the species picked for the last one.
+  // A new tank keeps the species and propagule picked for the last one.
   const kept = plantPickEl.value;
+  const keptWay = propagulePickEl.value;
   plantPickEl.replaceChildren(
     ...tank.plantSpecies().map((entry, i) => {
       const [name, ...description] = entry.split(" ");
@@ -394,10 +397,38 @@ function buildPlantPicker() {
   );
   if (kept !== "") tank.setPlantSpecies(Number(kept));
   plantPickEl.value = String(tank.plantSpeciesSelected());
+  if (keptWay !== "") tank.setPlantPropagule(keptWay);
+  buildPropagulePicker();
+}
+
+function buildPropagulePicker() {
+  const ways = tank.plantPropagules();
+  propagulePickEl.replaceChildren(
+    ...ways.map((name) => {
+      const o = document.createElement("option");
+      o.value = name;
+      o.textContent = label(name);
+      return o;
+    }),
+  );
+  propagulePickEl.value = tank.plantPropagule();
+  // A species with one method has nothing to pick.
+  propagulePickEl.disabled = ways.length < 2;
 }
 
 function pickPlant() {
   tank.setPlantSpecies(Number(plantPickEl.value));
+  buildPropagulePicker();
+  choosePlantSlot();
+}
+
+function pickPropagule() {
+  tank.setPlantPropagule(propagulePickEl.value);
+  choosePlantSlot();
+}
+
+// Selects the plants slot (after a pick), with the species' swatch.
+function choosePlantSlot() {
   const slot = tank.palette().findIndex((e) => e.startsWith("plant "));
   const colour = tank.paletteColours()[slot];
   const button = paletteEl.children[slot];
@@ -736,6 +767,7 @@ function wireInput() {
   paletteEl.addEventListener("keydown", paletteKeys);
   groupsEl.addEventListener("keydown", groupKeys);
   plantPickEl.addEventListener("change", pickPlant);
+  propagulePickEl.addEventListener("change", pickPropagule);
   playBtn.addEventListener("click", () => setRunning(!tank.running()));
   stepBtn.addEventListener("click", step);
   $("feed").addEventListener("click", () => {

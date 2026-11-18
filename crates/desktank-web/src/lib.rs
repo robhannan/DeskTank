@@ -38,7 +38,7 @@ use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
 use desktank_sim::tools::{
     self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
-use desktank_sim::{Brush, FieldKind, MaterialTable, Script, World, WorldConfig};
+use desktank_sim::{Brush, FieldKind, MaterialTable, Propagule, Script, World, WorldConfig};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -218,7 +218,8 @@ impl WebTank {
     /// `inspect`), `device` (place it; the name is its material's),
     /// `creature` (add one; the name is the species') or `plant` (the one
     /// plants slot, named `plants`: pour the species
-    /// [`WebTank::set_plant_species`] picked).
+    /// [`WebTank::set_plant_species`] picked, as the propagule
+    /// [`WebTank::set_plant_propagule`] picked).
     #[must_use]
     pub fn palette(&self) -> Vec<String> {
         self.palette
@@ -326,6 +327,37 @@ impl WebTank {
         if let Some(id) = id {
             self.tools.set_plant_species(id);
         }
+    }
+
+    /// The propagules the picked species grows from, as names (`seeds`,
+    /// `cuttings`, `fragments`): the plants slot's second picker.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagules))]
+    #[must_use]
+    pub fn plant_propagules(&self) -> Vec<String> {
+        let world = self.tank.world();
+        self.tools
+            .plant_species(world)
+            .and_then(|id| world.plant_species().get(id))
+            .map_or_default(|s| s.propagules().map(|p| p.name().to_owned()).collect())
+    }
+
+    /// The propagule the plants slot pours (one of
+    /// [`WebTank::plant_propagules`]), or `""` without plant species.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagule))]
+    #[must_use]
+    pub fn plant_propagule(&self) -> String {
+        self.tools
+            .plant_propagule(self.tank.world())
+            .map_or_else(String::new, |p| p.name().to_owned())
+    }
+
+    /// Picks the propagule the plants slot pours, by name; ignored (returns
+    /// false) unless the picked species grows from it. A species picked
+    /// later that doesn't grow from it pours its own default.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setPlantPropagule))]
+    pub fn set_plant_propagule(&mut self, name: &str) -> bool {
+        Propagule::from_name(name)
+            .is_some_and(|p| self.tools.set_plant_propagule(self.tank.world(), p))
     }
 
     /// Plants in the tank.
