@@ -110,8 +110,14 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    (`git diff origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
    include the reviewer model selected for this run in the brief. Have the reviewer
-   post ONE PR comment starting with `>! 🤖 <model> Reviewbot`. Replace
-   `<model>` with the model that performed the review (for example, `GPT-6 Luna`
+   post ONE PR comment beginning with this two-line GitHub alert.
+
+   ```markdown
+   > [!NOTE]
+   > 🤖 <model> Reviewbot
+   ```
+
+   Replace `<model>` with the model that performed the review (for example, `GPT-6 Luna`
    or `Gemini Flash`). Use the actual model if the host selected a fallback.
    Follow the tag with a blank line, a bold heading, then
    findings ranked most severe first (severity, file:line, scenario, fix).
