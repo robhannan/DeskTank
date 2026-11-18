@@ -1,0 +1,8 @@
+# Frozen bloodworms: dense, so they sink through everything lighter, and
+# slump flat (low repose). Rot into detritus if uneaten.
+id = 32
+name = "bloodworm"
+class = "powder"
+density = 1.8
+repose = 20.0
+colour = "#9e2335"

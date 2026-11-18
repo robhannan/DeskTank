@@ -6,8 +6,8 @@
 //! texture and no pipeline (WebGL2-safe, SPEC §3.5). Hosts hit-test clicks
 //! with [`PaletteLayout`], which places it exactly as it is drawn.
 
-use desktank_sim::MaterialTable;
 use desktank_sim::tools::{PaletteItem, Tool};
+use desktank_sim::{MaterialTable, Placeable};
 
 use crate::Layout;
 
@@ -38,6 +38,15 @@ const GLUE: [&str; 8] = [
 const INSPECT: [&str; 8] = [
     ".####...", "#....#..", "#.#..#..", "#....#..", ".####...", "....##..", ".....##.", "......##",
 ];
+
+/// Placeable icons: `#` is the device's colour, `o` a bubble or the jet.
+const BUBBLER: [&str; 8] = [
+    "...o....", ".o....o.", "....o...", "..o..o..", "........", "..####..", ".######.", "........",
+];
+const OUTLET: [&str; 8] = [
+    "........", "........", "###.....", "####.o.o", "####o.o.", "###.....", "........", "........",
+];
+const BUBBLE: [u8; 3] = [0xe8, 0xf6, 0xff];
 
 /// The palette as the host shows it: the items and which one is selected.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,9 +192,24 @@ fn slot_pixel(item: PaletteItem, materials: &MaterialTable, x: u32, y: u32) -> [
                 _ => c,
             }
         }
+        PaletteItem::Tool(Tool::Place(p)) => {
+            let icon = match p {
+                Placeable::Bubbler => BUBBLER,
+                Placeable::FilterOutlet => OUTLET,
+            };
+            let device = materials
+                .id(p.material_name())
+                .and_then(|id| materials.get(id))
+                .map_or(ICON_FG, |m| m.colour);
+            match icon[y as usize].as_bytes().get(x as usize) {
+                Some(b'#') => device.map(|v| v.saturating_add(40)),
+                Some(b'o') => BUBBLE,
+                _ => ICON_BG,
+            }
+        }
         PaletteItem::Tool(t) => {
             let icon = match t {
-                Tool::Scoop | Tool::Pour => SCOOP,
+                Tool::Scoop | Tool::Pour | Tool::Place(_) => SCOOP,
                 Tool::Net => NET,
                 Tool::Inspect => INSPECT,
                 Tool::Glue => GLUE,

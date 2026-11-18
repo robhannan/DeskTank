@@ -1,0 +1,7 @@
+# Fish waste. Sinks and breaks down into detritus.
+id = 50
+name = "waste"
+class = "powder"
+density = 1.2
+repose = 30.0
+colour = "#5a4a2a"

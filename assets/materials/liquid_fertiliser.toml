@@ -1,0 +1,8 @@
+# Slightly denser than water, so it sinks and spreads, dissolving into the
+# nutrient field as it goes (`assets/reactions.toml`).
+id = 41
+name = "liquid_fertiliser"
+class = "liquid"
+density = 1.03
+dispersion = 4
+colour = "#4f8a3c"

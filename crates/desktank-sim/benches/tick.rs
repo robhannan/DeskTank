@@ -1,5 +1,6 @@
-//! Simulation tick benches (SPEC §6.1, T1): a heavy pour must tick in
-//! ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine.
+//! Simulation tick benches (SPEC §6.1, T1, T5): a heavy pour must tick in
+//! ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine, also
+//! with living cells (random ticks) and fields active.
 //!
 //! `cargo bench -p desktank-sim`
 
@@ -24,6 +25,31 @@ fn heavy_pour() -> World {
     };
     assert_eq!(column.area() * 5, w.width() * w.height());
     w.fill_rect(column, sand, Brush::Replace).expect("pour");
+    w
+}
+
+fn settled_living() -> World {
+    let t = MaterialTable::builtin().expect("builtin materials");
+    let (soil, tab) = (
+        t.id("aquasoil").expect("aquasoil"),
+        t.id("root_tab").expect("root_tab"),
+    );
+    let mut w = World::new(WorldConfig::default(), t).expect("world");
+    let bed = Rect {
+        x0: 0,
+        y0: 348,
+        x1: 640,
+        y1: 360,
+    };
+    w.fill_rect(bed, soil, Brush::Replace).expect("bed");
+    for x in (16..640).step_by(32) {
+        w.set_cell(x, 347, tab).expect("tab");
+    }
+    while {
+        w.tick();
+        w.awake_chunks() > 0
+    } {}
+    assert_eq!(w.random_tick_stats().visited, w.random_tick_budget());
     w
 }
 
@@ -75,6 +101,15 @@ fn bench_tick(c: &mut Criterion) {
     g.bench_function("settled_with_bodies", |b| {
         b.iter(|| black_box(&mut rocks).tick());
     });
+    // A settled tank whose substrate is alive: a 12-row aquasoil bed (far
+    // more cells than the random-tick budget) with root tabs on it, so
+    // random ticks run their full budget and the nutrient field keeps
+    // diffusing, while every chunk sleeps.
+    let mut living = settled_living();
+    g.bench_function("settled_living", |b| {
+        b.iter(|| black_box(&mut living).tick());
+    });
+    assert_eq!(living.awake_chunks(), 0, "the living tank stays asleep");
     g.finish();
 }
 

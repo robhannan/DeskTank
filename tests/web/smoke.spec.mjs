@@ -94,3 +94,35 @@ test("reset during a lost WebGL2 context draws once restored", async ({ page }) 
   await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn()), { timeout: 10_000 }).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test("the bubbler and the new materials work from the palette", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  const canvas = page.locator("#tank");
+  // Clicking a swatch scrolls the long palette into view (and the canvas
+  // partly out), so bring the canvas back and measure it after each one.
+  const box = async () => {
+    await canvas.scrollIntoViewIfNeeded();
+    return canvas.boundingBox();
+  };
+  // Material counts, not the state hash: that changes every tick anyway.
+  const cells = (name) => page.evaluate((n) => window.desktank.tank.materialCount(n), name);
+  expect(await cells("bubbler")).toBe(0);
+
+  // A click with the bubbler places one (8 cells), which releases bubbles.
+  await page.getByRole("radio", { name: "Bubbler" }).click();
+  let b = await box();
+  await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.5);
+  expect(await cells("bubbler")).toBe(8);
+  await expect.poll(() => cells("air_bubble"), { timeout: 10_000 }).toBeGreaterThan(0);
+
+  // Liquid fertiliser pours like any material.
+  await page.getByRole("radio", { name: "Liquid fertiliser" }).click();
+  b = await box();
+  await page.mouse.move(b.x + b.width * 0.2, b.y + b.height * 0.3);
+  await page.mouse.down();
+  await page.waitForTimeout(300);
+  await page.mouse.up();
+  expect(await cells("liquid_fertiliser")).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});

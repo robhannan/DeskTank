@@ -130,12 +130,13 @@ mod tests {
     }
 
     #[test]
-    fn only_water_is_depth_tinted() {
+    fn only_dense_liquids_are_depth_tinted() {
         let mats = MaterialTable::builtin().unwrap();
         let table = build(&mats);
         for m in mats.iter() {
             let tinted = texel(&table, m.id.0, 0)[3] == 255;
-            assert_eq!(tinted, m.name == "water", "{}", m.name);
+            let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
+            assert_eq!(tinted, dense, "{}", m.name);
         }
     }
 

@@ -23,17 +23,23 @@
 //! material = "sand"  # a material name from assets/materials
 //! brush = "pour"     # "pour" fills only fluid cells, "replace" overwrites (default "pour")
 //! glued = true       # a rigid material's body is glued in place (default false)
+//!
+//! [[place]]
+//! tick = 0           # tick to place on (default 0)
+//! x = 20             # footprint centre, in cells from the top left
+//! y = 60
+//! device = "bubbler" # "bubbler" or "filter_outlet" (see `Placeable`)
 //! ```
 //!
-//! Pours due on tick `t` are applied just before the world's `t`-th tick
-//! (counting from 0), so they show from that tick on. Each `[[pour]]` entry
-//! is one stroke: the rigid cells of all its repeats form one body, held
-//! still until its last repeat (D17).
+//! Pours and placements due on tick `t` are applied just before the world's
+//! `t`-th tick (counting from 0), so they show from that tick on. Each
+//! `[[pour]]` entry is one stroke: the rigid cells of all its repeats form
+//! one body, held still until its last repeat (D17).
 
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{BodyId, Brush, World, WorldConfig, WorldError};
+use crate::{BodyId, Brush, Placeable, World, WorldConfig, WorldError};
 
 /// Error reading or applying a script.
 #[derive(Debug, Error)]
@@ -47,6 +53,9 @@ pub enum ScriptError {
     /// A pour names a material the table doesn't have.
     #[error("unknown material {0:?}")]
     UnknownMaterial(String),
+    /// A placement names a device that doesn't exist.
+    #[error("unknown device {0:?}")]
+    UnknownDevice(String),
     /// The world rejected an edit or its configuration.
     #[error(transparent)]
     World(#[from] WorldError),
@@ -68,6 +77,9 @@ pub struct Script {
     /// Timed pours.
     #[serde(default, rename = "pour")]
     pub pours: Vec<Pour>,
+    /// Timed device placements.
+    #[serde(default, rename = "place")]
+    pub places: Vec<Place>,
 }
 
 impl Default for Script {
@@ -77,6 +89,7 @@ impl Default for Script {
             frame_every: 1,
             world: WorldSpec::default(),
             pours: Vec::new(),
+            places: Vec::new(),
         }
     }
 }
@@ -136,6 +149,21 @@ pub struct Pour {
     pub glued: bool,
 }
 
+/// One `[[place]]` entry.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Place {
+    /// Tick to place on.
+    #[serde(default)]
+    pub tick: u64,
+    /// Footprint centre column.
+    pub x: i64,
+    /// Footprint centre row.
+    pub y: i64,
+    /// Device: a [`Placeable`] material name.
+    pub device: String,
+}
+
 /// A brush as written in a script.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -166,6 +194,13 @@ impl Script {
         let script: Self = toml::from_str(source)?;
         if script.frame_every == 0 {
             return Err(ScriptError::ZeroFrameEvery);
+        }
+        if let Some(p) = script
+            .places
+            .iter()
+            .find(|p| Placeable::from_name(&p.device).is_none())
+        {
+            return Err(ScriptError::UnknownDevice(p.device.clone()));
         }
         Ok(script)
     }
@@ -210,12 +245,19 @@ pub struct Player<'a> {
 }
 
 impl Player<'_> {
-    /// Applies the pours due on `tick` (call before the world's tick).
+    /// Applies the pours and placements due on `tick` (call before the
+    /// world's tick).
     ///
     /// # Errors
     ///
-    /// Returns an error if a pour names an unknown material.
+    /// Returns an error if a pour names an unknown material or a placement
+    /// an unknown device.
     pub fn apply(&mut self, world: &mut World, tick: u64) -> Result<(), ScriptError> {
+        for p in self.script.places.iter().filter(|p| p.tick == tick) {
+            let device = Placeable::from_name(&p.device)
+                .ok_or_else(|| ScriptError::UnknownDevice(p.device.clone()))?;
+            world.place(device, p.x, p.y)?;
+        }
         for (p, body) in self.script.pours.iter().zip(&mut self.bodies) {
             let Some(i) = tick.checked_sub(p.tick).filter(|&i| i < p.repeat) else {
                 continue;
@@ -333,6 +375,22 @@ mod tests {
         .unwrap();
         let mut w = world(&s, 1);
         s.run(&mut w, 3).unwrap();
+    }
+
+    #[test]
+    fn places_devices() {
+        let s = Script::parse("[[place]]\ntick = 1\nx = 10\ny = 5\ndevice = \"bubbler\"").unwrap();
+        let mut w = world(&s, 1);
+        let bubbler = w.materials().id("bubbler").unwrap();
+        s.run(&mut w, 1).unwrap();
+        assert_eq!(w.material_counts()[usize::from(bubbler.0)], 0);
+        s.run(&mut w, 2).unwrap();
+        assert_eq!(w.material_counts()[usize::from(bubbler.0)], 8);
+        // Rejected up front, not mid-run.
+        assert!(matches!(
+            Script::parse("[[place]]\ntick = 2\nx = 1\ny = 1\ndevice = \"heater\""),
+            Err(ScriptError::UnknownDevice(_))
+        ));
     }
 
     #[test]

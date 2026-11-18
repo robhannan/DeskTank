@@ -1,0 +1,7 @@
+# Air stone: a placeable (`desktank_sim::Placeable::Bubbler`). Releases air
+# bubbles from its top (`assets/fields.toml`, [bubbler]).
+id = 60
+name = "bubbler"
+class = "solid"
+density = 2.0
+colour = "#8a96a3"

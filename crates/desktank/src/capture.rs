@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
-use desktank_sim::{MaterialTable, Script, World};
+use desktank_sim::{FieldKind, MaterialTable, Script, World};
 
 use crate::scene;
 
@@ -27,6 +27,8 @@ pub struct Options {
     pub frames: u32,
     /// Input script; `None` is the empty script (an idle default world).
     pub script: Option<PathBuf>,
+    /// Field to tint the tank by (debug overlay).
+    pub field: Option<FieldKind>,
     /// Output directory.
     pub out: PathBuf,
 }
@@ -56,6 +58,7 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
         scene::starter(&mut world, opts.seed)?;
     }
     let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_field_overlay(opts.field);
     fs::create_dir_all(&opts.out).with_context(|| format!("creating {}", opts.out.display()))?;
 
     let mut player = script.player();
@@ -104,6 +107,11 @@ pub fn parse_size(s: &str) -> Result<(u32, u32), String> {
         return Err(format!("{s:?} has a zero side"));
     }
     Ok((w, h))
+}
+
+/// Parses a field name (`nutrient`, `co2`, `light`).
+pub fn parse_field(s: &str) -> Result<FieldKind, String> {
+    FieldKind::from_name(s).ok_or_else(|| format!("{s:?} is not nutrient, co2 or light"))
 }
 
 /// Parses `HH:MM` into minutes after midnight.

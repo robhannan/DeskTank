@@ -18,14 +18,28 @@ const WANTED = 2;
 const LOST = 4;
 const TICKS_SHIFT = 8;
 
-// Tools in palette order: label, material name (null = erase), swatch colour.
+// Tools in palette order: label, material name (null = erase), swatch
+// colour, and "place" for devices, which are placed once per click
+// (desktank_sim::Placeable) instead of poured.
 const TOOLS = [
   ["Sand", "sand", "#e0c992"],
   ["Gravel", "gravel", "#857b6e"],
   ["Rock", "rock", "#5c5853"],
   ["Water", "water", "#2a6496"],
   ["Bubbles", "air_bubble", "#eaf7ff"],
-  ["Food", "flake_food", "#e0673f"],
+  ["Flakes", "flake_food", "#e0673f"],
+  ["Aquasoil", "aquasoil", "#3b2f26"],
+  ["Driftwood", "driftwood", "#6b4a2f"],
+  ["Pellets", "sinking_pellet", "#a8743a"],
+  ["Bloodworms", "bloodworm", "#9e2335"],
+  ["Algae wafers", "algae_wafer", "#55663a"],
+  ["Root tabs", "root_tab", "#c9b27a"],
+  ["Liquid fertiliser", "liquid_fertiliser", "#4f8a3c"],
+  ["CO₂", "co2_bubble", "#cfe8d8"],
+  ["Waste", "waste", "#5a4a2a"],
+  ["Detritus", "detritus", "#4a3b2a"],
+  ["Bubbler", "bubbler", "#8a96a3", "place"],
+  ["Filter outlet", "filter_outlet", "#2e3a44", "place"],
   ["Erase", null, "repeating-conic-gradient(#16283a 0 25%, #8fa8bc 0 50%) 0 0 / 8px 8px"],
 ];
 
@@ -296,6 +310,12 @@ function wireInput() {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     const c = cellAt(e);
+    if (tool[3] === "place" && e.button === 0) {
+      // A device goes down once per click; there is no stroke.
+      tank.place(tool[1], c.x, c.y);
+      kick();
+      return;
+    }
     pointer = { ...c, id: e.pointerId, erase: e.button === 2 };
     stamp(c.x, c.y, pointer.erase);
     holdBrush();
