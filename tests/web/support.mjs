@@ -34,3 +34,59 @@ export async function decodePng(page, png) {
 }
 
 export const framesDrawn = (page) => page.evaluate(() => window.desktank.tank.framesDrawn());
+
+// Opens the page on WebGL2 and pauses it, so only the tools change cells.
+export async function openPaused(page) {
+  await open(page, "?backend=webgl2");
+  await page.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+}
+
+// Viewport (CSS px) point at the centre of cell (x, y), after scrolling the
+// canvas into view.
+export async function cellPoint(page, x, y) {
+  await page.locator("#tank").scrollIntoViewIfNeeded();
+  return page.evaluate(
+    ([x, y]) => {
+      const canvas = document.querySelector("#tank");
+      const r = canvas.getBoundingClientRect();
+      const [px, py] = window.desktank.tank.pixelAt(x, y);
+      return { x: r.left + (px / canvas.width) * r.width, y: r.top + (py / canvas.height) * r.height };
+    },
+    [x, y],
+  );
+}
+
+export const materialAt = (page, x, y) => page.evaluate(([x, y]) => window.desktank.tank.materialAt(x, y), [x, y]);
+export const cellCount = (page, name) => page.evaluate((n) => window.desktank.tank.materialCount(n), name);
+export const stateHash = (page) => page.evaluate(() => window.desktank.tank.stateHash());
+export const gridSize = (page) => page.evaluate(() => [window.desktank.tank.width(), window.desktank.tank.height()]);
+
+// Emulated multi-touch through the Chrome DevTools Protocol (Playwright's
+// touchscreen only taps). Points are viewport CSS px; `fingers` lists every
+// finger down after the event.
+export async function touchscreen(page) {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type, fingers) =>
+    cdp.send("Input.dispatchTouchEvent", {
+      type,
+      touchPoints: fingers.map((p, id) => ({ x: p.x, y: p.y, id, radiusX: 1, radiusY: 1, force: 1 })),
+    });
+  return {
+    start: (fingers) => send("touchStart", fingers),
+    move: (fingers) => send("touchMove", fingers),
+    end: (fingers = []) => send("touchEnd", fingers),
+    // Moves every finger from `from` to `to` in `steps` touchMoves.
+    async drag(from, to, steps = 10) {
+      await send("touchStart", from);
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        await send(
+          "touchMove",
+          from.map((f, k) => ({ x: f.x + (to[k].x - f.x) * t, y: f.y + (to[k].y - f.y) * t })),
+        );
+      }
+      await send("touchEnd", []);
+    },
+  };
+}
