@@ -97,9 +97,10 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   selector). Pick the dominant category. If a change fixes wrong
   behaviour, use 🐛 even when the fix is a speed-up; use 🏎️ only for
   speed with no behaviour change.
-- Push the branch and open a PR against `main`. Keep the body to about 300
-  words: what changed, screenshot or GIF, resource numbers if relevant,
-  and testing (say plainly what you could not verify). End with a “🤖 Generated with” credit naming the agent used.
+- Push the branch and open a PR against `main`. Fill in the sections of
+  `.github/pull_request_template.md` (summary, screenshot or GIF, resource
+  use, testing) and delete its HTML comments. Keep the body to about 300
+  words and say plainly what you could not verify. End with a “🤖 Generated with” credit naming the agent used.
 - Don't hard-wrap PR bodies or PR comments: GitHub renders single
   newlines as line breaks, so write each paragraph or bullet on one
   line (code blocks excepted).
