@@ -1,0 +1,60 @@
+# An amano shrimp, Caridina multidentata (placeholder art, D11): a larger
+# translucent grey-green shrimp, about 4.5 cm long, with a dashed brown
+# line along its side. A tireless algae grazer and a bold scavenger: it
+# eats every food in the tank and darts after it faster than the cherries.
+id = 6
+name = "amano_shrimp"
+zone = "bottom"
+depth = [0.68, 1.0]
+min_depth = 14
+temperament = "peaceful"
+speed = 2.5
+max_speed = 8.0
+hop_every = 10.0
+diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "bloodworm", "flake_food"]
+
+[sprite]
+# Facing right; two texels per cell side (an 8x3-cell body): a pale
+# dorsal stripe, the dashed lateral line, eye and antenna. Four frames:
+# the legs paddle while the tail fan and antenna flick.
+colours = { g = "#9aab94", p = "#d6dccb", t = "#73836d", d = "#7d4b38", k = "#16160f", a = "#c3cdbb", l = "#7f8f7a" }
+frames = [
+    [
+        "......pppppp...a",
+        "...gggggggggggka",
+        "ttgdggdggdggdggg",
+        "ttgggdggdggdggg.",
+        "t...l.l.l.l.lll.",
+        "....l.l.l.l.....",
+    ],
+    [
+        "......pppppp...a",
+        "...gggggggggggka",
+        "ttgdggdggdggdggg",
+        "ttgggdggdggdggg.",
+        "t..l.l.l.l.l.ll.",
+        "...l.l.l.l......",
+    ],
+    [
+        "......pppppp..a.",
+        "t..gggggggggggka",
+        "ttgdggdggdggdggg",
+        "t.gggdggdggdggg.",
+        "....l.l.l.l.lll.",
+        "....l.l.l.l.....",
+    ],
+    [
+        "......pppppp..a.",
+        "t..gggggggggggka",
+        "ttgdggdggdggdggg",
+        "t.gggdggdggdggg.",
+        "...l.l.l.l.l.ll.",
+        "...l.l.l.l......",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "..ppppa.",
+    "tgdgdgdk",
+    "..l.l.l.",
+]

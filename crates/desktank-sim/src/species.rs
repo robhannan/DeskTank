@@ -34,6 +34,8 @@ pub const MAX_ICON_SIDE: usize = 8;
 /// Fastest allowed speed, in cells per second: under one cell per tick, so
 /// a body never skips past a cell it would collide with.
 pub const MAX_SPEED: f32 = 16.0;
+/// Farthest a species reaches to eat, in cells past its body.
+pub const MAX_REACH: u8 = 4;
 
 /// The part of the tank a species lives in (SPEC §2.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -113,6 +115,12 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
+    /// How far past its body it takes food, in cells (1..=[`MAX_REACH`]):
+    /// 1 for a mouth at the body's edge, more for a filter feeder's fans.
+    pub reach: u8,
+    /// Seconds between a bottom walker's hops off the substrate (shrimp),
+    /// or `None` if it never hops.
+    pub hop_every: Option<f32>,
     /// Its pixel art; half its size in texels is the body size in cells.
     pub sprite: Sprite,
     /// Its main colour (the commonest in the first frame), for swatches.
@@ -187,7 +195,15 @@ struct SpeciesDef {
     speed: f32,
     max_speed: f32,
     diet: Vec<String>,
+    #[serde(default = "default_reach")]
+    reach: u8,
+    #[serde(default)]
+    hop_every: Option<f32>,
     sprite: SpriteDef,
+}
+
+fn default_reach() -> u8 {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,6 +220,9 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/corydoras.toml"),
     include_str!("../../../assets/species/betta.toml"),
     include_str!("../../../assets/species/nerite.toml"),
+    include_str!("../../../assets/species/cherry_shrimp.toml"),
+    include_str!("../../../assets/species/amano_shrimp.toml"),
+    include_str!("../../../assets/species/thai_micro_crab.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -321,6 +340,17 @@ fn validate(
     if d.max_speed > MAX_SPEED {
         return Err(invalid("max_speed must be at most 16 cells per second"));
     }
+    if !(1..=MAX_REACH).contains(&d.reach) {
+        return Err(invalid("reach must be 1..=4 cells"));
+    }
+    if let Some(every) = d.hop_every {
+        if d.zone != Zone::Bottom {
+            return Err(invalid("only bottom walkers hop"));
+        }
+        if !(every.is_finite() && (1.0..=600.0).contains(&every)) {
+            return Err(invalid("hop_every must be 1..=600 seconds"));
+        }
+    }
     let mut diet = Vec::with_capacity(d.diet.len());
     for food in &d.diet {
         match materials.id(food) {
@@ -347,6 +377,8 @@ fn validate(
         speed: d.speed,
         max_speed: d.max_speed,
         diet,
+        reach: d.reach,
+        hop_every: d.hop_every,
         sprite,
         colour,
     })
@@ -480,8 +512,16 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 4);
-        for name in ["neon_tetra", "corydoras", "betta", "nerite"] {
+        assert_eq!(t.len(), 7);
+        for name in [
+            "neon_tetra",
+            "corydoras",
+            "betta",
+            "nerite",
+            "cherry_shrimp",
+            "amano_shrimp",
+            "thai_micro_crab",
+        ] {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert!(!s.diet.is_empty(), "{name} eats something");
             assert!(s.sprite.frames.len() >= 2, "{name} animates");
@@ -498,6 +538,23 @@ mod tests {
         let betta = t.get(t.id("betta").unwrap()).unwrap();
         assert!(betta.breathes_air);
         assert_eq!(betta.zone, Zone::Surface);
+        // Shrimp walk the bottom and hop; the crab crawls and filter-feeds.
+        let algae = m.id("algae").unwrap();
+        for name in ["cherry_shrimp", "amano_shrimp"] {
+            let s = t.get(t.id(name).unwrap()).unwrap();
+            assert_eq!(s.zone, Zone::Bottom);
+            assert!(s.hop_every.is_some(), "{name} hops");
+            assert!(s.eats(algae), "{name} grazes algae");
+        }
+        let crab = t.get(t.id("thai_micro_crab").unwrap()).unwrap();
+        assert_eq!(
+            (crab.zone, crab.reach, crab.size()),
+            (Zone::Surfaces, 2, (3, 3))
+        );
+        assert!(
+            crab.size().0 % 2 == 1 && crab.size().1 % 2 == 1,
+            "odd crawler sides"
+        );
     }
 
     #[test]
@@ -573,6 +630,14 @@ mod tests {
         assert!(matches!(
             SpeciesTable::from_toml_sources(&[&odd_height], &m),
             Err(SpeciesError::Invalid { reason, .. }) if reason.contains("even")
+        ));
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nreach = 0"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nhop_every = 5.0"),
+            Err(SpeciesError::Invalid { .. })
         ));
         assert!(matches!(
             bad("zone = \"mid\"", "zone = \"sky\""),

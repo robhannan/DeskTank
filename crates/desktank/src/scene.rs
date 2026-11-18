@@ -48,7 +48,8 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
 }
 
 /// Adds `count` creatures (stopping at [`MAX_CREATURES`]), cycling through the
-/// fish species, each placed at a seeded spot in the middle of its zone (or the
+/// swimming and bottom-walking species (fish and shrimp; not the surface
+/// crawlers), each placed at a seeded spot in the middle of its zone (or the
 /// nearest free water). Returns how many were added.
 ///
 /// # Errors
@@ -122,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn stock_adds_every_fish_species_up_to_the_cap() {
+    fn stock_adds_every_swimmer_and_walker_up_to_the_cap() {
         let config = WorldConfig {
             width: 320,
             height: 180,
@@ -132,6 +133,11 @@ mod tests {
         let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
         starter(&mut world, 7).unwrap();
         assert_eq!(stock(&mut world, 30, 7).unwrap(), 30);
+        let stocked = world
+            .species()
+            .iter()
+            .filter(|s| s.zone != Zone::Surfaces)
+            .count();
         for s in world.species().iter() {
             assert_eq!(
                 world
@@ -139,7 +145,11 @@ mod tests {
                     .iter()
                     .filter(|c| c.species() == s.id)
                     .count(),
-                if s.zone == Zone::Surfaces { 0 } else { 10 }
+                if s.zone == Zone::Surfaces {
+                    0
+                } else {
+                    30 / stocked
+                }
             );
         }
         assert_eq!(stock(&mut world, 1000, 7).unwrap(), MAX_CREATURES - 30);
