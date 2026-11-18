@@ -136,12 +136,14 @@ struct SpriteOut {
 @vertex
 fn vs_sprite(
     @builtin(vertex_index) i: u32,
-    // Top-left in cells (fractional), size in texels (= cells), the frame's
-    // top-left texel in the atlas, and x > 0.5 to mirror (facing left).
+    // Top-left in cells (fractional), on-screen size in cells (the frame's
+    // size, swapped when turned a quarter), the frame's top-left texel in
+    // the atlas, and orient: x > 0.5 to mirror (facing left in its own
+    // frame), y the quarter turns clockwise applied after the mirror.
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
-    @location(3) flip: vec2<f32>,
+    @location(3) orient: vec2<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -151,13 +153,24 @@ fn vs_sprite(
     let top_left = round(view.offset + cell * view.scale);
     let px = top_left + corner * size * view.scale;
     let ndc = vec2<f32>(px.x / view.target_size.x * 2.0 - 1.0, 1.0 - px.y / view.target_size.y * 2.0);
-    var u = corner.x * size.x;
-    if flip.x > 0.5 {
-        u = size.x - u;
+    // Undo the turn: the frame point (0..1) this screen corner shows. One
+    // clockwise turn takes frame (a, b) to screen (1 - b, a).
+    let turn = u32(round(orient.y)) % 4u;
+    var q = corner;
+    if turn == 1u {
+        q = vec2<f32>(corner.y, 1.0 - corner.x);
+    } else if turn == 2u {
+        q = vec2<f32>(1.0 - corner.x, 1.0 - corner.y);
+    } else if turn == 3u {
+        q = vec2<f32>(1.0 - corner.y, corner.x);
     }
+    if orient.x > 0.5 {
+        q.x = 1.0 - q.x;
+    }
+    let frame = select(size, size.yx, turn % 2u == 1u);
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    o.texel = origin + vec2<f32>(u, corner.y * size.y);
+    o.texel = origin + q * frame;
     return o;
 }
 
