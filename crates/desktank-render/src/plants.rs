@@ -51,6 +51,13 @@ pub fn tint(health: f32) -> [u8; 3] {
     rgb.map(|v| (v * 255.0).round() as u8)
 }
 
+/// `rows` rows of texels with no plant: untinted, species 0 (a row of the
+/// species texture that repeats the default species, so no real species id
+/// is reserved).
+fn empty_rows(rows: usize) -> Vec<u8> {
+    [u8::MAX, u8::MAX, u8::MAX, 0].repeat(rows * SIDE)
+}
+
 /// The texture's contents on the CPU, to find the rows that changed.
 #[derive(Clone, Debug)]
 pub struct PlantTints {
@@ -64,7 +71,7 @@ pub struct PlantTints {
 impl Default for PlantTints {
     fn default() -> Self {
         Self {
-            image: vec![u8::MAX; SIDE * ROW_BYTES],
+            image: empty_rows(SIDE),
             rows: 0,
             version: None,
         }
@@ -89,7 +96,7 @@ impl PlantTints {
             .plants()
             .last()
             .map_or(0, |p| usize::from(p.id.0 >> 8) + 1);
-        let mut fresh = vec![u8::MAX; rows.max(self.rows) * ROW_BYTES];
+        let mut fresh = empty_rows(rows.max(self.rows));
         for plant in world.plants() {
             let at = usize::from(plant.id.0) * 4;
             let [red, green, blue] = tint(plant.health);
@@ -116,7 +123,8 @@ impl PlantTints {
 /// this many.
 pub const RAMP: usize = 8;
 /// Species texture width: three ramps, the shapes texel and the sizes
-/// texel, rounded up.
+/// texel, rounded up. Row 0 (no species id) and rows of missing ids repeat
+/// the default species.
 pub const SPECIES_WIDTH: usize = 32;
 /// Column of the shapes texel: leaf, stem and root shape discriminants.
 pub const SHAPES_COLUMN: usize = 3 * RAMP;
@@ -261,15 +269,37 @@ mod tests {
         let default = usize::from(table.default_species().unwrap().id.0);
         let at = |r: usize| &image[r * SPECIES_WIDTH * 4..(r + 1) * SPECIES_WIDTH * 4];
         assert_eq!(at(0), at(default));
+        // A plant texel with no plant points at row 0.
+        assert!(
+            PlantTints::default()
+                .image()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|t| *t == [255, 255, 255, 0])
+        );
         assert_eq!(at(255), at(default));
         assert_ne!(at(row), at(default));
     }
 
-    /// The shader's shape constants match the TOML enums' discriminants.
+    /// The shader's layout and shape constants match the Rust side.
     #[test]
-    fn shader_shape_constants_match_the_enums() {
+    fn shader_constants_match_the_rust_side() {
         use desktank_sim::plants::{LeafShape, RootShape, StemShape};
         let wgsl = include_str!("tank.wgsl");
+        for (name, value) in [
+            ("RAMP", RAMP),
+            ("SHAPES_COLUMN", SHAPES_COLUMN),
+            ("SIZES_COLUMN", SIZES_COLUMN),
+        ] {
+            let line = format!("const {name}: i32 = {value};");
+            assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");
+        }
+        for p in Part::ALL {
+            let name = format!("{p:?}").to_uppercase();
+            let line = format!("const PART_{name}: i32 = {};", p.index());
+            assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");
+        }
         let check = |prefix: &str, name: String, value: u8| {
             let line = format!("const {prefix}_{}: i32 = {value};", name.to_uppercase());
             assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");

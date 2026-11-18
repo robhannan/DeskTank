@@ -791,6 +791,12 @@ fn validate(
         stem: d.look.stem.unwrap_or(default_stem),
         root: d.look.root.unwrap_or_default(),
     };
+    let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
+    if mat_shape != matches!(form, Form::Mat(_)) {
+        return Err(invalid(
+            "look stem is stalk or thick for a stem form, fuzz or frond for a mat",
+        ));
+    }
     Ok(PlantSpecies {
         id: PlantSpeciesId(d.id),
         name: d.name.clone(),
@@ -954,6 +960,12 @@ mod tests {
             (look.leaf, look.stem, look.root),
             (LeafShape::Feather, StemShape::Thick, RootShape::Thick)
         );
+        // A mat shape on a stem plant is invalid.
+        let mat_on_stem = format!("{OK}\n[look]\nstem = \"fuzz\"\n");
+        assert!(matches!(
+            PlantSpeciesTable::from_toml_sources(&[&mat_on_stem], &m),
+            Err(PlantSpeciesError::Invalid { .. })
+        ));
         // Unknown shapes and keys are errors.
         for bad in ["leaf = \"spiky\"", "flower = \"round\""] {
             let src = format!("{OK}\n[look]\n{bad}\n");
