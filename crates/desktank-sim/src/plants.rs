@@ -56,20 +56,31 @@ pub fn plant_position(variant: u8) -> u8 {
 }
 
 /// The generic plant part materials shared by every species (SPEC §2.7).
-/// T6c adds blades, rhizomes, runners and floating leaves.
+/// A rosette's or carpet's blades are leaf cells (their shape comes from
+/// the species' `[look] leaf`), so blades cost no material id; T6c's later
+/// parts add rhizomes and floating leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Part {
     /// Grows down and sideways through the substrate.
     Root,
-    /// The upright stem; also the cells of a mat (moss).
+    /// The upright stem; a rosette's or carpet's crown; also the cells of a
+    /// mat (moss).
     Stem,
-    /// Grows sideways from stem nodes.
+    /// Grows sideways from stem nodes; a rosette's or carpet's blades grow
+    /// up from the crown.
     Leaf,
+    /// Creeps through the top layer of the substrate from a crown and roots
+    /// a new plant at its tip (T6c).
+    Runner,
 }
 
+/// Slots in a plant's part counts: roots (runners count with them),
+/// stems and leaves.
+pub const COUNTED_PARTS: usize = 3;
+
 impl Part {
-    /// Every part, in the order part counts use.
-    pub const ALL: [Self; 3] = [Self::Root, Self::Stem, Self::Leaf];
+    /// Every part, in discriminant order.
+    pub const ALL: [Self; 4] = [Self::Root, Self::Stem, Self::Leaf, Self::Runner];
 
     /// The part's material name.
     #[must_use]
@@ -78,13 +89,32 @@ impl Part {
             Self::Root => "root",
             Self::Stem => "stem",
             Self::Leaf => "leaf",
+            Self::Runner => "runner",
         }
     }
 
-    /// Index into part counts.
+    /// The discriminant (what the shader calls the part).
     #[must_use]
     pub fn index(self) -> usize {
         self as usize
+    }
+
+    /// Its slot in a plant's part counts ([`COUNTED_PARTS`]): runners are
+    /// counted with roots, as the parts below ground, so the counts (and
+    /// the save format) keep three slots.
+    #[must_use]
+    pub fn count_slot(self) -> usize {
+        match self {
+            Self::Runner => Self::Root.index(),
+            p => p.index(),
+        }
+    }
+
+    /// Whether it samples light (stems and leaves; roots and runners are in
+    /// the substrate).
+    #[must_use]
+    pub fn sees_light(self) -> bool {
+        matches!(self, Self::Stem | Self::Leaf)
     }
 }
 
@@ -227,14 +257,76 @@ impl Preferences {
 }
 
 /// How a species grows: a small growth program in Rust, parametrised by the
-/// TOML (SPEC §2.7 *Growth forms*). T6c adds rosettes, carpets, floaters
-/// and epiphytes.
+/// TOML (SPEC §2.7 *Growth forms*). T6c adds floaters and epiphytes next.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Form {
     /// An upright stem with leaves at nodes and roots in the substrate.
     Stem(StemForm),
     /// A mat that creeps over the surfaces it clings to (moss).
     Mat(MatForm),
+    /// A crown at the substrate with blades fanning up from it, roots
+    /// below, spreading by runners (vallisneria or sword type).
+    Rosette(RosetteForm),
+    /// Low tufts (a rosette whose blades stay within [`MAX_CARPET_BLADE`]
+    /// cells of the substrate) joined by short runners (dwarf hairgrass
+    /// type).
+    Carpet(RosetteForm),
+}
+
+impl Form {
+    /// The substrates it roots in, for the forms that root.
+    #[must_use]
+    pub fn substrates(&self) -> Option<&[MaterialId]> {
+        match self {
+            Self::Stem(f) => Some(&f.substrates),
+            Self::Rosette(f) | Self::Carpet(f) => Some(&f.substrates),
+            Self::Mat(_) => None,
+        }
+    }
+
+    /// The rosette parameters of a rosette or carpet.
+    #[must_use]
+    pub fn rosette(&self) -> Option<&RosetteForm> {
+        match self {
+            Self::Rosette(f) | Self::Carpet(f) => Some(f),
+            Self::Stem(_) | Self::Mat(_) => None,
+        }
+    }
+}
+
+/// Longest blade a carpet grows, in cells: carpets stay low.
+pub const MAX_CARPET_BLADE: u8 = 3;
+/// Most crown cells a rosette spreads along the substrate.
+pub const MAX_CROWN: u8 = 3;
+
+/// Parameters of the rosette and carpet forms (T6c). A crown of stem cells
+/// sits on the substrate, growing rightwards from where it rooted to one to
+/// [`MAX_CROWN`] cells wide; blades (leaf cells) start above each crown cell
+/// and beside its ends and grow up, those off the crown's centre stepping a
+/// cell outwards at their second cell and every `lean` cells after (more
+/// often the further out they are, so outer blades arch away); roots grow
+/// down from the first crown cell. With `runners` in its propagation, a runner leaves the
+/// root under the crown on each side, creeps through the top substrate
+/// layer and, `spacing` cells out, roots a child plant (parent id set,
+/// generation + 1) whose crown sits on the substrate above.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RosetteForm {
+    /// Crown cells along the substrate (1 for a carpet).
+    pub crown: u8,
+    /// Most blades (at most `crown + 2`).
+    pub blades: u8,
+    /// Longest blade, in cells.
+    pub blade_length: u8,
+    /// Cells of blade between two outward steps near the centre (0:
+    /// upright).
+    pub lean: u8,
+    /// Deepest root, in cells from the crown.
+    pub root_depth: u8,
+    /// Runner cells from the crown to a new plant (a runner gives up at
+    /// twice this).
+    pub spacing: u8,
+    /// Substrates it roots in and runners creep through.
+    pub substrates: Vec<MaterialId>,
 }
 
 /// Parameters of the stem form.
@@ -272,6 +364,10 @@ pub struct Growth {
     pub cost: f32,
     /// Lifespan in seconds, if it ages: past it, health declines.
     pub lifespan: Option<f32>,
+    /// It feeds through its roots: only its roots and runners sample the
+    /// nutrient field, so it follows the substrate (root tabs) rather than
+    /// the water (sword type). Only for forms that root.
+    pub root_feeder: bool,
 }
 
 /// How a species copes with conditions outside its ranges.
@@ -287,6 +383,7 @@ pub struct Hardiness {
 
 /// How a species spreads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)] // a set of flags: the TOML's list
 pub struct Propagation {
     /// Grows from seeds.
     pub seeds: bool,
@@ -294,6 +391,8 @@ pub struct Propagation {
     pub cuttings: bool,
     /// A cut-off piece holding a stem lives on as a new plant.
     pub fragments: bool,
+    /// Sends out runners that root new plants (rosettes and carpets).
+    pub runners: bool,
 }
 
 /// Colour ramps per part, dark to light (sRGB). The renderer shades each
@@ -328,11 +427,39 @@ pub enum LeafShape {
     Round = 2,
     /// A midrib with a fringe of fine teeth above it (cabomba type).
     Feather = 3,
+    /// Blade shapes, for rosettes and carpets (T6c), drawn up from the
+    /// crown: a long, one-texel strap that twists, crossing sides every
+    /// few cells (vallisneria type).
+    Ribbon = 4,
+    /// A broad blade on a narrow stalk with a pale midrib and a pointed tip
+    /// (sword type).
+    Sword = 5,
+    /// A fine, one-texel blade (hairgrass type).
+    Grass = 6,
+    /// A tiny round leaf on a short stalk, the tip cell a full pad (Monte
+    /// Carlo type).
+    Pad = 7,
 }
 
 impl LeafShape {
     /// Every shape, in discriminant order.
-    pub const ALL: [Self; 4] = [Self::Lanceolate, Self::Needle, Self::Round, Self::Feather];
+    pub const ALL: [Self; 8] = [
+        Self::Lanceolate,
+        Self::Needle,
+        Self::Round,
+        Self::Feather,
+        Self::Ribbon,
+        Self::Sword,
+        Self::Grass,
+        Self::Pad,
+    ];
+
+    /// Whether it is a blade shape (rosettes and carpets), drawn upright,
+    /// rather than a leaf growing sideways from a stem.
+    #[must_use]
+    pub fn is_blade(self) -> bool {
+        self as u8 >= Self::Ribbon as u8
+    }
 }
 
 /// How a species' stem cells are drawn (`[look] stem`). A mat's cells are
@@ -422,7 +549,7 @@ impl PlantSpecies {
     pub fn colour(&self) -> [u8; 3] {
         let ramp = match self.form {
             Form::Mat(_) => &self.colours.stem,
-            Form::Stem(_) => &self.colours.leaf,
+            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) => &self.colours.leaf,
         };
         ramp.get(ramp.len() / 2)
             .copied()
@@ -437,6 +564,7 @@ impl PlantSpecies {
             Propagule::Seeds => p.seeds,
             Propagule::Cuttings => p.cuttings,
             Propagule::Fragments => p.fragments,
+            Propagule::Runners => p.runners,
         }
     }
 
@@ -470,11 +598,15 @@ pub enum Propagule {
     /// `cutting` material (a loose piece that roots or clings like one);
     /// it has no material of its own.
     Fragments,
+    /// Runners: the species spreads by runners as it grows (T6c). Poured,
+    /// it is a plantlet taken off a runner: the `cutting` material, which
+    /// roots like one.
+    Runners,
 }
 
 impl Propagule {
     /// Every propagule, in the order hosts list them.
-    pub const ALL: [Self; 3] = [Self::Seeds, Self::Cuttings, Self::Fragments];
+    pub const ALL: [Self; 4] = [Self::Seeds, Self::Cuttings, Self::Fragments, Self::Runners];
 
     /// Its name, as a species' `propagation` list and scripts spell it.
     #[must_use]
@@ -483,6 +615,7 @@ impl Propagule {
             Self::Seeds => "seeds",
             Self::Cuttings => "cuttings",
             Self::Fragments => "fragments",
+            Self::Runners => "runners",
         }
     }
 
@@ -497,7 +630,7 @@ impl Propagule {
     pub fn material_name(self) -> &'static str {
         match self {
             Self::Seeds => "seed",
-            Self::Cuttings | Self::Fragments => "cutting",
+            Self::Cuttings | Self::Fragments | Self::Runners => "cutting",
         }
     }
 }
@@ -547,6 +680,8 @@ struct SpeciesDef {
     form: FormName,
     stem: Option<StemDef>,
     mat: Option<MatDef>,
+    rosette: Option<RosetteDef>,
+    carpet: Option<RosetteDef>,
     prefer: Preferences,
     growth: GrowthDef,
     hardiness: HardinessDef,
@@ -569,6 +704,8 @@ struct LookDef {
 enum FormName {
     Stem,
     Mat,
+    Rosette,
+    Carpet,
 }
 
 #[derive(Debug, Deserialize)]
@@ -589,11 +726,27 @@ struct MatDef {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RosetteDef {
+    /// Absent for a carpet (always 1).
+    crown: Option<u8>,
+    blades: u8,
+    blade_length: u8,
+    #[serde(default)]
+    lean: u8,
+    root_depth: u8,
+    spacing: u8,
+    substrates: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GrowthDef {
     rate: f32,
     size: u32,
     cost: f32,
     lifespan: Option<f32>,
+    #[serde(default)]
+    root_feeder: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -606,7 +759,8 @@ struct HardinessDef {
 
 /// The plant species embedded in the binary (T6b: T6's plant and moss, and
 /// a high-light stem plant; then ludwigia, cabomba, bacopa and christmas
-/// moss).
+/// moss; T6c's rosettes and carpets: amazon sword, vallisneria, dwarf
+/// hairgrass, Monte Carlo and cryptocoryne).
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/hygrophila.toml"),
     include_str!("../../../assets/plants/java_moss.toml"),
@@ -615,6 +769,11 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/cabomba.toml"),
     include_str!("../../../assets/plants/bacopa.toml"),
     include_str!("../../../assets/plants/christmas_moss.toml"),
+    include_str!("../../../assets/plants/amazon_sword.toml"),
+    include_str!("../../../assets/plants/vallisneria.toml"),
+    include_str!("../../../assets/plants/dwarf_hairgrass.toml"),
+    include_str!("../../../assets/plants/monte_carlo.toml"),
+    include_str!("../../../assets/plants/cryptocoryne.toml"),
 ];
 
 /// All plant species, ordered by ID.
@@ -752,7 +911,62 @@ fn validate(
         }
         Ok(out)
     };
+    let tables = [
+        d.stem.is_some(),
+        d.mat.is_some(),
+        d.rosette.is_some(),
+        d.carpet.is_some(),
+    ];
+    if tables.iter().filter(|&&t| t).count() != 1 {
+        return Err(invalid(
+            "needs exactly the [stem], [mat], [rosette] or [carpet] table its form names",
+        ));
+    }
     let form = match (d.form, &d.stem, &d.mat) {
+        (FormName::Rosette | FormName::Carpet, ..) => {
+            let carpet = d.form == FormName::Carpet;
+            let Some(r) = (if carpet { &d.carpet } else { &d.rosette }) else {
+                return Err(invalid(
+                    "needs exactly the [stem], [mat], [rosette] or [carpet] table its form names",
+                ));
+            };
+            let max = MAX_POSITION;
+            let crown = match (carpet, r.crown) {
+                (true, None) => 1,
+                (false, Some(c)) if (1..=MAX_CROWN).contains(&c) => c,
+                (true, Some(_)) => return Err(invalid("a carpet has no crown key (it is 1)")),
+                (false, _) => return Err(invalid("rosette crown must be 1..=3")),
+            };
+            let longest = if carpet { MAX_CARPET_BLADE } else { max };
+            if !(1..=crown + 2).contains(&r.blades) {
+                return Err(invalid("blades must be 1..=crown + 2"));
+            }
+            if !(1..=longest).contains(&r.blade_length) {
+                return Err(invalid(
+                    "blade_length must be 1..=63 (1..=3 for a carpet, which stays low)",
+                ));
+            }
+            if r.lean > max || !(1..=max).contains(&r.root_depth) {
+                return Err(invalid("lean must be 0..=63 and root_depth 1..=63"));
+            }
+            if !(2..=max / 2).contains(&r.spacing) {
+                return Err(invalid("runner spacing must be 2..=31"));
+            }
+            let f = RosetteForm {
+                crown,
+                blades: r.blades,
+                blade_length: r.blade_length,
+                lean: r.lean,
+                root_depth: r.root_depth,
+                spacing: r.spacing,
+                substrates: lookup(&r.substrates)?,
+            };
+            if carpet {
+                Form::Carpet(f)
+            } else {
+                Form::Rosette(f)
+            }
+        }
         (FormName::Stem, Some(s), None) => {
             let max = MAX_POSITION;
             if !(1..=max).contains(&s.height)
@@ -814,10 +1028,17 @@ fn validate(
             Propagule::Seeds => propagation.seeds = true,
             Propagule::Cuttings => propagation.cuttings = true,
             Propagule::Fragments => propagation.fragments = true,
+            Propagule::Runners => propagation.runners = true,
         }
     }
     if propagation == Propagation::default() {
         return Err(invalid("propagation needs at least one way to spread"));
+    }
+    if propagation.runners && form.rosette().is_none() {
+        return Err(invalid("only rosettes and carpets spread by runners"));
+    }
+    if g.root_feeder && form.substrates().is_none() {
+        return Err(invalid("only a plant that roots can be a root feeder"));
     }
     let mut ramps = [Vec::new(), Vec::new(), Vec::new()];
     for (key, shades) in &d.colours {
@@ -839,19 +1060,26 @@ fn validate(
         return Err(invalid("colours need a root, stem and leaf ramp"));
     }
     let [root, stem, leaf] = ramps;
-    let default_stem = match form {
-        Form::Stem(_) => StemShape::Stalk,
-        Form::Mat(_) => StemShape::Fuzz,
+    let (default_leaf, default_stem) = match form {
+        Form::Stem(_) => (LeafShape::Lanceolate, StemShape::Stalk),
+        Form::Mat(_) => (LeafShape::Lanceolate, StemShape::Fuzz),
+        Form::Rosette(_) => (LeafShape::Ribbon, StemShape::Thick),
+        Form::Carpet(_) => (LeafShape::Grass, StemShape::Thick),
     };
     let look = Look {
-        leaf: d.look.leaf.unwrap_or_default(),
+        leaf: d.look.leaf.unwrap_or(default_leaf),
         stem: d.look.stem.unwrap_or(default_stem),
         root: d.look.root.unwrap_or_default(),
     };
     let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
     if mat_shape != matches!(form, Form::Mat(_)) {
         return Err(invalid(
-            "look stem is stalk or thick for a stem form, fuzz or frond for a mat",
+            "look stem is stalk or thick for a stem, rosette or carpet, fuzz or frond for a mat",
+        ));
+    }
+    if look.leaf.is_blade() != form.rosette().is_some() {
+        return Err(invalid(
+            "look leaf is a blade shape (ribbon, sword, grass, pad) exactly for rosettes and carpets",
         ));
     }
     Ok(PlantSpecies {
@@ -865,6 +1093,7 @@ fn validate(
             size: g.size,
             cost: g.cost,
             lifespan: g.lifespan,
+            root_feeder: g.root_feeder,
         },
         hardiness: Hardiness {
             tolerance: h.tolerance,
@@ -919,7 +1148,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 7);
+        assert_eq!(t.len(), 12);
         let first = t.default_species().unwrap();
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
@@ -940,7 +1169,10 @@ mod tests {
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
         let get = |n| t.get(t.id(n).unwrap()).unwrap();
         let ways = |n| get(n).propagules().collect::<Vec<_>>();
-        assert_eq!(ways("hygrophila"), Propagule::ALL);
+        assert_eq!(
+            ways("hygrophila"),
+            [Propagule::Seeds, Propagule::Cuttings, Propagule::Fragments]
+        );
         assert_eq!(ways("rotala"), [Propagule::Cuttings]);
         assert_eq!(ways("java_moss"), [Propagule::Fragments]);
         assert_eq!(get("hygrophila").default_propagule(), Propagule::Cuttings);
@@ -1059,7 +1291,7 @@ mod tests {
         let get = |n: &str| t.get(t.id(n).unwrap()).unwrap();
         let stem = |n: &str| match &get(n).form {
             Form::Stem(f) => f.clone(),
-            Form::Mat(_) => panic!("{n} is a stem plant"),
+            _ => panic!("{n} is a stem plant"),
         };
         let (hyg, rotala, java) = (get("hygrophila"), get("rotala"), get("java_moss"));
         let (ludwigia, cabomba, bacopa, xmas) = (
@@ -1117,6 +1349,119 @@ mod tests {
                 assert_ne!(a.colour(), b.colour(), "{} {}", a.name, b.name);
             }
         }
+    }
+
+    #[test]
+    fn rosettes_and_carpets_load_with_their_care_and_look() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let get = |n: &str| t.get(t.id(n).unwrap()).unwrap();
+        let rosette = |n: &str| get(n).form.rosette().unwrap().clone();
+        let (sword, vals, crypt) = (get("amazon_sword"), get("vallisneria"), get("cryptocoryne"));
+        let (grass, monte) = (get("dwarf_hairgrass"), get("monte_carlo"));
+        for s in [sword, vals, crypt] {
+            assert!(matches!(s.form, Form::Rosette(_)), "{}", s.name);
+            assert!(s.propagation.runners, "{}", s.name);
+        }
+        for s in [grass, monte] {
+            assert!(matches!(s.form, Form::Carpet(_)), "{}", s.name);
+            assert!(s.grows_from(Propagule::Runners) && s.grows_from(Propagule::Fragments));
+            let f = rosette(&s.name);
+            assert!(f.crown == 1 && f.blade_length <= MAX_CARPET_BLADE);
+            assert!(f.spacing < rosette("vallisneria").spacing);
+        }
+        // Looks: broad swords, twisting ribbons, fine grass, round pads.
+        let looks = [sword, vals, grass, monte, crypt].map(|s| s.look.leaf);
+        assert_eq!(
+            looks,
+            [
+                LeafShape::Sword,
+                LeafShape::Ribbon,
+                LeafShape::Grass,
+                LeafShape::Pad,
+                LeafShape::Sword
+            ]
+        );
+        assert!(looks.iter().all(|l| l.is_blade()));
+        assert!(!LeafShape::Round.is_blade());
+        // Vallisneria has the longest blades and the shortest runners of
+        // the rosettes, and grows fastest; the sword is the widest and a
+        // root feeder that wants rich soil; cryptocoryne the smallest and
+        // slowest, wanting the least light.
+        assert!(rosette("vallisneria").blade_length > rosette("amazon_sword").blade_length);
+        assert!(rosette("vallisneria").spacing < rosette("amazon_sword").spacing);
+        assert!(vals.growth.rate > sword.growth.rate && sword.growth.rate > crypt.growth.rate);
+        assert!(rosette("amazon_sword").crown > rosette("vallisneria").crown);
+        assert!(sword.growth.root_feeder && crypt.growth.root_feeder && !vals.growth.root_feeder);
+        assert!(sword.prefer.nutrient.optimum > vals.prefer.nutrient.optimum);
+        assert!(rosette("cryptocoryne").blade_length < rosette("amazon_sword").blade_length);
+        for other in [sword, vals, grass, monte] {
+            assert!(crypt.prefer.light.optimum < other.prefer.light.optimum);
+            assert!(crypt.hardiness.tolerance > other.hardiness.tolerance);
+        }
+        // Monte Carlo wants the most light and CO₂ of the carpets.
+        assert!(monte.prefer.light.min > grass.prefer.light.min);
+        assert!(monte.prefer.co2.min > grass.prefer.co2.min);
+    }
+
+    #[test]
+    fn rosette_and_carpet_definitions_are_checked() {
+        let m = materials();
+        let rosette = OK
+            .replace("form = \"stem\"", "form = \"rosette\"")
+            .replace("[\"cuttings\"]", "[\"runners\"]")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6",
+                "[rosette]\n        crown = 1\n        blades = 3\n        blade_length = 20\n        lean = 5\n        root_depth = 6\n        spacing = 6",
+            );
+        assert_ne!(rosette, OK);
+        let t = PlantSpeciesTable::from_toml_sources(&[&rosette], &m).unwrap();
+        let s = t.get(PlantSpeciesId(9)).unwrap();
+        assert_eq!(
+            s.look.leaf,
+            LeafShape::Ribbon,
+            "rosettes default to ribbons"
+        );
+        assert_eq!(s.look.stem, StemShape::Thick);
+        assert_eq!(s.default_propagule(), Propagule::Runners);
+        let carpet = rosette
+            .replace("form = \"rosette\"", "form = \"carpet\"")
+            .replace("[rosette]", "[carpet]")
+            .replace("crown = 1\n", "")
+            .replace("blade_length = 20", "blade_length = 3");
+        let t = PlantSpeciesTable::from_toml_sources(&[&carpet], &m).unwrap();
+        assert_eq!(
+            t.get(PlantSpeciesId(9)).unwrap().look.leaf,
+            LeafShape::Grass
+        );
+        let invalid = |src: String| {
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &m);
+            assert!(matches!(r, Err(PlantSpeciesError::Invalid { .. })), "{r:?}");
+        };
+        // Too many blades for the crown, a carpet too tall or with a crown,
+        // runners too short, a stem leaf on a rosette, a blade on a stem
+        // plant, runners or root feeding where they don't apply.
+        invalid(rosette.replace("blades = 3", "blades = 4"));
+        invalid(rosette.replace("crown = 1", "crown = 4"));
+        invalid(carpet.replace("blade_length = 3", "blade_length = 4"));
+        invalid(carpet.replace("blades = 3", "crown = 1\n        blades = 3"));
+        invalid(rosette.replace("spacing = 6", "spacing = 1"));
+        invalid(format!("{rosette}\n[look]\nleaf = \"round\"\n"));
+        invalid(format!("{OK}\n[look]\nleaf = \"grass\"\n"));
+        invalid(OK.replace("[\"cuttings\"]", "[\"cuttings\", \"runners\"]"));
+        let mat = OK
+            .replace("form = \"stem\"", "form = \"mat\"")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6\n        substrates = [\"sand\"]",
+                "[mat]\n        on = [\"rock\"]",
+            )
+            .replace("[look]", "");
+        let mat = format!("{mat}\n[look]\nstem = \"fuzz\"\n");
+        assert!(PlantSpeciesTable::from_toml_sources(&[&mat], &m).is_ok());
+        invalid(mat.replace("cost = 0.01", "cost = 0.01\n        root_feeder = true"));
+        invalid(format!(
+            "{rosette}\n[stem]\nheight = 2\ninternode = 2\nleaf_length = 1\nroot_depth = 1\nsubstrates = []\n"
+        ));
     }
 
     #[test]
