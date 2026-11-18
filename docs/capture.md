@@ -10,7 +10,7 @@ desktank capture --seed 7 --size 640x360 --frames 60 \
 | Flag | Default | Meaning |
 |---|---|---|
 | `--seed N` | 1 | World seed; the same seed and script give the same pixels. |
-| `--time HH:MM` | none | Time of day. Accepted and validated, but has no effect until day and night exist. |
+| `--time HH:MM` | 12:00 | Local time of day the tank is lit for (day and night, `desktank_sim::daylight`): 07:30–19:30 is untinted day, with warm dawn (05:30–07:30) and dusk (19:30–21:30) and blue moonlight overnight. Lighting only: the simulation is the same at every hour. |
 | `--size WxH` | `640x360` | Output size in pixels. The grid is drawn at the largest integer scale that fits, letterboxed. |
 | `--frames K` | 1 | Frames to write, `frame_every` ticks apart. One frame is `frame.png`; several are `frame_0000.png`, `frame_0001.png`, … |
 | `--script FILE` | none | Input script (below). Without one, an empty 160×90 tank. |
@@ -53,9 +53,12 @@ tick = 0           # tick to place on (default 0)
 x = 20             # footprint centre, in cells from the top left
 y = 60
 device = "bubbler" # "bubbler" (drops onto what is below) or "filter_outlet"
+
+[[water_change]]   # any number of these
+tick = 36000       # tick to change the water on (`World::water_change`)
 ```
 
-Pours due on tick `t` are applied just before that tick runs. Each `[[pour]]` entry is one stroke: the rigid cells (rock) of all its repeats form one body, held still until its last repeat and then free to sink. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.
+Water changes, placements and pours due on tick `t` are applied, in that order, just before that tick runs. Each `[[pour]]` entry is one stroke: the rigid cells (rock) of all its repeats form one body, held still until its last repeat and then free to sink. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.
 
 ## Render tests
 
@@ -63,4 +66,4 @@ Pours due on tick `t` are applied just before that tick runs. Each `[[pour]]` en
 
 - Linux CI renders on Mesa lavapipe (software Vulkan), macOS CI on Metal and Windows CI on WARP. With `CI` set, a missing GPU adapter fails the test; locally it is skipped with a message.
 - After a deliberate visual change, update the references and commit them: `DESKTANK_BLESS=1 cargo test -p desktank --test render`. Look at the new PNGs before committing.
-- To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it.
+- To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it. `check_at("<name>", "HH:MM")` captures it lit for a time of day against `<name>_HHMM.png`; the `planted` scene (T6: cuttings, seeds and moss grown for 6 minutes) is checked at 00:00, 06:30, 12:00 and 20:30.

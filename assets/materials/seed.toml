@@ -1,0 +1,9 @@
+# Plant seeds. They sink, and a seed resting on substrate germinates while
+# it is fed and lit: it roots into the substrate and becomes the base of a
+# stem (`assets/reactions.toml`, [[grow]]).
+id = 70
+name = "seed"
+class = "powder"
+density = 1.3
+repose = 30.0
+colour = "#c8a85a"

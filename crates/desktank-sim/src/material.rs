@@ -94,6 +94,9 @@ pub struct Material {
     /// Buoyant: the material it turns into on touching that material (or
     /// the top edge), e.g. a bubble popping into air.
     pub pops_into: Option<MaterialId>,
+    /// How much of the light reaching a cell it blocks, 0–1: 0 for fluids
+    /// and 1 for other classes unless set (plant tissue lets some through).
+    pub opacity: f32,
     /// Placeholder palette colour (sRGB).
     pub colour: [u8; 3],
 }
@@ -147,10 +150,11 @@ struct MaterialDef {
     float_time: Option<f32>,
     float_density: Option<f32>,
     pops_into: Option<String>,
+    opacity: Option<f32>,
     colour: String,
 }
 
-/// The palette embedded in the binary (SPEC T1, T5). Our own values.
+/// The palette embedded in the binary (SPEC T1, T5, T6). Our own values.
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/water.toml"),
     include_str!("../../../assets/materials/air.toml"),
@@ -171,6 +175,14 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/detritus.toml"),
     include_str!("../../../assets/materials/bubbler.toml"),
     include_str!("../../../assets/materials/filter_outlet.toml"),
+    include_str!("../../../assets/materials/dead_plant.toml"),
+    include_str!("../../../assets/materials/seed.toml"),
+    include_str!("../../../assets/materials/cutting.toml"),
+    include_str!("../../../assets/materials/stem.toml"),
+    include_str!("../../../assets/materials/leaf.toml"),
+    include_str!("../../../assets/materials/root.toml"),
+    include_str!("../../../assets/materials/moss.toml"),
+    include_str!("../../../assets/materials/algae.toml"),
 ];
 
 /// All materials, ordered by ID.
@@ -301,6 +313,12 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
                 })?,
         ),
     };
+    let opacity = match d.opacity {
+        None if d.class.is_fluid() => 0.0,
+        None => 1.0,
+        Some(o) if o.is_finite() && (0.0..=1.0).contains(&o) => o,
+        Some(_) => return Err(invalid("opacity must be within 0..=1")),
+    };
     Ok(Material {
         id: MaterialId(d.id),
         name: d.name.clone(),
@@ -311,6 +329,7 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         float_time,
         float_density,
         pops_into,
+        opacity,
         colour,
     })
 }

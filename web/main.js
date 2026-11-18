@@ -42,6 +42,8 @@ const LABELS = {
   algae_wafer: "Algae wafers",
   root_tab: "Root tabs",
   co2_bubble: "CO₂",
+  seed: "Seeds",
+  cutting: "Cuttings",
 };
 const FIELDS = ["", "nutrient", "co2", "light"];
 

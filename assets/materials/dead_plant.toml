@@ -1,0 +1,7 @@
+# Wilted plant matter. Sinks and becomes detritus (`assets/reactions.toml`).
+id = 52
+name = "dead_plant"
+class = "powder"
+density = 1.1
+repose = 25.0
+colour = "#6b5a2e"

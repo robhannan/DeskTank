@@ -12,7 +12,9 @@
 //! brush size, and clicking the palette in the top-left corner (or keys 1–9,
 //! then 0 for the tenth slot) selects a material, device or tool. A device
 //! (bubbler, filter outlet) is placed once per click. `F` cycles a debug
-//! tint of the nutrient, CO₂ and light fields. Pointer moves only redraw
+//! tint of the nutrient, CO₂ and light fields; `W` changes the water and
+//! `Q` shows the water quality in the title bar. `--time HH:MM` lights the
+//! tank for that time of day (default noon). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
 //! `--demo-pour N` feeds the same code a synthetic left drag sweeping
@@ -55,13 +57,14 @@ const SEED: u64 = 7;
 /// # Errors
 ///
 /// Returns an error if the event loop, window, GPU or world can't be set up.
-pub fn run(demo_pour: Option<u64>) -> anyhow::Result<()> {
+pub fn run(demo_pour: Option<u64>, time: Option<u16>) -> anyhow::Result<()> {
     let event_loop = EventLoop::new().context("creating the event loop")?;
     let mut app = App {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
             Box::new(event_loop.owned_display_handle()),
         )),
         origin: Instant::now(),
+        time,
         state: None,
         error: None,
         demo: demo_pour.map(|secs| Demo {
@@ -78,6 +81,8 @@ pub fn run(demo_pour: Option<u64>) -> anyhow::Result<()> {
 struct App {
     instance: wgpu::Instance,
     origin: Instant,
+    /// Time of day to light the tank for (minutes after midnight).
+    time: Option<u16>,
     state: Option<Running>,
     error: Option<anyhow::Error>,
     demo: Option<Demo>,
@@ -342,7 +347,12 @@ impl ApplicationHandler for App {
             return;
         }
         match Running::new(&self.instance, event_loop) {
-            Ok(s) => self.state = Some(s),
+            Ok(mut s) => {
+                if let Some(minute) = self.time {
+                    s.tank.set_time_of_day(minute);
+                }
+                self.state = Some(s);
+            }
             Err(e) => {
                 self.error = Some(e);
                 event_loop.exit();
@@ -406,6 +416,24 @@ impl ApplicationHandler for App {
                             format!("DeskTank — {} field", f.name())
                         });
                         s.window.set_title(&title);
+                    }
+                    Key::Character(c) if c.eq_ignore_ascii_case("w") => {
+                        let siphoned = s.tank.world_mut().water_change();
+                        s.tank.cells_edited();
+                        let q = s.tank.world().ecosystem().quality;
+                        s.window.set_title(&format!(
+                            "DeskTank — water changed, {siphoned} cells siphoned, quality {:.0}%",
+                            q * 100.0
+                        ));
+                    }
+                    Key::Character(c) if c.eq_ignore_ascii_case("q") => {
+                        let e = s.tank.world().ecosystem();
+                        s.window.set_title(&format!(
+                            "DeskTank — water quality {:.0}%, nutrients {:.2}, algae {:.1}%",
+                            e.quality * 100.0,
+                            e.mean_nutrient,
+                            e.algae_coverage * 100.0
+                        ));
                     }
                     Key::Character(c) => {
                         // 1–9 are the first nine slots, 0 the tenth.

@@ -1,0 +1,8 @@
+# Moss grows over rock and driftwood. Moss that isn't touching either
+# falls off as dead plant matter.
+id = 75
+name = "moss"
+class = "solid"
+density = 1.1
+opacity = 0.4
+colour = "#2f6b2a"
