@@ -6,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import {
   cellCount,
   cellPoint,
+  choose,
   gridSize,
   materialAt,
   open,
@@ -15,7 +16,6 @@ import {
   watchErrors,
 } from "./support.mjs";
 
-const choose = (page, name) => page.getByRole("radio", { name, exact: true }).click();
 const glued = (page) => page.evaluate(() => window.desktank.tank.gluedBodies());
 
 test.describe("mouse", () => {
@@ -264,25 +264,31 @@ test.describe("touch", () => {
     await expect.poll(async () => (await scroll())[1]).toBeGreaterThan(before[1]);
   });
 
-  test("the palette is one row that scrolls sideways", async ({ page }) => {
+  test("the grouped palette fits a phone without scrolling sideways", async ({ page }) => {
     await open(page, "?backend=webgl2");
-    const strip = await page.locator("#palette").evaluate((el) => ({
-      height: el.clientHeight,
-      scrolls: el.scrollWidth > el.clientWidth,
-      button: el.firstElementChild.offsetHeight,
-    }));
-    expect(strip.scrolls).toBe(true);
-    expect(strip.height).toBeLessThan(strip.button * 2);
+    for (const id of ["#groups", "#palette"]) {
+      const scrolls = await page.locator(id).evaluate((el) => el.scrollWidth > el.clientWidth);
+      expect(scrolls, id).toBe(false);
+    }
+    // Touch-sized targets.
+    for (const sel of ['#groups [role="tab"]', '#palette .swatch:not([hidden])']) {
+      const heights = await page.locator(sel).evaluateAll((els) => els.map((b) => b.offsetHeight));
+      expect(Math.min(...heights), sel).toBeGreaterThanOrEqual(44);
+    }
+    // Every item can be reached through its group.
+    await choose(page, "Neon tetra");
+    await expect(page.getByRole("tab", { name: "Creatures" })).toHaveAttribute("aria-selected", "true");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no page overflow").toBe(true);
   });
 });
 
-test("the palette lists the sim's tools and navigates with the keyboard", async ({ page }) => {
+test("the palette groups the sim's tools and navigates with the keyboard", async ({ page }) => {
   await open(page, "?backend=webgl2");
-  const radios = page.getByRole("radio");
   const entries = await page.evaluate(() => window.desktank.tank.palette());
-  await expect(radios).toHaveCount(entries.length);
-  const names = await radios.evaluateAll((els) => els.map((b) => `${b.dataset.kind} ${b.dataset.name}`));
+  const groups = await page.evaluate(() => window.desktank.tank.paletteGroups());
+  const all = page.locator("#palette .swatch");
+  await expect(all).toHaveCount(entries.length);
+  const names = await all.evaluateAll((els) => els.map((b) => `${b.dataset.kind} ${b.dataset.name}`));
   expect(names).toEqual(entries);
   const materials = await page.evaluate(() => window.desktank.tank.materials());
   const species = await page.evaluate(() => window.desktank.tank.species());
@@ -293,13 +299,24 @@ test("the palette lists the sim's tools and navigates with the keyboard", async 
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
 
-  // One radio is in the tab order; arrows move the selection.
+  // One tab per sim group, in order; it opens on the selection's group
+  // (sand, in Substrate), showing only that group's items.
+  const tabs = page.getByRole("tab");
+  const labels = [...new Set(groups.map((g) => g.split(" ")[1]))];
+  await expect(tabs).toHaveText(labels);
+  await expect(page.getByRole("tab", { name: "Substrate" })).toHaveAttribute("aria-selected", "true");
+  const radios = page.getByRole("radio");
+  await expect(radios).toHaveText(["Sand", "Gravel", "Rock", "Aquasoil", "Driftwood"]);
+  await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
+
+  // One tab and one radio are in the tab order; arrows move the selection
+  // within the group and wrap.
+  await expect(page.locator('#groups [tabindex="0"]')).toHaveCount(1);
   await expect(page.locator('#palette [tabindex="0"]')).toHaveCount(1);
   await radios.first().focus();
   await page.keyboard.press("ArrowRight");
   await expect(radios.nth(1)).toBeFocused();
   await expect(radios.nth(1)).toHaveAttribute("aria-checked", "true");
-  expect(await page.evaluate(() => window.desktank.tank.selected())).toBe(1);
   await page.keyboard.press("End");
   await expect(radios.last()).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("ArrowRight");
@@ -307,12 +324,30 @@ test("the palette lists the sim's tools and navigates with the keyboard", async 
   await page.keyboard.press("ArrowLeft");
   await expect(radios.last()).toBeFocused();
 
-  // Digits pick slots anywhere on the page (1 is the first, 0 the tenth).
+  // Arrows on the tabs open the next group; the selection stays, marked on
+  // its tab, and the open group's first radio takes the tab stop.
+  await page.getByRole("tab", { name: "Substrate" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Water" })).toBeFocused();
+  await expect(page.getByRole("tab", { name: "Water" })).toHaveAttribute("aria-selected", "true");
+  await expect(radios.first()).toHaveText("Water");
+  await expect(page.locator("#group-substrate")).toHaveAttribute("data-holds", "");
+  await expect(page.locator('#palette [tabindex="0"]')).toHaveText("Water");
+
+  // Digits pick slots of the open group anywhere on the page; G and
+  // Shift+G step through the groups.
   await page.locator("h1").click();
-  await page.keyboard.press("3");
-  await expect(radios.nth(2)).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("0");
-  await expect(radios.nth(9)).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("2");
+  await expect(page.getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("9");
+  await expect(page.getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("g");
+  await expect(page.getByRole("tab", { name: "Food" })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Shift+G");
+  await page.keyboard.press("Shift+G");
+  await expect(page.getByRole("tab", { name: "Substrate" })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("1");
+  await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("settings persist across reloads", async ({ page }) => {

@@ -76,8 +76,9 @@ fn palette_matches_the_sim() {
     let t = tank();
     let palette = t.palette();
     assert_eq!(palette.len(), Tools::palette(t.tank().world()).len());
-    for m in tools::POUR_MATERIALS {
-        assert!(palette.contains(&format!("material {m}")), "{m}");
+    for m in t.tank().world().materials().iter() {
+        let listed = palette.contains(&format!("material {}", m.name));
+        assert_eq!(listed, m.palette.is_some(), "{}", m.name);
     }
     for tool in ["scoop", "glue", "net", "inspect"] {
         assert!(palette.contains(&format!("tool {tool}")), "{tool}");
@@ -92,8 +93,37 @@ fn palette_matches_the_sim() {
         assert_eq!(colour.is_empty(), is_tool, "{entry}: {colour:?}");
         assert!(is_tool || (colour.len() == 7 && colour.starts_with('#')));
     }
-    assert_eq!(colours[0], "#d8c08a", "sand's colour from its TOML");
-    assert_eq!(t.selected(), 0, "starts on sand");
+    let sand = slot(&t, "material sand");
+    assert_eq!(
+        colours[sand as usize], "#d8c08a",
+        "sand's colour from its TOML"
+    );
+    assert_eq!(t.selected(), sand, "starts on sand");
+}
+
+/// Each item's group, in the sim's group order; a group's items are
+/// consecutive.
+#[test]
+fn palette_groups_follow_the_sim() {
+    let t = tank();
+    let groups = t.palette_groups();
+    assert_eq!(groups.len(), t.palette().len());
+    let mut order: Vec<&str> = groups.iter().map(String::as_str).collect();
+    order.dedup();
+    let sim: Vec<_> = Tools::palette_groups(t.tank().world())
+        .iter()
+        .map(|(g, _)| format!("{} {}", g.name(), g.label()))
+        .collect();
+    assert_eq!(order, sim, "each group once, in order");
+    assert_eq!(
+        groups[slot(&t, "material sand") as usize],
+        "substrate Substrate"
+    );
+    assert_eq!(groups[slot(&t, "tool net") as usize], "tools Tools");
+    assert_eq!(
+        groups[slot(&t, "device bubbler") as usize],
+        "devices Devices"
+    );
 }
 
 #[test]
@@ -138,7 +168,7 @@ fn secondary_button_scoops_whatever_is_selected() {
     assert_eq!(t.material_at(40, 30), "water");
     // Above the surface, scoop leaves air.
     let scoop = slot(&t, "tool scoop");
-    t.select(0);
+    t.select(slot(&t, "material sand"));
     down(&mut t, PRIMARY, 10, 2);
     t.pointer_up(PRIMARY);
     t.select(scoop);
