@@ -109,8 +109,11 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 1. Spawn the named `desktank-reviewer` subagent for an adversarial review. Give it the diff command
    (`git diff origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
-   tell it to post ONE PR comment whose first line is exactly
-   `>! 🤖 DeskTank Reviewbot`, followed by a blank line, a bold heading, then
+   include the reviewer model selected for this run in the brief. Have the reviewer
+   post ONE PR comment starting with `>! 🤖 <model> Reviewbot`. Replace
+   `<model>` with the model that performed the review (for example, `GPT-6 Luna`
+   or `Gemini Flash`). Use the actual model if the host selected a fallback.
+   Follow the tag with a blank line, a bold heading, then
    findings ranked most severe first (severity, file:line, scenario, fix).
    Ask it to label each finding **in scope** (a defect in this PR's
    changes) or **out of scope** (pre-existing, new feature, or a
