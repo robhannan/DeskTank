@@ -118,8 +118,8 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    > 🤖 <model> Reviewbot
    ```
 
-   Replace `<model>` with the model that performed the review (for example, `GPT-6 Luna`
-   or `Gemini Flash`). Use the actual model if the host selected a fallback.
+   Replace `<model>` with the model that performed the review (for example, `GPT-6 Luna`,
+   `Gemini Flash` or `Claude Haiku 5.5`). Use the actual model if the host selected a fallback.
    Follow the tag with a blank line, a bold heading, then
    findings ranked most severe first (severity, file:line, scenario, fix).
    Ask it to label each finding **in scope** (a defect in this PR's
