@@ -195,6 +195,13 @@ impl Script {
         if script.frame_every == 0 {
             return Err(ScriptError::ZeroFrameEvery);
         }
+        if let Some(p) = script
+            .places
+            .iter()
+            .find(|p| Placeable::from_name(&p.device).is_none())
+        {
+            return Err(ScriptError::UnknownDevice(p.device.clone()));
+        }
         Ok(script)
     }
 
@@ -379,9 +386,9 @@ mod tests {
         assert_eq!(w.material_counts()[usize::from(bubbler.0)], 0);
         s.run(&mut w, 2).unwrap();
         assert_eq!(w.material_counts()[usize::from(bubbler.0)], 8);
-        let bad = Script::parse("[[place]]\ntick = 2\nx = 1\ny = 1\ndevice = \"heater\"").unwrap();
+        // Rejected up front, not mid-run.
         assert!(matches!(
-            bad.run(&mut w, 3),
+            Script::parse("[[place]]\ntick = 2\nx = 1\ny = 1\ndevice = \"heater\""),
             Err(ScriptError::UnknownDevice(_))
         ));
     }

@@ -203,19 +203,20 @@ impl Renderer {
             let b = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
             b
         };
-        let texels: Vec<u8> = (0..n.len())
-            .flat_map(|i| {
-                [
-                    byte(n[i] / FIELD_SHOW_MAX),
-                    byte(c[i] / FIELD_SHOW_MAX),
-                    byte(l[i]),
-                    255,
-                ]
-            })
-            .collect();
+        // The cell-upload scratch buffer, reused.
+        let texels = &mut self.scratch;
+        texels.clear();
+        texels.extend((0..n.len()).flat_map(|i| {
+            [
+                byte(n[i] / FIELD_SHOW_MAX),
+                byte(c[i] / FIELD_SHOW_MAX),
+                byte(l[i]),
+                255,
+            ]
+        }));
         gpu.queue.write_texture(
             self.fields.as_image_copy(),
-            &texels,
+            texels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(self.fields_size.0 * 4),

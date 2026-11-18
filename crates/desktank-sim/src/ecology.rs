@@ -26,7 +26,7 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::field::{FieldKind, MAX_DIFFUSION};
+use crate::field::{FIELD_DT, FIELD_SCALE, FieldKind, MAX_DIFFUSION};
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::world::TICKS_PER_SECOND;
 
@@ -358,6 +358,14 @@ impl Ecology {
             current: current(&f.current, materials, strict)?,
             bubbler: bubbler(&f.bubbler, materials, strict)?,
         };
+        for (name, d) in [("nutrient", eco.nutrient), ("co2", eco.co2)] {
+            if !stable(d.diffusion, eco.current.speed) {
+                return Err(invalid(
+                    &|| format!("field {name}"),
+                    "diffusion and current speed together are too fast to step stably",
+                ));
+            }
+        }
         let resolve = |name: &str| lookup(name, materials, strict);
         for d in &r.reaction {
             let what = || format!("reaction {:?} + {:?}", d.a, d.b);
@@ -541,6 +549,15 @@ fn diffusing(name: &'static str, d: DiffusingDef) -> Result<Diffusing, EcologyEr
     })
 }
 
+/// Whether one field step keeps every cell's own weight non-negative: what
+/// diffusion (`4·D·dt/h²`) and upwind advection (up to `2·v·dt/h`) take out
+/// of a cell must not exceed what it holds.
+fn stable(diffusion: f32, speed: f32) -> bool {
+    #[allow(clippy::cast_precision_loss)] // FIELD_SCALE is small
+    let h = FIELD_SCALE as f32;
+    4.0 * diffusion * FIELD_DT / (h * h) + 2.0 * speed * FIELD_DT / h <= 1.0
+}
+
 fn light(d: LightDef) -> Result<LightConfig, EcologyError> {
     let unit = |v: f32| v.is_finite() && (0.0..=1.0).contains(&v);
     if !(unit(d.surface) && unit(d.water) && unit(d.opaque)) {
@@ -651,6 +668,14 @@ mod tests {
             Err(EcologyError::Invalid { .. })
         ));
         assert!(matches!(bad("nope = 1"), Err(EcologyError::Parse { .. })));
+        // Fast diffusion with a fast current would step unstably.
+        let fast = FIELDS
+            .replace("diffusion = 16.0", "diffusion = 70.0")
+            .replace("speed = 10.0", "speed = 20.0");
+        assert!(matches!(
+            Ecology::from_toml(REACTIONS, &fast, &t, true),
+            Err(EcologyError::Invalid { .. })
+        ));
         // Lenient loading drops entries for missing materials.
         let eco = Ecology::from_toml(
             "[[decay]]\nmaterial = \"lava\"\nafter = 1.0\ninto = \"rock\"",

@@ -144,6 +144,17 @@ impl Field {
         self.values.iter().map(|&v| f64::from(v)).sum()
     }
 
+    /// Makes the next step run even if nothing was added (the current
+    /// changed, so a resting field may start moving).
+    pub(crate) fn wake(&mut self) {
+        self.active = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_active(&self) -> bool {
+        self.active
+    }
+
     pub(crate) fn set(&mut self, i: usize, v: f32) {
         self.values[i] = v;
     }

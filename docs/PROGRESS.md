@@ -75,6 +75,11 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T5: the current is horizontal only and doesn't carry bubbles or sinking powders; outlets can't be aimed.
 - T5: the web demo has no field overlay toggle (the renderer supports it); add one with WB2.
 - T5: the bubbler's surface mound and the T1 surface terraces would both flatten with a random-tick surface leveller.
+- T5: reaction keep-probabilities use `powf` at load time, which could differ in the last ULP between native and wasm; a deterministic routine or checked-in table would make trajectories identical across targets (PR #12 review).
+- T5: tests for the random-tick rotation (each living cell visited once per ⌈living/budget⌉ ticks), the web page's own `TOOLS` list against the sim's materials, and wasm determinism (PR #12 review).
+- T5: a refresh moves a chunk's touched living entries to the end of its list, so a rotation can visit some cells twice and skip others; ages stay within ±10% in tests, but keeping list order stable would make visits exact (PR #12 review).
+- T5: the field rest threshold leaves a tiny CO₂ residual that never drains, and `Field::step` copies the whole grid even when only a patch moves (PR #12 review).
+- T5: the web palette now has 19 swatches and wraps below the canvas on small screens; WB2's palette should be compact or scroll sideways.
 - T4b: bodies don't move sideways, slide off slopes or rotate; a body resting on a single grain stays put. A tipping or sliding rule is a later option.
 - T4b: the web demo has no glue tool yet; WB2 moves the web onto `desktank_sim::tools`, which brings it.
 - T4b: save files (T8) can rebuild the body table from the grid (id in `state`, glued in the variant bit); the next id counter should be saved or recomputed.

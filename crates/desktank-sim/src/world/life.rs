@@ -63,6 +63,9 @@ struct Registry {
     flag: u8,
     lists: Vec<Vec<u32>>,
     total: usize,
+    /// Scratch: entries a refresh removed, and the ones it found.
+    removed: Vec<u32>,
+    found: Vec<u32>,
 }
 
 impl Registry {
@@ -71,6 +74,8 @@ impl Registry {
             flag,
             lists: vec![Vec::new(); chunks],
             total: 0,
+            removed: Vec::new(),
+            found: Vec::new(),
         }
     }
 
@@ -85,11 +90,14 @@ impl Registry {
     ) -> bool {
         let list = &mut self.lists[ci];
         let before = list.len();
-        let mut changed = false;
+        let (removed, found) = (&mut self.removed, &mut self.found);
+        removed.clear();
+        found.clear();
         list.retain(|&i| {
-            let i = i as usize;
-            let keep = !rect.contains(i % width, i / width);
-            changed |= !keep;
+            let keep = !rect.contains(i as usize % width, i as usize / width);
+            if !keep {
+                removed.push(i);
+            }
             keep
         });
         for y in rect.y0..rect.y1 {
@@ -97,13 +105,15 @@ impl Registry {
             for x in rect.x0..rect.x1 {
                 if flags[usize::from(cells[row + x].material.0)] & self.flag != 0 {
                     #[allow(clippy::cast_possible_truncation)] // grids are ≤ 8192²
-                    list.push((row + x) as u32);
-                    changed = true;
+                    found.push((row + x) as u32);
                 }
             }
         }
+        list.extend_from_slice(found);
         self.total = self.total + list.len() - before;
-        changed
+        // Found in index order; the rect's old entries may not have been.
+        removed.sort_unstable();
+        removed != found
     }
 }
 
@@ -125,6 +135,8 @@ pub(super) struct Life {
     light: Field,
     /// Per field cell: fraction of opaque and of watery cells.
     opacity: Vec<(f32, f32)>,
+    /// Scratch: field columns whose light needs recomputing.
+    columns: Vec<bool>,
     /// Field cells whose opacity needs recounting.
     opacity_dirty: Vec<bool>,
     any_opacity_dirty: bool,
@@ -180,6 +192,7 @@ impl Life {
             co2: field.clone(),
             light: field,
             opacity: vec![(0.0, 0.0); blocks],
+            columns: Vec::new(),
             opacity_dirty: vec![true; blocks],
             any_opacity_dirty: true,
             current: vec![0.0; blocks],
@@ -283,7 +296,9 @@ impl World {
     }
 
     /// Living cells visited per tick (SPEC §2.1; default
-    /// [`RANDOM_TICK_BUDGET`]). At least 1.
+    /// [`RANDOM_TICK_BUDGET`]). At least 1. A visit acts for at most 65 535
+    /// ticks, so with more than 65 535 living cells per unit of budget,
+    /// slow processes run slower than configured.
     pub fn set_random_tick_budget(&mut self, budget: usize) {
         self.life.budget = budget.max(1);
     }
@@ -350,6 +365,9 @@ impl World {
     }
 
     fn refresh_registries(&mut self, ci: usize, r: Rect) {
+        if r.is_empty() {
+            return;
+        }
         let life = &mut self.life;
         life.living
             .refresh(ci, r, self.width, &self.cells, &life.flags);
@@ -515,7 +533,9 @@ impl World {
     /// Bubblers: each cell with water above releases a bubble at the
     /// configured rate. A bubble turns into air when it pops at the surface,
     /// so to keep the water level, each release turns the first air cell
-    /// above it back into water.
+    /// above it back into water. In a tank full to the lid there is no air
+    /// to return until the first bubbles pop there, so those first releases
+    /// cost a cell of water each.
     fn run_devices(&mut self) {
         let cfg = self.life.eco.bubbler;
         let (Some(bubbler), Some(emits), Some(water)) = (cfg.material, cfg.emits, self.life.water)
@@ -607,6 +627,9 @@ impl World {
                 life.current_blocks.push(b);
             }
         }
+        // A resting field may now be carried by the new current.
+        life.nutrient.wake();
+        life.co2.wake();
         life.version += 1;
     }
 
@@ -697,7 +720,9 @@ impl World {
         let life = &mut self.life;
         life.any_opacity_dirty = false;
         let (fw, fh) = (life.light.width(), life.light.height());
-        let mut columns = vec![false; fw];
+        let mut columns = mem::take(&mut life.columns);
+        columns.clear();
+        columns.resize(fw, false);
         for b in 0..fw * fh {
             if !mem::take(&mut life.opacity_dirty[b]) {
                 continue;
@@ -736,6 +761,7 @@ impl World {
                 l *= (1.0 - cfg.opaque * o) * (1.0 - cfg.water * w);
             }
         }
+        life.columns = columns;
         if changed {
             life.version += 1;
         }
@@ -758,7 +784,122 @@ fn powu(base: f64, mut k: u16) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::powu;
+    use super::{LIVING, powu};
+    use crate::{Brush, MaterialTable, Placeable, Rect, World, WorldConfig};
+
+    /// Every living cell, by a full scan, in index order.
+    fn scan(w: &World) -> Vec<u32> {
+        (0..w.cells.len())
+            .filter(|&i| w.life.flags[usize::from(w.cells[i].material.0)] & LIVING != 0)
+            .map(|i| u32::try_from(i).unwrap())
+            .collect()
+    }
+
+    fn listed(w: &World) -> Vec<u32> {
+        let mut v: Vec<u32> = w.life.living.lists.iter().flatten().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn registries_match_a_full_rescan_and_report_only_real_changes() {
+        let config = WorldConfig {
+            width: 192,
+            height: 128,
+            seed: 4,
+            water_level: 0.9,
+        };
+        let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        let t = w.materials().clone();
+        let id = |n: &str| t.id(n).unwrap();
+        w.fill_rect(
+            Rect {
+                x0: 0,
+                y0: 120,
+                x1: 192,
+                y1: 128,
+            },
+            id("aquasoil"),
+            Brush::Replace,
+        )
+        .unwrap();
+        w.place(Placeable::Bubbler, 100, 60).unwrap();
+        for k in 0..400u32 {
+            if k % 20 == 0 {
+                let x = i64::from(k % 180) + 5;
+                w.paint(
+                    x,
+                    15,
+                    2,
+                    id(["waste", "liquid_fertiliser", "detritus"][(k / 20) as usize % 3]),
+                    Brush::Pour,
+                )
+                .unwrap();
+            }
+            w.tick();
+            // Every living cell is listed. Cells a visit converted this
+            // tick stay listed until the next refresh (visits skip them).
+            let (listed, living) = (listed(&w), scan(&w));
+            assert_eq!(w.life.living.total, listed.len());
+            let missing = living
+                .iter()
+                .filter(|i| listed.binary_search(i).is_err())
+                .count();
+            assert_eq!(missing, 0, "tick {k}: living cells not listed");
+            let mut dedup = listed.clone();
+            dedup.dedup();
+            assert_eq!(dedup.len(), listed.len(), "tick {k}: listed twice");
+            assert!(
+                listed.len() - living.len() <= 256,
+                "tick {k}: too many stale"
+            );
+        }
+        // Rescanning a rect whose cells didn't change reports no change.
+        let r = Rect {
+            x0: 0,
+            y0: 64,
+            x1: 64,
+            y1: 128,
+        };
+        let (width, cells, flags) = (w.width, w.cells.clone(), w.life.flags.clone());
+        assert!(
+            !w.life
+                .living
+                .refresh(2, r.intersect(w.chunks[2].bounds), width, &cells, &flags)
+        );
+        assert!(
+            !w.life
+                .devices
+                .refresh(4, w.chunks[4].bounds, width, &cells, &flags)
+        );
+    }
+
+    #[test]
+    fn placing_an_outlet_wakes_a_resting_field() {
+        let config = WorldConfig {
+            width: 256,
+            height: 64,
+            seed: 4,
+            water_level: 1.0,
+        };
+        let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        // A uniform field rests at once.
+        for y in (0..64).step_by(8) {
+            for x in (0..256).step_by(8) {
+                w.add_to_field(crate::FieldKind::Nutrient, x, y, 1.0);
+            }
+        }
+        for _ in 0..8 {
+            w.tick();
+        }
+        assert!(!w.life.nutrient.is_active(), "the field came to rest");
+        let before = w.field(crate::FieldKind::Nutrient).values().to_vec();
+        w.place(Placeable::FilterOutlet, 4, 12).unwrap();
+        for _ in 0..40 {
+            w.tick();
+        }
+        assert_ne!(w.field(crate::FieldKind::Nutrient).values(), &before[..]);
+    }
 
     #[test]
     fn powu_matches_powi() {

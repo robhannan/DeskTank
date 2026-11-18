@@ -246,6 +246,16 @@ impl WebTank {
         Ok(self.stamp(Some(id), x, y, radius))
     }
 
+    /// Number of cells of the material named `name` (0 if unknown), for
+    /// tests.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = materialCount))]
+    #[must_use]
+    pub fn material_count(&self, name: &str) -> u32 {
+        self.material(name).map_or(0, |id| {
+            count(self.tank.world().material_counts()[usize::from(id.0)])
+        })
+    }
+
     /// Places the device whose material is `device` (`"bubbler"` or
     /// `"filter_outlet"`) centred on `(x, y)`. Returns how many cells
     /// changed.
@@ -590,6 +600,8 @@ mod tests {
         let mut t = tank();
         let outlet = id(&t, "filter_outlet");
         assert_eq!(t.place("filter_outlet", 10, 30), Ok(9));
+        assert_eq!(t.material_count("filter_outlet"), 9);
+        assert_eq!(t.material_count("unobtainium"), 0);
         assert_eq!(t.tank().world().cell(10, 30).unwrap().material, outlet);
         assert!(t.place("heater", 10, 30).is_err());
         // Every pour material in the page's list exists.
