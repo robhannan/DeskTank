@@ -1048,11 +1048,25 @@ mod tests {
             // tick stay listed until the next refresh (visits skip them).
             let (listed, living) = (listed(&w), scan(&w));
             assert_eq!(w.life.living.total, listed.len());
-            // Cells grown or spawned this tick are listed at the next
-            // refresh, which rescans the rects they changed.
+            // Cells grown or spawned this tick (only grow and spawn
+            // products) are listed at the next refresh, which rescans the
+            // rects they changed.
+            let mut products = crate::ecology::MaterialSet::default();
+            for b in &w.life.eco.behaviour {
+                for g in &b.grows {
+                    products.insert(g.makes);
+                    if let Some(m) = g.becomes {
+                        products.insert(m);
+                    }
+                }
+            }
+            for sp in &w.life.eco.spawns {
+                products.insert(sp.material);
+            }
             let pending = |i: u32| {
                 let (x, y) = (i as usize % w.width, i as usize / w.width);
-                w.chunks.iter().any(|c| c.changed_next.contains(x, y))
+                products.contains(w.cells[i as usize].material)
+                    && w.chunks.iter().any(|c| c.changed_next.contains(x, y))
             };
             let missing = living
                 .iter()
@@ -1063,6 +1077,7 @@ mod tests {
             dedup.dedup();
             assert_eq!(dedup.len(), listed.len(), "tick {k}: listed twice");
             assert!(
+                // New products can make `living` the longer list.
                 listed.len().saturating_sub(living.len()) <= 256,
                 "tick {k}: too many stale"
             );

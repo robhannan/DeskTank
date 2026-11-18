@@ -90,6 +90,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T6: day and night are lighting only; the window takes `--time` but doesn't follow the local clock (std has no time zone; needs a small platform call or crate), and photosynthesis doesn't follow the light schedule. The web page doesn't set the time of day yet (WB2 or later).
 - T6: the web page has no water-change action or quality readout; add with WB2's controls (the sim API is `World::water_change` / `World::ecosystem`).
 - T6: `World::ecosystem` scans the whole grid (fine on demand); a per-tick consumer (T9 deaths from poor quality) should keep running counts or sample it once a second.
+- T6: `desktank window` keys 1–9 and 0 reach only the first ten of the 26 palette slots; the rest need the mouse (paging or a second row is open) (PR #14 review).
+- T6: `W` in the window changes the water at once with no confirmation or undo; the tray action may want one (PR #14 review).
 - T6: algae coverage counts only each column's top surface, so algae on rock sides or under leaves isn't counted.
 - T5: the current is horizontal only and doesn't carry bubbles or sinking powders; outlets can't be aimed.
 - T5: the bubbler's surface mound and the T1 surface terraces would both flatten with a random-tick surface leveller.

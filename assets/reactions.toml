@@ -103,7 +103,8 @@ rate = 0.01
 # Plants (T6). A seed or cutting resting on substrate roots into it and
 # becomes the base of a stem, while it is fed and lit; cuttings root much
 # sooner. The stem grows up through the water to `max` cells, puts out
-# leaves a row apart that grow up to three cells sideways, and its roots
+# leaves that grow up to three cells sideways without touching another
+# leaf (so leaves on one side sit a row apart), and its roots
 # spread through the substrate. Plant cells take nutrients from the water
 # as they grow, grow twice as fast with CO₂, and wilt into dead plant
 # matter without nutrients or light.

@@ -683,9 +683,10 @@ impl Ecology {
         }
         for d in &r.spawn {
             let what = || format!("spawn of {:?}", d.material);
-            // At most one attempt per column per tick.
-            if !(d.rate.is_finite() && d.rate > 0.0 && d.rate <= SPAWN_COLUMNS * per_second()) {
-                return Err(invalid(&what, "rate must be within (0, 1280] per second"));
+            // Each attempt scans a column, so keep it to about one column
+            // scan per 64 columns per tick.
+            if !(d.rate.is_finite() && d.rate > 0.0 && d.rate <= MAX_SPAWN_RATE) {
+                return Err(invalid(&what, "rate must be within (0, 20] per second"));
             }
             let when = gates(&d.when, &what)?;
             let on = set(&d.on, materials, strict)?;
@@ -811,6 +812,9 @@ fn per_second() -> f32 {
 /// Columns a `[[spawn]]` rate is given per: one chunk's width.
 #[allow(clippy::cast_precision_loss)] // small constant
 const SPAWN_COLUMNS: f32 = crate::world::CHUNK_SIZE as f32;
+
+/// Largest `[[spawn]]` rate, attempts per second per 64 columns.
+const MAX_SPAWN_RATE: f32 = 20.0;
 
 /// Chance per tick of not firing, for a chance `p` per second:
 /// `(1 - p)^(1/20)`, by [`nth_root`] so it is the same on every target.
