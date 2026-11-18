@@ -52,3 +52,10 @@ frames = [
         "s...ss..s.....",
     ],
 ]
+# The palette icon, at one pixel per cell.
+icon = [
+    "...sss..",
+    "s.bbcbbk",
+    "ssrrrrww",
+    "s...ss..",
+]

@@ -130,46 +130,26 @@ impl Atlas {
     }
 }
 
-/// An 8×8 palette icon for species `id`: its first frame at one pixel per
-/// cell (each 2×2 block of texels shown by its commonest opaque colour, or
-/// transparent if the block is mostly transparent), centred; `None` where
-/// transparent.
+/// Pixel `(x, y)` of an 8×8 palette icon for species `id`: its hand-drawn
+/// icon centred, `None` where transparent.
+#[allow(clippy::many_single_char_names)] // pixel maths
 #[must_use]
-#[allow(clippy::many_single_char_names)] // texel maths
 pub fn icon(
     species: &SpeciesTable,
     id: desktank_sim::SpeciesId,
     x: u32,
     y: u32,
 ) -> Option<[u8; 3]> {
-    let s = species.get(id)?;
-    let (w, h) = s.size();
+    let icon = &species.get(id)?.sprite.icon;
+    let (w, h) = (icon.width, icon.height);
     let (ox, oy) = (8_usize.saturating_sub(w) / 2, 8_usize.saturating_sub(h) / 2);
     let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
-    let (cx, cy) = (x.checked_sub(ox)?, y.checked_sub(oy)?);
-    if cx >= w || cy >= h {
+    let (ix, iy) = (x.checked_sub(ox)?, y.checked_sub(oy)?);
+    if ix >= w || iy >= h {
         return None;
     }
-    let frame = s.sprite.frames.first()?;
-    let n = TEXELS_PER_CELL;
-    let mut block = [[0_u8; 4]; TEXELS_PER_CELL * TEXELS_PER_CELL];
-    for (i, t) in block.iter_mut().enumerate() {
-        *t = frame[(cy * n + i / n) * s.sprite.width + cx * n + i % n];
-    }
-    let opaque = block.iter().filter(|t| t[3] > 0).count();
-    if opaque * 2 < block.len() {
-        return None;
-    }
-    // The commonest opaque colour; the first one wins a tie.
-    let count = |c: &[u8; 4]| block.iter().filter(|t| *t == c).count();
-    let best = block
-        .iter()
-        .filter(|t| t[3] > 0)
-        .fold(None::<&[u8; 4]>, |best, t| match best {
-            Some(b) if count(b) >= count(t) => Some(b),
-            _ => Some(t),
-        })?;
-    Some([best[0], best[1], best[2]])
+    let p = icon.pixels[iy * w + ix];
+    (p[3] > 0).then_some([p[0], p[1], p[2]])
 }
 
 #[cfg(test)]
@@ -247,25 +227,22 @@ mod tests {
     }
 
     #[test]
-    fn icons_centre_the_first_frame_at_one_pixel_per_cell() {
+    fn icons_centre_the_hand_drawn_icon() {
         let w = world();
         for name in ["neon_tetra", "corydoras", "betta", "nerite"] {
             let id = w.species().id(name).unwrap();
-            let s = w.species().get(id).unwrap();
-            let (bw, bh) = s.size();
-            let opaque: Vec<(u32, u32)> = (0..8)
-                .flat_map(|y| (0..8).map(move |x| (x, y)))
-                .filter(|&(x, y)| icon(w.species(), id, x, y).is_some())
-                .collect();
-            assert!(!opaque.is_empty(), "{name} shows");
-            // Everything drawn lies inside the centred body box.
-            let (ox, oy) = ((8 - bw) / 2, (8 - bh) / 2);
-            for &(x, y) in &opaque {
-                let (x, y) = (x as usize, y as usize);
-                assert!(
-                    (ox..ox + bw).contains(&x) && (oy..oy + bh).contains(&y),
-                    "{name}"
-                );
+            let art = &w.species().get(id).unwrap().sprite.icon;
+            let (ox, oy) = ((8 - art.width) / 2, (8 - art.height) / 2);
+            for y in 0..8_u32 {
+                for x in 0..8_u32 {
+                    let (ix, iy) = (x as usize, y as usize);
+                    let want =
+                        (ix >= ox && iy >= oy && ix - ox < art.width && iy - oy < art.height)
+                            .then(|| art.pixels[(iy - oy) * art.width + ix - ox])
+                            .filter(|p| p[3] > 0)
+                            .map(|p| [p[0], p[1], p[2]]);
+                    assert_eq!(icon(w.species(), id, x, y), want, "{name} ({x}, {y})");
+                }
             }
         }
     }
@@ -274,32 +251,5 @@ mod tests {
     fn the_shader_draws_the_same_texels_per_cell() {
         let want = format!("const TEXELS_PER_CELL: f32 = {TEXELS_PER_CELL}.0;");
         assert!(include_str!("tank.wgsl").contains(&want));
-    }
-
-    #[test]
-    fn icon_blocks_take_their_commonest_opaque_colour() {
-        let m = MaterialTable::builtin().unwrap();
-        let src = r##"
-            id = 9
-            name = "blocky"
-            zone = "mid"
-            depth = [0.2, 0.6]
-            min_depth = 10
-            temperament = "peaceful"
-            speed = 2.0
-            max_speed = 4.0
-            diet = ["flake_food"]
-            [sprite]
-            colours = { a = "#102030", b = "#405060" }
-            frames = [["abb.", "bb..", "a...", "...."]]
-        "##;
-        let t = SpeciesTable::from_toml_sources(&[src], &m).unwrap();
-        let id = desktank_sim::SpeciesId(9);
-        // 4×4 texels: a 2×2-cell body, centred at (3..5, 3..5). The top-left
-        // block is a, b, b, b; the others hold one opaque texel or none.
-        assert_eq!(icon(&t, id, 3, 3), Some([0x40, 0x50, 0x60]));
-        assert_eq!(icon(&t, id, 4, 3), None, "one of four opaque");
-        assert_eq!(icon(&t, id, 3, 4), None);
-        assert_eq!(icon(&t, id, 2, 3), None);
     }
 }

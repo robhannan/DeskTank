@@ -29,6 +29,8 @@ pub struct SpeciesId(pub u8);
 pub const TEXELS_PER_CELL: usize = 2;
 /// Largest sprite side, in texels (16 cells).
 pub const MAX_SPRITE_SIDE: usize = 32;
+/// Largest palette icon side, in pixels (a palette slot's face).
+pub const MAX_ICON_SIDE: usize = 8;
 /// Fastest allowed speed, in cells per second: under one cell per tick, so
 /// a body never skips past a cell it would collide with.
 pub const MAX_SPEED: f32 = 16.0;
@@ -70,6 +72,21 @@ pub struct Sprite {
     pub height: usize,
     /// Animation frames.
     pub frames: Vec<Vec<[u8; 4]>>,
+    /// The palette icon: hand-drawn at one pixel per cell, at most
+    /// [`MAX_ICON_SIDE`] a side, in the same colours.
+    pub icon: Icon,
+}
+
+/// A species' palette icon: `width × height` RGBA pixels (alpha 0 or 255),
+/// row-major from the top left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Icon {
+    /// Width in pixels.
+    pub width: usize,
+    /// Height in pixels.
+    pub height: usize,
+    /// The pixels.
+    pub pixels: Vec<[u8; 4]>,
 }
 
 /// One species, validated.
@@ -178,6 +195,7 @@ struct SpeciesDef {
 struct SpriteDef {
     colours: BTreeMap<String, String>,
     frames: Vec<Vec<String>>,
+    icon: Vec<String>,
 }
 
 /// The species embedded in the binary (T7a placeholders, D11).
@@ -365,27 +383,47 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
         if rows.len() != height {
             return Err("every sprite frame must be the same size");
         }
-        let mut texels = Vec::with_capacity(width * height);
-        for row in rows {
-            if row.chars().count() != width {
-                return Err("every sprite row must be the same width");
-            }
-            for c in row.chars() {
-                texels.push(match c {
-                    '.' => [0; 4],
-                    c => *key
-                        .get(&c)
-                        .ok_or("sprite uses a character with no colour")?,
-                });
-            }
-        }
-        frames.push(texels);
+        frames.push(texels(rows, width, &key)?);
     }
+    let icon_height = def.icon.len();
+    let icon_width = def.icon.first().map_or(0, |r| r.chars().count());
+    if !(1..=MAX_ICON_SIDE).contains(&icon_width) || !(1..=MAX_ICON_SIDE).contains(&icon_height) {
+        return Err("icon sides must be 1..=8 pixels");
+    }
+    let icon = Icon {
+        width: icon_width,
+        height: icon_height,
+        pixels: texels(&def.icon, icon_width, &key)?,
+    };
     Ok(Sprite {
         width,
         height,
         frames,
+        icon,
     })
+}
+
+/// Rows of `width` keyed characters as RGBA texels.
+fn texels(
+    rows: &[String],
+    width: usize,
+    key: &BTreeMap<char, [u8; 4]>,
+) -> Result<Vec<[u8; 4]>, &'static str> {
+    let mut out = Vec::with_capacity(width * rows.len());
+    for row in rows {
+        if row.chars().count() != width {
+            return Err("every sprite row must be the same width");
+        }
+        for c in row.chars() {
+            out.push(match c {
+                '.' => [0; 4],
+                c => *key
+                    .get(&c)
+                    .ok_or("sprite uses a character with no colour")?,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// The commonest opaque colour of the first frame (the first one wins a
@@ -434,6 +472,7 @@ mod tests {
             ["aabbaa", "aabbaa", ".aa...", ".aa..."],
             ["aabbaa", "aabbaa", "aa..aa", "aa..aa"],
         ]
+        icon = ["aab", "a.a"]
     "##;
 
     #[test]
@@ -446,6 +485,8 @@ mod tests {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert!(!s.diet.is_empty(), "{name} eats something");
             assert!(s.sprite.frames.len() >= 2, "{name} animates");
+            let icon = &s.sprite.icon;
+            assert!(icon.pixels.iter().any(|p| p[3] > 0), "{name} has an icon");
             let (w, h) = s.size();
             assert!(w <= 8 && h <= 8, "{name} fits a palette slot");
         }
@@ -468,6 +509,9 @@ mod tests {
         assert_eq!(s.sprite.frames[0][0], [0x10, 0x20, 0x30, 255]);
         assert_eq!(s.sprite.frames[0][12], [0; 4]);
         assert_eq!(s.colour, [0x10, 0x20, 0x30]);
+        assert_eq!((s.sprite.icon.width, s.sprite.icon.height), (3, 2));
+        assert_eq!(s.sprite.icon.pixels[2], [0x40, 0x50, 0x60, 255]);
+        assert_eq!(s.sprite.icon.pixels[4], [0; 4]);
     }
 
     #[test]
@@ -499,6 +543,22 @@ mod tests {
             bad("\"aa..aa\", \"aa..aa\"]", "\"aa..aa\", \"aa..az\"]"),
             Err(SpeciesError::Invalid { .. })
         ));
+        // Icons: at most 8 a side, every row the same width, keyed colours.
+        for icon in [
+            "[\"aaaaaaaaa\"]",
+            "[\"a\", \"a\", \"a\", \"a\", \"a\", \"a\", \"a\", \"a\", \"a\"]",
+            "[]",
+            "[\"aa\", \"a\"]",
+            "[\"az\"]",
+        ] {
+            assert!(
+                matches!(
+                    bad("icon = [\"aab\", \"a.a\"]", &format!("icon = {icon}")),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "{icon}"
+            );
+        }
         let odd_width = OK
             .replace("aabbaa", "aabbaaa")
             .replace(".aa...", ".aa....")

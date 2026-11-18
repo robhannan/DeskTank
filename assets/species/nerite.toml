@@ -45,3 +45,10 @@ frames = [
         ".ffffffddf",
     ],
 ]
+# The palette icon, at one pixel per cell.
+icon = [
+    ".lbgb..",
+    "gbgbgb.",
+    "obobobk",
+    "fffffkf",
+]
