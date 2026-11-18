@@ -592,7 +592,8 @@ fn ludwigia_cabomba_and_bacopa_grow_by_their_care() {
         let [(lud, _), (cab, _), (bac, _)] = open[..] else {
             unreachable!()
         };
-        // In strong light the fast cabomba leads and the slow bacopa trails.
+        // In the open tank's light the fast cabomba leads and the slow
+        // bacopa trails (all three are held back by CO₂ there, not light).
         assert!(cab > lud && lud > bac && bac > 50, "open: {open:?}");
         let shaded = grow_alone(&names, 5, seed);
         let [(s_lud, _), (s_cab, cab_limit), (s_bac, _)] = shaded[..] else {

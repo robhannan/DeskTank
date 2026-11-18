@@ -323,12 +323,13 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
                 step = 1 + i32((h >> 3u) % 4u) + select(0, 3, exposed);
             } else {
                 // Layered fronds: exposed edges break into regular tiers (a
-                // gap every third texel along the edge), with light tips over
-                // a dark base, where java moss's fuzz frays at random.
+                // gap every third texel along the edge), each tier's first
+                // texel the lightest, over a dark inner row, where java moss's
+                // fuzz frays at random.
                 let t = at * 2 + sub;
                 let k = select(t.x, t.y, water_x && !water_y) % 3;
                 covered = !exposed || k != 2;
-                step = 1 + i32((h >> 3u) & 1u) + select(0, 2, exposed) + select(0, 2, exposed && k == 0);
+                step = i32((h >> 3u) & 1u) + select(0, 3, exposed) + select(0, 3, exposed && k == 0);
             }
         } else {
             let left = kin(at, vec2<i32>(-1, 0), me);
