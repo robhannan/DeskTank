@@ -1,18 +1,29 @@
-//! DeskTank web host (SPEC §3.5, WB1).
+//! DeskTank web host (SPEC §3.5, WB1, WB2).
 //!
 //! A [`wasm-bindgen`](https://docs.rs/wasm-bindgen) wrapper that drives the
 //! loop-agnostic [`desktank_render::Tank`] on a page's canvas. The page
-//! (`web/main.js`) owns the `requestAnimationFrame` loop, input, visibility
-//! and battery signals; this crate owns the world, the pacing (a fixed 20 Hz
-//! tick, frames capped at 30 fps and drawn only when something changed) and
-//! the GPU:
+//! (`web/main.js`) owns the `requestAnimationFrame` loop, the DOM controls,
+//! gesture recognition (touch), visibility and battery signals; this crate
+//! owns the world, the pacing (a fixed 20 Hz tick, frames capped at 30 fps and
+//! drawn only when something changed), the interact tools and the GPU:
 //!
-//! - [`WebTank`] is the world plus its pacing and edits. It needs no GPU, so
-//!   it is tested natively on every OS.
+//! - [`WebTank`] is the world plus its pacing and the platform-free
+//!   [`desktank_sim::tools::Tools`] (pour, scoop, glue, net, inspect and
+//!   devices; brush radius; stroke interpolation). The page passes pointer
+//!   events in canvas pixels, which map to cells with
+//!   [`desktank_render::Layout`]. It needs no GPU, so it is tested natively on
+//!   every OS.
 //! - `Graphics` (wasm32 only) is a wgpu device and canvas surface. It tries
 //!   WebGPU first and falls back to WebGL2 (or uses the one forced by
 //!   `?backend=`). After device or context loss the page detaches it and
 //!   opens a new one; the world is unaffected.
+//!
+//! The palette is DOM buttons rather than the shader's strip
+//! ([`desktank_render::PaletteLayout`]): touch needs larger targets than the
+//! pixel-art slots, and buttons give the page a keyboard-navigable radio
+//! group. Its items come from [`Tools::palette`], so the page lists exactly
+//! the sim's materials, tools and devices. The brush outline is the shader's
+//! ([`Tank::set_cursor`]).
 //!
 //! `unsafe_code`: the workspace denies it, and this crate needs no
 //! exception. The `unsafe` that `#[wasm_bindgen]` generates comes from an
@@ -22,10 +33,9 @@
 
 use core::time::Duration;
 
-use desktank_render::{Layout, Tank, TankConfig};
-use desktank_sim::{
-    BodyId, Brush, MaterialId, MaterialTable, Placeable, Script, World, WorldConfig,
-};
+use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
+use desktank_sim::tools::{self, Button, Inspection, Outcome, PaletteItem, Tool, Tools};
+use desktank_sim::{Brush, FieldKind, MaterialTable, Script, World, WorldConfig};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -47,6 +57,11 @@ pub const MAX_SCALE: u32 = 8;
 /// Water level of a new tank, as a fraction of the height.
 const WATER_LEVEL: f32 = 0.9;
 
+/// The food Feed sprinkles (SPEC §2.5 tray actions: Feed with the default
+/// food), and how many pinches.
+const FEED_FOOD: &str = "flake_food";
+const FEED_PINCHES: u32 = 12;
+
 /// [`WebTank::frame`] drew and presented a frame.
 pub const FRAME_DREW: u32 = 1;
 /// A frame is still waiting (on the frame cap, or on a surface that gave
@@ -57,41 +72,50 @@ pub const FRAME_LOST: u32 = 4;
 /// Simulation ticks run by the call are in the bits from here up.
 pub const FRAME_TICKS_SHIFT: u32 = 8;
 
+/// Pointer button codes the page passes: the primary button (left mouse, a
+/// one-finger touch) uses the selected tool.
+pub const BUTTON_PRIMARY: u32 = 0;
+/// The secondary button (right mouse, a two-finger touch) always scoops.
+pub const BUTTON_SECONDARY: u32 = 2;
+
 /// The grid for a canvas of `width`×`height` device pixels:
-/// `[scale, columns, rows]`, with the largest whole-number scale (1 to
-/// [`MAX_SCALE`]) that gives at least [`MIN_CELLS_ACROSS`] columns. A canvas
-/// narrower than that gets scale 1.
+/// `[scale, columns, rows]`. With `scale` 0 (auto) it is the largest
+/// whole-number scale (1 to [`MAX_SCALE`]) that gives at least
+/// [`MIN_CELLS_ACROSS`] columns, so a canvas narrower than that gets scale 1.
+/// Any other `scale` is the user's override (settings), clamped to
+/// 1..=[`MAX_SCALE`].
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = gridFor))]
 #[must_use]
-pub fn grid_for(width: u32, height: u32) -> Vec<u32> {
-    let scale = (width / MIN_CELLS_ACROSS).clamp(1, MAX_SCALE);
+pub fn grid_for(width: u32, height: u32, scale: u32) -> Vec<u32> {
+    let scale = if scale == 0 {
+        width / MIN_CELLS_ACROSS
+    } else {
+        scale
+    }
+    .clamp(1, MAX_SCALE);
     let cells = |px: u32| (px / scale).clamp(1, MAX_GRID_SIDE);
     vec![scale, cells(width), cells(height)]
 }
 
-/// A brush held still on the canvas: it keeps pouring every tick, like a
-/// tap.
-#[derive(Clone, Copy, Debug)]
-struct Hold {
-    x: i32,
-    y: i32,
-    radius: u32,
-    /// `None` erases.
-    material: Option<MaterialId>,
+/// Smallest and largest brush radius in cells, `[min, max]`.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = brushRange))]
+#[must_use]
+pub fn brush_range() -> Vec<u32> {
+    vec![tools::MIN_RADIUS, tools::MAX_RADIUS]
 }
 
-/// A tank on the page: the world, its pacing and its edits, plus the
-/// attached graphics on wasm32.
+/// A tank on the page: the world, its pacing and the interact tools, plus
+/// the attached graphics on wasm32.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct WebTank {
     tank: Tank,
-    water: MaterialId,
-    air: MaterialId,
+    tools: Tools,
+    palette: Vec<PaletteItem>,
     running: bool,
-    hold: Option<Hold>,
-    /// The rigid body (rock) the current stroke pours into, until
-    /// [`WebTank::release`]: one stroke makes one body (D17).
-    body: Option<BodyId>,
+    /// What inspect found, not yet taken by [`WebTank::take_inspection`].
+    inspection: String,
+    /// When the page should call [`WebTank::frame`] again, on its clock.
+    wake_at: Duration,
     /// Canvas size in device pixels.
     size: (u32, u32),
     frames: u32,
@@ -181,6 +205,234 @@ impl WebTank {
             .collect()
     }
 
+    /// The palette, in order, as `"<kind> <name>"`: kind `material` (pour
+    /// it; the name is the material's), `tool` (`scoop`, `glue`, `net`,
+    /// `inspect`) or `device` (place it; the name is its material's).
+    #[must_use]
+    pub fn palette(&self) -> Vec<String> {
+        self.palette
+            .iter()
+            .map(|&item| {
+                let (kind, name) = self.describe(item);
+                format!("{kind} {name}")
+            })
+            .collect()
+    }
+
+    /// Swatch colour of each palette item as `#rrggbb` (the material's
+    /// colour), or `""` for tools.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = paletteColours))]
+    #[must_use]
+    pub fn palette_colours(&self) -> Vec<String> {
+        let table = self.tank.world().materials();
+        self.palette
+            .iter()
+            .map(|&item| {
+                let id = match item {
+                    PaletteItem::Material(m) => Some(m),
+                    PaletteItem::Tool(Tool::Place(p)) => table.id(p.material_name()),
+                    PaletteItem::Tool(_) => None,
+                };
+                id.and_then(|id| table.get(id))
+                    .map_or_else(String::new, |m| {
+                        let [r, g, b] = m.colour;
+                        format!("#{r:02x}{g:02x}{b:02x}")
+                    })
+            })
+            .collect()
+    }
+
+    /// Index of the selected palette item.
+    #[must_use]
+    pub fn selected(&self) -> u32 {
+        let i = self
+            .palette
+            .iter()
+            .position(|&item| self.tools.is_selected(item));
+        count(i.unwrap_or(0))
+    }
+
+    /// Selects palette item `index` (ignored if out of range). Ends any
+    /// stroke in progress.
+    pub fn select(&mut self, index: u32) {
+        if let Some(&item) = self.palette.get(index as usize) {
+            self.tools.select(item);
+            self.sync_cursor();
+        }
+    }
+
+    /// Brush radius in cells.
+    #[must_use]
+    pub fn radius(&self) -> u32 {
+        self.tools.radius()
+    }
+
+    /// Sets the brush radius, clamped to [`brush_range`].
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setRadius))]
+    pub fn set_radius(&mut self, radius: u32) {
+        let steps = i64::from(radius) - i64::from(self.tools.radius());
+        self.resize_brush(i32::try_from(steps).unwrap_or(i32::MAX));
+    }
+
+    /// Grows (positive) or shrinks the brush by `steps` cells of radius.
+    /// Returns the new radius.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = resizeBrush))]
+    pub fn resize_brush(&mut self, steps: i32) -> u32 {
+        if self.tools.resize(steps) {
+            self.sync_cursor();
+        }
+        self.tools.radius()
+    }
+
+    /// A pointer `button` ([`BUTTON_PRIMARY`] or [`BUTTON_SECONDARY`]; others
+    /// are ignored) went down at canvas pixel `(x, y)`. Returns how many
+    /// cells (or, for glue, bodies) changed.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerDown))]
+    pub fn pointer_down(&mut self, button: u32, x: f64, y: f64) -> u32 {
+        let Some(button) = to_button(button) else {
+            return 0;
+        };
+        let cell = self.cell(x, y);
+        let out = self.tools.press(self.tank.world_mut(), button, cell);
+        self.outcome(out)
+    }
+
+    /// The pointer moved to canvas pixel `(x, y)`, with or without a button
+    /// down. A stroke covers every cell on the way from the last sample.
+    /// Returns how many cells (or bodies) changed.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerMove))]
+    pub fn pointer_move(&mut self, x: f64, y: f64) -> u32 {
+        let cell = self.cell(x, y);
+        let out = self.tools.moved(self.tank.world_mut(), cell);
+        self.outcome(out)
+    }
+
+    /// `button` was released, ending the stroke it started.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerUp))]
+    pub fn pointer_up(&mut self, button: u32) {
+        if let Some(button) = to_button(button) {
+            self.tools.release(button);
+            self.sync_cursor();
+        }
+    }
+
+    /// The pointer left the canvas (or was lost): ends any stroke and hides
+    /// the brush outline.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerLeave))]
+    pub fn pointer_leave(&mut self) {
+        self.tools.leave();
+        self.sync_cursor();
+    }
+
+    /// Inspects the cell at canvas pixel `(x, y)` whatever tool is selected
+    /// (touch long-press, SPEC §3.5), keeping the selection. Returns what
+    /// it found, which [`WebTank::take_inspection`] then also returns once.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectAt))]
+    pub fn inspect_at(&mut self, x: f64, y: f64) -> String {
+        let keep = self
+            .palette
+            .iter()
+            .copied()
+            .find(|&item| self.tools.is_selected(item));
+        self.tools.select(PaletteItem::Tool(Tool::Inspect));
+        let cell = self.cell(x, y);
+        let out = self
+            .tools
+            .press(self.tank.world_mut(), Button::Primary, cell);
+        self.tools.release(Button::Primary);
+        self.outcome(out);
+        if let Some(item) = keep {
+            self.tools.select(item);
+        }
+        self.sync_cursor();
+        self.inspection.clone()
+    }
+
+    /// What inspect found since the last call, once: `"cell <material>
+    /// <column> <row>"`, `"creature <id>"` (T7), or `""` if nothing new.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
+    pub fn take_inspection(&mut self) -> String {
+        core::mem::take(&mut self.inspection)
+    }
+
+    /// The material name at cell `(x, y)`, or `""` outside the grid (tests).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = materialAt))]
+    #[must_use]
+    pub fn material_at(&self, x: u32, y: u32) -> String {
+        let world = self.tank.world();
+        world
+            .cell(x as usize, y as usize)
+            .and_then(|c| world.materials().get(c.material))
+            .map_or_else(String::new, |m| m.name.clone())
+    }
+
+    /// Number of glued (static) rigid bodies (tests).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = gluedBodies))]
+    #[must_use]
+    pub fn glued_bodies(&self) -> u32 {
+        count(self.tank.world().bodies().filter(|b| b.anchored).count())
+    }
+
+    /// Number of cells of the material named `name` (0 if unknown), for
+    /// tests.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = materialCount))]
+    #[must_use]
+    pub fn material_count(&self, name: &str) -> u32 {
+        let world = self.tank.world();
+        world
+            .materials()
+            .id(name)
+            .map_or(0, |id| count(world.material_counts()[usize::from(id.0)]))
+    }
+
+    /// Sprinkles the default food (flake food) just below the water surface
+    /// in a dozen pinches across the tank (the tray's Feed, SPEC §2.5).
+    /// Returns how many cells changed.
+    pub fn feed(&mut self) -> u32 {
+        let world = self.tank.world_mut();
+        let Some(food) = world.materials().id(FEED_FOOD) else {
+            return 0;
+        };
+        let width = i64::try_from(world.width()).unwrap_or(i64::MAX);
+        let row = i64::try_from(world.surface_row()).unwrap_or(0) + 1;
+        // Spread evenly, shifted by the tick so feeds don't stack exactly.
+        let shift = i64::try_from(world.tick_count() % 7).unwrap_or(0);
+        let mut changed = 0;
+        for i in 0..i64::from(FEED_PINCHES) {
+            let x = (2 * i + 1) * width / (2 * i64::from(FEED_PINCHES)) + shift - 3;
+            changed += world.paint(x, row, 0, food, Brush::Pour).unwrap_or(0);
+        }
+        self.edited(changed);
+        count(changed)
+    }
+
+    /// Tints the tank by a field (`"nutrient"`, `"co2"`, `"light"`), or
+    /// with `""` turns the tint off.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if the field name is unknown.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setFieldOverlay))]
+    pub fn set_field_overlay(&mut self, field: &str) -> Result<(), String> {
+        let field = match field {
+            "" => None,
+            name => {
+                Some(FieldKind::from_name(name).ok_or_else(|| format!("unknown field {name:?}"))?)
+            }
+        };
+        self.tank.set_field_overlay(field);
+        Ok(())
+    }
+
+    /// The field overlay shown (`""` if none).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fieldOverlay))]
+    #[must_use]
+    pub fn field_overlay(&self) -> String {
+        self.tank
+            .field_overlay()
+            .map_or_else(String::new, |f| f.name().to_owned())
+    }
+
     /// Whether the simulation is running (not paused by the user).
     #[must_use]
     pub fn running(&self) -> bool {
@@ -229,96 +481,28 @@ impl WebTank {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = cellAt))]
     #[must_use]
     pub fn cell_at(&self, x: f64, y: f64) -> Vec<i32> {
-        let layout = Layout::fit((self.width(), self.height()), self.size);
-        let (cx, cy) = layout.cell_at(x, y);
+        let (cx, cy) = self.layout().cell_at(x, y);
         let clamp = |v: i64| i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX });
         vec![clamp(cx), clamp(cy)]
     }
 
-    /// Pours `material` in a disc of `radius` cells at `(x, y)`, filling only
-    /// fluid cells. Returns how many cells changed.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message if the material name is unknown.
-    pub fn pour(&mut self, material: &str, x: i32, y: i32, radius: u32) -> Result<u32, String> {
-        let id = self.material(material)?;
-        Ok(self.stamp(Some(id), x, y, radius))
-    }
-
-    /// Number of cells of the material named `name` (0 if unknown), for
-    /// tests.
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = materialCount))]
+    /// The canvas pixel at the centre of cell `(x, y)`, as `[x, y]` (tests
+    /// aim pointer events with it).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pixelAt))]
     #[must_use]
-    pub fn material_count(&self, name: &str) -> u32 {
-        self.material(name).map_or(0, |id| {
-            count(self.tank.world().material_counts()[usize::from(id.0)])
-        })
-    }
-
-    /// Places the device whose material is `device` (`"bubbler"` or
-    /// `"filter_outlet"`) centred on `(x, y)`. Returns how many cells
-    /// changed.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message if `device` isn't a placeable.
-    pub fn place(&mut self, device: &str, x: i32, y: i32) -> Result<u32, String> {
-        let what =
-            Placeable::from_name(device).ok_or_else(|| format!("unknown device {device:?}"))?;
-        let changed = self
-            .tank
-            .world_mut()
-            .place(what, i64::from(x), i64::from(y))
-            .map_err(|e| e.to_string())?;
-        if changed > 0 && !self.running {
-            self.tank.cells_edited();
-        }
-        Ok(count(changed))
-    }
-
-    /// Erases a disc of `radius` cells at `(x, y)` back to the empty tank:
-    /// water below the configured surface, air above. Returns how many cells
-    /// changed.
-    pub fn erase(&mut self, x: i32, y: i32, radius: u32) -> u32 {
-        self.stamp(None, x, y, radius)
-    }
-
-    /// Holds the brush at `(x, y)`: until [`WebTank::release`], it pours
-    /// `material` (or erases, if `None`) again on each [`WebTank::frame`]
-    /// that runs simulation ticks (once per tick, except after a stall,
-    /// when several ticks catch up in one frame).
-    ///
-    /// # Errors
-    ///
-    /// Returns a message if the material name is unknown.
-    pub fn hold(
-        &mut self,
-        material: Option<String>,
-        x: i32,
-        y: i32,
-        radius: u32,
-    ) -> Result<(), String> {
-        let material = material.map(|m| self.material(&m)).transpose()?;
-        self.hold = Some(Hold {
-            x,
-            y,
-            radius,
-            material,
-        });
-        Ok(())
-    }
-
-    /// Lifts the held brush, ending the stroke.
-    pub fn release(&mut self) {
-        self.hold = None;
-        self.body = None;
+    pub fn pixel_at(&self, x: i32, y: i32) -> Vec<f64> {
+        let l = self.layout();
+        let s = f64::from(l.scale);
+        #[allow(clippy::cast_precision_loss)] // offsets are canvas pixels
+        let at = |c: i32, o: i64| o as f64 + (f64::from(c) + 0.5) * s;
+        vec![at(x, l.offset.0), at(y, l.offset.1)]
     }
 
     /// Advances to `now_ms` (`performance.now()`): runs the simulation ticks
-    /// due, and draws a frame if one is due and allowed. Returns
-    /// [`FRAME_DREW`], [`FRAME_WANTED`] and [`FRAME_LOST`] flags, with the
-    /// simulation ticks run shifted by [`FRAME_TICKS_SHIFT`].
+    /// due, re-applies a held stroke once per tick, and draws a frame if one
+    /// is due and allowed. Returns [`FRAME_DREW`], [`FRAME_WANTED`] and
+    /// [`FRAME_LOST`] flags, with the simulation ticks run shifted by
+    /// [`FRAME_TICKS_SHIFT`].
     pub fn frame(&mut self, now_ms: f64) -> u32 {
         let now = Duration::from_secs_f64(now_ms.max(0.0) / 1000.0);
         if !self.running {
@@ -326,11 +510,11 @@ impl WebTank {
             self.tank.pause();
         }
         let request = self.tank.tick(now);
-        if request.sim_ticks > 0
-            && let Some(h) = self.hold
-        {
-            self.stamp(h.material, h.x, h.y, h.radius);
+        // Holding still keeps pouring, once per tick run.
+        for _ in 0..request.sim_ticks {
+            self.tools.hold(self.tank.world_mut());
         }
+        self.wake_at = request.wake_at;
         let mut flags = request.sim_ticks.min(0xff_ffff) << FRAME_TICKS_SHIFT;
         if request.redraw && self.draw() {
             self.frames = self.frames.wrapping_add(1);
@@ -344,6 +528,16 @@ impl WebTank {
             flags |= FRAME_WANTED;
         }
         flags
+    }
+
+    /// When the last [`WebTank::frame`] wants to be called again, in the
+    /// page's milliseconds: the next tick, or the next frame the cap allows.
+    /// Nothing happens before then unless input arrives, so the page can
+    /// sleep on a timer instead of waking every vsync.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = wakeAt))]
+    #[must_use]
+    pub fn wake_at(&self) -> f64 {
+        self.wake_at.as_secs_f64() * 1000.0
     }
 
     /// Frames drawn so far (wraps).
@@ -386,20 +580,18 @@ impl WebTank {
 
 impl WebTank {
     fn with_world(world: World, size: (u32, u32)) -> Result<Self, String> {
-        let id = |name| {
-            world
-                .materials()
-                .id(name)
-                .ok_or_else(|| format!("no {name} material"))
-        };
-        let (water, air) = (id("water")?, id("air")?);
+        let sand = world
+            .materials()
+            .id("sand")
+            .ok_or_else(|| "no sand material".to_owned())?;
+        let palette = Tools::palette(&world);
         Ok(Self {
             tank: Tank::new(world, TankConfig::default()),
-            water,
-            air,
+            tools: Tools::new(sand),
+            palette,
             running: true,
-            hold: None,
-            body: None,
+            inspection: String::new(),
+            wake_at: Duration::ZERO,
             size: (size.0.max(1), size.1.max(1)),
             frames: 0,
             #[cfg(target_arch = "wasm32")]
@@ -413,69 +605,85 @@ impl WebTank {
         &self.tank
     }
 
-    fn material(&self, name: &str) -> Result<MaterialId, String> {
-        self.tank
-            .world()
-            .materials()
-            .id(name)
-            .ok_or_else(|| format!("unknown material {name:?}"))
+    fn layout(&self) -> Layout {
+        self.tank.layout(self.size)
     }
 
-    /// Pours `material`, or erases if `None`. While paused, an edit
-    /// re-uploads the grid so it shows without a tick.
-    fn stamp(&mut self, material: Option<MaterialId>, x: i32, y: i32, radius: u32) -> u32 {
-        let changed = match material {
-            Some(id) => {
-                let (x, y) = (i64::from(x), i64::from(y));
-                let world = self.tank.world_mut();
-                match world.paint_into(x, y, radius, id, Brush::Pour, self.body) {
-                    Ok((changed, body)) => {
-                        self.body = body;
-                        changed
-                    }
-                    Err(_) => 0,
-                }
-            }
-            None => self.erase_disc(x, y, radius),
+    /// The cell under canvas pixel `(x, y)`, clamped to just outside the
+    /// grid (one brush radius), so a captured drag far off the canvas
+    /// doesn't interpolate a long run of stamps.
+    fn cell(&self, x: f64, y: f64) -> (i64, i64) {
+        let (cx, cy) = self.layout().cell_at(x, y);
+        let pad = i64::from(self.tools.radius()) + 1;
+        let clamp = |v: i64, len: usize| {
+            let len = i64::try_from(len).unwrap_or(i64::MAX);
+            v.clamp(-pad, len - 1 + pad)
         };
-        if changed > 0 && !self.running {
-            self.tank.cells_edited();
+        let world = self.tank.world();
+        (clamp(cx, world.width()), clamp(cy, world.height()))
+    }
+
+    /// Kind and name of a palette item, as [`WebTank::palette`] lists it.
+    fn describe(&self, item: PaletteItem) -> (&'static str, String) {
+        let table = self.tank.world().materials();
+        match item {
+            PaletteItem::Material(m) => (
+                "material",
+                table.get(m).map_or_else(String::new, |m| m.name.clone()),
+            ),
+            PaletteItem::Tool(Tool::Place(p)) => ("device", p.material_name().to_owned()),
+            PaletteItem::Tool(t) => (
+                "tool",
+                match t {
+                    Tool::Scoop => "scoop",
+                    Tool::Glue => "glue",
+                    Tool::Net => "net",
+                    Tool::Inspect => "inspect",
+                    Tool::Pour | Tool::Place(_) => "pour",
+                }
+                .to_owned(),
+            ),
         }
+    }
+
+    /// Records a tool outcome: shows edits made while paused, keeps the
+    /// inspection and the brush outline. Returns how many cells or bodies
+    /// changed.
+    fn outcome(&mut self, out: Outcome) -> u32 {
+        let changed = match out {
+            Outcome::Painted(n) | Outcome::Glued(n) => n,
+            Outcome::Inspected(found) => {
+                self.inspection = match found {
+                    Inspection::Cell { x, y, material } => {
+                        let table = self.tank.world().materials();
+                        let name = table.get(material).map_or("?", |m| m.name.as_str());
+                        format!("cell {name} {x} {y}")
+                    }
+                    Inspection::Creature(id) => format!("creature {}", id.0),
+                };
+                0
+            }
+            Outcome::None => 0,
+        };
+        self.edited(changed);
+        self.sync_cursor();
         count(changed)
     }
 
-    fn erase_disc(&mut self, x: i32, y: i32, radius: u32) -> usize {
-        let (water, air) = (self.water, self.air);
-        let world = self.tank.world_mut();
-        let (cx, cy) = (i64::from(x), i64::from(y));
-        // As in `World::paint`: a radius past the grid covers it all, and the
-        // loop is clipped to the grid, so the maths stays far from overflow.
-        let r = i64::from(radius.min(2 * MAX_GRID_SIDE));
-        let (width, height) = (world.width(), world.height());
-        let surface = world.surface_row();
-        let (Ok(cols), Ok(rows)) = (i64::try_from(width), i64::try_from(height)) else {
-            return 0;
-        };
-        let mut changed = 0;
-        for py in (cy - r).max(0)..=(cy + r).min(rows - 1) {
-            for px in (cx - r).max(0)..=(cx + r).min(cols - 1) {
-                let (dx, dy) = (px - cx, py - cy);
-                if dx * dx + dy * dy > r * r + r {
-                    continue;
-                }
-                let (Ok(px), Ok(py)) = (usize::try_from(px), usize::try_from(py)) else {
-                    continue;
-                };
-                let Some(cell) = world.cell(px, py) else {
-                    continue;
-                };
-                let empty = if py >= surface { water } else { air };
-                if cell.material != empty && world.set_cell(px, py, empty).is_ok() {
-                    changed += 1;
-                }
-            }
+    /// While paused, an edit re-uploads the grid so it shows without a tick.
+    fn edited(&mut self, changed: usize) {
+        if changed > 0 && !self.running {
+            self.tank.cells_edited();
         }
-        changed
+    }
+
+    /// Gives the tank the brush outline to draw (or none).
+    fn sync_cursor(&mut self) {
+        let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
+            cell: (x, y),
+            radius,
+        });
+        self.tank.set_cursor(cursor);
     }
 
     /// Draws to the attached graphics, if any. Returns whether a frame was
@@ -532,6 +740,14 @@ impl WebTank {
     }
 }
 
+fn to_button(code: u32) -> Option<Button> {
+    match code {
+        BUTTON_PRIMARY => Some(Button::Primary),
+        BUTTON_SECONDARY => Some(Button::Secondary),
+        _ => None,
+    }
+}
+
 fn builtin() -> Result<MaterialTable, String> {
     MaterialTable::builtin().map_err(|e| e.to_string())
 }
@@ -557,199 +773,4 @@ fn count(n: usize) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const MS: f64 = 1.0;
-
-    fn tank() -> WebTank {
-        WebTank::new(128, 72, 7, 512, 288).unwrap()
-    }
-
-    fn id(t: &WebTank, name: &str) -> MaterialId {
-        t.tank().world().materials().id(name).unwrap()
-    }
-
-    #[test]
-    fn grid_scale_is_the_largest_giving_320_across() {
-        assert_eq!(grid_for(1920, 1080), [6, 320, 180]);
-        assert_eq!(grid_for(1896, 1066), [5, 379, 213]);
-        assert_eq!(grid_for(640, 360), [2, 320, 180]);
-        assert_eq!(grid_for(639, 359), [1, 639, 359]);
-        assert_eq!(grid_for(200, 100), [1, 200, 100], "narrow: scale 1");
-        assert_eq!(grid_for(5120, 2880), [8, 640, 360], "scale capped at 8");
-        assert_eq!(grid_for(0, 0), [1, 1, 1]);
-    }
-
-    #[test]
-    fn rejects_bad_sizes() {
-        assert!(WebTank::new(0, 10, 0, 1, 1).is_err());
-        assert!(WebTank::new(MAX_GRID_SIDE + 1, 10, 0, 1, 1).is_err());
-    }
-
-    #[test]
-    fn lists_builtin_materials() {
-        let names = tank().materials();
-        for m in ["water", "air", "sand", "gravel", "rock", "air_bubble"] {
-            assert!(names.iter().any(|n| n == m), "{m} missing");
-        }
-    }
-
-    #[test]
-    fn places_devices_and_rejects_unknown_ones() {
-        let mut t = tank();
-        let outlet = id(&t, "filter_outlet");
-        assert_eq!(t.place("filter_outlet", 10, 30), Ok(9));
-        assert_eq!(t.material_count("filter_outlet"), 9);
-        assert_eq!(t.material_count("unobtainium"), 0);
-        assert_eq!(t.tank().world().cell(10, 30).unwrap().material, outlet);
-        assert!(t.place("heater", 10, 30).is_err());
-        // Every pour material in the page's list exists.
-        for m in desktank_sim::tools::POUR_MATERIALS {
-            assert!(t.pour(m, 60, 10, 1).is_ok(), "{m}");
-        }
-    }
-
-    #[test]
-    fn frame_ticks_at_20_hz_and_pauses() {
-        let mut t = tank();
-        let ticks = |f: u32| f >> FRAME_TICKS_SHIFT;
-        assert_eq!(ticks(t.frame(0.0)), 0, "the first frame starts the clock");
-        assert_eq!(ticks(t.frame(16.0 * MS)), 0);
-        assert_eq!(ticks(t.frame(50.0 * MS)), 1);
-        assert_eq!(ticks(t.frame(150.0 * MS)), 2);
-        t.set_running(false);
-        assert_eq!(ticks(t.frame(1000.0 * MS)), 0);
-        assert_eq!(ticks(t.frame(2000.0 * MS)), 0, "paused: no world time");
-        t.step();
-        assert_eq!(t.tick_count(), 4.0);
-        t.set_running(true);
-        assert_eq!(ticks(t.frame(2000.0 * MS)), 0, "resuming doesn't catch up");
-        assert_eq!(ticks(t.frame(2050.0 * MS)), 1);
-    }
-
-    #[test]
-    fn a_frame_is_wanted_after_an_edit() {
-        let mut t = tank();
-        // Without graphics nothing is drawn, so the first frame stays wanted.
-        assert_ne!(t.frame(0.0) & FRAME_WANTED, 0);
-        assert_eq!(t.frame(0.0) & FRAME_DREW, 0);
-    }
-
-    #[test]
-    fn held_brush_pours_every_tick() {
-        let mut t = tank();
-        let sand = id(&t, "sand");
-        let count = |t: &WebTank| t.tank().world().material_counts()[usize::from(sand.0)];
-        t.hold(Some("sand".into()), 64, 20, 2).unwrap();
-        t.frame(0.0);
-        assert_eq!(count(&t), 0, "no tick yet");
-        t.frame(50.0);
-        let one = count(&t);
-        assert!(one > 0);
-        for i in 2..10 {
-            t.frame(f64::from(i) * 50.0);
-        }
-        assert!(count(&t) > one, "kept pouring");
-        t.release();
-        let before = count(&t);
-        t.frame(600.0);
-        assert_eq!(count(&t), before, "released");
-        assert!(t.hold(Some("lava".into()), 0, 0, 1).is_err());
-    }
-
-    #[test]
-    fn pour_settles_sand_and_erase_restores_water() {
-        let mut t = tank();
-        assert!(t.pour("sand", 64, 20, 4).unwrap() > 0);
-        for _ in 0..200 {
-            t.step();
-        }
-        let (sand, water, air) = (id(&t, "sand"), id(&t, "water"), id(&t, "air"));
-        let world = || t.tank().world();
-        assert_eq!(world().cell(64, 71).unwrap().material, sand);
-        let mut t = t;
-        assert!(t.erase(64, 71, 3) > 0);
-        assert_eq!(t.tank().world().cell(64, 71).unwrap().material, water);
-        // Above the surface, erase leaves air.
-        t.tank
-            .world_mut()
-            .paint(10, 1, 1, sand, Brush::Replace)
-            .unwrap();
-        assert_eq!(t.erase(10, 1, 1), 9, "a radius-1 disc is 3×3");
-        assert_eq!(t.tank().world().cell(10, 1).unwrap().material, air);
-        assert_eq!(t.erase(10, 1, 1), 0, "already empty");
-    }
-
-    #[test]
-    fn a_rock_stroke_makes_one_body_until_release() {
-        let mut t = tank();
-        for x in (20..60).step_by(4) {
-            t.pour("rock", x, 30, 3).unwrap();
-        }
-        t.step();
-        assert_eq!(t.tank().world().bodies().count(), 1);
-        t.release();
-        t.pour("rock", 100, 30, 3).unwrap();
-        t.step();
-        assert_eq!(t.tank().world().bodies().count(), 2);
-    }
-
-    #[test]
-    fn huge_erase_radius_clears_everything_without_overflow() {
-        let mut t = tank();
-        t.pour("sand", 64, 50, 6).unwrap();
-        assert_eq!(
-            t.erase(-5, i32::MAX, u32::MAX),
-            0,
-            "disc far below the grid"
-        );
-        assert!(t.erase(64, 36, u32::MAX) > 0);
-        let sand = id(&t, "sand");
-        assert_eq!(t.tank().world().material_counts()[usize::from(sand.0)], 0);
-    }
-
-    #[test]
-    fn unknown_material_is_an_error() {
-        assert!(tank().pour("lava", 1, 1, 1).is_err());
-    }
-
-    #[test]
-    fn maps_canvas_pixels_to_cells_with_letterbox() {
-        let mut t = tank();
-        // 512×288 holds 128×72 at scale 4 exactly.
-        assert_eq!(t.cell_at(0.0, 0.0), [0, 0]);
-        assert_eq!(t.cell_at(511.0, 287.0), [127, 71]);
-        // A wider canvas letterboxes left and right at scale 4.
-        t.resize(600, 288);
-        assert_eq!(t.cell_at(44.0, 0.0), [0, 0]);
-        assert_eq!(t.cell_at(43.0, 0.0), [-1, 0]);
-    }
-
-    #[test]
-    fn script_matches_native_capture_world() {
-        let src = include_str!("../../desktank/tests/scenes/layers.toml");
-        let t = WebTank::from_script(src, 7, 320, 180).unwrap();
-        let script = Script::parse(src).unwrap();
-        let mut world = World::new(script.world_config(7), builtin().unwrap()).unwrap();
-        script.run(&mut world, script.ticks).unwrap();
-        assert_eq!(t.tank().world().state_hash(), world.state_hash());
-        assert_eq!(t.tick_count(), 160.0);
-        assert!(!t.running(), "a scripted scene starts paused");
-        let starter = include_str!("../../desktank/tests/scenes/starter.toml");
-        assert!(WebTank::from_script(starter, 7, 320, 180).is_err());
-    }
-
-    #[test]
-    fn same_seed_same_world() {
-        let run = || {
-            let mut t = tank();
-            t.pour("gravel", 30, 10, 5).unwrap();
-            for _ in 0..50 {
-                t.step();
-            }
-            t.state_hash()
-        };
-        assert_eq!(run(), run());
-    }
-}
+mod tests;

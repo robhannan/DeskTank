@@ -15,7 +15,7 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 - **Rust first** — idiomatic, safe Rust with platform-specific code isolated behind small, well-defined boundaries.
 - **Cross-platform** — macOS, Windows and Linux.
 
-**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water.
+**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water, glue rocks in place and place bubblers, with the mouse or touch (drag pours, two-finger drag scoops, long-press inspects).
 
 ## Status
 
@@ -60,8 +60,8 @@ pnpm install
 pnpm build:web           # builds target/site/ and reports the gzip transfer size (budget 3 MB)
 pnpm serve:web           # then open http://127.0.0.1:8000
 pnpm exec playwright install chromium
-pnpm test:web            # Playwright: smoke test, context-loss recovery, render match with the native reference
-pnpm bench:web chrome 60 # p50/p95 frame intervals over 60 s of pouring at DPR 2 (also chromium, firefox, webkit)
+pnpm test:web            # Playwright: smoke test, context-loss recovery, render match with the native reference, tools with mouse and touch, settings
+pnpm bench:web chrome 60 # p50/p95 loop and drawn-frame intervals over 60 s of pouring at DPR 2 (also chromium, firefox, webkit)
 ```
 
 Pushes to `main` deploy it to GitHub Pages (`.github/workflows/pages.yml`).
