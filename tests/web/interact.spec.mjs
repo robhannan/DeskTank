@@ -348,6 +348,14 @@ test("the palette groups the sim's tools and navigates with the keyboard", async
   await expect(page.getByRole("tab", { name: "Substrate" })).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("1");
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
+
+  // G with a radio focused moves focus to the new group's tab (the radio
+  // is hidden), and a reset keeps the open group.
+  await page.getByRole("radio", { name: "Sand" }).focus();
+  await page.keyboard.press("g");
+  await expect(page.getByRole("tab", { name: "Water" })).toBeFocused();
+  await page.getByRole("button", { name: "Reset" }).click();
+  await expect(page.getByRole("tab", { name: "Water" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("settings persist across reloads", async ({ page }) => {

@@ -170,6 +170,8 @@ struct Running {
     groups: Vec<(PaletteGroup, Vec<PaletteItem>)>,
     /// Index of the group the palette shows.
     open: usize,
+    /// Whether Shift is held.
+    shift: bool,
     /// Trackpad scroll (pixels) not yet turned into a brush-size step.
     scroll: f64,
     /// Wheel scroll (lines) not yet turned into a step; Windows precision
@@ -232,6 +234,7 @@ impl Running {
             tools,
             groups,
             open: 0,
+            shift: false,
             scroll: 0.0,
             scroll_lines: 0.0,
             shown: None,
@@ -506,6 +509,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
+            WindowEvent::ModifiersChanged(m) => s.shift = m.state().shift_key(),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
@@ -546,9 +550,11 @@ impl ApplicationHandler for App {
                             e.algae_coverage * 100.0
                         ));
                     }
-                    // G opens the next group, Shift+G the previous one.
-                    Key::Character(c) if c == "g" => s.step_group(1),
-                    Key::Character(c) if c == "G" => s.step_group(-1),
+                    // G opens the next group, Shift+G the previous one
+                    // (Shift, not the letter's case: Caps Lock doesn't flip it).
+                    Key::Character(c) if c.eq_ignore_ascii_case("g") => {
+                        s.step_group(if s.shift { -1 } else { 1 });
+                    }
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the
                         // tenth.

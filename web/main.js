@@ -409,7 +409,9 @@ function buildPalette() {
       return b;
     }),
   );
-  openGroup = groups[tank.selected()]?.[0] ?? tabs[0]?.[0];
+  // A rebuilt palette (reset, new scale) keeps the open group if it still
+  // exists; the first opens on the selection's.
+  if (!tabs.some(([name]) => name === openGroup)) openGroup = groups[tank.selected()]?.[0] ?? tabs[0]?.[0];
   showSelection();
 }
 
@@ -710,8 +712,11 @@ function wireInput() {
       const next = FIELDS[(FIELDS.indexOf(settings.field) + 1) % FIELDS.length];
       update({ field: next });
     } else if (e.key === "g" || e.key === "G") {
-      // G opens the next group, Shift+G the previous (as in desktank window).
-      stepGroup(e.key === "G" ? -1 : 1);
+      // G opens the next group, Shift+G the previous (as in desktank window;
+      // Shift, not the letter's case, so Caps Lock doesn't flip it). Focus
+      // in the palette moves to the new tab, as its radio may be hidden.
+      const inPalette = paletteEl.contains(e.target) || groupsEl.contains(e.target);
+      stepGroup(e.shiftKey ? -1 : 1, inPalette);
     } else if (/^[0-9]$/.test(e.key)) {
       // 1–9 are the open group's first nine slots, 0 the tenth.
       chooseSlot((Number(e.key) + 9) % 10);
