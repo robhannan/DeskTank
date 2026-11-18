@@ -9,7 +9,7 @@ resource budgets, work packages with acceptance criteria).
 - Build/test: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`.
 - Keep the simulation/rendering core OS-agnostic; platform code lives behind `cfg(target_os = …)` boundaries.
 - Minimal resource use is a core requirement: no uncapped redraws; pause when hidden.
-- Features are built by the Developer agent (`.claude/agents/developer.md`): one PR per increment, never commit to `main`.
+- For features and fixes, invoke the named `desktank-developer` agent, which follows the shared workflow (`.agents/skills/desktank-developer/SKILL.md`): one PR per increment, never commit to `main`.
 - Toolchain: pinned exactly in `rust-toolchain.toml`; that version is the MSRV (`rust-version` in the root `Cargo.toml`). Bump both together.
 - `Cargo.lock` is committed (binary project); CI builds with `--locked`.
 - `desktank-sim` and `desktank-render` use `#![forbid(unsafe_code)]`. The workspace denies `unsafe_code`; only `desktank-platform` and `desktank-saver-mac` allow it, at FFI boundaries with `// SAFETY:` comments.
