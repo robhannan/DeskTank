@@ -12,6 +12,7 @@ mod grid;
 mod hash;
 pub mod material;
 mod placeable;
+pub mod plants;
 mod rng;
 pub mod script;
 pub mod snapshot;
@@ -26,10 +27,14 @@ pub use material::{
     GLUED_VARIANT_BIT, Material, MaterialError, MaterialId, MaterialTable, MovementClass,
 };
 pub use placeable::Placeable;
+pub use plants::{
+    Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,
+};
 pub use script::{Player, Script, ScriptError};
 pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable};
 pub use world::{
-    BodyId, BodyInfo, Brush, CHUNK_SIZE, Creature, CreatureId, Ecosystem, MAX_CREATURES, MAX_SIDE,
-    RANDOM_TICK_BUDGET, RandomTickStats, SLEEP_TICKS, TICKS_PER_SECOND, UnmetNeed, World,
-    WorldConfig, WorldError,
+    BodyId, BodyInfo, Brush, CHUNK_SIZE, Creature, CreatureId, Ecosystem, MAX_CREATURES,
+    MAX_PLANTS, MAX_SIDE, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, RANDOM_TICK_BUDGET,
+    RandomTickStats, SLEEP_TICKS, TICKS_PER_SECOND, UPDATE_SECONDS, UnmetNeed, World, WorldConfig,
+    WorldError,
 };

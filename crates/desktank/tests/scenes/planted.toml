@@ -28,7 +28,7 @@ glued = true
 x = 118
 y = 74
 radius = 9
-material = "moss"
+plant = "java_moss"
 
 [[pour]]
 x = 24

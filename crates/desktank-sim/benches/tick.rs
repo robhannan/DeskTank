@@ -1,7 +1,8 @@
-//! Simulation tick benches (SPEC §6.1, T1, T5, T6, T7a): a heavy pour must
-//! tick in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine,
-//! also with living cells (random ticks) and fields active, with grown
-//! plants, and with the reference tank's 30 creatures swimming.
+//! Simulation tick benches (SPEC §6.1, T1, T5, T6, T6b, T7a): a heavy pour
+//! must tick in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference
+//! machine, also with living cells (random ticks) and fields active, with
+//! grown plants (and 500 of them, of every species), and with the reference
+//! tank's 30 creatures swimming.
 //!
 //! `cargo bench -p desktank-sim`
 
@@ -63,6 +64,65 @@ fn planted() -> World {
         w.paint(x, 40, 0, cutting, Brush::Pour).expect("cutting");
     }
     advance(w, 30 * 60 * 20)
+}
+
+/// T6b: the living tank with 500 plants of every species: hygrophila in
+/// three of every four columns along the bed, rotala (which needs strong
+/// light) on four glued rock shelves with aquasoil a third of the way down,
+/// and java moss on four glued rocks, grown for 10 minutes and left until
+/// every chunk sleeps (or 10 more minutes pass).
+fn five_hundred_plants() -> World {
+    let mut w = settled_living();
+    let t = w.materials().clone();
+    let (rock, soil) = (t.id("rock").expect("rock"), t.id("aquasoil").expect("soil"));
+    let ids = |n| w.plant_species().id(n).expect("species");
+    let (hyg, rotala, moss) = (ids("hygrophila"), ids("rotala"), ids("java_moss"));
+    let glue = |w: &mut World, x: usize, y: usize| {
+        let body = w.body_at(x, y).expect("body");
+        w.set_anchored(body, true);
+    };
+    for k in 0..4 {
+        let x0 = 40 + k * 160;
+        let shelf = Rect {
+            x0,
+            y0: 120,
+            x1: x0 + 80,
+            y1: 124,
+        };
+        w.fill_rect(shelf, rock, Brush::Replace).expect("shelf");
+        glue(&mut w, x0, 120);
+        let bed = Rect {
+            y0: 117,
+            y1: 120,
+            ..shelf
+        };
+        w.fill_rect(bed, soil, Brush::Replace).expect("bed");
+        for x in (x0 + 2..x0 + 78).step_by(4) {
+            w.paint_plant(i64::try_from(x).expect("x"), 110, 0, rotala)
+                .expect("rotala");
+        }
+        let x = 140 + 160 * i64::try_from(k).expect("k");
+        w.paint(x, 220, 8, rock, Brush::Replace).expect("rock");
+        glue(&mut w, usize::try_from(x).expect("x"), 220);
+        for dx in [-6, -3, 0, 3, 6] {
+            w.paint_plant(x + dx, 205, 0, moss).expect("moss");
+        }
+    }
+    for x in (0..640).filter(|x| x % 4 != 3) {
+        w.paint_plant(x, 346, 0, hyg).expect("cutting");
+    }
+    let mut w = advance(w, 10 * 60 * 20);
+    for _ in 0..10 * 60 * 20 {
+        if w.awake_chunks() == 0 {
+            break;
+        }
+        w.tick();
+    }
+    for s in [hyg, rotala, moss] {
+        assert!(w.plants().any(|p| p.species == s), "{s:?} grew");
+    }
+    assert!(w.plant_count() >= 500, "{} plants", w.plant_count());
+    w
 }
 
 fn advance(mut w: World, ticks: u32) -> World {
@@ -193,6 +253,18 @@ fn bench_tick(c: &mut Criterion) {
     let mut planted = planted();
     g.bench_function("planted", |b| {
         b.iter(|| black_box(&mut planted).tick());
+    });
+    // T6b: 500 grown plants of every species; the plant update visits up
+    // to 5 of them per tick.
+    let mut plants = five_hundred_plants();
+    println!(
+        "settled_500_plants: {} plants, {} cells, {} awake chunks",
+        plants.plant_count(),
+        plants.plant_cells(),
+        plants.awake_chunks()
+    );
+    g.bench_function("settled_500_plants", |b| {
+        b.iter(|| black_box(&mut plants).tick());
     });
     g.finish();
 }

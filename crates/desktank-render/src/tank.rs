@@ -60,6 +60,8 @@ pub struct Tank {
     time_of_day: u16,
     /// Creatures version last drawn (`None` before the first frame).
     creatures_drawn: Option<u64>,
+    /// Plants version last drawn (`None` before the first frame).
+    plants_drawn: Option<u64>,
 }
 
 impl Tank {
@@ -82,6 +84,7 @@ impl Tank {
             fields_drawn: 0,
             time_of_day: daylight::NOON,
             creatures_drawn: None,
+            plants_drawn: None,
         }
     }
 
@@ -222,14 +225,16 @@ impl Tank {
     }
 
     /// Whether a frame is waiting: the world changed since the last frame
-    /// (cells, or a creature moved), or the target was invalidated. A tank
-    /// with swimming creatures wants a frame every tick (20 a second, under
-    /// the frame cap) even when every chunk sleeps.
+    /// (cells, a creature moved or a plant's tint changed), or the target
+    /// was invalidated. A tank with swimming creatures wants a frame every
+    /// tick (20 a second, under the frame cap) even when every chunk
+    /// sleeps; a plant's tint changes at most once per plant update.
     #[must_use]
     pub fn frame_wanted(&self) -> bool {
         self.needs_frame
             || !self.dirty.is_empty()
             || self.creatures_drawn != Some(self.world.creatures_version())
+            || self.plants_drawn != Some(self.world.plants_version())
     }
 
     /// Changes the frame-rate cap (SPEC §6.2: 15 fps on battery). The
@@ -327,14 +332,20 @@ impl Tank {
         renderer.upload(gpu, &self.world, &mut self.dirty);
         renderer.upload_sprites(gpu, &self.world);
         self.creatures_drawn = Some(self.world.creatures_version());
+        renderer.upload_plants(gpu, &self.world);
+        self.plants_drawn = Some(self.world.plants_version());
         if self.field_overlay.is_some() {
             renderer.upload_fields(gpu, &self.world);
             self.fields_drawn = self.world.fields_version();
         }
         if self.palette_dirty {
             if let Some(p) = &self.palette {
-                let (image, image_size) =
-                    hud::build(p, self.world.materials(), self.world.species());
+                let (image, image_size) = hud::build(
+                    p,
+                    self.world.materials(),
+                    self.world.species(),
+                    self.world.plant_species(),
+                );
                 renderer.upload_hud(gpu, &image, image_size);
             }
             self.palette_dirty = false;

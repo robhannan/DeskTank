@@ -20,6 +20,11 @@
 //! tank for that time of day (default noon). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
+//! Plants (T6b): the palette's plants slot pours the seeds or cuttings of
+//! the species named in the title bar; clicking it again (or `P`) picks the
+//! next species. Inspect shows a plant's species, age, health, size and
+//! what limits its growth in the title bar.
+//!
 //! Creatures (T7a): the palette's creature slots add one per click; the net
 //! carries a creature and, let go above the water, lifts it out; inspect
 //! names the species in the title bar. `--fish N` stocks the tank with N
@@ -40,7 +45,7 @@ use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Palette, PaletteHit, Tank, TankConfig, TankSurface, wgpu,
 };
 use desktank_sim::UnmetNeed;
-use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tools};
+use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
 use desktank_sim::{FieldKind, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -154,6 +159,14 @@ struct Hidden {
     minimised: bool,
 }
 
+/// What the palette overlay last showed: the open group, the selection
+/// (group, item) and the plant species the plants slot pours.
+type Shown = (
+    usize,
+    Option<(usize, usize)>,
+    Option<desktank_sim::PlantSpeciesId>,
+);
+
 struct Running {
     window: Arc<Window>,
     gpu: Gpu,
@@ -177,9 +190,9 @@ struct Running {
     /// Wheel scroll (lines) not yet turned into a step; Windows precision
     /// touchpads send fractions of a line.
     scroll_lines: f64,
-    /// Open group and selection last given to the tank (`None` before the
-    /// first).
-    shown: Option<(usize, Option<(usize, usize)>)>,
+    /// Open group, selection and plant species last given to the tank
+    /// (`None` before the first).
+    shown: Option<Shown>,
 }
 
 impl Running {
@@ -309,6 +322,33 @@ impl Running {
         }
     }
 
+    /// Selects a palette item; choosing the plants slot again picks the
+    /// next plant species. The plants slot names its species in the title.
+    fn choose(&mut self, item: PaletteItem) {
+        let plants = PaletteItem::Tool(Tool::Plant);
+        if item == plants && self.tools.is_selected(plants) {
+            self.tools.next_plant_species(self.tank.world());
+        }
+        self.tools.select(item);
+        if item == plants {
+            self.show_plant_species();
+        }
+    }
+
+    /// Names the species the plants slot pours in the title bar.
+    fn show_plant_species(&mut self) {
+        let world = self.tank.world();
+        if let Some(s) = self
+            .tools
+            .plant_species(world)
+            .and_then(|id| world.plant_species().get(id))
+        {
+            let title = format!("DeskTank — plants: {} ({})", s.name, s.description);
+            self.sync_overlay();
+            self.window.set_title(&title);
+        }
+    }
+
     /// Reports an inspection in the title bar (a drawn card comes later).
     fn show(&self, out: Outcome) {
         let Outcome::Inspected(found) = out else {
@@ -348,6 +388,27 @@ impl Running {
                     None => String::new(),
                 };
                 format!("{name} #{}{need} over {over} at ({x}, {y})", id.0)
+            }
+            Inspection::Plant { id, x, y, .. } => {
+                let world = self.tank.world();
+                let Some(p) = world.plant(id) else { return };
+                let name = world
+                    .plant_species()
+                    .get(p.species)
+                    .map_or("?", |s| s.name.as_str());
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ages ≥ 0
+                let age = p.age as u64;
+                let [roots, stem, leaves] = p.parts;
+                format!(
+                    "{name} #{}, {}m {:02}s old, health {:.0}%, {} cells \
+                     (roots {roots}, stem {stem}, leaves {leaves}), {} at ({x}, {y})",
+                    id.0,
+                    age / 60,
+                    age % 60,
+                    p.health * 100.0,
+                    p.size(),
+                    p.limit.describe(),
+                )
             }
         };
         self.window.set_title(&format!("DeskTank — {text}"));
@@ -396,8 +457,24 @@ impl Running {
             .get(self.open)
             .and_then(|(_, items)| items.get(i))
         {
-            self.tools.select(item);
+            self.choose(item);
         }
+    }
+
+    /// Picks the next plant species and selects the plants slot, opening
+    /// its group.
+    fn next_plant_species(&mut self) {
+        self.tools.next_plant_species(self.tank.world());
+        let slot = PaletteItem::Tool(Tool::Plant);
+        if let Some(g) = self
+            .groups
+            .iter()
+            .position(|(_, items)| items.contains(&slot))
+        {
+            self.open = g;
+        }
+        self.tools.select(slot);
+        self.show_plant_species();
     }
 
     /// The selection's group and its index in that group.
@@ -412,9 +489,10 @@ impl Running {
     /// the tank; it only asks for a frame if they changed.
     fn sync_overlay(&mut self) {
         let selected = self.selection();
-        let shown = (self.open, selected);
+        let plant = self.tools.plant_species(self.tank.world());
+        let shown = (self.open, selected, plant);
         if self.shown != Some(shown) {
-            if self.shown.is_none_or(|(_, s)| s != selected) {
+            if self.shown.is_none_or(|(_, s, _)| s != selected) {
                 // A new tool clears the last inspection from the title.
                 self.window.set_title("DeskTank");
             }
@@ -431,6 +509,7 @@ impl Running {
                     .get(self.open)
                     .map_or_else(Vec::new, |(_, items)| items.clone()),
                 selected,
+                plant,
             }));
         }
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
@@ -557,9 +636,11 @@ impl ApplicationHandler for App {
                     }
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the
-                        // tenth.
+                        // tenth; P picks the next plant species.
                         if let Ok(n) = c.parse::<usize>() {
                             s.select_slot((n + 9) % 10);
+                        } else if c.eq_ignore_ascii_case("p") {
+                            s.next_plant_species();
                         }
                     }
                     _ => {}

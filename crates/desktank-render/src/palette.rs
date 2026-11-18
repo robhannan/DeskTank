@@ -1,7 +1,8 @@
 //! The palette: a 256×256 RGBA table indexed by (material, variant) that the
 //! fragment shader reads with `textureLoad`.
 
-use desktank_sim::{GLUED_VARIANT_BIT, MaterialTable, MovementClass};
+use desktank_sim::plants::POSITION_BITS;
+use desktank_sim::{GLUED_VARIANT_BIT, MaterialTable, MovementClass, Part};
 
 /// Table side: one column per material ID, one row per variant byte.
 pub const SIDE: usize = 256;
@@ -23,6 +24,18 @@ const GLUE_TINT: [u8; 3] = [0xd9, 0xa4, 0x41];
 /// Liquids at least this dense darken with depth (water, not air).
 const DEPTH_TINT_DENSITY: f32 = 0.5;
 
+/// Palette alpha marking a plant part (T6b): the shader tints these cells
+/// by their plant's texel. 255 marks depth-tinted liquids, 0 the rest.
+pub const PLANT_ALPHA: u8 = 128;
+
+/// Which shade a plant cell's variant byte picks: its top two bits are
+/// colour noise (the low bits are its position in its part,
+/// `desktank_sim::plants`), mostly the base shade.
+#[must_use]
+pub fn plant_shade(variant: u8) -> usize {
+    [0, 0, 1, 2][usize::from(variant >> POSITION_BITS)]
+}
+
 /// Which shade a variant byte picks. Every range starts on an even byte,
 /// so a rigid cell's glued bit ([`GLUED_VARIANT_BIT`]) never changes it.
 #[must_use]
@@ -36,14 +49,21 @@ pub fn shade(variant: u8) -> usize {
 }
 
 /// Builds the RGBA table, row-major with rows = variants. Alpha is 255 for
-/// materials that darken with depth and 0 otherwise (the shader's flag;
-/// output is opaque). Rigid materials shade odd variants (glued bodies)
-/// with an amber tint.
+/// materials that darken with depth, [`PLANT_ALPHA`] for plant parts and 0
+/// otherwise (the shader's flags; output is opaque). Rigid materials shade
+/// odd variants (glued bodies) with an amber tint; plant parts take their
+/// shade from the variant's noise bits.
 #[must_use]
 pub fn build(materials: &MaterialTable) -> Vec<u8> {
     let mut columns = [[UNKNOWN; 4]; SIDE];
     let mut tinted = [false; SIDE];
     let mut rigid = [false; SIDE];
+    let mut plant = [false; SIDE];
+    for p in Part::ALL {
+        if let Some(id) = materials.id(p.material_name()) {
+            plant[usize::from(id.0)] = true;
+        }
+    }
     for m in materials.iter() {
         let i = usize::from(m.id.0);
         columns[i] = SHADES.map(|k| m.colour.map(|c| scale(c, k)));
@@ -56,13 +76,22 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
         let s = shade(variant as u8);
         #[allow(clippy::cast_possible_truncation)] // variant < 256
         let glued = variant as u8 & GLUED_VARIANT_BIT != 0;
+        #[allow(clippy::cast_possible_truncation)] // variant < 256
+        let ps = plant_shade(variant as u8);
         for (material, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            let mut rgb = columns[material][s];
+            let mut rgb = columns[material][if plant[material] { ps } else { s }];
             if glued && rigid[material] {
                 rgb = glue(rgb);
             }
             let [r, g, b] = rgb;
-            px.copy_from_slice(&[r, g, b, if tinted[material] { 255 } else { 0 }]);
+            let flag = if plant[material] {
+                PLANT_ALPHA
+            } else if tinted[material] {
+                255
+            } else {
+                0
+            };
+            px.copy_from_slice(&[r, g, b, flag]);
         }
     }
     out
@@ -138,6 +167,23 @@ mod tests {
             let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
             assert_eq!(tinted, dense, "{}", m.name);
         }
+    }
+
+    #[test]
+    fn plant_parts_are_flagged_and_shaded_by_their_noise_bits() {
+        let mats = MaterialTable::builtin().unwrap();
+        let table = build(&mats);
+        let leaf = mats.get(mats.id("leaf").unwrap()).unwrap();
+        // Any position, noise 0: the base colour.
+        for pos in [0u8, 1, 17, 63] {
+            let [r, g, b, a] = texel(&table, leaf.id.0, pos);
+            assert_eq!(([r, g, b], a), (leaf.colour, PLANT_ALPHA));
+        }
+        assert_ne!(
+            texel(&table, leaf.id.0, 0b1000_0001),
+            texel(&table, leaf.id.0, 1)
+        );
+        assert_eq!(texel(&table, mats.id("sand").unwrap().0, 0)[3], 0);
     }
 
     #[test]
