@@ -79,7 +79,6 @@ let tickMs = 0;
 let frames = 0;
 let fps = 0;
 let fpsSince = 0;
-let inspection = "";
 let inspectTimer = 0;
 let wheelRest = 0;
 
@@ -289,11 +288,12 @@ function loop(now) {
     fpsSince = now;
     updateStats();
   }
-  // A frame due and something to draw it on: the next vsync. Running:
+  // A frame due now and something to draw it on: the next vsync. Running:
   // sleep until the next tick (20 wake-ups/s, not one per vsync; also the
   // back-off while no graphics are attached). Paused and idle: sleep until
   // input wakes us.
-  if (flags & WANTED && tank.backend()) kick();
+  // A frame held back by the cap sleeps until the cap allows it.
+  if (flags & WANTED && tank.backend() && tank.wakeAt() <= performance.now() + 1) kick();
   else if (tank.running() || flags & WANTED) sleepUntil(tank.wakeAt());
   else updateStats();
 }
@@ -434,9 +434,8 @@ function canvasPoint(e) {
 
 // Shows what inspect last found under the tank for a few seconds.
 function showInspection() {
-  const found = tank.inspection();
-  if (found === inspection) return;
-  inspection = found;
+  const found = tank.takeInspection();
+  if (!found) return;
   const [kind, ...rest] = found.split(" ");
   if (kind === "cell") {
     const [name, x, y] = rest;
@@ -450,7 +449,6 @@ function showInspection() {
   clearTimeout(inspectTimer);
   inspectTimer = setTimeout(() => {
     inspectEl.hidden = true;
-    inspection = "";
   }, INSPECT_SHOW_MS);
 }
 
@@ -530,7 +528,11 @@ const touch = {
   },
   up(e) {
     if (!touches.delete(e.pointerId) || !gesture) return;
-    if (gesture.mode === "pending") {
+    if (gesture.mode === "pending" && e.type === "pointercancel") {
+      // The browser took the touch: no tap.
+      clearTimeout(gesture.timer);
+      gesture.mode = "done";
+    } else if (gesture.mode === "pending") {
       // A tap: use the tool once where it landed.
       clearTimeout(gesture.timer);
       tank.pointerDown(PRIMARY, ...gesture.start);
@@ -539,7 +541,8 @@ const touch = {
     } else if (gesture.mode === "stroke" && e.pointerId === gesture.id) {
       tank.pointerUp(PRIMARY);
       gesture.mode = "done";
-    } else if (gesture.mode === "scoop" && touches.size < 2) {
+    } else if (gesture.mode === "scoop") {
+      // Any finger lifting ends the scoop, so the midpoint never jumps.
       tank.pointerUp(SECONDARY);
       gesture.mode = "done";
     }
@@ -579,7 +582,11 @@ function wireInput() {
     // After a normal pointerup this repeats it harmlessly; otherwise the
     // capture was taken away mid-stroke.
     if (e.pointerType === "touch") up(e);
-    else if (e.buttons === 0) mouse.up(e);
+    else if (e.buttons === 0) {
+      tank.pointerUp(PRIMARY);
+      tank.pointerUp(SECONDARY);
+      after();
+    }
   });
   canvas.addEventListener("pointerleave", (e) => {
     // Hide the brush outline once the mouse is off the canvas.

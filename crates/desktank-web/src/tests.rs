@@ -200,7 +200,8 @@ fn inspect_reports_the_cell_and_net_changes_nothing() {
     let hash = t.state_hash();
     assert_eq!(down(&mut t, PRIMARY, 12, 40), 0);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.inspection(), "cell water 12 40");
+    assert_eq!(t.take_inspection(), "cell water 12 40");
+    assert_eq!(t.take_inspection(), "", "taken once");
     t.select(slot(&t, "tool net"));
     down(&mut t, PRIMARY, 12, 40);
     drag(&mut t, 30, 40);

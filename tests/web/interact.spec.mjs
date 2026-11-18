@@ -163,7 +163,7 @@ test.describe("touch", () => {
     p = await cellPoint(page, Math.round(w * 0.7), Math.round(h * 0.3));
     const before = await cellCount(page, "gravel");
     await touch.start([p]);
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1200); // well past the 500 ms long-press
     await touch.end();
     await expect(page.locator("#inspect")).toHaveText(/^Water · cell \d+, \d+$/);
     expect(await cellCount(page, "gravel")).toBe(before);

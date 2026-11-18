@@ -112,7 +112,7 @@ pub struct WebTank {
     tools: Tools,
     palette: Vec<PaletteItem>,
     running: bool,
-    /// The last thing inspect found, formatted for [`WebTank::inspection`].
+    /// What inspect found, not yet taken by [`WebTank::take_inspection`].
     inspection: String,
     /// When the page should call [`WebTank::frame`] again, on its clock.
     wake_at: Duration,
@@ -325,8 +325,8 @@ impl WebTank {
     }
 
     /// Inspects the cell at canvas pixel `(x, y)` whatever tool is selected
-    /// (touch long-press, SPEC §3.5), keeping the selection. Returns
-    /// [`WebTank::inspection`].
+    /// (touch long-press, SPEC §3.5), keeping the selection. Returns what
+    /// it found, which [`WebTank::take_inspection`] then also returns once.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectAt))]
     pub fn inspect_at(&mut self, x: f64, y: f64) -> String {
         let keep = self
@@ -348,11 +348,11 @@ impl WebTank {
         self.inspection.clone()
     }
 
-    /// What inspect last found: `"cell <material> <column> <row>"`,
-    /// `"creature <id>"` (T7), or `""` before the first inspection.
-    #[must_use]
-    pub fn inspection(&self) -> String {
-        self.inspection.clone()
+    /// What inspect found since the last call, once: `"cell <material>
+    /// <column> <row>"`, `"creature <id>"` (T7), or `""` if nothing new.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
+    pub fn take_inspection(&mut self) -> String {
+        core::mem::take(&mut self.inspection)
     }
 
     /// The material name at cell `(x, y)`, or `""` outside the grid (tests).
