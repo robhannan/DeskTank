@@ -1,0 +1,42 @@
+# Hygrophila (T6's plant, the default species): an easy, fast stem plant
+# that grows in modest light. It roots in any substrate, puts out a pair of
+# leaves every second stem cell and lives on as a fragment when cut.
+id = 1
+name = "hygrophila"
+description = "An easy, fast stem plant that grows in modest light."
+form = "stem"
+propagation = ["seeds", "cuttings", "fragments"]
+
+[stem]
+height = 48
+internode = 2
+leaf_length = 3
+root_depth = 10
+substrates = ["sand", "gravel", "aquasoil"]
+
+# Light, nutrient and CO₂ ranges (field units): 0 response outside
+# min..max, 1 at the optimum, linear between. CO₂'s min below 0 lets it
+# grow without injection, at half speed.
+[prefer]
+light = { min = 0.02, optimum = 0.35, max = 1.0 }
+nutrient = { min = 0.05, optimum = 0.4, max = 3.0 }
+co2 = { min = -1.0, optimum = 1.0, max = 4.0 }
+
+# New cells per minute at full response; mature size in cells; nutrient
+# taken per new cell.
+[growth]
+rate = 65.0
+size = 300
+cost = 0.01
+
+# Seconds outside its ranges before it declines; health lost and regained
+# per second (health runs 0–1; below 0.5 it drops its oldest leaves).
+[hardiness]
+tolerance = 20.0
+decline = 0.01
+recovery = 0.02
+
+[colours]
+root = ["#b8ad86", "#d9cfa8", "#ece4c4"]
+stem = ["#2f5f22", "#3f7a2e", "#55923d"]
+leaf = ["#4c8a30", "#5ea53b", "#6dbb45", "#86cf5a", "#a3e07a"]

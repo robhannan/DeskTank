@@ -1,0 +1,34 @@
+# Rotala: a stem plant for strong light. It outgrows hygrophila near the
+# surface and struggles in shade. Cut pieces don't regrow.
+id = 3
+name = "rotala"
+description = "A fine-leaved stem plant that needs strong light."
+form = "stem"
+propagation = ["cuttings"]
+
+[stem]
+height = 48
+internode = 2
+leaf_length = 3
+root_depth = 8
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.25, optimum = 1.0, max = 1.6 }
+nutrient = { min = 0.05, optimum = 0.4, max = 3.0 }
+co2 = { min = -1.0, optimum = 1.2, max = 4.0 }
+
+[growth]
+rate = 45.0
+size = 260
+cost = 0.01
+
+[hardiness]
+tolerance = 15.0
+decline = 0.012
+recovery = 0.02
+
+[colours]
+root = ["#b8ad86", "#d9cfa8", "#ece4c4"]
+stem = ["#6a4a2a", "#7e5a32", "#94703e"]
+leaf = ["#7a8f34", "#93a83e", "#b0b84a", "#cf9a4e", "#e07a52"]
