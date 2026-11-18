@@ -72,6 +72,49 @@ fn advance(mut w: World, ticks: u32) -> World {
     w
 }
 
+/// A second consecutive grazing tick: ten walkers bite an algae/detritus
+/// film while twenty other fish swim. The previous bites have woken the bed.
+fn grazing() -> World {
+    let t = MaterialTable::builtin().expect("materials");
+    let mut w = World::new(WorldConfig::default(), t).expect("world");
+    let sand = w.materials().id("sand").expect("sand");
+    w.fill_rect(
+        Rect {
+            x0: 0,
+            y0: 348,
+            x1: 640,
+            y1: 360,
+        },
+        sand,
+        Brush::Replace,
+    )
+    .expect("bed");
+    w = advance(w, 100);
+    let [algae, mulm] = ["algae", "detritus"].map(|n| w.materials().id(n).expect("film"));
+    for x in 0..640 {
+        w.set_cell(x, 347, if x % 2 == 0 { algae } else { mulm })
+            .expect("film");
+    }
+    for (name, row) in [("neon_tetra", 180), ("betta", 90), ("corydoras", 344)] {
+        let species = w.species().id(name).expect("fish");
+        for x in (20..640).step_by(64) {
+            w.add_creature(species, x, row).expect("stock");
+        }
+    }
+    w.tick();
+    let bites = |w: &World| {
+        w.creatures()
+            .iter()
+            .map(desktank_sim::Creature::eaten)
+            .sum::<u32>()
+    };
+    assert_eq!(bites(&w), 10);
+    let mut check = w.clone();
+    check.tick();
+    assert_eq!(bites(&check), 20);
+    w
+}
+
 fn bench_tick(c: &mut Criterion) {
     let mut g = c.benchmark_group("tick");
     // Early in the pour (the whole column falling through water) and
@@ -93,7 +136,7 @@ fn bench_tick(c: &mut Criterion) {
     // tank), ten of each species, swimming; with no food they edit no
     // cells, so every chunk stays asleep.
     let mut fish = settled.clone();
-    let species: Vec<_> = fish.species().iter().map(|s| s.id).collect();
+    let species = ["neon_tetra", "corydoras", "betta"].map(|n| fish.species().id(n).expect("fish"));
     // Spread along the tank, skipping spots the sand pile fills.
     let mut column = 10;
     while fish.creatures().len() < 30 {
@@ -108,6 +151,10 @@ fn bench_tick(c: &mut Criterion) {
         b.iter(|| black_box(&mut fish).tick());
     });
     assert_eq!(fish.awake_chunks(), 0, "swimming wakes no chunk");
+    let grazing = grazing();
+    g.bench_function("grazing", |b| {
+        b.iter_batched_ref(|| grazing.clone(), World::tick, BatchSize::LargeInput);
+    });
     // A rock body sinking through the water (D17), and the tank once it
     // and a dozen more rocks rest on the pile and the floor.
     let rock = settled.materials().id("rock").expect("rock");

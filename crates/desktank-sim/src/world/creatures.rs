@@ -1,8 +1,6 @@
-//! Creatures (SPEC §2.4, T7a): entities, not cells. Each swims with simple
-//! steering — wander towards random targets inside its species' depth
-//! zone, or dart towards the nearest food it eats while hungry — never
-//! enters a cell it can't swim through, and eats food cells within a cell
-//! of its body.
+//! Creatures (SPEC §2.4) steer in fixed point, collide with the cell grid
+//! and eat within a cell of their bodies. Species data selects schooling,
+//! substrate walking, contour grazing and trips to the air interface.
 //!
 //! - **Fixed point.** Positions and velocities are integers in 1/256 cell
 //!   (velocities per tick), so every platform computes the same motion and
@@ -21,6 +19,8 @@
 //!   a chunk only when they eat (SPEC §2.1). Food is found through a
 //!   registry of food cells kept like the living lists, not by scanning.
 
+mod steering;
+
 use core::mem;
 
 use rand_core::Rng as _;
@@ -31,7 +31,7 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::species::{SpeciesId, SpeciesTable};
+use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
 
 /// Most creatures a world holds (SPEC §2.4: the default population cap per
 /// display, which protects the budget).
@@ -112,7 +112,9 @@ pub struct Creature {
     facing_left: bool,
     /// Held in the net up to this tick (0: free).
     held_until: u64,
-    /// Food cells eaten so far.
+    /// Next tick when an air-breather must surface.
+    next_breath: u64,
+    /// Food or grazing cells eaten so far.
     eaten: u32,
 }
 
@@ -176,6 +178,9 @@ struct Kind {
     accel: i32,
     /// Depth band as fractions of the water column.
     depth: [f32; 2],
+    schooling: bool,
+    zone: Zone,
+    breathes_air: bool,
     edible: [bool; 256],
 }
 
@@ -185,6 +190,10 @@ struct Kind {
 pub(super) struct Creatures {
     species: SpeciesTable,
     list: Vec<Creature>,
+    /// Cell-space input from a host with avoidance enabled.
+    cursor: Option<(i32, i32)>,
+    /// Reused start-of-tick snapshots for schooling, in creature id order.
+    school: Vec<Schoolmate>,
     next_id: u32,
     kinds: Vec<Option<Kind>>,
     /// Per material: a creature's body may overlap it.
@@ -193,6 +202,16 @@ pub(super) struct Creatures {
     air: MaterialId,
     /// Bumped whenever a creature is added, removed, moves or turns.
     version: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Schoolmate {
+    id: CreatureId,
+    species: SpeciesId,
+    x: i32,
+    y: i32,
+    vx: i32,
+    vy: i32,
 }
 
 impl Creatures {
@@ -233,12 +252,17 @@ impl Creatures {
                 top,
                 accel: (top / 6).max(2),
                 depth: s.depth,
+                schooling: s.temperament == Temperament::Schooling,
+                zone: s.zone,
+                breathes_air: s.breathes_air,
                 edible,
             });
         }
         Self {
             species,
             list: Vec::new(),
+            cursor: None,
+            school: Vec::new(),
             next_id: 1,
             kinds,
             swim,
@@ -270,6 +294,16 @@ impl Creatures {
 }
 
 impl World {
+    /// Sets the pointer cell fish avoid. A missing or out-of-tank pointer
+    /// disables avoidance. Hosts supply this input only when enabled.
+    pub fn set_creature_cursor(&mut self, cell: Option<(i64, i64)>) {
+        self.creatures.cursor = cell
+            .filter(|&(x, y)| {
+                (0..to_i64(self.width)).contains(&x) && (0..to_i64(self.height)).contains(&y)
+            })
+            .map(|(x, y)| (centre_of(x), centre_of(y)));
+    }
+
     /// The species table.
     #[must_use]
     pub fn species(&self) -> &SpeciesTable {
@@ -363,6 +397,7 @@ impl World {
             ignore: None,
             facing_left: id.0 % 2 == 1,
             held_until: 0,
+            next_breath: self.tick + u64::from(id.0 % 20),
             eaten: 0,
         });
         self.creatures.version += 1;
@@ -431,9 +466,16 @@ impl World {
         Some(zone(k, self.surface_row, self.height))
     }
 
-    /// Whether `creature`'s body centre is inside its species' zone.
+    /// Whether the creature is in its depth band and, for a surface grazer,
+    /// touching a submerged support.
     #[must_use]
     pub fn in_zone(&self, creature: &Creature) -> bool {
+        if let Some(k) = self.kind(creature.species)
+            && k.zone == Zone::Surfaces
+            && !self.on_surface(k, creature.x, creature.y)
+        {
+            return false;
+        }
         self.zone_rows(creature.species)
             .is_some_and(|(top, bottom)| {
                 let row = usize::try_from(creature.y >> 8).unwrap_or(usize::MAX);
@@ -469,6 +511,7 @@ impl World {
                 h.write(&v.map_or(u64::MAX, u64::from).to_le_bytes());
             }
             h.write(&c.held_until.to_le_bytes());
+            h.write(&c.next_breath.to_le_bytes());
             h.write(&c.eaten.to_le_bytes());
         }
     }
@@ -479,6 +522,19 @@ impl World {
             return;
         }
         let mut list = mem::take(&mut self.creatures.list);
+        self.creatures.school.clear();
+        for c in &list {
+            if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
+                self.creatures.school.push(Schoolmate {
+                    id: c.id,
+                    species: c.species,
+                    x: c.x,
+                    y: c.y,
+                    vx: c.vx,
+                    vy: c.vy,
+                });
+            }
+        }
         let mut changed = false;
         for c in &mut list {
             changed |= self.update_creature(c);
@@ -509,27 +565,26 @@ impl World {
         let mut rng = chunk_stream(self.seed, self.tick, CREATURE_STREAM + u64::from(c.id.0));
         c.satiety = c.satiety.saturating_sub(1);
         let hungry = c.hungry();
+        if k.zone == Zone::Surfaces {
+            self.crawl(&k, c);
+            if hungry && self.life.food_cells() > 0 {
+                self.eat(&k, c);
+            }
+            return (c.x, c.y, c.facing_left) != before;
+        }
         self.choose_food(&k, c, hungry);
 
-        // Steer towards the food, or the wander target inside the zone.
-        let (tx, ty, speed) = if let Some(i) = c.food {
-            let i = i as usize;
-            let cell = |v: usize| centre_of(i64::try_from(v).unwrap_or(0));
-            (cell(i % self.width), cell(i / self.width), k.top)
-        } else {
-            let near = dist(c.tx - c.x, c.ty - c.y) <= REACHED;
-            if c.retarget == 0 || near {
-                self.pick_target(&k, c, &mut rng);
-            } else {
-                c.retarget -= 1;
-            }
-            (c.tx, c.ty, k.cruise)
-        };
-        steer(&k, c, tx, ty, speed, c.food.is_some());
+        let (tx, ty, speed) = self.steering_target(&k, c, &mut rng);
+        steer(&k, c, tx, ty, speed, speed == k.top);
+        // Walkers keep a downward bias even on long, nearly horizontal
+        // routes. A one-row step lets them follow a sloping sand bed.
+        if k.zone == Zone::Bottom {
+            c.vy = k.cruise;
+        }
 
         // Move, sliding along whatever blocks one axis.
         let blocked = !self.try_move(&k, c);
-        if hungry && self.eat(&k, c) {
+        if hungry && self.life.food_cells() > 0 && self.eat(&k, c) {
             c.food = None;
         } else if blocked {
             (c.vx, c.vy) = (0, 0);
@@ -555,7 +610,7 @@ impl World {
         }
         let lost = c
             .food
-            .is_none_or(|i| !k.edible[usize::from(self.cells[i as usize].material.0)]);
+            .is_some_and(|i| !k.edible[usize::from(self.cells[i as usize].material.0)]);
         if lost || (self.tick + u64::from(c.id.0)).is_multiple_of(SEARCH_EVERY) {
             c.food = self.nearest_food(k, c);
         }
@@ -565,6 +620,17 @@ impl World {
     /// blocked. Returns false if it wanted to move and couldn't at all.
     fn try_move(&self, k: &Kind, c: &mut Creature) -> bool {
         if (c.vx, c.vy) == (0, 0) {
+            return true;
+        }
+        if k.zone == Zone::Bottom
+            && c.vx != 0
+            && !self.fits(k, c.x, c.y + ONE)
+            && !self.fits(k, c.x + c.vx, c.y)
+            && self.fits(k, c.x, c.y - ONE)
+            && self.fits(k, c.x + c.vx, c.y - ONE)
+        {
+            c.x += c.vx;
+            c.y -= ONE;
             return true;
         }
         for (dx, dy) in [(c.vx, c.vy), (c.vx, 0), (0, c.vy)] {

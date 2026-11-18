@@ -1,0 +1,17 @@
+# A surface grazer. The shell and foot occupy five by three cells.
+id = 4
+name = "nerite"
+zone = "surfaces"
+depth = [0.0, 1.0]
+min_depth = 6
+temperament = "peaceful"
+speed = 2.0
+max_speed = 2.0
+diet = ["algae", "detritus"]
+
+[sprite]
+colours = { g = "#d9a548", b = "#623e27", f = "#ba9772", k = "#312626" }
+frames = [
+    [".bgb.", "bgbgk", ".ffff"],
+    [".bgb.", "bgbgk", "ffff."],
+]
