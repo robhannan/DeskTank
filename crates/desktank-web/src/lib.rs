@@ -110,6 +110,7 @@ pub fn brush_range() -> Vec<u32> {
 pub struct WebTank {
     tank: Tank,
     tools: Tools,
+    avoid_cursor: bool,
     palette: Vec<PaletteItem>,
     running: bool,
     /// What inspect found, not yet taken by [`WebTank::take_inspection`].
@@ -303,6 +304,13 @@ impl WebTank {
             self.sync_cursor();
         }
         self.tools.radius()
+    }
+
+    /// Enables fish fleeing the pointer. Off by default.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setCursorAvoidance))]
+    pub fn set_cursor_avoidance(&mut self, enabled: bool) {
+        self.avoid_cursor = enabled;
+        self.sync_cursor();
     }
 
     /// A pointer `button` ([`BUTTON_PRIMARY`] or [`BUTTON_SECONDARY`]; others
@@ -614,6 +622,7 @@ impl WebTank {
         Ok(Self {
             tank: Tank::new(world, TankConfig::default()),
             tools: Tools::new(sand),
+            avoid_cursor: false,
             palette,
             running: true,
             inspection: String::new(),
@@ -735,6 +744,8 @@ impl WebTank {
 
     /// Gives the tank the brush outline to draw (or none).
     fn sync_cursor(&mut self) {
+        let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
+        self.tank.world_mut().set_creature_cursor(pointer);
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
             cell: (x, y),
             radius,
