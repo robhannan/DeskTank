@@ -8,7 +8,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 - Repository, licences (MIT OR Apache-2.0), README.
 - Developer agent brief (`.claude/agents/developer.md`) and `CLAUDE.md`.
-- Plan and spec (`docs/SPEC.md` v0.4): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
+- Plan and spec (`docs/SPEC.md` v0.5): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
 - F1 workspace scaffold + CI: six crate stubs (SPEC §4.1), `clap` CLI skeleton for every §4.3 subcommand, toolchain pinned at 1.100.0, workspace lints, size-tuned release profile, `deny.toml`, Dependabot, CI (fmt, clippy, test, doc on macOS/Windows/Ubuntu; `cargo deny` on Ubuntu).
 - Decided: `Cargo.lock` committed; MSRV = pinned toolchain; `forbid(unsafe_code)` in sim and render (recorded in CLAUDE.md).
 - T1 grid, chunks and movement (`desktank-sim`): 4-byte cells, 64×64 chunks with sleep/wake and dirty rectangles, five movement classes, materials from embedded TOML (`assets/materials/`), fixed 1/20 s tick, per-chunk PCG streams, FNV-1a state hash, `set_cell`/`paint`/`fill_rect` edit API, PPM/ASCII debug snapshots (`cargo run --release -p desktank-sim --example snapshot`), criterion benches (`cargo bench -p desktank-sim`). Mechanisms the spec left open are recorded in SPEC §2.1 (*T1* notes).
@@ -110,7 +110,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - WB2: touch has no brush-size gesture (the slider and settings only); a pinch on the canvas could size the brush.
 - WB2: the palette strip has no hint that it scrolls sideways beyond the scrollbar; a fade at the edge would help on phones.
 - Web demo: run `wasm-opt` in CI (binaryen isn't on the runner; Ubuntu's apt package is old), saving about 60 KiB.
-- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), T7 and WB3.
+- Work packages live in `docs/SPEC.md` §9; next up is P1 (packaging and identity spike), T7, T6b (plant individuals and species, D18, which must land before T8) and WB3. T6c (growth forms) and T6d (plant appearance) follow T6b.
 - T4: a drawn inspect card (pixel font) instead of the title bar, and the net carrying creatures, with T7.
 - T4: scoop turns everything (rock, gravel) into water below the line, while pour never overwrites solids; decide whether scoop should spare rock before T7 / WB2 (PR #9 review).
 - T4: a drag ends when it crosses the palette or leaves the window; keeping the stroke and resuming on re-entry is an option (PR #9 review).
