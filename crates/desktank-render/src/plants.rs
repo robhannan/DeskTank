@@ -1,13 +1,23 @@
-//! The per-plant texture (T6b, SPEC §2.7 *Appearance*): a 256×256
-//! `Rgba8Unorm` texture with one texel per plant id, at column `id & 255`
-//! and row `id >> 8`, so every id (1–65535) has one. Its RGB is the health
-//! tint the shader multiplies into every cell of that plant (the cell
-//! texture carries the id in its state bytes). It is rebuilt from the plant
-//! table when [`desktank_sim::World::plants_version`] changes, and only the
-//! rows that changed are uploaded, so a plant's look changes without waking
-//! a chunk or rewriting its cells. T6d adds species colouration.
+//! Plant appearance textures (SPEC §2.7 *Appearance*).
+//!
+//! **Plant texture** (T6b): a 256×256 `Rgba8Unorm` texture with one texel
+//! per plant id, at column `id & 255` and row `id >> 8`, so every id
+//! (1–65535) has one. Its RGB is the health tint the shader multiplies into
+//! every cell of that plant (the cell texture carries the id in its state
+//! bytes) and its alpha the plant's species id (T6d). It is rebuilt from
+//! the plant table when [`desktank_sim::World::plants_version`] changes,
+//! and only the rows that changed are uploaded, so a plant's look changes
+//! without waking a chunk or rewriting its cells.
+//!
+//! **Species texture** (T6d): [`SPECIES_WIDTH`]×256, one row per species
+//! id, built once: each part's colour ramp resampled to [`RAMP`] shades
+//! (root, stem, leaf), then the part shapes ([`desktank_sim::plants::Look`])
+//! and the sizes the shader scales positions by. Rows without a species
+//! repeat the default species, so a cell whose plant texel isn't written
+//! yet still draws as a plant.
 
-use desktank_sim::World;
+use desktank_sim::plants::{Form, PlantSpecies, PlantSpeciesTable};
+use desktank_sim::{Part, World};
 
 /// Texture side: 256 ids per row, 256 rows.
 pub const SIDE: usize = 256;
@@ -83,7 +93,7 @@ impl PlantTints {
         for plant in world.plants() {
             let at = usize::from(plant.id.0) * 4;
             let [red, green, blue] = tint(plant.health);
-            fresh[at..at + 4].copy_from_slice(&[red, green, blue, u8::MAX]);
+            fresh[at..at + 4].copy_from_slice(&[red, green, blue, plant.species.0]);
         }
         let old_rows = self.image.as_chunks_mut::<ROW_BYTES>().0.iter_mut();
         for (row, (new, old)) in fresh
@@ -100,6 +110,92 @@ impl PlantTints {
         }
         self.rows = rows;
     }
+}
+
+/// Shades per part in the species texture: every ramp is resampled to
+/// this many.
+pub const RAMP: usize = 8;
+/// Species texture width: three ramps, the shapes texel and the sizes
+/// texel, rounded up.
+pub const SPECIES_WIDTH: usize = 32;
+/// Column of the shapes texel: leaf, stem and root shape discriminants.
+pub const SHAPES_COLUMN: usize = 3 * RAMP;
+/// Column of the sizes texel: stem height, root depth and leaf length in
+/// cells (0 for a mat).
+pub const SIZES_COLUMN: usize = SHAPES_COLUMN + 1;
+
+/// The species texture's contents, row-major (`SPECIES_WIDTH` texels per
+/// row, 256 rows).
+#[must_use]
+pub fn species_image(table: &PlantSpeciesTable) -> Vec<u8> {
+    let row_bytes = SPECIES_WIDTH * 4;
+    let mut out = vec![0; SIDE * row_bytes];
+    let default = table.default_species().map(species_row);
+    for (id, row) in out
+        .as_chunks_mut::<{ SPECIES_WIDTH * 4 }>()
+        .0
+        .iter_mut()
+        .enumerate()
+    {
+        let own = u8::try_from(id)
+            .ok()
+            .and_then(|id| table.get(desktank_sim::PlantSpeciesId(id)))
+            .map(species_row);
+        if let Some(bytes) = own.or(default) {
+            *row = bytes;
+        }
+    }
+    out
+}
+
+/// One species' row of the species texture.
+fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
+    let mut row = [0; SPECIES_WIDTH * 4];
+    for part in Part::ALL {
+        let ramp = match part {
+            Part::Root => &s.colours.root,
+            Part::Stem => &s.colours.stem,
+            Part::Leaf => &s.colours.leaf,
+        };
+        for (k, shade) in resample(ramp).into_iter().enumerate() {
+            let at = (part.index() * RAMP + k) * 4;
+            row[at..at + 4].copy_from_slice(&[shade[0], shade[1], shade[2], u8::MAX]);
+        }
+    }
+    let look = s.look;
+    let at = SHAPES_COLUMN * 4;
+    row[at..at + 4].copy_from_slice(&[look.leaf as u8, look.stem as u8, look.root as u8, 0]);
+    let sizes = match &s.form {
+        Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
+        Form::Mat(_) => [0; 4],
+    };
+    let at = SIZES_COLUMN * 4;
+    row[at..at + 4].copy_from_slice(&sizes);
+    row
+}
+
+/// `ramp` (1 or more shades, dark to light) stretched or squeezed to
+/// [`RAMP`] shades by linear interpolation between neighbours.
+fn resample(ramp: &[[u8; 3]]) -> [[u8; 3]; RAMP] {
+    let last = ramp.len().saturating_sub(1);
+    core::array::from_fn(|k| {
+        #[allow(clippy::cast_precision_loss)] // tiny counts
+        let at = k as f32 * last as f32 / (RAMP - 1) as f32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=last
+        let lo = (at.floor() as usize).min(last);
+        let hi = (lo + 1).min(last);
+        let t = at - at.floor();
+        let (a, b) = (ramp.get(lo), ramp.get(hi));
+        match (a, b) {
+            (Some(a), Some(b)) => core::array::from_fn(|c| {
+                let v = f32::from(a[c]) + (f32::from(b[c]) - f32::from(a[c])) * t;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=255
+                let v = v.round() as u8;
+                v
+            }),
+            _ => [0x40, 0x90, 0x40],
+        }
+    })
 }
 
 #[cfg(test)]
@@ -122,6 +218,70 @@ mod tests {
             let t = tint(k as f32 / 100.0);
             assert!(t.iter().zip(last).all(|(a, b)| *a <= b), "{k}");
             last = t;
+        }
+    }
+
+    #[test]
+    fn ramps_are_resampled_end_to_end() {
+        let r = resample(&[[0, 0, 0], [70, 140, 210]]);
+        assert_eq!(r[0], [0, 0, 0]);
+        assert_eq!(r[RAMP - 1], [70, 140, 210]);
+        assert_eq!(r[1], [10, 20, 30]);
+        assert_eq!(resample(&[[5, 6, 7]]), [[5, 6, 7]; RAMP]);
+    }
+
+    #[test]
+    fn species_rows_hold_ramps_shapes_and_sizes() {
+        let materials = desktank_sim::MaterialTable::builtin().unwrap();
+        let table = PlantSpeciesTable::builtin_for(&materials).unwrap();
+        let image = species_image(&table);
+        let texel = |row: usize, col: usize| -> [u8; 4] {
+            let at = (row * SPECIES_WIDTH + col) * 4;
+            image[at..at + 4].try_into().unwrap()
+        };
+        let rotala = table.get(table.id("rotala").unwrap()).unwrap();
+        let row = usize::from(rotala.id.0);
+        // The leaf ramp's ends are the TOML's ends.
+        let leaf = &rotala.colours.leaf;
+        let first = texel(row, Part::Leaf.index() * RAMP);
+        let last = texel(row, Part::Leaf.index() * RAMP + RAMP - 1);
+        assert_eq!(first[..3], leaf[0]);
+        assert_eq!(last[..3], leaf[leaf.len() - 1]);
+        let shapes = texel(row, SHAPES_COLUMN);
+        assert_eq!(shapes[0], rotala.look.leaf as u8);
+        assert_eq!(shapes[1], rotala.look.stem as u8);
+        let Form::Stem(f) = &rotala.form else {
+            panic!("rotala is a stem plant")
+        };
+        assert_eq!(
+            texel(row, SIZES_COLUMN)[..3],
+            [f.height, f.root_depth, f.leaf_length]
+        );
+        // Rows without a species repeat the default.
+        let default = usize::from(table.default_species().unwrap().id.0);
+        let at = |r: usize| &image[r * SPECIES_WIDTH * 4..(r + 1) * SPECIES_WIDTH * 4];
+        assert_eq!(at(0), at(default));
+        assert_eq!(at(255), at(default));
+        assert_ne!(at(row), at(default));
+    }
+
+    /// The shader's shape constants match the TOML enums' discriminants.
+    #[test]
+    fn shader_shape_constants_match_the_enums() {
+        use desktank_sim::plants::{LeafShape, RootShape, StemShape};
+        let wgsl = include_str!("tank.wgsl");
+        let check = |prefix: &str, name: String, value: u8| {
+            let line = format!("const {prefix}_{}: i32 = {value};", name.to_uppercase());
+            assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");
+        };
+        for s in LeafShape::ALL {
+            check("LEAF", format!("{s:?}"), s as u8);
+        }
+        for s in StemShape::ALL {
+            check("STEM", format!("{s:?}"), s as u8);
+        }
+        for s in RootShape::ALL {
+            check("ROOT", format!("{s:?}"), s as u8);
         }
     }
 }
