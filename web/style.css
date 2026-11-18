@@ -87,11 +87,22 @@ canvas {
   margin: 10px 0;
 }
 
+.tools { flex-wrap: nowrap; }
+
+/* One row that scrolls sideways on small screens (19+ entries). */
 .palette {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  padding: 4px 2px 6px;
 }
+
+.palette .swatch { flex: 0 0 auto; white-space: nowrap; }
 
 button, .swatch {
   font: inherit;
@@ -106,7 +117,7 @@ button, .swatch {
 
 button:active, .swatch:active { box-shadow: inset 2px 2px 0 #0b1724; }
 button:disabled { opacity: 0.45; cursor: default; }
-button:focus-visible, .swatch:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .swatch {
   display: inline-flex;
@@ -121,10 +132,56 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible { outline: 2px 
   background: var(--c);
 }
 
+.swatch[data-kind="tool"] i { background: var(--panel); }
+.swatch[data-name="scoop"] i { background: repeating-conic-gradient(#16283a 0 25%, #8fa8bc 0 50%) 0 0 / 8px 8px; }
+.swatch[data-name="glue"] i { background: linear-gradient(135deg, #f0c75e 0 45%, #a8742a 45% 100%); }
+.swatch[data-name="net"] i { background: repeating-linear-gradient(45deg, transparent 0 3px, #8fa8bc 3px 4px), repeating-linear-gradient(-45deg, #16283a 0 3px, #8fa8bc 3px 4px); }
+.swatch[data-name="inspect"] i { background: radial-gradient(circle at 40% 40%, #16283a 0 3px, #e6f0f7 3px 5px, #16283a 5px); }
+.swatch[data-kind="device"] i { box-shadow: inset 0 0 0 2px #e8f6ff; }
+
 .swatch[aria-checked="true"] {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+.inspect {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  line-height: 1.4;
+  background: rgba(5, 11, 17, 0.8);
+  border: 2px solid var(--edge);
+  pointer-events: none;
+}
+
+.inspect[hidden] { display: none; }
+
+.settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 2px solid var(--edge);
+}
+
+.settings[hidden] { display: none; }
+.settings .note { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 0.85rem; }
+
+select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 2px solid var(--edge);
+  padding: 6px;
+  min-height: 40px;
+}
+
+.stats[hidden] { display: none; }
 
 input[type="number"] {
   font: inherit;
@@ -138,6 +195,14 @@ input[type="number"] {
 input[type="range"] { accent-color: var(--accent); vertical-align: middle; }
 
 label { white-space: nowrap; }
+
+/* Phones: the brush slider gets its own row under the palette. */
+@media (max-width: 600px) {
+  main { padding: 10px; }
+  .tools { flex-wrap: wrap; }
+  .palette { flex-basis: 100%; }
+  .swatch { min-height: 44px; padding: 6px 8px; }
+}
 
 .hint {
   color: var(--muted);

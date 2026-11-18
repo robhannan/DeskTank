@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DeskTank sand tank</title>
-  <meta name="description" content="DeskTank's falling-sand and water simulation core, running in the browser via WebAssembly.">
+  <meta name="description" content="DeskTank's falling-sand aquarium, running in the browser via WebAssembly.">
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -15,29 +15,66 @@
     </header>
 
     <div class="tank">
-      <canvas id="tank" width="320" height="180" aria-label="Simulation: drag to pour the selected material"></canvas>
+      <canvas id="tank" width="320" height="180" aria-label="Tank: drag to use the selected tool"></canvas>
       <p id="status" class="status" role="status">Loading the simulation…</p>
+      <p id="inspect" class="inspect" role="status" aria-live="polite" hidden></p>
     </div>
+
+    <nav class="controls menu" aria-label="Tank">
+      <button id="play" type="button">Pause</button>
+      <button id="step" type="button" disabled>Step</button>
+      <button id="feed" type="button">Feed</button>
+      <button id="reset" type="button">Reset</button>
+      <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
+    </nav>
+
+    <section id="settings" class="settings" aria-label="Settings" hidden>
+      <label>Cell scale
+        <select id="set-scale">
+          <option value="0">Auto</option>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+          <option value="4">4×</option>
+          <option value="5">5×</option>
+          <option value="6">6×</option>
+          <option value="7">7×</option>
+          <option value="8">8×</option>
+        </select>
+      </label>
+      <label>Frame cap
+        <select id="set-fps">
+          <option value="auto">Auto (30, 15 on battery)</option>
+          <option value="30">30 fps</option>
+          <option value="15">15 fps</option>
+        </select>
+      </label>
+      <label>Field overlay
+        <select id="set-field">
+          <option value="">Off</option>
+          <option value="nutrient">Nutrients</option>
+          <option value="co2">CO₂</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
+      <label>Seed <input id="seed" type="number" min="0" max="4294967295" step="1" value="1"></label>
+      <label class="check"><input id="set-stats" type="checkbox" checked> Show stats</label>
+      <button id="set-defaults" type="button">Defaults</button>
+      <p class="note">Saved in this browser. A new cell scale or seed starts a new tank.</p>
+    </section>
+
+    <section class="controls tools" aria-label="Tools">
+      <div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div>
+      <label class="brush">Brush <input id="brush" type="range" min="0" max="24" value="3"> <output id="brush-out">3</output></label>
+    </section>
 
     <p id="stats" class="stats" aria-live="off">fps – · tick – · awake chunks – · tick time –</p>
 
-    <section class="controls" aria-label="Tools">
-      <div id="palette" class="palette" role="radiogroup" aria-label="Material"></div>
-      <label class="brush">Brush <input id="brush" type="range" min="1" max="12" value="3"> <output id="brush-out">3</output></label>
-    </section>
-
-    <section class="controls" aria-label="Simulation">
-      <button id="play" type="button">Pause</button>
-      <button id="step" type="button" disabled>Step</button>
-      <button id="reset" type="button">Reset</button>
-      <label class="seed">Seed <input id="seed" type="number" min="0" max="4294967295" step="1" value="1"></label>
-    </section>
-
-    <p class="hint">Left-drag (or touch-drag) pours · right-drag or the eraser removes · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
+    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush. Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>1</kbd>–<kbd>0</kbd> tools · <kbd>[</kbd> <kbd>]</kbd> brush · <kbd>F</kbd> field overlay · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
 
     <section class="about">
       <h2>What is this?</h2>
-      <p><a href="https://github.com/robhannan/DeskTank">DeskTank</a> is a desktop aquarium in progress: a pixel-art falling-sand tank that will run as your wallpaper, screensaver or a click-through overlay on macOS, Windows and Linux. This page runs its sand and water simulation and its GPU renderer, compiled from Rust to WebAssembly: WebGPU where your browser has it, WebGL2 otherwise, at a fixed 20 ticks per second. Fish and plants come later.</p>
+      <p><a href="https://github.com/robhannan/DeskTank">DeskTank</a> is a desktop aquarium in progress: a pixel-art falling-sand tank that will run as your wallpaper, screensaver or a click-through overlay on macOS, Windows and Linux. This page runs its simulation and its GPU renderer, compiled from Rust to WebAssembly: WebGPU where your browser has it, WebGL2 otherwise, at a fixed 20 ticks per second. Fish and plants come later.</p>
     </section>
   </main>
   <script type="module" src="main.js"></script>
