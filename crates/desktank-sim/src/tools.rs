@@ -27,8 +27,9 @@ pub const DEFAULT_RADIUS: u32 = 3;
 const T1_MATERIALS: usize = 6;
 
 /// Materials offered for pouring, in palette order: the T1 set (keys 1–6),
-/// then the T5 substrates, food, fertilisers and decay (after the tools).
-pub const POUR_MATERIALS: [&str; 16] = [
+/// then the T5 substrates, food, fertilisers and decay and the T6 life
+/// (after the tools).
+pub const POUR_MATERIALS: [&str; 20] = [
     "sand",
     "gravel",
     "rock",
@@ -45,6 +46,10 @@ pub const POUR_MATERIALS: [&str; 16] = [
     "co2_bubble",
     "waste",
     "detritus",
+    "seed",
+    "cutting",
+    "moss",
+    "algae",
 ];
 
 /// What the primary button does.
@@ -748,7 +753,7 @@ mod tests {
         let w = world();
         let items = Tools::palette(&w);
         assert_eq!(items.len(), POUR_MATERIALS.len() + 2 + 4);
-        assert!(items.len() <= 23, "the palette strip holds 23 slots");
+        assert!(items.len() <= 34, "the palette strip holds 34 slots");
         assert_eq!(
             items[9],
             PaletteItem::Tool(Tool::Glue),

@@ -13,7 +13,7 @@ use crate::{Gpu, timer::GpuTimer};
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 96;
+const VIEW_BYTES: u64 = 112;
 
 /// Field value shown at full strength by the overlay (light is 0–1).
 const FIELD_SHOW_MAX: f32 = 2.0;
@@ -262,6 +262,7 @@ impl Renderer {
         target: &wgpu::TextureView,
         size: (u32, u32),
         surface_row: usize,
+        daylight: [f32; 3],
         overlay: (
             Option<PaletteLayout>,
             Option<BrushPreview>,
@@ -296,7 +297,7 @@ impl Renderer {
             let cursor = cursor.map_or([0.0; 4], |c| {
                 [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
             });
-            hud.into_iter().chain(cursor)
+            hud.into_iter().chain(cursor).chain(daylight).chain([1.0])
         };
         {
             #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
