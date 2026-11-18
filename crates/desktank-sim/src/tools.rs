@@ -952,6 +952,21 @@ mod tests {
             names(PaletteGroup::Devices),
             ["Place(Bubbler)", "Place(FilterOutlet)"]
         );
+        // Every species, nerites included, has a slot in Creatures.
+        let creatures: Vec<_> = w
+            .species()
+            .iter()
+            .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
+            .collect();
+        assert!(w.species().iter().any(|s| s.name == "nerite"));
+        assert_eq!(
+            groups
+                .iter()
+                .find(|(g, _)| *g == PaletteGroup::Creatures)
+                .unwrap()
+                .1,
+            creatures
+        );
         // Number keys pick within the open group: every slot is reachable.
         assert!(groups.iter().all(|(_, items)| items.len() <= 10));
         // Plant tissue, air and device cells aren't poured.
