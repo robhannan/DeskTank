@@ -145,6 +145,7 @@ impl Tank {
         Some(PaletteLayout::fit(
             target,
             &self.layout(target),
+            p.tabs.len(),
             p.items.len(),
         ))
     }

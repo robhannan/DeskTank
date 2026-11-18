@@ -1,6 +1,6 @@
 // The cell grid drawn as pixel art: each fragment finds its cell (integer
 // scale, nearest by construction), looks up (material, variant) in the
-// palette, darkens water with depth and tints by the time of day. The interact overlay (palette strip
+// palette, darkens water with depth and tints by the time of day. The interact overlay (palette
 // and brush outline) is drawn on top. Creature sprites are instanced quads
 // drawn after the grid (vs_sprite / fs_sprite), one atlas texel per cell.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
@@ -176,10 +176,12 @@ fn vs_sprite(
 
 @fragment
 fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
-    // The palette strip stays on top.
+    // The palette stays on top (where drawn: creatures show beside its
+    // shorter row).
     if view.hud.w > 0.5 {
         let p = floor((v.pos.xy - view.hud.xy) / view.hud.z);
-        if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy) {
+        if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy)
+            && textureLoad(hud, vec2<i32>(p), 0).a > 0.5 {
             discard;
         }
     }

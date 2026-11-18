@@ -272,7 +272,7 @@ impl Renderer {
         #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
         let extra = {
             let hud = palette.map_or([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, field_mode, 0.0], |p| {
-                let (w, h) = hud::image_size(p.slots);
+                let (w, h) = hud::image_size(p.tabs, p.items);
                 [
                     p.origin.0 as f32,
                     p.origin.1 as f32,
