@@ -3,6 +3,8 @@
 # crumbles into sand (`assets/reactions.toml`).
 id = 40
 name = "root_tab"
+# The palette group it is poured from (SPEC §2.5).
+palette = "food"
 class = "powder"
 density = 2.2
 repose = 45.0

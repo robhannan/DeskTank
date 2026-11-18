@@ -1,6 +1,8 @@
 # Rises through water and becomes air when it touches air or the tank lid.
 id = 20
 name = "air_bubble"
+# The palette group it is poured from (SPEC §2.5).
+palette = "water"
 class = "buoyant"
 density = 0.0012
 dispersion = 1

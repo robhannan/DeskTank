@@ -3,6 +3,8 @@
 # (`assets/reactions.toml`, [[buffer]]).
 id = 13
 name = "aquasoil"
+# The palette group it is poured from (SPEC §2.5).
+palette = "substrate"
 class = "powder"
 density = 1.5
 repose = 40.0

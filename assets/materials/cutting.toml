@@ -2,6 +2,8 @@
 # sooner (`assets/reactions.toml`, [[grow]]).
 id = 71
 name = "cutting"
+# The palette group it is poured from (SPEC §2.5).
+palette = "plants"
 class = "powder"
 density = 1.2
 repose = 30.0
