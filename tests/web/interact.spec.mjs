@@ -295,9 +295,11 @@ test("the palette groups the sim's tools and navigates with the keyboard", async
   for (const e of entries) {
     const [kind, name] = e.split(" ");
     if (kind === "creature") expect(species, e).toContain(name);
+    else if (kind === "plant") expect(name, e).toBe("plants");
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
+  expect(entries.filter((e) => e.startsWith("plant ")).length, "one plants slot").toBe(1);
 
   // One tab per sim group, in order; it opens on the selection's group
   // (sand, in Substrate), showing only that group's items.

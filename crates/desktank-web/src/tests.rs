@@ -127,6 +127,57 @@ fn palette_groups_follow_the_sim() {
 }
 
 #[test]
+fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
+    let mut t = tank();
+    let species = t.plant_species();
+    assert_eq!(species.len(), 3);
+    assert!(species[0].starts_with("hygrophila "));
+    assert_eq!(t.plant_species_selected(), 0);
+    let moss = species
+        .iter()
+        .position(|s| s.starts_with("java_moss "))
+        .unwrap();
+    let moss = u32::try_from(moss).unwrap();
+    t.set_plant_species(moss);
+    t.set_plant_species(99);
+    assert_eq!(t.plant_species_selected(), moss, "bad indices are ignored");
+    let plants = slot(&t, "plant plants");
+    t.select(plants);
+    t.set_radius(0);
+    down(&mut t, PRIMARY, 60, 30);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.material_count("cutting"), 1);
+    let colour = &t.palette_colours()[plants as usize];
+    let moss_colour = t
+        .tank()
+        .world()
+        .plant_species()
+        .get(desktank_sim::PlantSpeciesId(2));
+    let [r, g, b] = moss_colour.unwrap().colour();
+    assert_eq!(colour, &format!("#{r:02x}{g:02x}{b:02x}"));
+    // A plant made by an edit (the default species), then inspected.
+    let leaf = t.tank().world().materials().id("leaf").unwrap();
+    t.tank
+        .world_mut()
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: 20,
+                y0: 40,
+                x1: 23,
+                y1: 41,
+            },
+            leaf,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+    assert_eq!(t.plant_count(), 1);
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 21, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.take_inspection(), "plant hygrophila 1 0 100 3 none 21 40");
+}
+
+#[test]
 fn select_changes_the_tool_and_ignores_bad_indices() {
     let mut t = tank();
     let gravel = slot(&t, "material gravel");

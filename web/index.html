@@ -69,6 +69,7 @@
         <div id="groups" class="groups" role="tablist" aria-label="Tool groups"></div>
         <div id="palette-panel" role="tabpanel"><div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div></div>
       </div>
+      <label class="plant-pick">Plants <select id="plant-species" aria-label="Plant species the Plants tool pours"></select></label>
       <label class="brush">Brush <input id="brush" type="range" min="0" max="24" value="3"> <output id="brush-out">3</output></label>
     </section>
 
@@ -78,7 +79,7 @@
 
     <section class="about">
       <h2>What is this?</h2>
-      <p><a href="https://github.com/robhannan/DeskTank">DeskTank</a> is a desktop aquarium in progress: a pixel-art falling-sand tank that will run as your wallpaper, screensaver or a click-through overlay on macOS, Windows and Linux. This page runs its simulation and its GPU renderer, compiled from Rust to WebAssembly: WebGPU where your browser has it, WebGL2 otherwise, at a fixed 20 ticks per second. Fish and plants come later.</p>
+      <p><a href="https://github.com/robhannan/DeskTank">DeskTank</a> is a desktop aquarium in progress: a pixel-art falling-sand tank that will run as your wallpaper, screensaver or a click-through overlay on macOS, Windows and Linux. This page runs its simulation and its GPU renderer, compiled from Rust to WebAssembly: WebGPU where your browser has it, WebGL2 otherwise, at a fixed 20 ticks per second. Plants are individuals of a few species, each with its own age and health: inspect one to see what holds it back.</p>
     </section>
   </main>
   <script type="module" src="main.js"></script>
