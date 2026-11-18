@@ -7,6 +7,11 @@
 // KEEP, so a save is replaced atomically (IndexedDB's transactions stand in
 // for the native write-fsync-rename) and the last few are kept, as on
 // native. Only the tab that owns the tank (Web Locks, main.js) writes.
+//
+// Ownership epoch: each new owner bumps a counter stored beside the saves
+// ([tank, "owner"], outside the generations' key range), and every write
+// checks it in its own transaction, so an owner whose lock was stolen (a
+// frozen tab waking up) can't write its stale tank over the new owner's.
 
 const DB_NAME = "desktank";
 const DB_VERSION = 1;
@@ -28,6 +33,22 @@ const committed = (tx) =>
 
 // Every generation of `tank`.
 const range = (tank) => IDBKeyRange.bound([tank, 0], [tank, Infinity]);
+const epochKey = (tank) => [tank, "owner"];
+
+// Claims the tank for a new owner: resolves to its epoch, which its writes
+// pass to writeSave.
+export async function claim(db, tank) {
+  const tx = db.transaction(STORE, "readwrite");
+  const store = tx.objectStore(STORE);
+  let epoch = 0;
+  const req = store.get(epochKey(tank));
+  req.onsuccess = () => {
+    epoch = (Number.isInteger(req.result) ? req.result : 0) + 1;
+    store.put(epoch, epochKey(tank));
+  };
+  await committed(tx);
+  return epoch;
+}
 
 // Opens the database, or resolves to null where IndexedDB is unavailable
 // (some private modes): the page then runs without saving.
@@ -45,20 +66,32 @@ export async function openStore() {
   }
 }
 
-// Writes `bytes` as the newest save of `tank` and prunes the older ones.
-// Started synchronously, so a `pagehide` handler gets its transaction queued
-// before the page goes. Resolves once it is committed.
-export function writeSave(db, tank, bytes, tick) {
+// Writes `bytes` as the newest save of `tank` and prunes the older ones,
+// unless another owner has claimed the tank since `epoch` (then it rejects
+// and writes nothing). Started synchronously, so a `pagehide` handler gets
+// its transaction queued before the page goes. Resolves once committed.
+export function writeSave(db, tank, bytes, tick, epoch) {
   const tx = db.transaction(STORE, "readwrite");
   const store = tx.objectStore(STORE);
+  let lost = false;
+  const owner = store.get(epochKey(tank));
+  owner.onsuccess = () => {
+    if (owner.result !== epoch) {
+      lost = true;
+      tx.abort();
+    }
+  };
   const keys = store.getAllKeys(range(tank));
   keys.onsuccess = () => {
+    if (lost) return;
     const gens = keys.result.map((k) => k[1]);
     const next = gens.length ? gens[gens.length - 1] + 1 : 1;
     store.put({ bytes, tick, savedAt: Date.now() }, [tank, next]);
     for (const g of gens.slice(0, Math.max(0, gens.length - (KEEP - 1)))) store.delete([tank, g]);
   };
-  return committed(tx);
+  return committed(tx).catch((err) => {
+    throw lost ? new Error("another tab owns the tank now") : err;
+  });
 }
 
 // The saves of `tank`, newest first: [{ key, bytes, tick, savedAt }].
@@ -67,11 +100,4 @@ export async function readSaves(db, tank) {
   const store = tx.objectStore(STORE);
   const [keys, values] = await Promise.all([done(store.getAllKeys(range(tank))), done(store.getAll(range(tank)))]);
   return keys.map((key, i) => ({ key, ...values[i] })).reverse();
-}
-
-// Deletes one save (one that doesn't load).
-export function deleteSave(db, key) {
-  const tx = db.transaction(STORE, "readwrite");
-  tx.objectStore(STORE).delete(key);
-  return committed(tx);
 }

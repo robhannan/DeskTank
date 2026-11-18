@@ -1761,7 +1761,8 @@ Each package depends only on the packages before it.
   the newest save paused with its controls inert and queues for the lock,
   so it takes over by itself when the owner closes; an owner that doesn't
   answer Take over within 1 s (a frozen tab) has the lock stolen
-  (`steal: true`). Native import and export are `desktank import FILE` and
+  (`steal: true`), and an owner epoch checked inside each write keeps a
+  stolen owner from writing. Native import and export are `desktank import FILE` and
   `desktank export FILE` (§4.3).)*
 - [ ] **WB4 Installable PWA** (after WB3). Manifest, placeholder icons and
   a service worker, with paths relative to the `/DeskTank/` subpath

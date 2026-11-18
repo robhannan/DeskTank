@@ -65,7 +65,8 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   await page.waitForTimeout(1000);
   const ran = (await ticks(page)) - hiddenAt;
   expect(ran).toBeGreaterThan(5);
-  expect(ran, "the hidden time isn't caught up").toBeLessThan(35);
+  // 1.5 s hidden caught up would add 30 ticks to the ~20 of 1 s shown.
+  expect(ran, "the hidden time isn't caught up").toBeLessThan(45);
 
   await setHidden(page, true);
   await page.evaluate(() => window.desktank.saving);
@@ -153,7 +154,9 @@ test("Take over steals the lock from an owner that doesn't answer", async ({ con
   await expect.poll(() => owner(b), { timeout: 3000 }).toBe(true);
   const took = await b.evaluate(() => window.desktank.ownedAt - window.desktank.takeOverAt);
   expect(took).toBeGreaterThanOrEqual(1000);
-  expect(took).toBeLessThan(1500);
+  expect(took).toBeLessThan(2000);
+  // The epoch refuses a write the old owner started before it learned.
+  expect(await a.evaluate(() => window.desktank.lateWrite())).toBe("another tab owns the tank now");
   // The old owner learns it lost the lock, stops and never writes again.
   await expect.poll(() => owner(a)).toBe(false);
   await expect(a.getByText("open in another tab")).toBeVisible();
@@ -200,11 +203,12 @@ test("a native save imports, letterboxed, and exports the same bytes", async ({ 
   expect(await page.evaluate(() => window.desktank.loaded.hash)).toBe(NATIVE_HASH);
 
   // Not a save: refused with a message, the tank unchanged.
+  await page.getByRole("button", { name: "Pause" }).click();
   const hash = await stateHash(page);
   await page.locator("#import-file").setInputFiles({ name: "junk.dtank", mimeType: "application/octet-stream", buffer: Buffer.from("not a save") });
   await expect(page.locator("#notice")).toContainText("Couldn't import junk.dtank: not a DeskTank save");
   expect(await page.evaluate(() => window.desktank.tank.width())).toBe(200);
-  expect((await stateHash(page)) === hash || (await ticks(page)) > 1200).toBe(true);
+  expect(await stateHash(page)).toBe(hash);
   expect(errors).toEqual([]);
 });
 

@@ -22,7 +22,7 @@
 // window.desktank.frameTimes (scripts/bench-web.mjs).
 import init, { Graphics, WebTank, brushRange, gridFor } from "./pkg/desktank_web.js";
 import { Ownership } from "./ownership.js";
-import { deleteSave, openStore, readSaves, writeSave } from "./store.js";
+import { claim, openStore, readSaves, writeSave } from "./store.js";
 
 const FPS_AC = 30;
 const FPS_BATTERY = 15;
@@ -112,6 +112,8 @@ let wheelRest = 0;
 let db = null; // IndexedDB, or null where there is none
 let ownership = null;
 let owner = false; // this tab simulates and saves the tank
+let epoch = null; // this owner's claim (store.js); writes need it
+let handingOver = false;
 let started = false; // the first tank is open
 let nextAutosave = Infinity;
 let saveFailed = false; // the last write failed: write again even if unchanged
@@ -138,6 +140,16 @@ const hooks = {
   },
   get ownership() {
     return ownership;
+  },
+  lastEpoch: null, // the epoch this tab last claimed
+  // A write with that epoch, bypassing the owner check (a stale owner).
+  async lateWrite() {
+    try {
+      await writeSave(db, TANK, tank.exportSave(), tank.tickCount(), hooks.lastEpoch);
+      return "written";
+    } catch (err) {
+      return err.message;
+    }
   },
   writes: 0, // saves this tab wrote
   saving: Promise.resolve(false), // the latest write
@@ -322,7 +334,7 @@ function showSaved() {
 // Saves the tank to IndexedDB if this tab owns it and it changed (or
 // `force`). Returns the write's promise (true once written).
 function persist(why, force = false) {
-  if (!owner || !db || !tank) return Promise.resolve(false);
+  if (!owner || epoch === null || !db || !tank) return Promise.resolve(false);
   nextAutosave = performance.now() + AUTOSAVE_MS;
   if (!force && !saveFailed && !tank.saveNeeded()) return hooks.saving;
   const bytes = tank.save();
@@ -330,7 +342,7 @@ function persist(why, force = false) {
   hooks.writes++;
   let write;
   try {
-    write = writeSave(db, TANK, bytes, tick);
+    write = writeSave(db, TANK, bytes, tick, epoch);
   } catch (err) {
     write = Promise.reject(err);
   }
@@ -365,7 +377,8 @@ function askPersist() {
 }
 
 // The newest save that opens, as a tank for the current canvas, or null.
-// Saves that don't open are logged, and deleted if this tab owns the tank.
+// Saves that don't open are logged and skipped, never deleted (one may be
+// from a newer build); pruning drops them once newer saves replace them.
 async function loadNewest() {
   if (!db) return null;
   let saves = [];
@@ -383,8 +396,7 @@ async function loadNewest() {
       hooks.loaded = { hash: next.stateHash(), tick: next.tickCount(), width: next.width(), height: next.height() };
       return next;
     } catch (err) {
-      console.warn(`desktank: a save doesn't open (${err})${owner ? "; deleted" : ""}`);
-      if (owner) await deleteSave(db, save.key).catch(() => {});
+      console.warn(`desktank: a save doesn't open (${err}); skipped`);
     }
   }
   return null;
@@ -394,6 +406,15 @@ async function loadNewest() {
 // saved it when it handed over) and run.
 async function becomeOwner() {
   owner = true;
+  epoch = null;
+  if (db) {
+    try {
+      epoch = await claim(db, TANK);
+      hooks.lastEpoch = epoch;
+    } catch (err) {
+      console.warn(`desktank: couldn't claim the tank: ${err}`);
+    }
+  }
   hooks.ownedAt = performance.now();
   showOwnership();
   if (!started) return;
@@ -408,6 +429,8 @@ async function becomeOwner() {
 // Another tab owns the tank: this one shows it paused and never writes.
 function becomeViewer() {
   owner = false;
+  epoch = null;
+  handingOver = false;
   showOwnership();
   if (tank) setRunning(false);
 }
@@ -416,20 +439,28 @@ function becomeViewer() {
 // finish), so the next owner opens exactly this state.
 async function handOver() {
   // Stop simulating and editing first, so the save is the final state.
+  handingOver = true;
+  showOwnership();
   endGestures();
   if (tank) setRunning(false);
+  const forced = saveFailed;
   await persist("hand-over");
-  await hooks.saving;
+  if (!(await hooks.saving) && (forced || tank?.saveNeeded())) {
+    notice("Couldn't save before handing over: the other tab opened the last save.");
+  }
   if (tank) hooks.released = { hash: tank.stateHash(), tick: tank.tickCount() };
 }
 
 function showOwnership() {
-  $("elsewhere").hidden = owner || !started;
-  $("elsewhere-text").textContent = "DeskTank is open in another tab. This one shows its last save and won't change it.";
-  $("take-over").disabled = false;
+  const active = owner && !handingOver;
+  $("elsewhere").hidden = active || !started;
+  $("elsewhere-text").textContent = handingOver
+    ? "Handing the tank over to another tab…"
+    : "DeskTank is open in another tab. This one shows its last save and won't change it.";
+  $("take-over").disabled = handingOver;
   document.body.dataset.owner = String(owner);
   // A viewer's controls are inert: nothing it does would be saved.
-  for (const el of document.querySelectorAll("[data-owner-only]")) el.inert = !owner;
+  for (const el of document.querySelectorAll("[data-owner-only]")) el.inert = !active;
 }
 
 function takeOver() {
@@ -457,8 +488,11 @@ async function importSave(file) {
   if (!owner || !file) return;
   let next;
   try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // The tab may have handed the tank over while the file was read.
+    if (!owner) return;
     const [w, h] = sizeCanvas();
-    next = WebTank.fromSave(new Uint8Array(await file.arrayBuffer()), w, h);
+    next = WebTank.fromSave(bytes, w, h);
   } catch (err) {
     notice(`Couldn't import ${file.name}: ${err}`);
     return;
@@ -1129,8 +1163,9 @@ async function main() {
     ownership = new Ownership(LOCK, { own: becomeOwner, view: becomeViewer, handOver });
     await ownership.start();
   } else {
-    owner = true;
+    await becomeOwner();
   }
+  const ownedAtStart = owner;
   try {
     replaceTank((await loadNewest()) ?? newTank());
     if (!owner) setRunning(false);
@@ -1140,6 +1175,8 @@ async function main() {
     return;
   }
   started = true;
+  // Granted the lock while starting (the owner closed): open its last save.
+  if (owner && !ownedAtStart) await becomeOwner();
   nextAutosave = owner ? performance.now() + AUTOSAVE_MS : Infinity;
   showOwnership();
   showSaved();

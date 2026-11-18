@@ -60,6 +60,7 @@ export class Ownership {
         })
         .catch((err) => {
           // A queued request we aborted, or the held lock was stolen.
+          if (err?.name !== "AbortError") console.warn(`desktank: tank lock: ${err}`);
           if (this.owner && err?.name === "AbortError") {
             this.owner = false;
             this.release = null;
