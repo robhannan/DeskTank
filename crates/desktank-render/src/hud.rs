@@ -15,8 +15,8 @@ use crate::Layout;
 const SLOT: u32 = 10;
 /// Palette pixels between slots and around the strip.
 const GAP: u32 = 1;
-/// Largest palette image: the HUD texture's size.
-pub const MAX_SIZE: (u32, u32) = (256, 16);
+/// Largest palette image: the HUD texture's size (34 slots).
+pub const MAX_SIZE: (u32, u32) = (384, 16);
 
 /// Colours, sRGB.
 const BACKGROUND: [u8; 3] = [0x0b, 0x12, 0x1c];
@@ -255,6 +255,20 @@ mod tests {
     fn shrinks_to_fit_a_narrow_target() {
         let p = PaletteLayout::fit((200, 100), &Layout::fit((50, 25), (200, 100)), 9);
         assert_eq!(p.scale, 1);
+    }
+
+    #[test]
+    fn the_whole_default_palette_fits() {
+        let w = desktank_sim::World::new(
+            desktank_sim::WorldConfig::default(),
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let n = desktank_sim::tools::Tools::palette(&w).len();
+        assert_eq!(
+            image_size(n).0,
+            GAP + u32::try_from(n).unwrap() * (SLOT + GAP)
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub use bodies::{BodyId, BodyInfo};
 mod life;
 
 use life::Life;
-pub use life::{RANDOM_TICK_BUDGET, RandomTickStats};
+pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
 
 /// Side of a square chunk, in cells.
 pub const CHUNK_SIZE: usize = 64;

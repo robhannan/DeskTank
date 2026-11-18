@@ -16,6 +16,24 @@
 # [[buffer]]    stores up to `capacity` (full when poured) and trades with a
 #               field at up to `rate` per second towards `level`: absorbing
 #               above it, releasing below.
+# [[grow]]      (T6) grows a `makes` cell into a neighbour that is one of
+#               `into`, along one of `dirs` (up, down, left, right), with
+#               probability `p` per second while all `needs` hold at the
+#               growing cell (`boost` multiplies p while a field is above a
+#               value). Each cell counts its distance from where its part
+#               began: the new cell's count is one more than its parent's
+#               if the parent is also `makes`, else 1, and it may not
+#               exceed `max`. `touching`: the new cell must touch one of
+#               these; `alone`: it may touch no other `makes` cell;
+#               `becomes`: the growing cell turns into this when it grows;
+#               `consume` takes from a field at the growing cell.
+# [[wilt]]      (T6) becomes `into` with probability `p` per second while
+#               any of `unless` fails at the cell, or while it touches none
+#               of `attached`.
+# [[spawn]]     (T6) `rate` attempts per second per 64 columns: a random
+#               column's first non-fluid cell below the surface, if it is
+#               one of `on`, grows `material` into the water cell above it
+#               while all of `when` hold there.
 
 # Liquid fertiliser dissolves into the nutrient field.
 [[reaction]]
@@ -81,3 +99,143 @@ field = "nutrient"
 level = 0.4
 capacity = 2.0
 rate = 0.01
+
+# Plants (T6). A seed or cutting resting on substrate roots into it and
+# becomes the base of a stem, while it is fed and lit; cuttings root much
+# sooner. The stem grows up through the water to `max` cells, puts out
+# leaves that grow up to three cells sideways without touching another
+# leaf (so leaves on one side sit a row apart), and its roots
+# spread through the substrate. Plant cells take nutrients from the water
+# as they grow, grow twice as fast with CO₂, and wilt into dead plant
+# matter without nutrients or light.
+[[grow]]
+material = "seed"
+into = ["sand", "gravel", "aquasoil"]
+makes = "root"
+dirs = ["down"]
+becomes = "stem"
+p = 0.02
+needs = [{ field = "nutrient", above = 0.1 }, { field = "light", above = 0.1 }]
+
+[[grow]]
+material = "cutting"
+into = ["sand", "gravel", "aquasoil"]
+makes = "root"
+dirs = ["down"]
+becomes = "stem"
+p = 0.5
+needs = [{ field = "nutrient", above = 0.1 }, { field = "light", above = 0.1 }]
+
+[[grow]]
+material = "stem"
+into = ["water"]
+makes = "stem"
+dirs = ["up"]
+max = 48
+p = 0.08
+needs = [{ field = "nutrient", above = 0.1 }, { field = "light", above = 0.1 }]
+boost = { field = "co2", above = 0.3, factor = 2.0 }
+consume = { field = "nutrient", amount = 0.01 }
+
+[[grow]]
+material = "stem"
+into = ["water"]
+makes = "leaf"
+dirs = ["left", "right"]
+alone = true
+max = 3
+p = 0.03
+needs = [{ field = "nutrient", above = 0.1 }, { field = "light", above = 0.1 }]
+boost = { field = "co2", above = 0.3, factor = 2.0 }
+consume = { field = "nutrient", amount = 0.01 }
+
+[[grow]]
+material = "leaf"
+into = ["water"]
+makes = "leaf"
+dirs = ["left", "right"]
+alone = true
+max = 3
+p = 0.03
+needs = [{ field = "nutrient", above = 0.1 }, { field = "light", above = 0.1 }]
+boost = { field = "co2", above = 0.3, factor = 2.0 }
+consume = { field = "nutrient", amount = 0.01 }
+
+[[grow]]
+material = "root"
+into = ["sand", "gravel", "aquasoil"]
+makes = "root"
+dirs = ["down", "left", "right"]
+alone = true
+max = 10
+p = 0.02
+needs = { field = "nutrient", above = 0.1 }
+consume = { field = "nutrient", amount = 0.01 }
+
+[[wilt]]
+material = "stem"
+into = "dead_plant"
+p = 0.01
+unless = [{ field = "nutrient", above = 0.02 }, { field = "light", above = 0.05 }]
+
+[[wilt]]
+material = "leaf"
+into = "dead_plant"
+p = 0.01
+unless = [{ field = "nutrient", above = 0.02 }, { field = "light", above = 0.05 }]
+
+[[wilt]]
+material = "root"
+into = "dead_plant"
+p = 0.005
+unless = { field = "nutrient", above = 0.01 }
+
+[[decay]]
+material = "dead_plant"
+after = 120.0
+into = "detritus"
+
+# Moss creeps over rock and driftwood and needs little; poured moss that
+# isn't touching either soon falls off.
+[[grow]]
+material = "moss"
+into = ["water"]
+makes = "moss"
+dirs = ["up", "down", "left", "right"]
+touching = ["rock", "driftwood"]
+p = 0.02
+needs = [{ field = "nutrient", above = 0.05 }, { field = "light", above = 0.05 }]
+consume = { field = "nutrient", amount = 0.005 }
+
+[[wilt]]
+material = "moss"
+into = "dead_plant"
+p = 0.05
+unless = { field = "light", above = 0.02 }
+attached = ["rock", "driftwood"]
+
+# Algae: spores settle where the water holds excess nutrients and light,
+# the film creeps over substrate, rock and wood, and it dies back once the
+# nutrients fall below the same level.
+[[spawn]]
+material = "algae"
+on = ["sand", "gravel", "aquasoil", "rock", "driftwood"]
+rate = 0.2
+when = [{ field = "nutrient", above = 0.6 }, { field = "light", above = 0.15 }]
+
+[[grow]]
+material = "algae"
+into = ["water"]
+makes = "algae"
+dirs = ["up", "down", "left", "right"]
+touching = ["sand", "gravel", "aquasoil", "rock", "driftwood"]
+p = 0.03
+needs = [{ field = "nutrient", above = 0.6 }, { field = "light", above = 0.15 }]
+consume = { field = "nutrient", amount = 0.005 }
+
+[[wilt]]
+material = "algae"
+into = "water"
+p = 0.01
+unless = { field = "nutrient", above = 0.6 }
+attached = ["sand", "gravel", "aquasoil", "rock", "driftwood"]

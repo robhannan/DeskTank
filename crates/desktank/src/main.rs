@@ -67,6 +67,9 @@ struct WindowArgs {
     /// tank) for this many seconds, then print the CPU it used.
     #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..=600))]
     demo_pour: Option<u64>,
+    /// Local time of day to light the tank for, as HH:MM (default 12:00).
+    #[arg(long, value_name = "HH:MM", value_parser = capture::parse_time)]
+    time: Option<u16>,
 }
 
 #[derive(Debug, Args)]
@@ -91,7 +94,7 @@ struct CaptureArgs {
     /// World seed.
     #[arg(long, default_value_t = 1)]
     seed: u64,
-    /// Local time of day in the tank, as HH:MM (no effect until day and night exist).
+    /// Local time of day to light the tank for, as HH:MM (default 12:00).
     #[arg(long, value_name = "HH:MM", value_parser = capture::parse_time)]
     time: Option<u16>,
     /// Output size in pixels, as width x height (for example 640x360).
@@ -143,7 +146,7 @@ impl Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
-        Command::Window(args) => window::run(args.demo_pour),
+        Command::Window(args) => window::run(args.demo_pour, args.time),
         Command::Bench(args) => bench::run(args.seconds),
         Command::Capture(args) => capture::run(&capture::Options {
             seed: args.seed,
@@ -184,6 +187,7 @@ mod tests {
             (&["run", "--wallpaper", "--overlay", "--idle"], "run"),
             (&["window"], "window"),
             (&["window", "--demo-pour", "10"], "window"),
+            (&["window", "--time", "21:00"], "window"),
             (&["interact", "toggle"], "interact"),
             (&["feed"], "feed"),
             (&["feed", "pellets"], "feed"),

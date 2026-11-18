@@ -1,0 +1,8 @@
+# A stem cutting. It sinks like a seed and roots the same way, but much
+# sooner (`assets/reactions.toml`, [[grow]]).
+id = 71
+name = "cutting"
+class = "powder"
+density = 1.2
+repose = 30.0
+colour = "#5f9e3a"
