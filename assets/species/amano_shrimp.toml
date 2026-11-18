@@ -1,5 +1,5 @@
 # An amano shrimp, Caridina multidentata (placeholder art, D11): a larger
-# translucent grey-green shrimp, about 4.5 cm long, with a dashed brown
+# translucent grey-green shrimp, 3–5 cm long (drawn at 4 cm), with a dashed brown
 # line along its side. A tireless algae grazer and a bold scavenger: it
 # takes every prepared food as well as algae and mulm, and darts after it
 # faster than the cherries.
@@ -8,6 +8,8 @@ name = "amano_shrimp"
 zone = "bottom"
 depth = [0.68, 1.0]
 min_depth = 14
+# Real-world body length in cm, nose to tail without the antennae.
+length_cm = 4.0
 temperament = "peaceful"
 speed = 2.5
 max_speed = 8.0
@@ -15,47 +17,49 @@ hop_every = 10.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "bloodworm", "flake_food"]
 
 [sprite]
-# Facing right; two texels per cell side (an 8x3-cell body): a pale
-# dorsal stripe, the dashed lateral line, eye and antenna. Four frames:
-# the legs paddle while the tail fan and antenna flick.
+# Facing right; two texels per cell side. The body is 16 texels (8 cells,
+# 4 cm at two cells per cm) from tail fan to eye, with a pale dorsal
+# stripe and the dashed lateral line; the long antennae sweep 4 texels
+# past it: a 10x3-cell sprite. Four frames: the legs paddle while the
+# tail fan and antennae flick.
 colours = { g = "#9aab94", p = "#d6dccb", t = "#73836d", d = "#7d4b38", k = "#16160f", a = "#c3cdbb", l = "#7f8f7a" }
 frames = [
     [
-        "......pppppp...a",
-        "...gggggggggggka",
-        "ttgdggdggdggdggg",
-        "ttgggdggdggdggg.",
-        "t...l.l.l.l.lll.",
-        "....l.l.l.l.....",
+        ".......pppppp.....aa",
+        "...ggggggggggggg.aa.",
+        "ttgdggdggdggdggkaa..",
+        "ttgggdggdggdgggg...a",
+        "t...l.l.l.l.lll.....",
+        "....l.l.l.l.........",
     ],
     [
-        "......pppppp...a",
-        "...gggggggggggka",
-        "ttgdggdggdggdggg",
-        "ttgggdggdggdggg.",
-        "t..l.l.l.l.l.ll.",
-        "...l.l.l.l......",
+        ".......pppppp.....aa",
+        "...ggggggggggggg.aa.",
+        "ttgdggdggdggdggkaa..",
+        "ttgggdggdggdgggg...a",
+        "t..l.l.l.l.l.ll.....",
+        "...l.l.l.l..........",
     ],
     [
-        "......pppppp..a.",
-        "t..gggggggggggka",
-        "ttgdggdggdggdggg",
-        "t.gggdggdggdggg.",
-        "....l.l.l.l.lll.",
-        "....l.l.l.l.....",
+        ".......pppppp....aa.",
+        "t..ggggggggggggg.aa.",
+        "ttgdggdggdggdggkaa..",
+        "t.gggdggdggdgggg..a.",
+        "....l.l.l.l.lll.....",
+        "....l.l.l.l.........",
     ],
     [
-        "......pppppp..a.",
-        "t..gggggggggggka",
-        "ttgdggdggdggdggg",
-        "t.gggdggdggdggg.",
-        "...l.l.l.l.l.ll.",
-        "...l.l.l.l......",
+        ".......pppppp....aa.",
+        "t..ggggggggggggg.aa.",
+        "ttgdggdggdggdggkaa..",
+        "t.gggdggdggdgggg..a.",
+        "...l.l.l.l.l.ll.....",
+        "...l.l.l.l..........",
     ],
 ]
 # The palette icon, at one pixel per cell.
 icon = [
-    "..ppppa.",
-    "tgdgdgdk",
+    "..ppp.aa",
+    "tgdgdgka",
     "..l.l.l.",
 ]

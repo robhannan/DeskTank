@@ -666,17 +666,21 @@ impl World {
 
     /// Whether a hopping walker is in the kick of a hop this tick. Each
     /// creature's hops are offset by its id, so a group doesn't hop as one.
-    /// A walker too near the top of its zone for a whole kick stays down,
-    /// so a hop never lifts it out of its depth band.
+    /// A kick ends early (or never starts) where the rest of it would lift
+    /// the walker above its zone, so a hop never leaves its depth band.
     fn hopping(&self, k: &Kind, c: &Creature) -> bool {
-        if k.hop_every == 0 || (self.tick + u64::from(c.id.0) * 7919) % k.hop_every >= HOP_TICKS {
+        if k.hop_every == 0 {
+            return false;
+        }
+        let phase = (self.tick + u64::from(c.id.0) * 7919) % k.hop_every;
+        if phase >= HOP_TICKS {
             return false;
         }
         let (top, _) = zone(k, self.surface_row, self.height);
-        // The most a kick can still rise: HOP_TICKS at top speed, in 1/256
-        // cells (HOP_TICKS is 8).
+        // The most the rest of this kick can rise, in 1/256 cells (at most
+        // HOP_TICKS = 8 ticks at top speed).
         #[allow(clippy::cast_possible_truncation)]
-        let rise = HOP_TICKS as i32 * k.top;
+        let rise = (HOP_TICKS - phase) as i32 * k.top;
         let body_top = c.y - k.h * ONE / 2;
         i64::from(body_top - rise) >= to_i64(top) * i64::from(ONE)
     }

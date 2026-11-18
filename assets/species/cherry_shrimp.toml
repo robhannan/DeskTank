@@ -1,11 +1,15 @@
 # A cherry shrimp, Neocaridina davidi (placeholder art, D11): a small red
-# shrimp about 2.5 cm long that picks over the substrate for algae, mulm
+# shrimp 1.5–4 cm long (males small and slim, females larger and solid
+# red; drawn at a typical 2.5 cm) that picks over the substrate for algae, mulm
 # and fallen food, and kicks off the bottom in short hops now and then.
 id = 5
 name = "cherry_shrimp"
 zone = "bottom"
 depth = [0.72, 1.0]
 min_depth = 12
+# Real-world body length in cm, nose to tail without the antennae; the
+# sprite is drawn at two cells per cm.
+length_cm = 2.5
 temperament = "peaceful"
 speed = 2.0
 max_speed = 6.0
@@ -14,46 +18,40 @@ hop_every = 6.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "flake_food"]
 
 [sprite]
-# Facing right; two texels per cell side (a 6x3-cell body). Four frames:
-# the legs and swimmerets paddle while the tail fan and antenna flick.
+# Facing right; two texels per cell side. The body is 10 texels (5 cells,
+# 2.5 cm at two cells per cm) from tail fan to eye, with the antennae
+# reaching 2 texels past it: a 6x2-cell sprite. Four frames: the legs
+# paddle while the tail fan and antennae flick.
 colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430" }
 frames = [
     [
-        "....rhhrr..a",
-        "..rrrrrrrrka",
-        "ddrrrrrrrrrr",
-        "ddrdrrdrrrr.",
-        "d..l.l.l.ll.",
-        "...l.l.l....",
+        "...rhhrr...a",
+        "ddrrrrrrrka.",
+        "d.rdrrdrrr.a",
+        "...l.l.l.l..",
     ],
     [
-        "....rhhrr..a",
-        "..rrrrrrrrka",
-        "ddrrrrrrrrrr",
-        "ddrdrrdrrrr.",
-        "d.l.l.l.l.l.",
-        "..l.l.l.....",
+        "...rhhrr...a",
+        "ddrrrrrrrka.",
+        "d.rdrrdrrr.a",
+        "..l.l.l.l...",
     ],
     [
-        "....rhhrr.a.",
-        "d.rrrrrrrrka",
-        "ddrrrrrrrrrr",
-        "d.rdrrdrrrr.",
-        "...l.l.l.ll.",
-        "...l.l.l....",
+        "...rhhrr..a.",
+        "d.rrrrrrrka.",
+        "ddrdrrdrrr.a",
+        "...l.l.l.l..",
     ],
     [
-        "....rhhrr.a.",
-        "d.rrrrrrrrka",
-        "ddrrrrrrrrrr",
-        "d.rdrrdrrrr.",
-        "..l.l.l.l.l.",
-        "..l.l.l.....",
+        "...rhhrr..a.",
+        "d.rrrrrrrka.",
+        "ddrdrrdrrr.a",
+        "..l.l.l.l...",
     ],
 ]
 # The palette icon, at one pixel per cell.
 icon = [
-    "..rrha",
-    "drrrrk",
-    "..l.l.",
+    "..rhra",
+    "drrrka",
+    ".l.l..",
 ]

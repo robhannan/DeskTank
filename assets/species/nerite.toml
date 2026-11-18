@@ -4,6 +4,8 @@ name = "nerite"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 6
+# Real-world body length in cm, at two cells per cm.
+length_cm = 2.5
 temperament = "peaceful"
 speed = 2.0
 max_speed = 2.0

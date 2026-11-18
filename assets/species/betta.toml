@@ -5,6 +5,8 @@ name = "betta"
 zone = "surface"
 depth = [0.0, 0.3]
 min_depth = 16
+# Real-world body length in cm, at two cells per cm.
+length_cm = 4.0
 breathes_air = true
 temperament = "territorial"
 speed = 3.5
