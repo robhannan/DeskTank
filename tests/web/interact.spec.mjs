@@ -362,7 +362,7 @@ test("settings persist across reloads", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   const autoScale = await page.evaluate(() => window.desktank.grid[0]);
-  const scale = autoScale === 3 ? 2 : 3;
+  const scale = autoScale === 4 ? 2 : 4;
   await page.getByRole("button", { name: "Settings" }).click();
   await page.locator("#set-scale").selectOption(String(scale));
   await expect.poll(() => page.evaluate(() => window.desktank.grid[0])).toBe(scale);

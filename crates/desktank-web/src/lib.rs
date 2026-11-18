@@ -82,11 +82,12 @@ pub const BUTTON_PRIMARY: u32 = 0;
 pub const BUTTON_SECONDARY: u32 = 2;
 
 /// The grid for a canvas of `width`×`height` device pixels:
-/// `[scale, columns, rows]`. With `scale` 0 (auto) it is the largest
-/// whole-number scale (1 to [`MAX_SCALE`]) that gives at least
-/// [`MIN_CELLS_ACROSS`] columns, so a canvas narrower than that gets scale 1.
-/// Any other `scale` is the user's override (settings), clamped to
-/// 1..=[`MAX_SCALE`].
+/// `[scale, columns, rows]`. With `scale` 0 (auto) it is the largest even
+/// scale (2 to [`MAX_SCALE`]) that gives at least [`MIN_CELLS_ACROSS`]
+/// columns, or 1 if even 2 gives fewer. Any other `scale` is the user's
+/// override (settings), clamped to 1..=[`MAX_SCALE`] and rounded down to an
+/// even number above 1. Even scales draw every sprite texel (two per cell
+/// side) the same size; see [`desktank_render::Layout`].
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = gridFor))]
 #[must_use]
 pub fn grid_for(width: u32, height: u32, scale: u32) -> Vec<u32> {
@@ -96,6 +97,7 @@ pub fn grid_for(width: u32, height: u32, scale: u32) -> Vec<u32> {
         scale
     }
     .clamp(1, MAX_SCALE);
+    let scale = desktank_render::even_scale(scale);
     let cells = |px: u32| (px / scale).clamp(1, MAX_GRID_SIDE);
     vec![scale, cells(width), cells(height)]
 }

@@ -38,9 +38,9 @@ fn slot(t: &WebTank, entry: &str) -> u32 {
 }
 
 #[test]
-fn grid_scale_is_the_largest_giving_320_across() {
+fn grid_scale_is_the_largest_even_giving_320_across() {
     assert_eq!(grid_for(1920, 1080, 0), [6, 320, 180]);
-    assert_eq!(grid_for(1896, 1066, 0), [5, 379, 213]);
+    assert_eq!(grid_for(1896, 1066, 0), [4, 474, 266], "5 rounds down to 4");
     assert_eq!(grid_for(640, 360, 0), [2, 320, 180]);
     assert_eq!(grid_for(639, 359, 0), [1, 639, 359]);
     assert_eq!(grid_for(200, 100, 0), [1, 200, 100], "narrow: scale 1");
@@ -50,7 +50,12 @@ fn grid_scale_is_the_largest_giving_320_across() {
 
 #[test]
 fn grid_scale_override_is_clamped() {
-    assert_eq!(grid_for(1920, 1080, 3), [3, 640, 360]);
+    assert_eq!(grid_for(1920, 1080, 4), [4, 480, 270]);
+    assert_eq!(
+        grid_for(1920, 1080, 3),
+        [2, 960, 540],
+        "odd overrides round down"
+    );
     assert_eq!(grid_for(1920, 1080, 99), [8, 240, 135]);
     assert_eq!(grid_for(4096, 100, 1), [1, MAX_GRID_SIDE, 100]);
 }
