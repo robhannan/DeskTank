@@ -56,9 +56,17 @@ device = "bubbler" # "bubbler" (drops onto what is below) or "filter_outlet"
 
 [[water_change]]   # any number of these
 tick = 36000       # tick to change the water on (`World::water_change`)
+
+[[creature]]       # any number of these (T7a)
+tick = 0           # tick to add them on (default 0)
+species = "neon_tetra" # a species name from assets/species
+x = 40             # body centre, in cells from the top left (the nearest free spot)
+y = 30
+count = 6          # how many (default 1)
+dx = 3             # move the centre this many cells per creature (default 0)
 ```
 
-Water changes, placements and pours due on tick `t` are applied, in that order, just before that tick runs. Each `[[pour]]` entry is one stroke: the rigid cells (rock) of all its repeats form one body, held still until its last repeat and then free to sink. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.
+Water changes, placements, pours and creatures due on tick `t` are applied, in that order, just before that tick runs. Each `[[pour]]` entry is one stroke: the rigid cells (rock) of all its repeats form one body, held still until its last repeat and then free to sink. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.
 
 ## Render tests
 
@@ -66,4 +74,4 @@ Water changes, placements and pours due on tick `t` are applied, in that order, 
 
 - Linux CI renders on Mesa lavapipe (software Vulkan), macOS CI on Metal and Windows CI on WARP. With `CI` set, a missing GPU adapter fails the test; locally it is skipped with a message.
 - After a deliberate visual change, update the references and commit them: `DESKTANK_BLESS=1 cargo test -p desktank --test render`. Look at the new PNGs before committing.
-- To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it. `check_at("<name>", "HH:MM")` captures it lit for a time of day against `<name>_HHMM.png`; the `planted` scene (T6: cuttings, seeds and moss grown for 6 minutes) is checked at 00:00, 06:30, 12:00 and 20:30.
+- To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it. `check_at("<name>", "HH:MM")` captures it lit for a time of day against `<name>_HHMM.png`; the `planted` scene (T6: cuttings, seeds and moss grown for 6 minutes) is checked at 00:00, 06:30, 12:00 and 20:30. The `creatures` scene (T7a) draws every species' sprites after 30 s of swimming and feeding.

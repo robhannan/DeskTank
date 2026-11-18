@@ -1,0 +1,31 @@
+# A small schooling tetra (placeholder art, D11): keeps to mid-water and
+# takes flakes and bloodworms. Schooling itself comes with T7b.
+id = 1
+name = "neon_tetra"
+zone = "mid"
+# The band of the water column it keeps to: 0 is the surface, 1 the floor.
+depth = [0.25, 0.7]
+# Water depth it needs, in cells; the tank warns below it.
+min_depth = 24
+breathes_air = false
+temperament = "schooling"
+# Cells per second: cruising, and darting after food.
+speed = 5.0
+max_speed = 10.0
+diet = ["flake_food", "bloodworm"]
+
+[sprite]
+# Facing right; '.' is transparent. Two frames: a tail flick.
+colours = { b = "#2f8cff", r = "#e0373f", w = "#dfe8f0", k = "#0c1016", s = "#8fa3b5" }
+frames = [
+    [
+        "s.bbbb.",
+        "ssbbbbk",
+        "s.rrrr.",
+    ],
+    [
+        "..bbbb.",
+        "ssbbbbk",
+        "..rrrr.",
+    ],
+]

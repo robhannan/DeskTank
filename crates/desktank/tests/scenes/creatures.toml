@@ -1,0 +1,50 @@
+# Creatures (T7a): the starter bed with a glued rock, every species
+# swimming in its zone for 30 s, and a pinch of flakes and pellets that the
+# tetras, bettas and corydoras come to eat. The render test captures it.
+ticks = 600
+
+[world]
+starter = true
+
+[[pour]]
+x = 100
+y = 50
+radius = 5
+material = "rock"
+brush = "replace"
+glued = true
+
+[[creature]]
+species = "neon_tetra"
+x = 20
+y = 45
+count = 6
+dx = 12
+
+[[creature]]
+species = "corydoras"
+x = 30
+y = 78
+count = 3
+dx = 40
+
+[[creature]]
+species = "betta"
+x = 60
+y = 12
+count = 2
+dx = 50
+
+[[pour]]
+tick = 400
+x = 70
+y = 2
+radius = 2
+material = "flake_food"
+
+[[pour]]
+tick = 450
+x = 120
+y = 30
+radius = 1
+material = "sinking_pellet"

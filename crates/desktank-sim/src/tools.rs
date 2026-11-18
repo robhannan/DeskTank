@@ -11,10 +11,14 @@
 //! while the button is down; it drops when released (D17). Glue toggles
 //! the bodies under the brush between glued (static) and free.
 //!
-//! Net and inspect need creatures (T7). Until then the net's hit test finds
-//! nothing and inspect reports the cell's material.
+//! The net catches the creature under the pointer and carries it while the
+//! button is down; letting go above the water (or outside the tank) lifts it
+//! out. Inspect reports the creature under the pointer, if any, and the
+//! cell's material. A creature slot in the palette adds one of its species
+//! per click.
 
-use crate::{BodyId, Brush, MaterialId, Placeable, World};
+pub use crate::CreatureId;
+use crate::{BodyId, Brush, MaterialId, Placeable, SpeciesId, World};
 
 /// Smallest brush radius in cells (a single cell).
 pub const MIN_RADIUS: u32 = 0;
@@ -67,6 +71,8 @@ pub enum Tool {
     Inspect,
     /// Place a device, once per click.
     Place(Placeable),
+    /// Add a creature of this species, once per click.
+    AddCreature(SpeciesId),
 }
 
 /// One entry in the palette.
@@ -88,14 +94,10 @@ pub enum Button {
     Secondary,
 }
 
-/// A creature handle. No creatures exist before T7, so none is ever made.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct CreatureId(pub u32);
-
 /// What inspect found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Inspection {
-    /// A cell and its material (until creatures exist).
+    /// A cell and its material.
     Cell {
         /// Column.
         x: usize,
@@ -104,8 +106,19 @@ pub enum Inspection {
         /// The material there.
         material: MaterialId,
     },
-    /// A creature (T7).
-    Creature(CreatureId),
+    /// A creature, and the cell under the pointer.
+    Creature {
+        /// The creature.
+        id: CreatureId,
+        /// Its species.
+        species: SpeciesId,
+        /// Column under the pointer.
+        x: usize,
+        /// Row under the pointer.
+        y: usize,
+        /// The material there.
+        material: MaterialId,
+    },
 }
 
 /// The result of a pointer event.
@@ -119,6 +132,14 @@ pub enum Outcome {
     Inspected(Inspection),
     /// Glue changed this many bodies.
     Glued(usize),
+    /// The net caught this creature.
+    Caught(CreatureId),
+    /// The net let this creature go in the water.
+    Dropped(CreatureId),
+    /// The net lifted this creature out of the tank.
+    Removed(CreatureId),
+    /// A creature was added.
+    Added(CreatureId),
 }
 
 /// A stroke in progress: which button, what it does, where it last was.
@@ -138,10 +159,12 @@ enum Action {
     /// Glue (`Some(true)`) or free bodies; `None` until the stroke first
     /// touches a body, which it toggles, setting the way for the rest.
     Glue(Option<bool>),
-    /// Carrying a creature (or, before T7, nothing: the hit test missed).
-    Net(Option<CreatureId>),
+    /// Carrying a creature, held by the cell offset from the pointer to its
+    /// body centre (or nothing: the hit test missed).
+    Net(Option<(CreatureId, (i64, i64))>),
     Inspect,
-    /// Placed a device on press; the rest of the drag does nothing.
+    /// Placed a device or added a creature on press; the rest of the drag
+    /// does nothing.
     Place,
 }
 
@@ -170,9 +193,9 @@ impl Tools {
     }
 
     /// The palette for `world`'s materials: the [`POUR_MATERIALS`] it has,
-    /// then scoop, net, inspect and glue, then the later materials and the
-    /// placeables whose material it has (appended, so the earlier number
-    /// keys stay put).
+    /// then scoop, net, inspect and glue, then the later materials, the
+    /// placeables whose material it has and its species (appended, so the
+    /// earlier number keys stay put).
     #[must_use]
     pub fn palette(world: &World) -> Vec<PaletteItem> {
         let table = world.materials();
@@ -189,7 +212,16 @@ impl Tools {
             .filter(|p| table.id(p.material_name()).is_some())
             .map(|p| PaletteItem::Tool(Tool::Place(p)));
         let tools = [Tool::Scoop, Tool::Net, Tool::Inspect, Tool::Glue].map(PaletteItem::Tool);
-        early.chain(tools).chain(late).chain(devices).collect()
+        let species = world
+            .species()
+            .iter()
+            .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)));
+        early
+            .chain(tools)
+            .chain(late)
+            .chain(devices)
+            .chain(species)
+            .collect()
     }
 
     /// The selected tool.
@@ -271,9 +303,14 @@ impl Tools {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
             (Button::Primary, Tool::Glue) => Action::Glue(None),
-            (Button::Primary, Tool::Net) => Action::Net(creature_at(world, cell)),
+            (Button::Primary, Tool::Net) => {
+                Action::Net(world.creature_at(cell.0, cell.1).and_then(|id| {
+                    let (x, y) = world.creature(id)?.cell();
+                    Some((id, (x - cell.0, y - cell.1)))
+                }))
+            }
             (Button::Primary, Tool::Inspect) => Action::Inspect,
-            (Button::Primary, Tool::Place(_)) => Action::Place,
+            (Button::Primary, Tool::Place(_) | Tool::AddCreature(_)) => Action::Place,
         };
         self.stroke = Some(Stroke {
             button,
@@ -289,9 +326,17 @@ impl Tools {
                 // The device material is in the table: the palette only
                 // offers placeables it has.
                 Tool::Place(p) => Outcome::Painted(world.place(p, cell.0, cell.1).unwrap_or(0)),
+                // No room (solid there) or a full tank adds nothing.
+                Tool::AddCreature(s) => world
+                    .add_creature(s, cell.0, cell.1)
+                    .map_or(Outcome::None, Outcome::Added),
                 _ => Outcome::None,
             },
-            Action::Net(_) => Outcome::None,
+            Action::Net(Some((id, _))) => {
+                world.hold_creature(id);
+                Outcome::Caught(id)
+            }
+            Action::Net(None) => Outcome::None,
         }
     }
 
@@ -329,33 +374,69 @@ impl Tools {
                 Outcome::Painted(changed)
             }
             Action::Inspect if from != cell => inspect(world, cell),
-            // Carrying a creature moves it with the pointer (T7).
-            Action::Net(_) | Action::Inspect | Action::Place => Outcome::None,
+            // Carrying a creature moves it with the pointer, wherever its
+            // body fits (it stays at the edge of the water while the
+            // pointer is above it).
+            Action::Net(Some((id, (ox, oy)))) => {
+                world.move_creature(id, cell.0 + ox, cell.1 + oy);
+                world.hold_creature(id);
+                Outcome::None
+            }
+            Action::Net(None) | Action::Inspect | Action::Place => Outcome::None,
         }
     }
 
-    /// `button` was released. Ends the stroke it started (dropping a netted
-    /// creature where the pointer is).
-    pub fn release(&mut self, button: Button) {
-        if self.stroke.is_some_and(|s| s.button == button) {
-            self.stroke = None;
+    /// `button` was released. Ends the stroke it started. A netted creature
+    /// is let go where it is, or lifted out of the tank if the pointer is
+    /// above the water or outside the grid.
+    pub fn release(&mut self, world: &mut World, button: Button) -> Outcome {
+        let Some(stroke) = self.stroke.filter(|s| s.button == button) else {
+            return Outcome::None;
+        };
+        self.stroke = None;
+        let Action::Net(Some((id, _))) = stroke.action else {
+            return Outcome::None;
+        };
+        let (x, y) = stroke.last;
+        let surface = i64::try_from(world.surface_row()).unwrap_or(i64::MAX);
+        let inside = |v: i64, len: usize| usize::try_from(v).is_ok_and(|v| v < len);
+        if y < surface || !inside(x, world.width()) || !inside(y, world.height()) {
+            world.remove_creature(id);
+            return Outcome::Removed(id);
         }
+        world.release_creature(id);
+        Outcome::Dropped(id)
     }
 
-    /// The pointer left the tank (or the host lost it). Ends any stroke.
-    pub fn leave(&mut self) {
+    /// The pointer left the tank (or the host lost it). Ends any stroke; a
+    /// netted creature is let go where it is.
+    pub fn leave(&mut self, world: &mut World) {
+        if let Some(Stroke {
+            action: Action::Net(Some((id, _))),
+            ..
+        }) = self.stroke
+        {
+            world.release_creature(id);
+        }
         self.pointer = None;
         self.stroke = None;
     }
 
     /// Re-applies a held paint stroke where the pointer rests, so holding
-    /// still keeps pouring (and keeps a rigid body being poured still).
-    /// Hosts call this once per simulation tick run (several times after a
-    /// catch-up).
+    /// still keeps pouring (and keeps a rigid body being poured still), and
+    /// keeps a netted creature held. Hosts call this once per simulation
+    /// tick run (several times after a catch-up).
     pub fn hold(&mut self, world: &mut World) -> usize {
         match self.stroke {
             Some(s) if matches!(s.action, Action::Pour | Action::Scoop) => {
                 self.stamp(world, s.last)
+            }
+            Some(Stroke {
+                action: Action::Net(Some((id, _))),
+                ..
+            }) => {
+                world.hold_creature(id);
+                0
             }
             _ => 0,
         }
@@ -461,25 +542,26 @@ fn scoop(world: &mut World, c: (i64, i64), radius: u32) -> usize {
 }
 
 fn inspect(world: &World, c: (i64, i64)) -> Outcome {
-    if let Some(id) = creature_at(world, c) {
-        return Outcome::Inspected(Inspection::Creature(id));
-    }
     let (Ok(x), Ok(y)) = (usize::try_from(c.0), usize::try_from(c.1)) else {
         return Outcome::None;
     };
-    world.cell(x, y).map_or(Outcome::None, |cell| {
-        Outcome::Inspected(Inspection::Cell {
+    let Some(cell) = world.cell(x, y) else {
+        return Outcome::None;
+    };
+    let material = cell.material;
+    let creature = world
+        .creature_at(c.0, c.1)
+        .and_then(|id| world.creature(id));
+    Outcome::Inspected(match creature {
+        Some(found) => Inspection::Creature {
+            id: found.id(),
+            species: found.species(),
             x,
             y,
-            material: cell.material,
-        })
+            material,
+        },
+        None => Inspection::Cell { x, y, material },
     })
-}
-
-/// The creature under `cell`. Creatures arrive in T7; until then nothing
-/// is ever hit.
-fn creature_at(_world: &World, _cell: (i64, i64)) -> Option<CreatureId> {
-    None
 }
 
 /// The cells of a line from `a` to `b` inclusive (Bresenham): 8-connected,
@@ -585,7 +667,7 @@ mod tests {
         // Two pointer samples 100 cells apart, as a fast flick gives.
         t.press(&mut w, Button::Primary, (20, 30));
         let out = t.moved(&mut w, (120, 50));
-        t.release(Button::Primary);
+        t.release(&mut w, Button::Primary);
         for p in line((20, 30), (120, 50)) {
             let (x, y) = (usize::try_from(p.0).unwrap(), usize::try_from(p.1).unwrap());
             assert_eq!(at(&w, x, y), sand, "gap at {p:?}");
@@ -680,15 +762,15 @@ mod tests {
         t.press(&mut w, Button::Secondary, (40, yi));
         t.moved(&mut w, (59, yi));
         assert_eq!(t.preview(), Some((59, yi, DEFAULT_RADIUS)));
-        t.release(Button::Secondary);
+        t.release(&mut w, Button::Secondary);
         assert!((40..60).all(|x| at(&w, x, y) == water));
         // Releasing the other button doesn't end a stroke it didn't start,
         // and a second button can't hijack it.
         t.press(&mut w, Button::Secondary, (40, yi));
-        t.release(Button::Primary);
+        t.release(&mut w, Button::Primary);
         assert!(t.stroke.is_some());
         assert_eq!(t.press(&mut w, Button::Primary, (40, yi)), Outcome::None);
-        t.release(Button::Primary);
+        t.release(&mut w, Button::Primary);
         assert!(t.stroke.is_some());
     }
 
@@ -702,7 +784,7 @@ mod tests {
         w.tick();
         // The poured sand has started to fall, leaving fluid to refill.
         assert!(t.hold(&mut w) > 0);
-        t.release(Button::Primary);
+        t.release(&mut w, Button::Primary);
         assert_eq!(t.hold(&mut w), 0);
     }
 
@@ -715,7 +797,7 @@ mod tests {
         t.select(PaletteItem::Tool(Tool::Net));
         assert_eq!(t.press(&mut w, Button::Primary, (80, 60)), Outcome::None);
         assert_eq!(t.moved(&mut w, (90, 60)), Outcome::None);
-        t.release(Button::Primary);
+        t.release(&mut w, Button::Primary);
         assert_eq!(t.preview(), None);
         assert_eq!(w.state_hash(), before);
     }
@@ -752,7 +834,10 @@ mod tests {
     fn palette_selects_tools_and_materials() {
         let w = world();
         let items = Tools::palette(&w);
-        assert_eq!(items.len(), POUR_MATERIALS.len() + 2 + 4);
+        assert_eq!(
+            items.len(),
+            POUR_MATERIALS.len() + 2 + 4 + w.species().len()
+        );
         assert!(items.len() <= 34, "the palette strip holds 34 slots");
         assert_eq!(
             items[9],
@@ -782,7 +867,7 @@ mod tests {
         );
         assert_eq!(t.moved(&mut w, (60, 40)), Outcome::None);
         assert_eq!(t.hold(&mut w), 0);
-        t.release(Button::Primary);
+        t.release(&mut w, Button::Primary);
         assert_eq!(count(&w, outlet), 9);
         assert_eq!(at(&w, 20, 40), outlet);
     }

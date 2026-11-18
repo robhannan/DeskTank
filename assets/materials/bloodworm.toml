@@ -5,4 +5,5 @@ name = "bloodworm"
 class = "powder"
 density = 1.8
 repose = 20.0
+passable = true
 colour = "#9e2335"

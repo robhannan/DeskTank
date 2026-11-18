@@ -5,8 +5,10 @@
 //!
 //! GPU timing reads timestamps back after each frame, which blocks that
 //! frame on the GPU (waiting costs little CPU). "CPU per frame" is process
-//! CPU time across the tick and the draw. The settled phase draws no frames,
-//! so its numbers are the production path.
+//! CPU time across the tick and the draw. Without creatures the settled
+//! phase draws no frames, so its numbers are the production path; with
+//! `--fish N` the creatures swim through it, so it draws a frame per tick
+//! (the sprites move) while every chunk sleeps.
 
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
@@ -30,7 +32,7 @@ const POUR_RADIUS: u32 = 4;
 /// # Errors
 ///
 /// Returns an error if no GPU is available or the world can't be built.
-pub fn run(seconds: u64) -> anyhow::Result<()> {
+pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let gpu = pollster::block_on(Gpu::new(&instance, None, GpuOptions { timestamps: true }))?;
@@ -42,6 +44,7 @@ pub fn run(seconds: u64) -> anyhow::Result<()> {
     };
     let mut world = World::new(config, MaterialTable::builtin()?)?;
     scene::starter(&mut world, SEED)?;
+    scene::stock(&mut world, fish, SEED)?;
     let sand = scene::material(&world, "sand")?;
     let mut tank = Tank::new(world, TankConfig::default());
     let gpu_timing = tank.enable_gpu_timing(&gpu);
@@ -194,6 +197,7 @@ impl Report<'_> {
             world.chunk_count(),
             world.awake_chunks()
         );
+        let _ = writeln!(out, "creatures: {}", world.creatures().len());
         match self.gpu_times {
             Some(t) => {
                 let _ = writeln!(out, "GPU frame time ({} frames): {}", t.len(), t.summary());

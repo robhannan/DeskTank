@@ -1,6 +1,6 @@
 //! Starting scenes shared by `desktank window` and `desktank bench`.
 
-use desktank_sim::{Brush, MaterialId, Rect, World};
+use desktank_sim::{Brush, MAX_CREATURES, MaterialId, Rect, World, WorldError};
 
 /// A built-in material's ID. The built-in table always has these.
 pub fn material(world: &World, name: &str) -> anyhow::Result<MaterialId> {
@@ -46,6 +46,45 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Adds `count` creatures (stopping at [`MAX_CREATURES`]), cycling through the
+/// species, each placed at a seeded spot in the middle of its zone (or the
+/// nearest free water). Returns how many were added.
+///
+/// # Errors
+///
+/// Returns an error if the world rejects a creature for a reason other
+/// than having no room at its spot.
+pub fn stock(world: &mut World, count: usize, seed: u64) -> anyhow::Result<usize> {
+    let species: Vec<_> = world.species().iter().map(|s| s.id).collect();
+    if species.is_empty() {
+        return Ok(0);
+    }
+    let width = u64::try_from(world.width()).unwrap_or(1).max(1);
+    let mut state = seed ^ 0x9e37_79b9_7f4a_7c15;
+    let mut added = 0;
+    for i in 0..count {
+        if world.creatures().len() >= MAX_CREATURES {
+            break;
+        }
+        let s = species[i % species.len()];
+        let Some((top, bottom)) = world.zone_rows(s) else {
+            continue;
+        };
+        // A small LCG: spread across the tank, the same for a seed.
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let x = i64::try_from((state >> 33) % width).unwrap_or(0);
+        let y = i64::try_from(usize::midpoint(top, bottom)).unwrap_or(0);
+        match world.add_creature(s, x, y) {
+            Ok(_) => added += 1,
+            Err(WorldError::NoRoom) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(added)
+}
+
 fn rect(x0: usize, y0: usize, x1: usize, y1: usize) -> Rect {
     Rect { x0, y0, x1, y1 }
 }
@@ -74,5 +113,29 @@ mod tests {
             }
         }
         panic!("starter scene still awake after 100 s");
+    }
+
+    #[test]
+    fn stock_adds_every_species_up_to_the_cap() {
+        let config = WorldConfig {
+            width: 320,
+            height: 180,
+            seed: 7,
+            ..WorldConfig::default()
+        };
+        let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        starter(&mut world, 7).unwrap();
+        assert_eq!(stock(&mut world, 30, 7).unwrap(), 30);
+        for s in world.species().iter() {
+            assert_eq!(
+                world
+                    .creatures()
+                    .iter()
+                    .filter(|c| c.species() == s.id)
+                    .count(),
+                10
+            );
+        }
+        assert_eq!(stock(&mut world, 1000, 7).unwrap(), MAX_CREATURES - 30);
     }
 }
