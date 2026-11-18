@@ -7,4 +7,5 @@ density = 1.1
 float_density = 0.5
 float_time = 8.0
 repose = 45.0
+passable = true
 colour = "#d9603b"

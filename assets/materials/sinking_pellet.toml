@@ -4,4 +4,5 @@ name = "sinking_pellet"
 class = "powder"
 density = 1.4
 repose = 40.0
+passable = true
 colour = "#a8743a"

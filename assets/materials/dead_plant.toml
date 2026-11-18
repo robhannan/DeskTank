@@ -4,4 +4,5 @@ name = "dead_plant"
 class = "powder"
 density = 1.1
 repose = 25.0
+passable = true
 colour = "#6b5a2e"

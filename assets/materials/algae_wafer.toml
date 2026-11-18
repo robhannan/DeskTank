@@ -4,4 +4,5 @@ name = "algae_wafer"
 class = "powder"
 density = 1.5
 repose = 45.0
+passable = true
 colour = "#55663a"

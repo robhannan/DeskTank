@@ -32,10 +32,18 @@
 //!
 //! [[water_change]]
 //! tick = 600         # tick to change the water on (see `World::water_change`)
+//!
+//! [[creature]]
+//! tick = 0           # tick to add them on (default 0)
+//! species = "neon_tetra" # a species name from assets/species
+//! x = 40             # body centre, in cells from the top left (the nearest free spot)
+//! y = 30
+//! count = 6          # how many (default 1)
+//! dx = 3             # move the centre this many cells per creature (default 0)
 //! ```
 //!
-//! Water changes, then placements, then pours due on tick `t` are applied just before the world's
-//! `t`-th tick (counting from 0), so they show from that tick on. Each
+//! Water changes, then placements, then pours, then creatures due on tick `t` are applied just
+//! before the world's `t`-th tick (counting from 0), so they show from that tick on. Each
 //! `[[pour]]` entry is one stroke: the rigid cells of all its repeats form
 //! one body, held still until its last repeat (D17).
 
@@ -43,6 +51,10 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::{BodyId, Brush, Placeable, World, WorldConfig, WorldError};
+
+/// Most creatures one `[[creature]]` entry may add.
+#[allow(clippy::cast_possible_truncation)] // 60
+const MAX_COUNT: u32 = crate::MAX_CREATURES as u32;
 
 /// Error reading or applying a script.
 #[derive(Debug, Error)]
@@ -59,6 +71,12 @@ pub enum ScriptError {
     /// A placement names a device that doesn't exist.
     #[error("unknown device {0:?}")]
     UnknownDevice(String),
+    /// A `[[creature]]` entry names a species the table doesn't have.
+    #[error("unknown species {0:?}")]
+    UnknownSpecies(String),
+    /// A `[[creature]]` entry asks for more creatures than a tank holds.
+    #[error("count {0} is more than a tank holds")]
+    TooMany(u32),
     /// The world rejected an edit or its configuration.
     #[error(transparent)]
     World(#[from] WorldError),
@@ -86,6 +104,9 @@ pub struct Script {
     /// Timed water changes.
     #[serde(default, rename = "water_change")]
     pub water_changes: Vec<WaterChange>,
+    /// Timed creature additions.
+    #[serde(default, rename = "creature")]
+    pub creatures: Vec<AddCreatures>,
 }
 
 impl Default for Script {
@@ -97,6 +118,7 @@ impl Default for Script {
             pours: Vec::new(),
             places: Vec::new(),
             water_changes: Vec::new(),
+            creatures: Vec::new(),
         }
     }
 }
@@ -179,6 +201,27 @@ pub struct WaterChange {
     pub tick: u64,
 }
 
+/// One `[[creature]]` entry.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AddCreatures {
+    /// Tick to add them on.
+    #[serde(default)]
+    pub tick: u64,
+    /// Species name.
+    pub species: String,
+    /// Body centre column of the first.
+    pub x: i64,
+    /// Body centre row.
+    pub y: i64,
+    /// How many.
+    #[serde(default = "one_u32")]
+    pub count: u32,
+    /// Column step per creature.
+    #[serde(default)]
+    pub dx: i64,
+}
+
 /// A brush as written in a script.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -191,6 +234,10 @@ pub enum BrushName {
 }
 
 fn one() -> u64 {
+    1
+}
+
+fn one_u32() -> u32 {
     1
 }
 
@@ -216,6 +263,9 @@ impl Script {
             .find(|p| Placeable::from_name(&p.device).is_none())
         {
             return Err(ScriptError::UnknownDevice(p.device.clone()));
+        }
+        if let Some(c) = script.creatures.iter().find(|c| c.count > MAX_COUNT) {
+            return Err(ScriptError::TooMany(c.count));
         }
         Ok(script)
     }
@@ -260,13 +310,14 @@ pub struct Player<'a> {
 }
 
 impl Player<'_> {
-    /// Applies the water changes, placements and pours due on `tick` (call
-    /// before the world's tick).
+    /// Applies the water changes, placements, pours and creatures due on
+    /// `tick` (call before the world's tick).
     ///
     /// # Errors
     ///
-    /// Returns an error if a pour names an unknown material or a placement
-    /// an unknown device.
+    /// Returns an error if a pour names an unknown material, a placement an
+    /// unknown device or a creature an unknown species, or a creature has
+    /// no room (or the tank is full).
     pub fn apply(&mut self, world: &mut World, tick: u64) -> Result<(), ScriptError> {
         for _ in self.script.water_changes.iter().filter(|c| c.tick == tick) {
             world.water_change();
@@ -300,6 +351,16 @@ impl Player<'_> {
                 && let Some(id) = joined
             {
                 world.set_anchored(id, true);
+            }
+        }
+        for c in self.script.creatures.iter().filter(|c| c.tick == tick) {
+            let species = world
+                .species()
+                .id(&c.species)
+                .ok_or_else(|| ScriptError::UnknownSpecies(c.species.clone()))?;
+            for i in 0..i64::from(c.count) {
+                let x = c.x.saturating_add(c.dx.saturating_mul(i));
+                world.add_creature(species, x, c.y)?;
             }
         }
         Ok(())
@@ -423,6 +484,28 @@ mod tests {
         assert!(w.material_counts()[usize::from(detritus.0)] > 0);
         s.run(&mut w, 6).unwrap();
         assert_eq!(w.material_counts()[usize::from(detritus.0)], 0);
+    }
+
+    #[test]
+    fn adds_creatures() {
+        let s = Script::parse(
+            "[[creature]]\ntick = 2\nspecies = \"neon_tetra\"\nx = 20\ny = 40\ncount = 3\ndx = 10",
+        )
+        .unwrap();
+        let mut w = world(&s, 1);
+        s.run(&mut w, 2).unwrap();
+        assert_eq!(w.creatures().len(), 0);
+        s.run(&mut w, 3).unwrap();
+        assert_eq!(w.creatures().len(), 3);
+        let bad = Script::parse("[[creature]]\nspecies = \"shark\"\nx = 1\ny = 40").unwrap();
+        assert!(matches!(
+            bad.run(&mut world(&bad, 1), 1),
+            Err(ScriptError::UnknownSpecies(_))
+        ));
+        assert!(matches!(
+            Script::parse("[[creature]]\nspecies = \"betta\"\nx = 1\ny = 1\ncount = 999"),
+            Err(ScriptError::TooMany(999))
+        ));
     }
 
     #[test]
