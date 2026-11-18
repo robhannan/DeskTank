@@ -98,13 +98,21 @@ fn busy_tank(seed: u64) -> World {
     for x in [14, 26, 40] {
         w.set_cell(x, 20, cutting).unwrap();
     }
-    for (i, name) in ["neon_tetra", "corydoras", "betta", "nerite"]
-        .iter()
-        .enumerate()
+    for (i, name) in [
+        "neon_tetra",
+        "corydoras",
+        "betta",
+        "nerite",
+        "cherry_shrimp",
+        "amano_shrimp",
+        "thai_micro_crab",
+    ]
+    .iter()
+    .enumerate()
     {
         let s = species(&w, name);
         for j in 0..3_i64 {
-            let x = 16 + 36 * j + i64::try_from(i).unwrap() * 6;
+            let x = 12 + 36 * j + i64::try_from(i).unwrap() * 5;
             w.add_creature(s, x, 50).unwrap();
         }
     }
@@ -138,11 +146,15 @@ fn no_creature_enters_a_solid_cell_in_100k_ticks() {
             }
         }
     }
-    assert_eq!(w.creatures().len(), 12);
-    // They swim, not sit stuck: each moved on most ticks.
+    assert_eq!(w.creatures().len(), 21);
+    // They swim, not sit stuck: each moved on most ticks. Crawlers take a
+    // step every 10 (nerite) or 13 (crab) ticks.
     for (i, &n) in moved.iter().enumerate() {
-        let min = if w.creatures()[i].species() == species(&w, "nerite") {
+        let s = w.creatures()[i].species();
+        let min = if s == species(&w, "nerite") {
             8_000
+        } else if s == species(&w, "thai_micro_crab") {
+            6_000
         } else {
             50_000
         };
@@ -497,7 +509,7 @@ fn the_palette_adds_creatures_of_each_species() {
     let mut t = Tools::new(id(&w, "sand"));
     for (k, &s) in adders.iter().enumerate() {
         t.select(PaletteItem::Tool(Tool::AddCreature(s)));
-        let x = 30 + 40 * i64::try_from(k).unwrap();
+        let x = 20 + 20 * i64::try_from(k).unwrap();
         let Outcome::Added(c) = t.press(&mut w, Button::Primary, (x, 40)) else {
             panic!("no creature added");
         };
@@ -756,8 +768,15 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
 
 #[test]
 fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
-    for name in ["corydoras", "nerite"] {
-        for meal in ["algae", "detritus"] {
+    let grazers: [(&str, &[&str]); 5] = [
+        ("corydoras", &["algae", "detritus"]),
+        ("nerite", &["algae", "detritus"]),
+        ("cherry_shrimp", &["algae", "detritus"]),
+        ("amano_shrimp", &["algae", "detritus"]),
+        ("thai_micro_crab", &["detritus"]),
+    ];
+    for (name, meals) in grazers {
+        for &meal in meals {
             let mut w = world(128, 64, 7);
             sand_bed(&mut w, 6);
             let food = id(&w, meal);
@@ -801,4 +820,115 @@ fn pointer_input_repels_fish_and_clears_on_leave() {
     run(&mut w, 80);
     run(&mut cleared, 80);
     assert_eq!(w.state_hash(), cleared.state_hash());
+}
+
+#[test]
+fn shrimp_walk_the_substrate_and_hop_off_it_now_and_then() {
+    for name in ["cherry_shrimp", "amano_shrimp"] {
+        let mut w = world(128, 80, 21);
+        sand_bed(&mut w, 6);
+        let shrimp = w.add_creature(species(&w, name), 30, 60).unwrap();
+        run(&mut w, 200);
+        let floor = w.height() - 6;
+        let (mut on_bed, mut hops, mut highest, mut aloft) = (0, 0, floor, false);
+        let mut range = (128, 0);
+        for _ in 0..4_000 {
+            w.tick();
+            let c = w.creature(shrimp).unwrap();
+            assert_eq!(solid_under(&w, c), None);
+            assert!(w.in_zone(c), "{name} left its zone");
+            let b = w.creature_body(c);
+            if b.y1 == floor {
+                on_bed += 1;
+                aloft = false;
+            } else if b.y1 + 2 <= floor && !aloft {
+                aloft = true;
+                hops += 1;
+            }
+            highest = highest.min(b.y1);
+            range = (range.0.min(c.cell().0), range.1.max(c.cell().0));
+        }
+        eprintln!("{name}: {hops} hops, on the bed {on_bed}/4000, top {highest}");
+        // Mostly on the bed, with a hop every 6–10 s that lifts it a few
+        // cells and lands it again.
+        assert!(on_bed > 2_400, "{name} on the bed {on_bed}/4000 ticks");
+        assert!(hops >= 15, "{name} hopped {hops} times in 200 s");
+        assert!(
+            floor - highest <= 6,
+            "{name} hopped {} cells",
+            floor - highest
+        );
+        assert!(range.1 - range.0 > 40, "{name} roamed {range:?}");
+    }
+}
+
+#[test]
+fn shrimp_find_algae_on_the_bed_and_graze_it() {
+    let limit = 10 * TICKS_PER_SECOND;
+    for (name, food) in [
+        ("cherry_shrimp", "algae"),
+        ("amano_shrimp", "algae"),
+        ("amano_shrimp", "bloodworm"),
+        ("cherry_shrimp", "sinking_pellet"),
+    ] {
+        let t = ticks_to_eat(name, (30, 78), food, (75, 81), limit)
+            .unwrap_or_else(|| panic!("{name} didn't eat {food} within 10 s"));
+        eprintln!("{name} ate {food} after {:.2} s", f64::from(t) / 20.0);
+    }
+}
+
+#[test]
+fn thai_micro_crab_filter_feeds_from_two_cells_away() {
+    for (name, eats) in [("thai_micro_crab", true), ("nerite", false)] {
+        let mut w = world(96, 64, 3);
+        sand_bed(&mut w, 6);
+        let crawler = w.add_creature(species(&w, name), 40, 56).unwrap();
+        run(&mut w, 2);
+        let b = w.creature_body(w.creature(crawler).unwrap());
+        // A cell of mulm on the bed one cell clear of its body.
+        w.set_cell(b.x1 + 1, b.y1 - 1, id(&w, "detritus")).unwrap();
+        w.tick();
+        let ate = w.creature(crawler).unwrap().eaten() > 0;
+        assert_eq!(ate, eats, "{name}");
+    }
+}
+
+#[test]
+fn thai_micro_crab_clings_to_plants_and_walks_the_bottom() {
+    let mut w = world(120, 80, 5);
+    let (aquasoil, cutting) = (id(&w, "aquasoil"), id(&w, "cutting"));
+    w.fill_rect(rect(0, 72, 120, 80), aquasoil, Brush::Replace)
+        .unwrap();
+    for x in [30, 60, 90] {
+        w.set_cell(x, 71, cutting).unwrap();
+    }
+    // Ten minutes of growth for something to climb.
+    run(&mut w, 10 * 60 * TICKS_PER_SECOND);
+    let parts = [id(&w, "stem"), id(&w, "leaf"), id(&w, "root")];
+    let plant = |m: MaterialId| parts.contains(&m);
+    assert!(w.plant_count() > 0);
+    let crab = w
+        .add_creature(species(&w, "thai_micro_crab"), 10, 70)
+        .unwrap();
+    let (mut held, mut on_plant, mut on_bed, ticks) = (0, 0, 0, 6_000);
+    for _ in 0..ticks {
+        w.tick();
+        let c = w.creature(crab).unwrap();
+        assert_eq!(solid_under(&w, c), None);
+        held += u32::from(foot_held(&w, c));
+        let b = w.creature_body(c);
+        let near = |x: usize, y: usize| w.cell(x, y).is_some_and(|cell| plant(cell.material));
+        let x0 = b.x0.saturating_sub(1);
+        let y0 = b.y0.saturating_sub(1);
+        let touching = (y0..=b.y1).any(|y| (x0..=b.x1).any(|x| near(x, y)));
+        on_plant += u32::from(touching && b.y1 < 72);
+        on_bed += u32::from(c.turn() == 0 && b.y1 == 72 && !touching);
+    }
+    eprintln!("crab: held {held}, on plants {on_plant}, on the bed {on_bed} of {ticks}");
+    assert!(
+        held * 100 >= ticks * 90,
+        "foot held on {held} of {ticks} ticks"
+    );
+    assert!(on_plant > 300, "on plants {on_plant} ticks");
+    assert!(on_bed > 100, "walking the bed {on_bed} ticks");
 }
