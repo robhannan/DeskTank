@@ -1,6 +1,6 @@
 # DeskTank — Plan and Spec
 
-Status: **draft v0.4** (2026-11-17).
+Status: **draft v0.5** (2026-11-18).
 
 - ❓ marks items still waiting on owner decisions (see
   [Open questions](#12-open-questions)). The defaults shown are what we
@@ -87,8 +87,8 @@ It can run as any combination of four desktop **display modes**, or in a browser
     card and the log, when the current level doesn't suit a species
     living in it.
 - **Cell.** A material ID (u8), a variant or colour-noise byte (u8), and
-  per-cell state such as age, a timer, moisture or a rigid cell's body id
-  (u16). That is about
+  per-cell state such as age, a timer, moisture, a rigid cell's body id
+  or a plant cell's plant id (u16, §2.7). That is about
   4 bytes per cell, or about 1 MB per display.
 - **Fields.** Coarse grids at 1/8 resolution hold the values that
   diffuse:
@@ -328,14 +328,16 @@ The v1 palette (D2):
 | Substrates | sand, gravel, aquasoil (holds nutrients), rock (rigid), driftwood (rigid, lighter than water) |
 | Food | flakes (float, then sink), sinking pellets, bloodworms (sink fast), algae wafers (for bottom feeders) |
 | Fertilisers | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), CO₂ (bubbles that dissolve into the CO₂ field and boost plant growth) |
-| Life | seeds and cuttings (become plants), moss (grows on rock and wood), algae (nuisance; grows with excess light and nutrients), eggs (one material per breeding species, which hatches into fry) |
+| Life | seeds and cuttings of each plant species (become plants, §2.7), moss (grows on rock and wood; a plant species from T6b), algae (nuisance; grows with excess light and nutrients), eggs (one material per breeding species, which hatches into fry) |
 | Gases | air bubbles (from the bubbler, plants and creatures), CO₂ bubbles |
 | Decay | waste, dead plant matter and corpses, which sink and become **detritus**; detritus slowly disintegrates into nutrients |
 | Chaos *(hidden behind a setting, off by default)* | acid (dissolves substrate and plants), magma (boils water into steam bubbles and cools into rock), dye (tints the water), salt (harms freshwater life), blight (spreads through plants) |
 
 Plants are structures of cells: roots, stems, leaves. A plant grows by
 converting nearby water cells while it has nutrients, light and CO₂.
-Without them it wilts and drops dead plant matter.
+Without them it wilts and drops dead plant matter. From T6b each plant is
+an individual of a data-defined species (D18, §2.7); the T6 rules below
+are the first step.
 
 *T6:* `assets/reactions.toml` gained three rule kinds, run on random ticks
 like the rest. `[[grow]]`: a cell grows a `makes` cell into a neighbour
@@ -421,7 +423,7 @@ target computes the same bits.
   - zone: surface, mid-water, bottom or surfaces;
   - temperament: schooling, peaceful or territorial;
   - diet: which food and which materials it grazes, such as algae and
-    detritus;
+    detritus, and which plant species (by their palatability, §2.7);
   - lifespan and maturity age;
   - breeding: egg layer (and which egg material) or livebearer;
   - tolerances;
@@ -529,6 +531,8 @@ target computes the same bits.
     - the material table version;
     - the grid, run-length encoded and then compressed;
     - the fields;
+    - the plant table (§2.7: species by name, age, health, stored energy,
+      lineage), which the grid alone can't rebuild;
     - the creatures (genetics, age and names included);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
@@ -553,6 +557,144 @@ target computes the same bits.
 - **Multi-monitor** (configurable): separate tanks per display (the
   default), or one spanning tank where creatures and materials cross
   between adjacent screen edges (stretch goal).
+
+### 2.7 Plants (D18)
+
+Plants are **individual organisms** of **data-defined species**, not just
+materials. Every plant is distinct from every other, even one of the same
+species growing into it: it has its own age, health and size, competes
+for light and nutrients, and the inspect card shows it. T6 built plants
+as materials and rules (§2.2 *T6*, §2.3 *T6*); T6b turns them into this
+model, T6c adds the growth forms and T6d the appearance effects. Algae
+stays a material film, not individuals.
+
+- **Species are data**, as creatures are (§2.4, D8). One TOML file per
+  species in `assets/plants/` defines:
+  - name and a one-line description (the inspect card);
+  - the **growth form** and its parameters ([below](#growth-forms));
+  - **environment preferences**: for light, nutrient and CO₂ a range of
+    `min`, `optimum` and `max`. Each factor's response is 0 outside
+    min..max, 1 at the optimum and linear in between; the growth rate
+    scales with the product of the responses. Also where it can live:
+    the substrates it roots in or the surfaces it attaches to, and a
+    depth range (for example, must reach the surface, or stays in the
+    bottom third). With E1, temperature and nitrate join the ranges;
+  - **growth**: base rate (new cells per minute at full response),
+    mature size (cells) and height, nutrient cost per cell, and an
+    optional lifespan;
+  - **hardiness**: how long it tolerates conditions outside its range
+    before it drops leaves, and how fast it then declines;
+  - **propagation**: any of seeds, cuttings, fragments, runners, plantlets
+    and budding (floaters);
+  - **appearance**: colour ramps per part and its effects
+    ([below](#plant-appearance));
+  - **palatability** to grazers (T7) and whether creatures shelter in it.
+
+  v1 ships about 8 real freshwater plants, in the spirit of D8: a fast
+  stem plant (hornwort type, can float rootless), a stem plant that
+  reddens in strong light (rotala type), a bushy branching stem plant, a
+  rosette that spreads by runners (vallisneria or sword type), a carpeting
+  plant (dwarf hairgrass type), a floater (duckweed or frogbit type), a
+  slow low-light epiphyte on wood or rock (anubias or java fern type) and
+  a moss (java moss type, replacing T6's moss material).
+- **Plant table.** As for rigid bodies (§2.1 [Rigid bodies](#rigid-bodies)),
+  each plant cell's `state` holds its **plant id** (1–65535), and the
+  world keeps a plant table in a `BTreeMap` (id → species, age, health,
+  stored energy, cell counts per part, base cell, bounds, parent id,
+  generation), so passes run in id order.
+  - Plant cells use a small set of **generic part materials** shared by
+    every species (root, stem, leaf, blade, rhizome, runner, floating
+    leaf), so species cost no material ids (u8, §2.1). The species comes
+    from the table.
+  - Growth only extends a plant from its own cells, and spacing checks
+    (T6's `alone`) compare plant ids, so two plants of one species
+    growing into each other stay separate.
+  - The part-local position T6 keeps in `state` (distance from where a
+    part began) moves to the variant byte or is derived from the plant's
+    form; T6b fixes the layout.
+  - The table holds age and health, which the grid can't rebuild, so
+    saves store it (§2.6). Ids, part counts and bounds are checked
+    against the grid in tests.
+  - **Cutting and splitting.** Scooping through a plant splits it as it
+    splits a body: at the next tick, the piece still joined to the base
+    keeps the id, and each other 4-connected piece becomes a new plant of
+    the same species (a fragment, parent id set) if the species
+    propagates by fragments and the piece holds a stem or rhizome;
+    otherwise it becomes dead plant matter. A fragment drifts or sinks
+    like a cutting until it roots.
+  - **Health and death.** Health falls while the plant's conditions are
+    outside its ranges and recovers inside them. Low health drops the
+    oldest leaves first, then the whole plant becomes dead plant matter;
+    old age only if the species has a lifespan. Grazing (T7) removes
+    cells and costs health.
+  - **Cap.** A plant population cap per tank, set from measurement in
+    T6b, alongside the creature cap (T9).
+- **Cost.** Plant cells are still visited by random ticks within the
+  budget (§2.1), and a visit looks up its plant's species. A slow **plant
+  update** (each plant about every 5 s of world time, a bounded number of
+  plants per tick) turns what its cells sampled into health and stored
+  energy and decides growth events: new nodes, leaves, branches,
+  runners, seeds. Neither wakes a chunk unless a cell changes. A settled
+  tank with 500 plants across every v1 species stays within the settled
+  tick budget (0.5 ms, §9 T1).
+- <a id="growth-forms"></a>**Growth forms.** A form is a small growth
+  program in Rust, parametrised by the species TOML: new species are
+  data, new forms are code. Forms are cheap and deterministic, not a
+  general L-system.
+  - **Stem:** an upright stem with leaves at nodes every `internode`
+    cells (opposite or alternate, with length and angle), side shoots
+    from nodes with probability `branching` (bushy species), topping out
+    at the surface and trailing along it. A rootless variant anchors
+    loosely or floats (hornwort type).
+  - **Rosette:** a crown at the substrate grows `blades` blades of a
+    given length, width (1–2 cells) and lean; spreads by runners.
+  - **Carpet:** low tufts; runners creep through the top substrate layer
+    and sprout a new tuft every `spacing` cells.
+  - **Floater:** leaves in the top water row under the air band, with
+    roots hanging `root_length` cells; buds new plants alongside, drifts
+    with the current and shades what is below it through the light field.
+    Whether floaters hold to the surface by a rule or as buoyant bodies is
+    settled in T6c.
+  - **Epiphyte and mat:** attaches to rock, driftwood or glued bodies by
+    a creeping rhizome with leaves (anubias type) or as a mat (moss), and
+    falls off when nothing holds it. Whether a plant on a moving body
+    moves with it or is torn off is settled in T6c.
+  - **Propagation:** runners and buds make child plants (parent id set);
+    mature plants of seeding species drop seeds now and then; the palette
+    pours a species' seeds or cuttings; fragments come from cuts.
+- <a id="plant-appearance"></a>**Appearance.** Effects are computed at
+  render time where possible, so a change in a plant's look costs no
+  chunk wakes and no cell rewrites.
+  - Each species has a **colour ramp per part** (about 6 shades) in a
+    species palette texture.
+  - **Per cell** (the variant byte): a shade from position and age, so
+    new growth is lighter, older leaves darker and tips differ from
+    bases, plus noise.
+  - **Per plant** (a plant texture with one texel per plant id, written
+    by the plant update): health tints the whole plant, from vigorous to
+    pale (nutrient shortage), yellowing, then brown and translucent as it
+    dies; and species colouration, such as reddening in strong light
+    with low nutrients (rotala type).
+  - **Night:** leaves can fold or dim by time of day (render only, like
+    the day/night tint).
+  - **Pearling:** under strong light and high CO₂ a healthy plant
+    releases small oxygen bubbles from leaf cells (a sim effect using the
+    air-bubble material, at a capped rate).
+  - **Sway:** leaves and blades shift by a cell in the current or a
+    gentle wave. It is render-only but needs frames when nothing else
+    changes, which §6 otherwise avoids. ❓ Default: off, a setting,
+    capped at 10 fps, and off on battery, in the saver and while hidden.
+  - **Mechanism:** the cell texture widens from `Rg8Unorm` (material,
+    variant) to `Rgba8Unorm` (material, variant, state), so the shader
+    reads a plant cell's id and looks up its plant texel (a 256×256
+    texture covers every id) and its species ramp. This stays within the
+    WebGL2 limits (§3.5). It doubles the bytes of each dirty-rectangle
+    upload; 🔍 T6b measures that against the §6.1 budgets.
+- **Interaction.** The palette gets one plants slot with a species picker
+  (the palette strip is short, §9 T4) in `desktank window` and on the
+  web, pouring that species' seeds or cuttings. Inspect shows species,
+  age, health, size and what is limiting growth (for example, "light too
+  low"). The water-quality score counts plant cells from the table.
 
 ## 3. Display modes per platform
 
@@ -813,7 +955,7 @@ crates/
   desktank-saver-mac # macOS .saver bundle (ScreenSaverView subclass).
   desktank-web       # web host (wasm-bindgen): page lifecycle, rAF loop, input, IndexedDB,
                      # in-page menu. Today a canvas-2D demo of the sim (WB0).
-assets/              # materials/*.toml, reactions.toml, species/*.toml, sprites (PNG atlases + source files)
+assets/              # materials/*.toml, reactions.toml, plants/*.toml, species/*.toml, sprites (PNG atlases + source files)
 ```
 
 Dependency direction: `sim ← render ← platform ← {desktank,
@@ -862,7 +1004,9 @@ directory for custom materials and species is a stretch goal.
   RNG streams (§2.1) keep the parallel pass deterministic. One thread is
   the default.
 - **Rendering**: each tick, the dirty rectangles of the cell grid are
-  copied into an `R8G8` texture (material, variant). A fragment shader
+  copied into an `R8G8` texture (material, variant); from T6b an `RGBA8`
+  texture (material, variant, state) plus a per-plant texture (§2.7
+  [Plant appearance](#plant-appearance)). A fragment shader
   maps material and variant to a palette colour, then applies lighting:
   quantised pixel-art caustics, day/night, and plant shadow. Creatures
   are instanced sprites from an atlas. Their position is interpolated
@@ -1236,6 +1380,53 @@ Each package depends only on the packages before it.
 
   *Done:* N = 150 (measured 185–235); mechanisms and numbers in §2.2 and
   §2.3 (*T6*).
+- [ ] **T6b Plant individuals and species** (D18, §2.7). The plant table
+  and plant ids in cell `state`; generic part materials; species TOML in
+  `assets/plants/` with preference ranges, growth rate, size, hardiness,
+  propagation and colour ramps; T6's plant and moss become the first two
+  species (stem form only, today's behaviour), plus a second stem species
+  with different preferences; health and death; splitting by scoop; the
+  `Rgba8Unorm` cell texture and the per-plant texture with the health
+  tint; the plants palette slot with a species picker (window and web);
+  inspect shows species, age, health, size and the limiting factor; the
+  water-quality score counts from the table; the population cap.
+  *Accept:*
+  - two touching plants of one species keep separate ids, sizes and
+    health, and scooping one never changes the other;
+  - in one tank, species A outgrows species B under strong light and B
+    outgrows A under weak light, following their ranges;
+  - scooping through a stem gives two plants, or a plant and dead plant
+    matter, as the species says, and the table always matches the grid;
+  - a starving plant's tint changes without waking a chunk or rewriting
+    its cells;
+  - the T6 acceptance tests still pass;
+  - same seed and script give the same state hash; the T1 and T5 bench
+    budgets hold, with a 500-plant settled case in the criterion bench;
+    the cost of the wider texture upload is measured and recorded.
+- [ ] **T6c Growth forms and propagation** (§2.7
+  [Growth forms](#growth-forms)). Stems with branching and surface
+  trailing, rosettes, carpets, floaters, epiphytes and mats; runners,
+  buds, fragments and seeds; the v1 species set (about 8). *Accept:*
+  - for each form, a seeded grow captures to a reference image;
+  - runners and buds make child plants with the parent id set;
+  - floaters stay in the top water row, drift with the current and
+    measurably reduce the light below them;
+  - epiphytes and mats grow only on what holds them, and fall off when
+    it is gone;
+  - a GIF per form in the PR;
+  - the settled bench budget holds with every v1 species growing.
+- [ ] **T6d Plant appearance effects** (§2.7
+  [Appearance](#plant-appearance)). Per-part colour ramps with age and
+  position shades, health tints, colouration in strong light, night
+  folding, pearling and the optional sway. *Accept:*
+  - reference images for a healthy, a starving and a strongly lit red
+    plant;
+  - pearling appears only above its light and CO₂ thresholds, at no more
+    than its capped rate;
+  - sway is off by default; with it on, CPU and GPU stay within budget at
+    its frame cap, and it draws nothing on battery or while hidden;
+  - with sway off, a settled planted tank draws no extra frames (a
+    frame-count test).
 - [ ] **T7 Creatures.** Species TOML (including depth and surface
   needs), the sprite atlas pipeline with placeholder art (D11), steering
   (wander, schooling, zones, bottom-walking, surface-grazing,
@@ -1478,7 +1669,10 @@ Each package depends only on the packages before it.
 
 1. F1, then P1 and T1 in parallel.
 2. T2, T3, then T4, T4b and T5 to T10 in order. WB1 slots in after T3, WB2 after
-   T4, and WB3 and WB4 after T8.
+   T4, and WB3 and WB4 after T8. T6b, T6c and T6d follow T6: T6b must
+   land before T8 (the save format includes the plant table and the cell
+   meaning of `state`); T6c and T6d come after T6b and can run alongside
+   T7.
 3. O3, then O1-Mac, then O2, then O5.
 4. W1, then S3, then S2, then the rest.
 
@@ -1524,6 +1718,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal. |
 | D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
 | D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole without rotating and rests on substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
+| D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
