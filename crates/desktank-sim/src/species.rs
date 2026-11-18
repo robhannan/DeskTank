@@ -372,7 +372,7 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
         .ok_or("a sprite needs at least one frame")?;
     let height = first.len();
     let width = first.first().map_or(0, |r| r.chars().count());
-    if !(1..=MAX_SPRITE_SIDE).contains(&width) || !(1..=MAX_SPRITE_SIDE).contains(&height) {
+    if !(2..=MAX_SPRITE_SIDE).contains(&width) || !(2..=MAX_SPRITE_SIDE).contains(&height) {
         return Err("sprite sides must be 2..=32 texels");
     }
     if width % TEXELS_PER_CELL != 0 || height % TEXELS_PER_CELL != 0 {

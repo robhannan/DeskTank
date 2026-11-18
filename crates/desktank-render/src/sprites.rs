@@ -5,9 +5,10 @@
 //! the palette). Each frame, every creature becomes one instance: its
 //! top-left cell, on-screen size, atlas frame, mirror and quarter turns,
 //! drawn as a quad by the sprite pipeline at the grid's cell scale, with
-//! [`TEXELS_PER_CELL`] texels per cell side (half a cell per texel). A crawler on a wall is turned a quarter, so its quad
-//! swaps width and height and the shader turns the texel lookup; quarter
-//! turns keep the pixel art crisp. WebGL2-safe: a per-instance vertex
+//! [`TEXELS_PER_CELL`] texels per cell side (half a cell per texel). A
+//! crawler on a wall is turned a quarter, so its quad swaps width and
+//! height and the shader turns the texel lookup; quarter turns keep the
+//! pixel art crisp. WebGL2-safe: a per-instance vertex
 //! buffer, no storage buffers.
 
 use desktank_sim::{SpeciesTable, TEXELS_PER_CELL, World};

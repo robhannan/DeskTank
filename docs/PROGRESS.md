@@ -149,3 +149,5 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Add `.gitattributes` (`* text=auto eol=lf`) to guard Windows `core.autocrlf` checkouts (PR #3 review).
 - Dependabot: add `groups` / `open-pull-requests-limit` once real dependencies land (PR #3 review).
 - Release symbolication: consider `strip = "debuginfo"` plus split debug info (dSYM/PDB) kept out of the release archive, so crash reports can be symbolicated (PR #3 review).
+- Palette at grid scale 1: `PaletteLayout::fit` shrinks only to fit the width, so in a very short window the two rows can run past the bottom (PR #23 review).
+- Sprite tests: assert texel bounds for every turn and mirror on the CPU (the shader maths is covered only by the creatures and climbing render references).

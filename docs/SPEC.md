@@ -75,8 +75,9 @@ It can run as any combination of four desktop **display modes**, or in a browser
 ### 2.1 World model
 
 - **Grid.** The tank is a grid of cells covering the display. Each cell
-  is a configurable number of screen pixels: 4×4 by default (2–8
-  allowed, D1), which gives 640×360 cells at 2560×1440.
+  is a configurable number of screen pixels: 4×4 by default (2, 4, 6 or
+  8 allowed, D1; even so sprite texels stay square, D19), which gives
+  640×360 cells at 2560×1440.
   - The screen edges are the tank walls, and the bottom edge is the
     floor.
   - The **water level** is configurable (D12): default about 96% of the
