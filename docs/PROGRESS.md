@@ -106,6 +106,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T6b: species colour ramps are loaded but not drawn yet (plants use the part material's palette, tinted by health); T6d adds the species palette texture, so rotala doesn't redden yet.
 - T6b: save files (T8) must store the plant table (age, health, energy, stress, parent, generation, next id); sample sums and update bookkeeping can be reset on load.
 - T6b: T7b's grazers eat algae and detritus only; grazing plant cells (removing cells and costing health, by palatability) is open.
+- T6b: a fragment cut from a plant keeps its place instead of drifting or sinking like a cutting until it roots (SPEC §2.7); it needs a decision on how a piece of plant moves (as a rigid body, or turned back into cuttings), likely with T6c's floaters (PR #22 review).
+- T6b: the plant update and tidy scan a plant's whole bounding box for its cells, so a mat spread thinly over a wide area costs more per update than its cell count; a per-plant cell list would bound it (PR #22 review).
 - T6b: the plant update is round-robin, so above 1600 plants each one is updated less often than every 5 s; fine at the 2048 cap.
 - T6: leaves grow only sideways (a fern-like ladder) and stems don't branch; diagonal leaves, branching and per-species plant shapes are open.
 - T6: day and night are lighting only; the window takes `--time` but doesn't follow the local clock (std has no time zone; needs a small platform call or crate), and photosynthesis doesn't follow the light schedule. The web page doesn't set the time of day yet (WB2 or later).

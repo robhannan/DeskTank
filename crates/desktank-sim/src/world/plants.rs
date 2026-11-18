@@ -48,8 +48,8 @@ use crate::plants::{
 };
 
 /// Most plants a tank holds by default (SPEC §2.7 *Cap*), set from
-/// measurement in T6b: a settled tank with 500 plants ticks in about
-/// 10 µs, and every plant update stays bounded per tick, so the cap guards
+/// measurement in T6b: a settled tank with 528 plants ticks in about
+/// 11 µs, and every plant update stays bounded per tick, so the cap guards
 /// the table and the tint texture rather than the tick.
 pub const MAX_PLANTS: usize = 2048;
 /// World seconds between two updates of one plant (while the tank holds at
@@ -151,16 +151,20 @@ pub(super) struct Plant {
     idle: u8,
 }
 
+/// Health steps that change a plant's tint: a declining plant asks for a
+/// new tint (and a frame) every 1/32 of health, not every 1/255.
+const TINT_STEPS: f32 = 32.0;
+
 impl Plant {
     fn tint_key(&self) -> u8 {
-        tint_byte(self.health)
+        tint_step(self.health)
     }
 }
 
-/// The health as the tint texture stores it.
+/// The health step the tint follows.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped
-fn tint_byte(health: f32) -> u8 {
-    (health.clamp(0.0, 1.0) * 255.0).round() as u8
+fn tint_step(health: f32) -> u8 {
+    (health.clamp(0.0, 1.0) * TINT_STEPS).round() as u8
 }
 
 /// Plant state owned by the world.
@@ -176,6 +180,8 @@ pub(super) struct Plants {
     dead: Option<MaterialId>,
     water: Option<MaterialId>,
     next_id: u16,
+    /// Some plant is marked for a tidy.
+    any_pending: bool,
     /// Next id the plant update starts from.
     cursor: u16,
     cap: usize,
@@ -217,6 +223,7 @@ impl Plants {
             dead,
             water,
             next_id: 1,
+            any_pending: false,
             cursor: 0,
             cap: MAX_PLANTS,
             version: 0,
@@ -399,13 +406,18 @@ impl World {
             h.write(&(p.base as u64).to_le_bytes());
             h.write(&p.parent.to_le_bytes());
             h.write(&p.generation.to_le_bytes());
+            h.write(&p.last_update.to_le_bytes());
+            h.write(&[p.idle]);
         }
+        h.write(&self.plants.next_id.to_le_bytes());
+        h.write(&self.plants.cursor.to_le_bytes());
     }
 
     /// Records that a cell of plant `id` was overwritten.
     pub(super) fn plant_removed(&mut self, id: u16) {
         if let Some(p) = self.plants.table.get_mut(&id) {
             p.pending = true;
+            self.plants.any_pending = true;
         }
     }
 
@@ -429,6 +441,7 @@ impl World {
             p.parts[part.index()] += 1;
             p.bounds = p.bounds.union(point(x, y));
             p.pending = true;
+            self.plants.any_pending = true;
         }
         id
     }
@@ -476,6 +489,10 @@ impl World {
 
     /// Tidies every plant edits touched (see the module docs).
     pub(super) fn tidy_plants(&mut self) {
+        if !self.plants.any_pending {
+            return;
+        }
+        self.plants.any_pending = false;
         let pending: Vec<u16> = self
             .plants
             .table
@@ -1070,6 +1087,7 @@ impl World {
         self.make_dead(&leaves);
         if let Some(p) = self.plants.table.get_mut(&id) {
             p.pending = true;
+            self.plants.any_pending = true;
         }
     }
 

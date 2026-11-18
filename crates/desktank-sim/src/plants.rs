@@ -641,9 +641,9 @@ fn validate(
         }
     }
     let g = &d.growth;
-    if !(g.rate.is_finite() && g.rate > 0.0 && g.rate <= 600.0) {
+    if !(g.rate.is_finite() && g.rate > 0.0 && g.rate <= MAX_RATE) {
         return Err(invalid(
-            "growth rate must be within (0, 600] cells per minute",
+            "growth rate must be within (0, 90] cells per minute",
         ));
     }
     if !(1..=100_000).contains(&g.size) {
