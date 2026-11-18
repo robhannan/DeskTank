@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Frame-interval benchmark for the web version (SPEC §9 WB1): loads the
 // built site in a real browser window at DPR 2, pours continuously for N
-// seconds, and prints the p50/p95/max interval between rAF callbacks (the
-// page's frame cadence) and between drawn frames, from performance.now().
+// seconds, and prints the p50/p95/max interval between loop callbacks and
+// between drawn frames, from performance.now(). Since WB2 the loop runs on
+// rAF only while a frame is due or input arrives and otherwise sleeps on a
+// timer until the next 20 Hz tick, so loop intervals are no longer vsync.
 //
 //   pnpm build:web && pnpm bench:web [chrome|chromium|firefox|webkit] [seconds]
 import { chromium, firefox, webkit } from "@playwright/test";
@@ -62,7 +64,7 @@ try {
     return `n=${d.length} p50 ${q(0.5)} ms, p95 ${q(0.95)} ms, max ${d.at(-1)?.toFixed(1)} ms`;
   };
   console.log(`${which} ${browser.version()} (${info.backend}), DPR ${info.dpr}, canvas ${info.canvas.join("×")}, grid ${info.grid.join("×")}, ${seconds} s pouring`);
-  console.log(`  rAF interval:   ${stats(raf)}`);
+  console.log(`  loop interval:  ${stats(raf)}`);
   console.log(`  drawn interval: ${stats(drawn)}`);
 } finally {
   await browser.close();

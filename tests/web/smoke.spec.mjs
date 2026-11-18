@@ -72,6 +72,7 @@ test("reset and a new seed start a fresh tank that draws", async ({ page }) => {
   await page.getByRole("button", { name: "Reset" }).click();
   await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn())).toBeGreaterThan(0);
   const hash = await page.evaluate(() => window.desktank.tank.stateHash());
+  await page.getByRole("button", { name: "Settings" }).click();
   await page.locator("#seed").fill("42");
   await page.locator("#seed").dispatchEvent("change");
   await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn())).toBeGreaterThan(0);
