@@ -6,6 +6,8 @@
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::tools::PaletteGroup;
+
 /// Index of a material in the [`MaterialTable`]; stored in every cell.
 ///
 /// IDs are fixed in each material's TOML file so saves stay stable when
@@ -102,6 +104,9 @@ pub struct Material {
     pub passable: bool,
     /// Placeholder palette colour (sRGB).
     pub colour: [u8; 3],
+    /// The palette group it is poured from, or `None` if it isn't offered
+    /// for pouring (air, the tissue plants grow, device cells).
+    pub palette: Option<PaletteGroup>,
 }
 
 /// Error loading or validating materials.
@@ -157,6 +162,7 @@ struct MaterialDef {
     #[serde(default)]
     passable: bool,
     colour: String,
+    palette: Option<PaletteGroup>,
 }
 
 /// The palette embedded in the binary (SPEC T1, T5, T6). Our own values.
@@ -327,6 +333,11 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
     if d.passable && !slides {
         return Err(invalid("passable only applies to powder and floating"));
     }
+    if d.palette.is_some_and(|g| !g.holds_materials()) {
+        return Err(invalid(
+            "palette must be substrate, water, food, plants or waste",
+        ));
+    }
     Ok(Material {
         id: MaterialId(d.id),
         name: d.name.clone(),
@@ -340,6 +351,7 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         opacity,
         passable: d.passable,
         colour,
+        palette: d.palette,
     })
 }
 
@@ -403,5 +415,20 @@ mod tests {
             MaterialTable::from_toml_sources(&[dangling]),
             Err(MaterialError::UnknownTarget { .. })
         ));
+        let base = "id = 1\nname = \"a\"\nclass = \"solid\"\ndensity = 1.0\ncolour = \"#000000\"";
+        assert!(matches!(
+            MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"tools\"")]),
+            Err(MaterialError::Invalid { .. })
+        ));
+        assert!(matches!(
+            MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"nowhere\"")]),
+            Err(MaterialError::Parse { index: 0, .. })
+        ));
+        let rock = MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"substrate\"")])
+            .unwrap();
+        assert_eq!(
+            rock.get(MaterialId(1)).unwrap().palette,
+            Some(PaletteGroup::Substrate)
+        );
     }
 }

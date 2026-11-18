@@ -1,6 +1,8 @@
 # Floats on the surface for `float_time` seconds, then sinks like a light powder.
 id = 30
 name = "flake_food"
+# The palette group it is poured from (SPEC §2.5).
+palette = "food"
 class = "floating"
 density = 1.1
 # Density while floating: lighter than water, heavier than air.

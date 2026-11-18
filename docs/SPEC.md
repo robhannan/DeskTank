@@ -482,7 +482,14 @@ target computes the same bits.
     the overlay. In wallpaper-only mode the tank is temporarily drawn in
     that window, with opaque water, so you can see what you are pouring
     through your other windows;
-  - a small pixel-art palette appears in a screen corner.
+  - a small pixel-art palette appears in a screen corner. It is grouped
+    (Tools, Substrate, Water, Food, Plants, Waste, Devices, Creatures):
+    a row of group tabs over the open group's items, with number keys
+    picking within the group and a key (`G` / `Shift+G`) or scrolling
+    over the palette switching group. A material's group is data
+    (`palette = "…"` in its TOML; materials without one aren't
+    offered); `desktank_sim::tools::Tools::palette_groups` gives every
+    host the same groups.
 - **Tools:**
   - **pour** the selected material: left-drag, with the scroll wheel
     setting brush size;
@@ -1662,7 +1669,9 @@ Each package depends only on the packages before it.
   shader draws the brush outline. Touch strokes start once a finger moves
   8 CSS px, so a long-press (500 ms) or a second finger never pours first;
   a tap uses the tool once. The reference-phone check is left to the
-  owner, see PROGRESS.)*
+  owner, see PROGRESS. Later the palette was grouped (§2.5): group tabs
+  over the open group's radio group, both wrapping, so nothing scrolls
+  sideways on a phone.)*
 - [ ] **WB3 Web persistence and ownership** (after T8). IndexedDB saves
   using the §2.6 format, save on hide and `pagehide`, autosave,
   `navigator.storage.persist()`, export/import, Web Locks ownership with

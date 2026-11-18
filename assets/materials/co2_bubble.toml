@@ -2,6 +2,8 @@
 # on the way up (`assets/reactions.toml`).
 id = 21
 name = "co2_bubble"
+# The palette group it is poured from (SPEC §2.5).
+palette = "water"
 class = "buoyant"
 density = 0.0015
 dispersion = 1

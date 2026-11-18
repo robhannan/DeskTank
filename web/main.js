@@ -64,9 +64,11 @@ const stepBtn = $("step");
 const seedInput = $("seed");
 const brushInput = $("brush");
 const paletteEl = $("palette");
+const groupsEl = $("groups");
 
 let settings = loadSettings();
 let tank;
+let openGroup; // name of the palette group shown
 let grid; // [scale, columns, rows] of the current tank
 let backend = "";
 let adapter = "";
@@ -186,7 +188,8 @@ function setCanvasSize([w, h]) {
 
 // Swaps in a new tank; the caller attaches graphics to it.
 function replaceTank(next) {
-  const selected = tank?.selected() ?? 0;
+  // A new tank keeps the selection; the first starts on sand.
+  const selected = tank?.selected() ?? next.selected();
   tank?.free();
   tank = next;
   tank.select(selected);
@@ -365,27 +368,50 @@ function label(name) {
 }
 
 // The palette is the sim's (WebTank.palette): materials, tools, devices,
-// creatures.
+// creatures, in groups (WebTank.paletteGroups). The group tabs show one
+// group's items at a time; the selection can be in a closed group.
 function buildPalette() {
   const entries = tank.palette();
   const colours = tank.paletteColours();
+  const groups = tank.paletteGroups().map((g) => g.split(" "));
+  const tabs = [...new Map(groups).entries()];
+  groupsEl.replaceChildren(
+    ...tabs.map(([name, text]) => {
+      const t = document.createElement("button");
+      t.type = "button";
+      t.id = `group-${name}`;
+      t.dataset.group = name;
+      t.setAttribute("role", "tab");
+      t.setAttribute("aria-controls", "palette-panel");
+      t.textContent = text;
+      t.addEventListener("click", () => showGroup(name));
+      return t;
+    }),
+  );
+  let slot = 0;
   paletteEl.replaceChildren(
     ...entries.map((entry, i) => {
       const [kind, name] = entry.split(" ");
+      const group = groups[i][0];
+      slot = i > 0 && groups[i - 1][0] === group ? slot + 1 : 0;
       const b = document.createElement("button");
       b.type = "button";
       b.className = "swatch";
       b.dataset.kind = kind;
       b.dataset.name = name;
+      b.dataset.group = group;
       b.setAttribute("role", "radio");
       const i_ = document.createElement("i");
       if (colours[i]) i_.style.setProperty("--c", colours[i]);
       b.append(i_, label(name));
-      if (i < 10) b.title = `Key ${(i + 1) % 10}`;
+      if (slot < 10) b.title = `Key ${(slot + 1) % 10}`;
       b.addEventListener("click", () => choose(i));
       return b;
     }),
   );
+  // A rebuilt palette (reset, new scale) keeps the open group if it still
+  // exists; the first opens on the selection's.
+  if (!tabs.some(([name]) => name === openGroup)) openGroup = groups[tank.selected()]?.[0] ?? tabs[0]?.[0];
   showSelection();
 }
 
@@ -395,40 +421,79 @@ function choose(i, focus = false) {
   kick();
 }
 
-// Roving tabindex: only the checked radio is in the tab order.
-function showSelection(focus = false) {
-  const selected = tank.selected();
-  [...paletteEl.children].forEach((b, i) => {
-    const on = i === selected;
-    b.setAttribute("aria-checked", String(on));
-    b.tabIndex = on ? 0 : -1;
-    if (on) {
-      // Scroll the strip sideways only, never the page (the strip is the
-      // buttons' offset parent).
-      const [l, r] = [b.offsetLeft, b.offsetLeft + b.offsetWidth];
-      if (l < paletteEl.scrollLeft) paletteEl.scrollLeft = l;
-      else if (r > paletteEl.scrollLeft + paletteEl.clientWidth) paletteEl.scrollLeft = r - paletteEl.clientWidth;
-      if (focus) b.focus({ preventScroll: true });
-    }
-  });
+// Shows group `name`'s items (the selection stays as it is).
+function showGroup(name, focus = false) {
+  openGroup = name;
+  showSelection();
+  if (focus) $(`group-${name}`)?.focus();
 }
 
-// Arrow keys move the selection within the radio group, Home/End jump.
-function paletteKeys(e) {
-  const n = paletteEl.children.length;
-  const at = tank.selected();
-  const next = {
-    ArrowRight: at + 1,
-    ArrowDown: at + 1,
-    ArrowLeft: at - 1,
-    ArrowUp: at - 1,
-    Home: 0,
-    End: n - 1,
-  }[e.key];
+// Opens the group `steps` after (or before) the open one, wrapping.
+function stepGroup(steps, focus = false) {
+  const tabs = [...groupsEl.children];
+  const at = tabs.findIndex((t) => t.dataset.group === openGroup);
+  const n = tabs.length;
+  showGroup(tabs[(((at + steps) % n) + n) % n].dataset.group, focus);
+}
+
+// The open group's buttons.
+const openItems = () => [...paletteEl.children].filter((b) => !b.hidden);
+
+// Roving tabindex: one tab and one radio are in the tab order, the open
+// tab and the checked radio (or, if the selection is in a closed group,
+// the open group's first).
+function showSelection(focus = false) {
+  const selected = tank.selected();
+  const holder = paletteEl.children[selected]?.dataset.group;
+  for (const t of groupsEl.children) {
+    const open = t.dataset.group === openGroup;
+    t.setAttribute("aria-selected", String(open));
+    t.tabIndex = open ? 0 : -1;
+    t.toggleAttribute("data-holds", !open && t.dataset.group === holder);
+  }
+  $("palette-panel").setAttribute("aria-labelledby", `group-${openGroup}`);
+  [...paletteEl.children].forEach((b, i) => {
+    const on = i === selected;
+    b.hidden = b.dataset.group !== openGroup;
+    b.setAttribute("aria-checked", String(on));
+    b.tabIndex = on && !b.hidden ? 0 : -1;
+    if (on && focus) b.focus({ preventScroll: true });
+  });
+  const items = openItems();
+  if (items.length && !items.some((b) => b.tabIndex === 0)) items[0].tabIndex = 0;
+}
+
+// Selects slot `n` of the open group, if it has one.
+function chooseSlot(n, focus = false) {
+  const b = openItems()[n];
+  if (b) choose([...paletteEl.children].indexOf(b), focus);
+}
+
+// Arrow keys: within the tabs, open the next or previous group; within the
+// radio group, select the next or previous item of the open group. Home and
+// End jump to the first and last.
+function arrowStep(e, at, n) {
+  return { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: n - 1 }[e.key];
+}
+
+function groupKeys(e) {
+  const tabs = [...groupsEl.children];
+  const next = arrowStep(e, Math.max(0, tabs.indexOf(document.activeElement)), tabs.length);
   if (next === undefined) return;
   e.preventDefault();
   e.stopPropagation();
-  choose((next + n) % n, true);
+  const n = tabs.length;
+  showGroup(tabs[(next + n) % n].dataset.group, true);
+}
+
+function paletteKeys(e) {
+  const items = openItems();
+  const n = items.length;
+  const next = arrowStep(e, Math.max(0, items.indexOf(document.activeElement)), n);
+  if (next === undefined || !n) return;
+  e.preventDefault();
+  e.stopPropagation();
+  chooseSlot((next + n) % n, true);
 }
 
 // --- Input -------------------------------------------------------------------
@@ -622,6 +687,7 @@ function wireInput() {
   for (const type of ["gesturestart", "gesturechange"]) canvas.addEventListener(type, (e) => e.preventDefault());
 
   paletteEl.addEventListener("keydown", paletteKeys);
+  groupsEl.addEventListener("keydown", groupKeys);
   playBtn.addEventListener("click", () => setRunning(!tank.running()));
   stepBtn.addEventListener("click", step);
   $("feed").addEventListener("click", () => {
@@ -645,10 +711,15 @@ function wireInput() {
     } else if (e.key === "f" || e.key === "F") {
       const next = FIELDS[(FIELDS.indexOf(settings.field) + 1) % FIELDS.length];
       update({ field: next });
+    } else if (e.key === "g" || e.key === "G") {
+      // G opens the next group, Shift+G the previous (as in desktank window;
+      // Shift, not the letter's case, so Caps Lock doesn't flip it). Focus
+      // in the palette moves to the new tab, as its radio may be hidden.
+      const inPalette = paletteEl.contains(e.target) || groupsEl.contains(e.target);
+      stepGroup(e.shiftKey ? -1 : 1, inPalette);
     } else if (/^[0-9]$/.test(e.key)) {
-      // 1–9 are the first nine slots, 0 the tenth (as in desktank window).
-      const slot = (Number(e.key) + 9) % 10;
-      if (slot < paletteEl.children.length) choose(slot);
+      // 1–9 are the open group's first nine slots, 0 the tenth.
+      chooseSlot((Number(e.key) + 9) % 10);
     }
   });
 }

@@ -22,7 +22,8 @@
 //! ([`desktank_render::PaletteLayout`]): touch needs larger targets than the
 //! pixel-art slots, and buttons give the page a keyboard-navigable radio
 //! group. Its items come from [`Tools::palette`], so the page lists exactly
-//! the sim's materials, tools and devices. The brush outline is the shader's
+//! the sim's materials, tools and devices, and [`WebTank::palette_groups`]
+//! gives each one's group for the page's group tabs. The brush outline is the shader's
 //! ([`Tank::set_cursor`]).
 //!
 //! `unsafe_code`: the workspace denies it, and this crate needs no
@@ -34,7 +35,9 @@
 use core::time::Duration;
 
 use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
-use desktank_sim::tools::{self, Button, Inspection, Outcome, PaletteItem, Tool, Tools};
+use desktank_sim::tools::{
+    self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
+};
 use desktank_sim::{Brush, FieldKind, MaterialTable, Script, World, WorldConfig};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -112,6 +115,8 @@ pub struct WebTank {
     tools: Tools,
     avoid_cursor: bool,
     palette: Vec<PaletteItem>,
+    /// Each palette item's group.
+    groups: Vec<PaletteGroup>,
     running: bool,
     /// What inspect found, not yet taken by [`WebTank::take_inspection`].
     inspection: String,
@@ -218,6 +223,18 @@ impl WebTank {
                 let (kind, name) = self.describe(item);
                 format!("{kind} {name}")
             })
+            .collect()
+    }
+
+    /// Each palette item's group, as `"<name> <label>"` (e.g.
+    /// `"substrate Substrate"`); items of a group are consecutive, groups
+    /// in palette order.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = paletteGroups))]
+    #[must_use]
+    pub fn palette_groups(&self) -> Vec<String> {
+        self.groups
+            .iter()
+            .map(|g| format!("{} {}", g.name(), g.label()))
             .collect()
     }
 
@@ -618,12 +635,16 @@ impl WebTank {
             .materials()
             .id("sand")
             .ok_or_else(|| "no sand material".to_owned())?;
-        let palette = Tools::palette(&world);
+        let (groups, palette) = Tools::palette_groups(&world)
+            .into_iter()
+            .flat_map(|(g, items)| items.into_iter().map(move |i| (g, i)))
+            .unzip();
         Ok(Self {
             tank: Tank::new(world, TankConfig::default()),
             tools: Tools::new(sand),
             avoid_cursor: false,
             palette,
+            groups,
             running: true,
             inspection: String::new(),
             wake_at: Duration::ZERO,

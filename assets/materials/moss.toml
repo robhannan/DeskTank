@@ -2,6 +2,8 @@
 # falls off as dead plant matter.
 id = 75
 name = "moss"
+# The palette group it is poured from (SPEC §2.5).
+palette = "plants"
 class = "solid"
 density = 1.1
 opacity = 0.4

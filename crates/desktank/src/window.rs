@@ -9,8 +9,11 @@
 //! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
 //! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
 //! drag scoops, the scroll wheel or a two-finger trackpad scroll sets the
-//! brush size, and clicking the palette in the top-left corner (or keys 1–9,
-//! then 0 for the tenth slot) selects a material, device or tool. A device
+//! brush size. The palette in the top-left corner is grouped: its top row
+//! picks a group (click a tab, scroll over the palette, or `G` / `Shift+G`
+//! for the next or previous group) and the row below lists that group's
+//! materials, devices, tools or creatures; click one (or press 1–9, then 0
+//! for the tenth) to select it. A device
 //! (bubbler, filter outlet) is placed once per click. `F` cycles a debug
 //! tint of the nutrient, CO₂ and light fields; `W` changes the water and
 //! `Q` shows the water quality in the title bar. `--time HH:MM` lights the
@@ -34,10 +37,10 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use desktank_platform::process_stats;
 use desktank_render::{
-    BrushPreview, Gpu, GpuOptions, Palette, Tank, TankConfig, TankSurface, wgpu,
+    BrushPreview, Gpu, GpuOptions, Palette, PaletteHit, Tank, TankConfig, TankSurface, wgpu,
 };
 use desktank_sim::UnmetNeed;
-use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tools};
+use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tools};
 use desktank_sim::{FieldKind, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -163,15 +166,20 @@ struct Running {
     cursor: Option<(f64, f64)>,
     avoid_cursor: bool,
     tools: Tools,
-    palette: Vec<PaletteItem>,
+    /// The palette's groups and their items.
+    groups: Vec<(PaletteGroup, Vec<PaletteItem>)>,
+    /// Index of the group the palette shows.
+    open: usize,
+    /// Whether Shift is held.
+    shift: bool,
     /// Trackpad scroll (pixels) not yet turned into a brush-size step.
     scroll: f64,
     /// Wheel scroll (lines) not yet turned into a step; Windows precision
     /// touchpads send fractions of a line.
     scroll_lines: f64,
-    /// Palette selection last given to the tank (`usize::MAX` before the
+    /// Open group and selection last given to the tank (`None` before the
     /// first).
-    shown_selection: Option<usize>,
+    shown: Option<(usize, Option<(usize, usize)>)>,
 }
 
 impl Running {
@@ -202,7 +210,7 @@ impl Running {
         let mut world = World::new(config, MaterialTable::builtin()?)?;
         scene::starter(&mut world, SEED)?;
         let tools = Tools::new(scene::material(&world, "sand")?);
-        let palette = Tools::palette(&world);
+        let groups = Tools::palette_groups(&world);
         let info = gpu.adapter.get_info();
         eprintln!(
             "desktank window: {} ({:?}), {}x{} cells, {}x{} px, {:?}",
@@ -224,11 +232,15 @@ impl Running {
             cursor: None,
             avoid_cursor: false,
             tools,
-            palette,
+            groups,
+            open: 0,
+            shift: false,
             scroll: 0.0,
             scroll_lines: 0.0,
-            shown_selection: Some(usize::MAX),
+            shown: None,
         };
+        // Open the group holding the starting material.
+        s.open = s.selection().map_or(0, |(g, _)| g);
         s.sync_overlay();
         Ok(s)
     }
@@ -278,12 +290,17 @@ impl Running {
     fn pressed(&mut self, button: Button) {
         let size = self.surface.size();
         if let (Some((px, py)), Some(p)) = (self.cursor, self.tank.palette_layout(size)) {
-            if let Some(&item) = p.hit(px, py).and_then(|i| self.palette.get(i)) {
-                self.tools.select(item);
-                return;
-            }
-            if p.contains(px, py) {
-                return;
+            match p.hit(px, py) {
+                Some(PaletteHit::Tab(g)) => {
+                    self.open = g;
+                    return;
+                }
+                Some(PaletteHit::Item(i)) => {
+                    self.select_slot(i);
+                    return;
+                }
+                None if p.contains(px, py) => return,
+                None => {}
             }
         }
         if let Some(cell) = self.cursor_cell() {
@@ -353,21 +370,68 @@ impl Running {
             }
         };
         #[allow(clippy::cast_possible_truncation)] // clamped to a small range
-        self.tools.resize(steps.clamp(-100.0, 100.0) as i32);
+        let steps = steps.clamp(-100.0, 100.0) as i32;
+        let over_palette = self
+            .cursor
+            .zip(self.tank.palette_layout(self.surface.size()));
+        if over_palette.is_some_and(|((px, py), p)| p.contains(px, py)) {
+            // Over the palette: scroll down for the next group.
+            self.step_group(-steps);
+        } else {
+            self.tools.resize(steps);
+        }
     }
 
-    /// Pushes the palette selection and brush outline to the tank; it only
-    /// asks for a frame if they changed.
+    /// Opens the group `steps` after (or before) the open one, wrapping.
+    fn step_group(&mut self, steps: i32) {
+        let n = i64::try_from(self.groups.len()).unwrap_or(1).max(1);
+        let open = i64::try_from(self.open).unwrap_or(0);
+        self.open = usize::try_from((open + i64::from(steps)).rem_euclid(n)).unwrap_or(0);
+    }
+
+    /// Selects slot `i` of the open group, if it has one.
+    fn select_slot(&mut self, i: usize) {
+        if let Some(&item) = self
+            .groups
+            .get(self.open)
+            .and_then(|(_, items)| items.get(i))
+        {
+            self.tools.select(item);
+        }
+    }
+
+    /// The selection's group and its index in that group.
+    fn selection(&self) -> Option<(usize, usize)> {
+        self.groups.iter().enumerate().find_map(|(g, (_, items))| {
+            let i = items.iter().position(|&i| self.tools.is_selected(i))?;
+            Some((g, i))
+        })
+    }
+
+    /// Pushes the palette (open group and selection) and brush outline to
+    /// the tank; it only asks for a frame if they changed.
     fn sync_overlay(&mut self) {
-        let selected = self.palette.iter().position(|&i| self.tools.is_selected(i));
-        if self.shown_selection != selected {
-            self.shown_selection = selected;
+        let selected = self.selection();
+        let shown = (self.open, selected);
+        if self.shown != Some(shown) {
+            if self.shown.is_none_or(|(_, s)| s != selected) {
+                // A new tool clears the last inspection from the title.
+                self.window.set_title("DeskTank");
+            }
+            self.shown = Some(shown);
             self.tank.set_palette(Some(Palette {
-                items: self.palette.clone(),
+                tabs: self
+                    .groups
+                    .iter()
+                    .filter_map(|(_, items)| items.first().copied())
+                    .collect(),
+                open: self.open,
+                items: self
+                    .groups
+                    .get(self.open)
+                    .map_or_else(Vec::new, |(_, items)| items.clone()),
                 selected,
             }));
-            // A new tool clears the last inspection from the title.
-            self.window.set_title("DeskTank");
         }
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
@@ -445,6 +509,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
+            WindowEvent::ModifiersChanged(m) => s.shift = m.state().shift_key(),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
@@ -485,11 +550,16 @@ impl ApplicationHandler for App {
                             e.algae_coverage * 100.0
                         ));
                     }
+                    // G opens the next group, Shift+G the previous one
+                    // (Shift, not the letter's case: Caps Lock doesn't flip it).
+                    Key::Character(c) if c.eq_ignore_ascii_case("g") => {
+                        s.step_group(if s.shift { -1 } else { 1 });
+                    }
                     Key::Character(c) => {
-                        // 1–9 are the first nine slots, 0 the tenth.
-                        let slot = c.parse::<usize>().ok().map(|n| (n + 9) % 10);
-                        if let Some(&item) = slot.and_then(|i| s.palette.get(i)) {
-                            s.tools.select(item);
+                        // 1–9 are the open group's first nine slots, 0 the
+                        // tenth.
+                        if let Ok(n) = c.parse::<usize>() {
+                            s.select_slot((n + 9) % 10);
                         }
                     }
                     _ => {}

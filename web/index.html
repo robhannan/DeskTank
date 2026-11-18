@@ -65,13 +65,16 @@
     </section>
 
     <section class="controls tools" aria-label="Tools">
-      <div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div>
+      <div class="palette-box">
+        <div id="groups" class="groups" role="tablist" aria-label="Tool groups"></div>
+        <div id="palette-panel" role="tabpanel"><div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div></div>
+      </div>
       <label class="brush">Brush <input id="brush" type="range" min="0" max="24" value="3"> <output id="brush-out">3</output></label>
     </section>
 
     <p id="stats" class="stats" aria-live="off">fps – · tick – · awake chunks – · tick time –</p>
 
-    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush. Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>1</kbd>–<kbd>0</kbd> tools · <kbd>[</kbd> <kbd>]</kbd> brush · <kbd>F</kbd> field overlay · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
+    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush. Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>1</kbd>–<kbd>0</kbd> tools in the group · <kbd>G</kbd> / <kbd>Shift</kbd>+<kbd>G</kbd> next/previous group · <kbd>[</kbd> <kbd>]</kbd> brush · <kbd>F</kbd> field overlay · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
 
     <section class="about">
       <h2>What is this?</h2>
