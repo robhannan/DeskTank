@@ -92,6 +92,39 @@ test.describe("mouse", () => {
     expect(errors).toEqual([]);
   });
 
+  test("creatures: add, inspect, net and lift out", async ({ page }) => {
+    const errors = watchErrors(page);
+    await openPaused(page);
+    const [w, h] = await gridSize(page);
+    const [x, y] = [Math.round(w / 2), Math.round(h / 2)];
+    const creatures = () => page.evaluate(() => window.desktank.tank.creatures());
+
+    // A palette slot adds one per click, in open water right where clicked.
+    await choose(page, "Neon tetra");
+    let p = await cellPoint(page, x, y);
+    await page.mouse.click(p.x, p.y);
+    expect(await creatures()).toBe(1);
+
+    // Inspect names it and the cell under it; that changes nothing.
+    const hash = await stateHash(page);
+    await choose(page, "Inspect");
+    p = await cellPoint(page, x, y);
+    await page.mouse.click(p.x, p.y);
+    await expect(page.locator("#inspect")).toHaveText(/^Neon tetra #1 · over Water · cell \d+, \d+$/);
+    expect(await stateHash(page)).toBe(hash);
+
+    // The net carries it up out of the water: it's gone.
+    await choose(page, "Net");
+    p = await cellPoint(page, x, y);
+    await page.mouse.move(p.x, p.y);
+    await page.mouse.down();
+    const top = await cellPoint(page, x, 0);
+    await page.mouse.move(top.x, top.y, { steps: 8 });
+    await page.mouse.up();
+    expect(await creatures()).toBe(0);
+    expect(errors).toEqual([]);
+  });
+
   test("the wheel sizes the brush and doesn't scroll or zoom the page", async ({ page }) => {
     await open(page, "?backend=webgl2");
     const canvas = page.locator("#tank");
@@ -252,10 +285,13 @@ test("the palette lists the sim's tools and navigates with the keyboard", async 
   const names = await radios.evaluateAll((els) => els.map((b) => `${b.dataset.kind} ${b.dataset.name}`));
   expect(names).toEqual(entries);
   const materials = await page.evaluate(() => window.desktank.tank.materials());
+  const species = await page.evaluate(() => window.desktank.tank.species());
   for (const e of entries) {
     const [kind, name] = e.split(" ");
-    if (kind !== "tool") expect(materials, e).toContain(name);
+    if (kind === "creature") expect(species, e).toContain(name);
+    else if (kind !== "tool") expect(materials, e).toContain(name);
   }
+  expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
 
   // One radio is in the tab order; arrows move the selection.
   await expect(page.locator('#palette [tabindex="0"]')).toHaveCount(1);
