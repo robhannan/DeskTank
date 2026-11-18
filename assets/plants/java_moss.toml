@@ -25,7 +25,12 @@ tolerance = 30.0
 decline = 0.01
 recovery = 0.02
 
+# A dark mat with lighter growing tips at its fringe.
 [colours]
 root = ["#3a4a2a"]
-stem = ["#234f20", "#2f6b2a", "#3c8034"]
+stem = ["#1b3d19", "#234f20", "#2f6b2a", "#3c8034", "#4f9645"]
 leaf = ["#2f6b2a", "#3c8034", "#4a9440"]
+
+# A soft, fuzzy mat.
+[look]
+stem = "fuzz"

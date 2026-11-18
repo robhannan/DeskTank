@@ -54,9 +54,14 @@ fn busy(seed: u64, ticks: u32) -> World {
         .unwrap();
     let ledge = w.body_at(30, 61).unwrap();
     w.set_anchored(ledge, true);
-    let species: Vec<_> = w.plant_species().iter().map(|s| s.id).collect();
-    for (k, s) in species.into_iter().enumerate() {
-        w.paint_plant(80 + 30 * k as i64, 100, 2, s).unwrap();
+    let species: Vec<_> = w
+        .plant_species()
+        .iter()
+        .map(|s| (s.id, s.default_propagule()))
+        .collect();
+    for (k, (s, propagule)) in species.into_iter().enumerate() {
+        w.paint_plant(80 + 30 * k as i64, 100, 2, s, propagule)
+            .unwrap();
     }
     w.place(Placeable::Bubbler, 10, 102).unwrap();
     w.place(Placeable::FilterOutlet, 190, 40).unwrap();

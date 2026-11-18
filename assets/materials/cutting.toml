@@ -2,7 +2,8 @@
 # sooner (`assets/reactions.toml`, [[grow]]).
 id = 71
 name = "cutting"
-# Poured from the palette's plants slot (T6b), as the picked species.
+# Poured from the palette's plants slot (T6b) as the picked species' cuttings or
+# fragments: a poured fragment is this material too (it has none of its own).
 class = "powder"
 density = 1.2
 repose = 30.0

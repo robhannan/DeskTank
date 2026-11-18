@@ -296,8 +296,9 @@ pub struct Propagation {
     pub fragments: bool,
 }
 
-/// Colour ramps per part, dark to light (sRGB). T6d draws them; until
-/// then the palette swatch and the web picker use them.
+/// Colour ramps per part, dark to light (sRGB). The renderer shades each
+/// plant cell from its part's ramp by position (T6d); the palette swatch
+/// and the web picker use the middle leaf shade.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ramps {
     /// Root shades.
@@ -310,6 +311,82 @@ pub struct Ramps {
 
 /// Most shades in one ramp.
 pub const MAX_RAMP: usize = 8;
+
+/// How a species' leaves are drawn at two texels per cell side (T6d,
+/// `[look] leaf` in its TOML). The discriminant is what the shader reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum LeafShape {
+    /// A broad blade on a short petiole, rising to a pointed tip
+    /// (hygrophila type).
+    #[default]
+    Lanceolate = 0,
+    /// A fine one-texel blade rising from base to tip (rotala type).
+    Needle = 1,
+    /// A broad blade with a blunt, rounded tip (ludwigia or bacopa type).
+    Round = 2,
+    /// A midrib with a fringe of fine teeth above it (cabomba type).
+    Feather = 3,
+}
+
+impl LeafShape {
+    /// Every shape, in discriminant order.
+    pub const ALL: [Self; 4] = [Self::Lanceolate, Self::Needle, Self::Round, Self::Feather];
+}
+
+/// How a species' stem cells are drawn (`[look] stem`). A mat's cells are
+/// stems, so mats pick a mat shape here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum StemShape {
+    /// A one-texel stalk that widens at nodes and the growing tip.
+    #[default]
+    Stalk = 0,
+    /// A full-width stem, shaded on one side (bacopa type).
+    Thick = 1,
+    /// A soft mat whose exposed edges break into a ragged fringe (java
+    /// moss type).
+    Fuzz = 2,
+    /// A mat of layered, downswept fronds (christmas moss type).
+    Frond = 3,
+}
+
+impl StemShape {
+    /// Every shape, in discriminant order.
+    pub const ALL: [Self; 4] = [Self::Stalk, Self::Thick, Self::Fuzz, Self::Frond];
+}
+
+/// How a species' root cells are drawn (`[look] root`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum RootShape {
+    /// A thin, wandering one-texel strand.
+    #[default]
+    Strand = 0,
+    /// A full-width root (rhizome type).
+    Thick = 1,
+}
+
+impl RootShape {
+    /// Every shape, in discriminant order.
+    pub const ALL: [Self; 2] = [Self::Strand, Self::Thick];
+}
+
+/// A species' drawn shapes per part (SPEC §2.7 *Appearance*, T6d). Every
+/// key is optional in the TOML: leaves default to lanceolate, roots to
+/// strands, and stems to stalks (fuzz for a mat).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Look {
+    /// Leaf shape.
+    pub leaf: LeafShape,
+    /// Stem (or mat) shape.
+    pub stem: StemShape,
+    /// Root shape.
+    pub root: RootShape,
+}
 /// Fastest growth rate, in cells per minute at full response (the plant
 /// update grows at most 8 cells per plant every 5 s).
 pub const MAX_RATE: f32 = 90.0;
@@ -335,6 +412,8 @@ pub struct PlantSpecies {
     pub propagation: Propagation,
     /// Colour ramps.
     pub colours: Ramps,
+    /// Drawn shapes.
+    pub look: Look,
 }
 
 impl PlantSpecies {
@@ -350,15 +429,75 @@ impl PlantSpecies {
             .unwrap_or([0x40, 0x90, 0x40])
     }
 
-    /// The propagule material name the palette pours for it: cuttings
-    /// unless it only grows from seed.
+    /// Whether it grows from `propagule` (lists it under `propagation`).
     #[must_use]
-    pub fn propagule(&self) -> &'static str {
+    pub fn grows_from(&self, propagule: Propagule) -> bool {
         let p = self.propagation;
-        if p.seeds && !p.cuttings && !p.fragments {
-            "seed"
+        match propagule {
+            Propagule::Seeds => p.seeds,
+            Propagule::Cuttings => p.cuttings,
+            Propagule::Fragments => p.fragments,
+        }
+    }
+
+    /// The ways it grows, in [`Propagule::ALL`] order (never empty).
+    pub fn propagules(&self) -> impl Iterator<Item = Propagule> + '_ {
+        Propagule::ALL.into_iter().filter(|&p| self.grows_from(p))
+    }
+
+    /// The propagule the palette pours until another is picked: cuttings
+    /// if it grows from them (they root soonest), else its first way.
+    #[must_use]
+    pub fn default_propagule(&self) -> Propagule {
+        if self.propagation.cuttings {
+            Propagule::Cuttings
         } else {
-            "cutting"
+            self.propagules().next().unwrap_or(Propagule::Cuttings)
+        }
+    }
+}
+
+/// A way to start a plant from the palette: what the plants slot pours
+/// (the names are those of a species' `propagation` list).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Propagule {
+    /// Seeds: the `seed` material, slow to germinate.
+    Seeds,
+    /// Stem cuttings: the `cutting` material, quick to root.
+    Cuttings,
+    /// Fragments: a cut-off piece of the plant. Poured, a fragment is the
+    /// `cutting` material (a loose piece that roots or clings like one);
+    /// it has no material of its own.
+    Fragments,
+}
+
+impl Propagule {
+    /// Every propagule, in the order hosts list them.
+    pub const ALL: [Self; 3] = [Self::Seeds, Self::Cuttings, Self::Fragments];
+
+    /// Its name, as a species' `propagation` list and scripts spell it.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Seeds => "seeds",
+            Self::Cuttings => "cuttings",
+            Self::Fragments => "fragments",
+        }
+    }
+
+    /// The propagule with this name, if any.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.name() == name)
+    }
+
+    /// The material poured for it.
+    #[must_use]
+    pub fn material_name(self) -> &'static str {
+        match self {
+            Self::Seeds => "seed",
+            Self::Cuttings | Self::Fragments => "cutting",
         }
     }
 }
@@ -411,8 +550,18 @@ struct SpeciesDef {
     prefer: Preferences,
     growth: GrowthDef,
     hardiness: HardinessDef,
-    propagation: Vec<PropagationName>,
+    propagation: Vec<Propagule>,
     colours: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    look: LookDef,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LookDef {
+    leaf: Option<LeafShape>,
+    stem: Option<StemShape>,
+    root: Option<RootShape>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -420,14 +569,6 @@ struct SpeciesDef {
 enum FormName {
     Stem,
     Mat,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PropagationName {
-    Seeds,
-    Cuttings,
-    Fragments,
 }
 
 #[derive(Debug, Deserialize)]
@@ -665,9 +806,9 @@ fn validate(
     let mut propagation = Propagation::default();
     for p in &d.propagation {
         match p {
-            PropagationName::Seeds => propagation.seeds = true,
-            PropagationName::Cuttings => propagation.cuttings = true,
-            PropagationName::Fragments => propagation.fragments = true,
+            Propagule::Seeds => propagation.seeds = true,
+            Propagule::Cuttings => propagation.cuttings = true,
+            Propagule::Fragments => propagation.fragments = true,
         }
     }
     if propagation == Propagation::default() {
@@ -693,6 +834,21 @@ fn validate(
         return Err(invalid("colours need a root, stem and leaf ramp"));
     }
     let [root, stem, leaf] = ramps;
+    let default_stem = match form {
+        Form::Stem(_) => StemShape::Stalk,
+        Form::Mat(_) => StemShape::Fuzz,
+    };
+    let look = Look {
+        leaf: d.look.leaf.unwrap_or_default(),
+        stem: d.look.stem.unwrap_or(default_stem),
+        root: d.look.root.unwrap_or_default(),
+    };
+    let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
+    if mat_shape != matches!(form, Form::Mat(_)) {
+        return Err(invalid(
+            "look stem is stalk or thick for a stem form, fuzz or frond for a mat",
+        ));
+    }
     Ok(PlantSpecies {
         id: PlantSpeciesId(d.id),
         name: d.name.clone(),
@@ -712,6 +868,7 @@ fn validate(
         },
         propagation,
         colours: Ramps { root, stem, leaf },
+        look,
     })
 }
 
@@ -770,6 +927,25 @@ mod tests {
         let rotala = t.get(t.id("rotala").unwrap()).unwrap();
         assert!(rotala.prefer.light.optimum > first.prefer.light.optimum);
         assert!(rotala.prefer.light.min > first.prefer.light.min);
+    }
+
+    #[test]
+    fn species_list_their_propagules_and_default_to_cuttings() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let get = |n| t.get(t.id(n).unwrap()).unwrap();
+        let ways = |n| get(n).propagules().collect::<Vec<_>>();
+        assert_eq!(ways("hygrophila"), Propagule::ALL);
+        assert_eq!(ways("rotala"), [Propagule::Cuttings]);
+        assert_eq!(ways("java_moss"), [Propagule::Fragments]);
+        assert_eq!(get("hygrophila").default_propagule(), Propagule::Cuttings);
+        assert_eq!(get("java_moss").default_propagule(), Propagule::Fragments);
+        // Every propagule pours a material the built-in table has.
+        for p in Propagule::ALL {
+            assert_eq!(Propagule::from_name(p.name()), Some(p));
+            assert!(m.id(p.material_name()).is_some(), "{p:?}");
+        }
+        assert_eq!(Propagule::from_name("spores"), None);
     }
 
     #[test]
@@ -834,6 +1010,41 @@ mod tests {
             PlantSpeciesTable::from_toml_sources(&[OK, OK], &m),
             Err(PlantSpeciesError::BadId(9))
         ));
+    }
+
+    #[test]
+    fn looks_are_read_with_defaults_by_form() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let look = |n: &str| t.get(t.id(n).unwrap()).unwrap().look;
+        assert_eq!(look("hygrophila").leaf, LeafShape::Lanceolate);
+        assert_eq!(look("rotala").leaf, LeafShape::Needle);
+        assert_eq!(look("java_moss").stem, StemShape::Fuzz);
+        // Absent keys take the defaults.
+        let s = PlantSpeciesTable::from_toml_sources(&[OK], &m).unwrap();
+        assert_eq!(s.get(PlantSpeciesId(9)).unwrap().look, Look::default());
+        let custom =
+            format!("{OK}\n[look]\nleaf = \"feather\"\nstem = \"thick\"\nroot = \"thick\"\n");
+        let s = PlantSpeciesTable::from_toml_sources(&[&custom], &m).unwrap();
+        let look = s.get(PlantSpeciesId(9)).unwrap().look;
+        assert_eq!(
+            (look.leaf, look.stem, look.root),
+            (LeafShape::Feather, StemShape::Thick, RootShape::Thick)
+        );
+        // A mat shape on a stem plant is invalid.
+        let mat_on_stem = format!("{OK}\n[look]\nstem = \"fuzz\"\n");
+        assert!(matches!(
+            PlantSpeciesTable::from_toml_sources(&[&mat_on_stem], &m),
+            Err(PlantSpeciesError::Invalid { .. })
+        ));
+        // Unknown shapes and keys are errors.
+        for bad in ["leaf = \"spiky\"", "flower = \"round\""] {
+            let src = format!("{OK}\n[look]\n{bad}\n");
+            assert!(matches!(
+                PlantSpeciesTable::from_toml_sources(&[&src], &m),
+                Err(PlantSpeciesError::Parse { .. })
+            ));
+        }
     }
 
     #[test]

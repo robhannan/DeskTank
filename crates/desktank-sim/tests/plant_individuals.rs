@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
-    Brush, Factor, FieldKind, Limit, MaterialId, MaterialTable, PlantId, PlantSpeciesId, Rect,
-    World, WorldConfig,
+    Brush, Factor, FieldKind, Limit, MaterialId, MaterialTable, PlantId, PlantSpeciesId, Propagule,
+    Rect, World, WorldConfig,
 };
 
 /// Ticks in a simulated minute.
@@ -121,8 +121,8 @@ fn two_touching_plants_of_one_species_keep_separate_ids_sizes_and_health() {
     let hyg = species(&w, "hygrophila");
     // Stems 7 columns apart: their 3-cell leaves meet between them. The
     // left one is in field column 9 (x 72–79), the right in column 10.
-    w.paint_plant(76, 30, 0, hyg).unwrap();
-    w.paint_plant(83, 30, 0, hyg).unwrap();
+    w.paint_plant(76, 30, 0, hyg, Propagule::Cuttings).unwrap();
+    w.paint_plant(83, 30, 0, hyg, Propagule::Cuttings).unwrap();
     run_checked(&mut w, 10 * MINUTE);
     let plants: Vec<_> = w.plants().collect();
     assert_eq!(plants.len(), 2);
@@ -169,8 +169,9 @@ fn compete(rows: usize, seed: u64) -> (u32, u32, Limit) {
         lid(&mut w, 0, 160, rows);
     }
     let (rotala, hyg) = (species(&w, "rotala"), species(&w, "hygrophila"));
-    w.paint_plant(40, 30, 0, rotala).unwrap();
-    w.paint_plant(120, 30, 0, hyg).unwrap();
+    w.paint_plant(40, 30, 0, rotala, Propagule::Cuttings)
+        .unwrap();
+    w.paint_plant(120, 30, 0, hyg, Propagule::Cuttings).unwrap();
     run(&mut w, 10 * MINUTE);
     check_table(&w);
     let size = |s| {
@@ -209,8 +210,9 @@ fn rotala_outgrows_hygrophila_in_strong_light_and_loses_in_weak_light() {
 fn scooping_through_a_stem_makes_a_fragment_or_dead_plant_matter_by_species() {
     let mut w = bedded(64, 8, 2);
     let (hyg, rotala) = (species(&w, "hygrophila"), species(&w, "rotala"));
-    w.paint_plant(40, 30, 0, hyg).unwrap();
-    w.paint_plant(120, 30, 0, rotala).unwrap();
+    w.paint_plant(40, 30, 0, hyg, Propagule::Cuttings).unwrap();
+    w.paint_plant(120, 30, 0, rotala, Propagule::Cuttings)
+        .unwrap();
     run_checked(&mut w, 10 * MINUTE);
     let (h, r) = (plant_of(&w, hyg)[0], plant_of(&w, rotala)[0]);
     let dead = count(&w, "dead_plant") + count(&w, "detritus");
@@ -252,7 +254,7 @@ fn scooping_through_a_stem_makes_a_fragment_or_dead_plant_matter_by_species() {
 fn grown_and_asleep(seed: u64) -> World {
     let mut w = bedded(120, 12, seed);
     let hyg = species(&w, "hygrophila");
-    w.paint_plant(80, 20, 0, hyg).unwrap();
+    w.paint_plant(80, 20, 0, hyg, Propagule::Cuttings).unwrap();
     run(&mut w, 30 * MINUTE);
     let mut asleep = 0;
     for _ in 0..20 * MINUTE {
@@ -370,7 +372,7 @@ fn the_population_cap_holds() {
     w.set_plant_cap(3);
     let hyg = species(&w, "hygrophila");
     for x in (20..140).step_by(12) {
-        w.paint_plant(x, 30, 0, hyg).unwrap();
+        w.paint_plant(x, 30, 0, hyg, Propagule::Cuttings).unwrap();
     }
     run_checked(&mut w, 2 * MINUTE);
     assert_eq!(w.plant_count(), 3);
@@ -389,7 +391,8 @@ fn the_population_cap_holds() {
 fn inspect_shows_species_age_health_size_and_what_limits_growth() {
     let mut w = bedded(64, 8, 6);
     let rotala = species(&w, "rotala");
-    w.paint_plant(80, 30, 0, rotala).unwrap();
+    w.paint_plant(80, 30, 0, rotala, Propagule::Cuttings)
+        .unwrap();
     run(&mut w, 4 * MINUTE);
     let p = plant_of(&w, rotala)[0];
     let mut tools = Tools::new(id(&w, "sand"));
@@ -446,11 +449,78 @@ fn the_plants_slot_pours_the_picked_species() {
 }
 
 #[test]
+fn the_plants_slot_pours_the_picked_propagule_within_the_species() {
+    let w = bedded(64, 8, 9);
+    let (hyg, moss, rotala) = (
+        species(&w, "hygrophila"),
+        species(&w, "java_moss"),
+        species(&w, "rotala"),
+    );
+    let mut tools = Tools::new(id(&w, "sand"));
+    // Each species starts on its default: cuttings if it lists them.
+    tools.set_plant_species(hyg);
+    assert_eq!(tools.plant_propagule(&w), Some(Propagule::Cuttings));
+    tools.set_plant_species(moss);
+    assert_eq!(tools.plant_propagule(&w), Some(Propagule::Fragments));
+    // Only the methods the species lists are taken.
+    assert!(!tools.set_plant_propagule(&w, Propagule::Seeds));
+    assert_eq!(tools.plant_propagule(&w), Some(Propagule::Fragments));
+    tools.set_plant_species(hyg);
+    assert!(tools.set_plant_propagule(&w, Propagule::Seeds));
+    assert_eq!(tools.plant_propagule(&w), Some(Propagule::Seeds));
+    // A species change keeps a choice it allows and falls back otherwise.
+    tools.set_plant_species(rotala);
+    assert_eq!(tools.plant_propagule(&w), Some(Propagule::Cuttings));
+    // A host's new tools keep both picks as they are.
+    let mut fresh = Tools::new(id(&w, "sand"));
+    fresh.keep_plant_picks(&tools);
+    assert_eq!(fresh.plant_species(&w), Some(rotala));
+    fresh.set_plant_species(hyg);
+    assert_eq!(fresh.plant_propagule(&w), Some(Propagule::Seeds));
+    tools.set_plant_species(hyg);
+    assert_eq!(tools.plant_propagule(&w), Some(Propagule::Seeds));
+    // Cycling goes through hygrophila's three methods and wraps.
+    let cycle: Vec<_> = (0..3)
+        .map(|_| tools.next_plant_propagule(&w).unwrap())
+        .collect();
+    assert_eq!(
+        cycle,
+        [Propagule::Cuttings, Propagule::Fragments, Propagule::Seeds]
+    );
+    tools.set_plant_species(rotala);
+    assert_eq!(tools.next_plant_propagule(&w), Some(Propagule::Cuttings));
+    // The world refuses a propagule the species doesn't grow from.
+    let mut w = w;
+    assert!(w.paint_plant(80, 20, 0, rotala, Propagule::Seeds).is_err());
+}
+
+#[test]
+fn hygrophila_seeds_pour_from_the_plants_slot_and_germinate() {
+    let mut w = bedded(64, 8, 10);
+    let hyg = species(&w, "hygrophila");
+    let mut tools = Tools::new(id(&w, "sand"));
+    tools.select(PaletteItem::Tool(Tool::Plant));
+    tools.set_plant_species(hyg);
+    assert!(tools.set_plant_propagule(&w, Propagule::Seeds));
+    tools.resize(-3);
+    assert!(matches!(
+        tools.press(&mut w, Button::Primary, (80, 20)),
+        Outcome::Painted(1)
+    ));
+    tools.release(&mut w, Button::Primary);
+    let c = w.cell(80, 20).unwrap();
+    assert_eq!((c.material, c.state), (id(&w, "seed"), u16::from(hyg.0)));
+    run(&mut w, 5 * MINUTE);
+    assert_eq!(count(&w, "seed"), 0, "the seed germinated");
+    assert_eq!(plant_of(&w, hyg).len(), 1);
+}
+
+#[test]
 fn water_quality_counts_plant_cells_from_the_table() {
     let mut w = bedded(64, 8, 8);
     let hyg = species(&w, "hygrophila");
-    w.paint_plant(50, 30, 0, hyg).unwrap();
-    w.paint_plant(110, 30, 0, hyg).unwrap();
+    w.paint_plant(50, 30, 0, hyg, Propagule::Cuttings).unwrap();
+    w.paint_plant(110, 30, 0, hyg, Propagule::Cuttings).unwrap();
     run(&mut w, 5 * MINUTE);
     let cells = ["root", "stem", "leaf"]
         .iter()
@@ -475,9 +545,11 @@ fn a_mixed_planting_is_deterministic() {
             species(&w, "rotala"),
             species(&w, "java_moss"),
         );
-        w.paint_plant(20, 30, 1, hyg).unwrap();
-        w.paint_plant(60, 30, 0, rotala).unwrap();
-        w.paint_plant(115, 30, 2, moss).unwrap();
+        w.paint_plant(20, 30, 1, hyg, Propagule::Cuttings).unwrap();
+        w.paint_plant(60, 30, 0, rotala, Propagule::Cuttings)
+            .unwrap();
+        w.paint_plant(115, 30, 2, moss, Propagule::Fragments)
+            .unwrap();
         run_checked(&mut w, 8 * MINUTE);
         assert!(w.plants().any(|p| p.species == moss));
         w

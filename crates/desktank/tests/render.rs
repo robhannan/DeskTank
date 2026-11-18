@@ -133,6 +133,13 @@ fn planted_scene_matches_reference_at_four_times_of_day() {
     }
 }
 
+/// Plant species (T6d): rotala, hygrophila and java moss side by side,
+/// each drawn with its own shapes and colour ramp.
+#[test]
+fn plant_species_scene_matches_reference() {
+    check("plant_species");
+}
+
 /// Creatures (T7a): sprites of every species over the starter bed, after
 /// they have swum for 30 s and come for food.
 #[test]

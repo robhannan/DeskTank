@@ -30,6 +30,7 @@ pub use material::{
 pub use placeable::Placeable;
 pub use plants::{
     Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,
+    Propagule,
 };
 pub use script::{Player, Script, ScriptError};
 pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL};

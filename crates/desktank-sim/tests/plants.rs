@@ -6,7 +6,9 @@
     clippy::cast_sign_loss
 )]
 
-use desktank_sim::{Brush, FieldKind, MaterialId, MaterialTable, Rect, World, WorldConfig};
+use desktank_sim::{
+    Brush, FieldKind, MaterialId, MaterialTable, Propagule, Rect, World, WorldConfig,
+};
 
 /// Plant cells a fed and lit cutting grows in 10 simulated minutes, at
 /// least. Measured (PR for T6) on seeds 0–5 in [`planted`]: 185–235 cells
@@ -181,7 +183,8 @@ fn moss_grows_over_rock_and_unattached_moss_falls_off() {
     assert!(w.set_anchored(body, true));
     let moss = w.plant_species().id("java_moss").unwrap();
     // Cuttings poured over the rock: those landing on it root.
-    w.paint_plant(80, 60, 2, moss).unwrap();
+    w.paint_plant(80, 60, 2, moss, Propagule::Fragments)
+        .unwrap();
     run(&mut w, 3 * MINUTE);
     let attached = |w: &World| {
         let mut n = 0;

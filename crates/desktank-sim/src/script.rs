@@ -23,8 +23,10 @@
 //! material = "sand"  # a material name from assets/materials
 //! brush = "pour"     # "pour" fills only fluid cells, "replace" overwrites (default "pour")
 //! glued = true       # a rigid material's body is glued in place (default false)
-//! # plant = "rotala" # instead of a material: pour this plant species' seeds
-//!                    # or cuttings (assets/plants), as the palette's plants slot does
+//! # plant = "rotala" # instead of a material: pour this plant species
+//!                    # (assets/plants), as the palette's plants slot does
+//! # propagule = "seeds" # with `plant`: "seeds", "cuttings" or "fragments", one the
+//!                    # species lists (default: cuttings if it lists them, else its first)
 //!
 //! [[place]]
 //! tick = 0           # tick to place on (default 0)
@@ -52,7 +54,7 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{BodyId, Brush, Placeable, World, WorldConfig, WorldError};
+use crate::{BodyId, Brush, Placeable, Propagule, World, WorldConfig, WorldError};
 
 /// Most creatures one `[[creature]]` entry may add.
 #[allow(clippy::cast_possible_truncation)] // 60
@@ -79,6 +81,17 @@ pub enum ScriptError {
     /// A pour names a plant species the table doesn't have.
     #[error("unknown plant species {0:?}")]
     UnknownPlantSpecies(String),
+    /// A pour names a propagule its plant species doesn't grow from.
+    #[error("plant species {plant:?} doesn't grow from {propagule:?}")]
+    BadPropagule {
+        /// The plant species name.
+        plant: String,
+        /// The propagule name.
+        propagule: &'static str,
+    },
+    /// A pour names a propagule but no plant.
+    #[error("propagule {0:?} needs a plant")]
+    PropaguleWithoutPlant(&'static str),
     /// A `[[creature]]` entry asks for more creatures than a tank holds.
     #[error("count {0} is more than a tank holds")]
     TooMany(u32),
@@ -176,9 +189,12 @@ pub struct Pour {
     /// Material name (unused when `plant` is set).
     #[serde(default)]
     pub material: String,
-    /// Plant species name: pour its seeds or cuttings instead.
+    /// Plant species name: pour its seeds, cuttings or fragments instead.
     #[serde(default)]
     pub plant: Option<String>,
+    /// With `plant`: the propagule to pour (default: the species').
+    #[serde(default)]
+    pub propagule: Option<Propagule>,
     /// How the disc treats the cells it covers.
     #[serde(default)]
     pub brush: BrushName,
@@ -259,8 +275,8 @@ impl Script {
     ///
     /// # Errors
     ///
-    /// Returns an error if the TOML is malformed, has unknown keys, or sets
-    /// `frame_every` to zero.
+    /// Returns an error if the TOML is malformed, has unknown keys, sets
+    /// `frame_every` to zero, or a pour names a propagule without a plant.
     pub fn parse(source: &str) -> Result<Self, ScriptError> {
         let script: Self = toml::from_str(source)?;
         if script.frame_every == 0 {
@@ -272,6 +288,14 @@ impl Script {
             .find(|p| Placeable::from_name(&p.device).is_none())
         {
             return Err(ScriptError::UnknownDevice(p.device.clone()));
+        }
+        if let Some(q) = script
+            .pours
+            .iter()
+            .filter(|p| p.plant.is_none())
+            .find_map(|p| p.propagule)
+        {
+            return Err(ScriptError::PropaguleWithoutPlant(q.name()));
         }
         if let Some(c) = script.creatures.iter().find(|c| c.count > MAX_COUNT) {
             return Err(ScriptError::TooMany(c.count));
@@ -347,11 +371,20 @@ impl Player<'_> {
             let far = 4 * i64::try_from(crate::MAX_SIDE).unwrap_or(i64::MAX / 8);
             let (x, y) = (x.clamp(-far, far), p.y.clamp(-far, far));
             if let Some(name) = &p.plant {
-                let species = world
+                let s = world
                     .plant_species()
-                    .id(name)
+                    .iter()
+                    .find(|s| s.name == *name)
                     .ok_or_else(|| ScriptError::UnknownPlantSpecies(name.clone()))?;
-                world.paint_plant(x, y, p.radius, species)?;
+                let propagule = p.propagule.unwrap_or_else(|| s.default_propagule());
+                if !s.grows_from(propagule) {
+                    return Err(ScriptError::BadPropagule {
+                        plant: name.clone(),
+                        propagule: propagule.name(),
+                    });
+                }
+                let species = s.id;
+                world.paint_plant(x, y, p.radius, species, propagule)?;
                 continue;
             }
             let material = world
@@ -440,6 +473,38 @@ mod tests {
             s.run(&mut w, 1),
             Err(ScriptError::UnknownMaterial(_))
         ));
+    }
+
+    #[test]
+    fn pours_a_plant_propagule_the_species_lists() {
+        let pour = |extra: &str| {
+            format!("[[pour]]\nx = 32\ny = 8\nradius = 0\nplant = \"hygrophila\"\n{extra}")
+        };
+        let s = Script::parse(&pour("propagule = \"seeds\"")).unwrap();
+        let mut w = world(&s, 1);
+        s.run(&mut w, 1).unwrap();
+        let seed = w.materials().id("seed").unwrap();
+        assert_eq!(w.material_counts()[usize::from(seed.0)], 1);
+        // Without one, cuttings (hygrophila's default).
+        let s = Script::parse(&pour("")).unwrap();
+        let mut w = world(&s, 1);
+        s.run(&mut w, 1).unwrap();
+        let cutting = w.materials().id("cutting").unwrap();
+        assert_eq!(w.material_counts()[usize::from(cutting.0)], 1);
+        // Rotala only grows from cuttings.
+        let s = Script::parse("[[pour]]\nx = 32\ny = 8\nplant = \"rotala\"\npropagule = \"seeds\"")
+            .unwrap();
+        let mut w = world(&s, 1);
+        assert!(matches!(
+            s.run(&mut w, 1),
+            Err(ScriptError::BadPropagule { .. })
+        ));
+        // A propagule needs a plant, and a known name.
+        assert!(matches!(
+            Script::parse("[[pour]]\nx = 1\ny = 1\nmaterial = \"sand\"\npropagule = \"seeds\""),
+            Err(ScriptError::PropaguleWithoutPlant("seeds"))
+        ));
+        assert!(Script::parse(&pour("propagule = \"spores\"")).is_err());
     }
 
     #[test]

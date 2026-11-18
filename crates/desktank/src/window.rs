@@ -20,9 +20,10 @@
 //! tank for that time of day (default noon). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
-//! Plants (T6b): the palette's plants slot pours the seeds or cuttings of
-//! the species named in the title bar; clicking it again (or `P`) picks the
-//! next species. Inspect shows a plant's species, age, health, size and
+//! Plants (T6b): the palette's plants slot pours the species named in the
+//! title bar as the propagule named there (seeds, cuttings or fragments);
+//! clicking it again (or `P`) picks the next species, `O` the next
+//! propagule that species grows from. Inspect shows a plant's species, age, health, size and
 //! what limits its growth in the title bar.
 //!
 //! Creatures (T7a): the palette's creature slots add one per click; the net
@@ -389,7 +390,8 @@ impl Running {
         }
     }
 
-    /// Names the species the plants slot pours in the title bar.
+    /// Names the species the plants slot pours, and as what, in the title
+    /// bar.
     fn show_plant_species(&mut self) {
         let world = self.tank.world();
         if let Some(s) = self
@@ -397,7 +399,11 @@ impl Running {
             .plant_species(world)
             .and_then(|id| world.plant_species().get(id))
         {
-            let title = format!("DeskTank — plants: {} ({})", s.name, s.description);
+            let way = self
+                .tools
+                .plant_propagule(world)
+                .map_or("", desktank_sim::Propagule::name);
+            let title = format!("DeskTank — plants: {} as {way} ({})", s.name, s.description);
             self.sync_overlay();
             self.window.set_title(&title);
         }
@@ -519,6 +525,18 @@ impl Running {
     /// its group.
     fn next_plant_species(&mut self) {
         self.tools.next_plant_species(self.tank.world());
+        self.select_plants_slot();
+    }
+
+    /// Picks the next propagule the plant species grows from (seeds,
+    /// cuttings, fragments) and selects the plants slot, opening its group.
+    fn next_plant_propagule(&mut self) {
+        self.tools.next_plant_propagule(self.tank.world());
+        self.select_plants_slot();
+    }
+
+    /// Selects the plants slot, opening its group, and names its species.
+    fn select_plants_slot(&mut self) {
         let slot = PaletteItem::Tool(Tool::Plant);
         if let Some(g) = self
             .groups
@@ -694,11 +712,14 @@ impl ApplicationHandler for App {
                     }
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the
-                        // tenth; P picks the next plant species.
+                        // tenth; P picks the next plant species, O the
+                        // next way to start it (seeds, cuttings, fragments).
                         if let Ok(n) = c.parse::<usize>() {
                             s.select_slot((n + 9) % 10);
                         } else if c.eq_ignore_ascii_case("p") {
                             s.next_plant_species();
+                        } else if c.eq_ignore_ascii_case("o") {
+                            s.next_plant_propagule();
                         }
                     }
                     _ => {}
