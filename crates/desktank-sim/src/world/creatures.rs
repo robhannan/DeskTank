@@ -1,5 +1,5 @@
 //! Creatures (SPEC §2.4) steer in fixed point, collide with the cell grid
-//! and eat within a cell of their bodies. Species data selects schooling,
+//! and eat within reach of their bodies. Species data selects schooling,
 //! substrate walking, contour grazing and trips to the air interface.
 //!
 //! - **Fixed point.** Positions and velocities are integers in 1/256 cell
@@ -13,6 +13,9 @@
 //!   substrate, bodies, plants and air block it. If the world moves a
 //!   solid into a creature (a pour, a growing plant) it hops to the nearest
 //!   free spot.
+//! - **Walkers** keep to the substrate, stepping up one-row ledges; a
+//!   species with `hop_every` (shrimp) kicks off it now and then and sinks
+//!   back a few cells on.
 //! - **Attachment.** A surface crawler turns in quarter turns so its foot
 //!   (the sprite's bottom row) rests on the face it holds: the floor
 //!   upright, a wall on its side, a ceiling upside down. Its body box turns
@@ -72,6 +75,9 @@ const WATER_DENSITY: f32 = 0.5;
 /// Sideways speed, in 1/256 cell per tick, past which a creature turns to
 /// face the way it swims.
 const TURN_SPEED: i32 = 12;
+/// Ticks a hopping walker kicks upwards for, at its top speed; it then
+/// drifts back down at its cruising speed.
+const HOP_TICKS: u64 = 8;
 
 /// Where a crawler's foot points for each quarter turn clockwise: down,
 /// left, up, right (one clockwise turn maps `(x, y)` to `(-y, x)`, as y
@@ -215,6 +221,10 @@ struct Kind {
     schooling: bool,
     zone: Zone,
     breathes_air: bool,
+    /// Cells past the body it eats from.
+    reach: usize,
+    /// Ticks between a walker's hops (0: it never hops).
+    hop_every: u64,
     edible: [bool; 256],
 }
 
@@ -289,6 +299,12 @@ impl Creatures {
                 schooling: s.temperament == Temperament::Schooling,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
+                reach: usize::from(s.reach),
+                // Validated to 1..=600 s.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                hop_every: s.hop_every.map_or(0, |every| {
+                    (f64::from(every) * f64::from(TICKS_PER_SECOND)).round() as u64
+                }),
                 edible,
             });
         }
@@ -620,8 +636,13 @@ impl World {
         steer(&k, c, tx, ty, speed, speed == k.top);
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.
+        // Hoppers (shrimp) kick upwards now and then and sink back.
         if k.zone == Zone::Bottom {
-            c.vy = k.cruise;
+            c.vy = if self.hopping(&k, c) {
+                -k.top
+            } else {
+                k.cruise
+            };
         }
 
         // Move, sliding along whatever blocks one axis.
@@ -641,6 +662,27 @@ impl World {
             c.facing_left = true;
         }
         (c.x, c.y, c.facing_left, c.turn) != before
+    }
+
+    /// Whether a hopping walker is in the kick of a hop this tick. Each
+    /// creature's hops are offset by its id, so a group doesn't hop as one.
+    /// A kick ends early (or never starts) where the rest of it would lift
+    /// the walker above its zone, so a hop never leaves its depth band.
+    fn hopping(&self, k: &Kind, c: &Creature) -> bool {
+        if k.hop_every == 0 {
+            return false;
+        }
+        let phase = (self.tick + u64::from(c.id.0) * 7919) % k.hop_every;
+        if phase >= HOP_TICKS {
+            return false;
+        }
+        let (top, _) = zone(k, self.surface_row, self.height);
+        // The most the rest of this kick can rise, in 1/256 cells (at most
+        // HOP_TICKS = 8 ticks at top speed).
+        #[allow(clippy::cast_possible_truncation)]
+        let rise = (HOP_TICKS - phase) as i32 * k.top;
+        let body_top = c.y - k.h * ONE / 2;
+        i64::from(body_top - rise) >= to_i64(top) * i64::from(ONE)
     }
 
     /// Keeps `c` heading for food while hungry: a new search when its food
@@ -694,16 +736,17 @@ impl World {
         false
     }
 
-    /// Eats one food cell within a cell of the body, if there is one.
+    /// Eats one food cell within the species' reach of the body, if there
+    /// is one.
     fn eat(&mut self, k: &Kind, c: &mut Creature) -> bool {
         let Some(b) = body(k, c.turn, c.x, c.y, self.width, self.height) else {
             return false;
         };
         let reach = Rect {
-            x0: b.x0.saturating_sub(1),
-            y0: b.y0.saturating_sub(1),
-            x1: (b.x1 + 1).min(self.width),
-            y1: (b.y1 + 1).min(self.height),
+            x0: b.x0.saturating_sub(k.reach),
+            y0: b.y0.saturating_sub(k.reach),
+            x1: (b.x1 + k.reach).min(self.width),
+            y1: (b.y1 + k.reach).min(self.height),
         };
         for y in reach.y0..reach.y1 {
             for x in reach.x0..reach.x1 {

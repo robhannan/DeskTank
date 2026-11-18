@@ -7,6 +7,8 @@ zone = "mid"
 depth = [0.25, 0.7]
 # Water depth it needs, in cells; the tank warns below it.
 min_depth = 24
+# Real-world body length in cm, at two cells per cm.
+length_cm = 3.5
 breathes_air = false
 temperament = "schooling"
 # Cells per second: cruising, and darting after food.

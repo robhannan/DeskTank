@@ -5,6 +5,8 @@ name = "corydoras"
 zone = "bottom"
 depth = [0.72, 1.0]
 min_depth = 20
+# Real-world body length in cm, at two cells per cm.
+length_cm = 4.0
 breathes_air = false
 temperament = "peaceful"
 speed = 3.5

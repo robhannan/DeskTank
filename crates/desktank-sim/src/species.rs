@@ -29,11 +29,17 @@ pub struct SpeciesId(pub u8);
 pub const TEXELS_PER_CELL: usize = 2;
 /// Largest sprite side, in texels (16 cells).
 pub const MAX_SPRITE_SIDE: usize = 32;
+/// Cells per centimetre of real-world size: every species is drawn at this
+/// scale, so a 3.5 cm neon tetra is 7 cells long and sits beside a 2.5 cm
+/// cherry shrimp (5 cells) as it would in a tank.
+pub const CELLS_PER_CM: f32 = 2.0;
 /// Largest palette icon side, in pixels (a palette slot's face).
 pub const MAX_ICON_SIDE: usize = 8;
 /// Fastest allowed speed, in cells per second: under one cell per tick, so
 /// a body never skips past a cell it would collide with.
 pub const MAX_SPEED: f32 = 16.0;
+/// Farthest a species reaches to eat, in cells past its body.
+pub const MAX_REACH: u8 = 4;
 
 /// The part of the tank a species lives in (SPEC §2.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -113,6 +119,17 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
+    /// Real-world body length in cm, nose to tail without antennae (a
+    /// crab's carapace), drawn at [`CELLS_PER_CM`]: the sprite is at least
+    /// this long and adds only what lies outside it, such as antennae, fins
+    /// or a crab's legs.
+    pub length_cm: f32,
+    /// How far past its body it takes food, in cells (1..=[`MAX_REACH`]):
+    /// 1 for a mouth at the body's edge, more for a filter feeder's fans.
+    pub reach: u8,
+    /// Seconds between a bottom walker's hops off the substrate (shrimp),
+    /// or `None` if it never hops.
+    pub hop_every: Option<f32>,
     /// Its pixel art; half its size in texels is the body size in cells.
     pub sprite: Sprite,
     /// Its main colour (the commonest in the first frame), for swatches.
@@ -187,7 +204,16 @@ struct SpeciesDef {
     speed: f32,
     max_speed: f32,
     diet: Vec<String>,
+    length_cm: f32,
+    #[serde(default = "default_reach")]
+    reach: u8,
+    #[serde(default)]
+    hop_every: Option<f32>,
     sprite: SpriteDef,
+}
+
+fn default_reach() -> u8 {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,6 +230,9 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/corydoras.toml"),
     include_str!("../../../assets/species/betta.toml"),
     include_str!("../../../assets/species/nerite.toml"),
+    include_str!("../../../assets/species/cherry_shrimp.toml"),
+    include_str!("../../../assets/species/amano_shrimp.toml"),
+    include_str!("../../../assets/species/thai_micro_crab.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -321,6 +350,17 @@ fn validate(
     if d.max_speed > MAX_SPEED {
         return Err(invalid("max_speed must be at most 16 cells per second"));
     }
+    if !(1..=MAX_REACH).contains(&d.reach) {
+        return Err(invalid("reach must be 1..=MAX_REACH (4) cells"));
+    }
+    if let Some(every) = d.hop_every {
+        if d.zone != Zone::Bottom {
+            return Err(invalid("only bottom walkers hop"));
+        }
+        if !(every.is_finite() && (1.0..=600.0).contains(&every)) {
+            return Err(invalid("hop_every must be 1..=600 seconds"));
+        }
+    }
     let mut diet = Vec::with_capacity(d.diet.len());
     for food in &d.diet {
         match materials.id(food) {
@@ -335,6 +375,14 @@ fn validate(
         }
     }
     let sprite = sprite(&d.sprite).map_err(invalid)?;
+    // Sprite sides are at most 32 texels: exact in f32.
+    #[allow(clippy::cast_precision_loss)]
+    let drawn_cm = sprite.width.max(sprite.height) as f32 / TEXELS_PER_CELL as f32 / CELLS_PER_CM;
+    if !(d.length_cm.is_finite() && d.length_cm > 0.0 && d.length_cm <= drawn_cm) {
+        return Err(invalid(
+            "length_cm must be > 0 and fit the sprite at CELLS_PER_CM",
+        ));
+    }
     let colour = main_colour(&sprite);
     Ok(Species {
         id: SpeciesId(d.id),
@@ -347,6 +395,9 @@ fn validate(
         speed: d.speed,
         max_speed: d.max_speed,
         diet,
+        length_cm: d.length_cm,
+        reach: d.reach,
+        hop_every: d.hop_every,
         sprite,
         colour,
     })
@@ -463,6 +514,7 @@ mod tests {
         depth = [0.2, 0.6]
         min_depth = 10
         temperament = "peaceful"
+        length_cm = 1.0
         speed = 2.0
         max_speed = 4.0
         diet = ["flake_food"]
@@ -480,15 +532,23 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 4);
-        for name in ["neon_tetra", "corydoras", "betta", "nerite"] {
+        assert_eq!(t.len(), 7);
+        for name in [
+            "neon_tetra",
+            "corydoras",
+            "betta",
+            "nerite",
+            "cherry_shrimp",
+            "amano_shrimp",
+            "thai_micro_crab",
+        ] {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert!(!s.diet.is_empty(), "{name} eats something");
             assert!(s.sprite.frames.len() >= 2, "{name} animates");
             let icon = &s.sprite.icon;
             assert!(icon.pixels.iter().any(|p| p[3] > 0), "{name} has an icon");
             let (w, h) = s.size();
-            assert!(w <= 8 && h <= 8, "{name} fits a palette slot");
+            assert!(w <= 16 && h <= 16, "{name} is at most 16 cells a side");
         }
         // Between them they eat every T5 food.
         for food in ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer"] {
@@ -498,6 +558,70 @@ mod tests {
         let betta = t.get(t.id("betta").unwrap()).unwrap();
         assert!(betta.breathes_air);
         assert_eq!(betta.zone, Zone::Surface);
+        // Shrimp walk the bottom and hop; the crab crawls and filter-feeds.
+        let algae = m.id("algae").unwrap();
+        for name in ["cherry_shrimp", "amano_shrimp"] {
+            let s = t.get(t.id(name).unwrap()).unwrap();
+            assert_eq!(s.zone, Zone::Bottom);
+            assert!(s.hop_every.is_some(), "{name} hops");
+            assert!(s.eats(algae), "{name} grazes algae");
+        }
+        let crab = t.get(t.id("thai_micro_crab").unwrap()).unwrap();
+        assert_eq!(
+            (crab.zone, crab.reach, crab.size()),
+            (Zone::Surfaces, 2, (3, 3))
+        );
+        assert!(
+            crab.size().0 % 2 == 1 && crab.size().1 % 2 == 1,
+            "odd crawler sides"
+        );
+    }
+
+    /// Real-world sizes at [`CELLS_PER_CM`]: the Thai micro crab is the
+    /// smallest invertebrate, then the cherry, then the amano, each in its
+    /// range, beside a neon tetra about a female cherry's size.
+    #[test]
+    fn invertebrates_are_sized_to_scale() {
+        let t = SpeciesTable::builtin_for(&materials()).unwrap();
+        let get = |name| t.get(t.id(name).unwrap()).unwrap();
+        // Sprite width in cm, antennae and legs included.
+        #[allow(clippy::cast_precision_loss)]
+        let drawn = |s: &Species| s.size().0 as f32 / CELLS_PER_CM;
+        let (crab, cherry, amano) = (
+            get("thai_micro_crab"),
+            get("cherry_shrimp"),
+            get("amano_shrimp"),
+        );
+        let tetra = get("neon_tetra");
+        assert!(crab.length_cm < cherry.length_cm && cherry.length_cm < amano.length_cm);
+        assert!(drawn(crab) < drawn(cherry) && drawn(cherry) < drawn(amano));
+        // Body lengths (the crab's carapace).
+        assert!((0.5..=1.0).contains(&crab.length_cm));
+        assert!((1.5..=3.5).contains(&cherry.length_cm));
+        assert!((3.0..=5.0).contains(&amano.length_cm));
+        assert!((3.0..=4.0).contains(&tetra.length_cm));
+        // The crab's legs span 1.5–2.5 cm, two thirds of a cherry or so.
+        assert!((1.5..=2.5).contains(&drawn(crab)));
+        assert!(drawn(crab) < drawn(cherry));
+        // Shrimp antennae add at most 1 cm past the body; the amano's are
+        // the longer.
+        for s in [cherry, amano] {
+            let extra = drawn(s) - s.length_cm;
+            assert!(
+                (0.0..=1.0).contains(&extra),
+                "{} antennae {extra} cm",
+                s.name
+            );
+        }
+        assert!(drawn(amano) - amano.length_cm > drawn(cherry) - cherry.length_cm);
+        // Every species is drawn at the shared scale.
+        for s in t.iter() {
+            assert!(
+                s.length_cm <= drawn(s) && drawn(s) - s.length_cm <= 1.5,
+                "{}",
+                s.name
+            );
+        }
     }
 
     #[test]
@@ -512,6 +636,57 @@ mod tests {
         assert_eq!((s.sprite.icon.width, s.sprite.icon.height), (3, 2));
         assert_eq!(s.sprite.icon.pixels[2], [0x40, 0x50, 0x60, 255]);
         assert_eq!(s.sprite.icon.pixels[4], [0; 4]);
+    }
+
+    #[test]
+    fn rejects_bad_lengths_reaches_and_hops() {
+        let m = materials();
+        let bad = |from: &str, to: &str| {
+            let src = OK.replace(from, to);
+            assert_ne!(src, OK, "{from:?} not in the template");
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nreach = 0"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nreach = 5"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        // A length the sprite can't hold at CELLS_PER_CM (3 cells: 1.5 cm).
+        for length in ["length_cm = 2.0", "length_cm = 0.0", "length_cm = nan"] {
+            assert!(
+                matches!(
+                    bad("length_cm = 1.0", length),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "{length}"
+            );
+        }
+        // Only bottom walkers hop, every 1..=600 s.
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nhop_every = 5.0"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        let walker = |extra: &str| {
+            let src = OK
+                .replace("zone = \"mid\"", "zone = \"bottom\"")
+                .replace("min_depth = 10", &format!("min_depth = 10\n{extra}"));
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        for every in ["0.5", "601.0", "nan", "inf"] {
+            assert!(
+                matches!(
+                    walker(&format!("hop_every = {every}")),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "hop_every = {every}"
+            );
+        }
+        let ok = walker("hop_every = 6.0\nreach = 4").unwrap();
+        let s = ok.get(SpeciesId(9)).unwrap();
+        assert_eq!((s.hop_every, s.reach), (Some(6.0), 4));
     }
 
     #[test]

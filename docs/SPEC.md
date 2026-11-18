@@ -426,6 +426,17 @@ target computes the same bits.
   livebearer such as a guppy, a betta, a corydoras, cherry and amano-type
   shrimp, a nerite-type and a ramshorn-type snail, and a dwarf frog that
   surfaces to breathe. Fictional species are a stretch goal.
+  *Shipped so far (7):* neon tetra, betta, corydoras, nerite, cherry
+  shrimp (*Neocaridina davidi*), amano shrimp (*Caridina multidentata*)
+  and Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
+  the examples above). Two species keys extend the list above: `reach`
+  (cells past the body it eats from, default 1; the crab's filter-feeding
+  fans reach 2) and `hop_every` (seconds between a bottom walker's short
+  hops off the substrate, for shrimp). Every species also gives its
+  real-world body length, `length_cm` (nose to tail without antennae, a
+  crab's carapace), and is drawn at a shared 2 cells per cm, so species
+  sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
+  1.5 cm), cherry shrimp 2.5 cm, neon tetra 3.5 cm, amano shrimp 4 cm.
 - **Behaviour** is steering-based:
   - wander;
   - schooling for schoolers;
@@ -1490,6 +1501,11 @@ Each package depends only on the packages before it.
   four species cleared the 100,000-tick collision run. On an M3 Max the
   30-fish settled and active-grazing cases took 7.37 and 28.04 µs/tick.
   Rendering the settled 30-fish tank at 2560×1440 used 0.72% of one core.
+  *Invertebrates:* cherry and amano shrimp (the v1 set's shrimp, §2.4)
+  are bottom walkers that hop a few cells off the substrate every 6 and
+  10 s and graze algae and detritus; Thai micro crabs are surface
+  crawlers that cling to plants, rock and glass, walk the bed and
+  filter-feed flakes and detritus from two cells away.
 
 - [ ] **T8 Persistence.** The save envelope and format, ownership lock,
   atomic writes keeping the last 3, autosave and save on exit (§2.6).
