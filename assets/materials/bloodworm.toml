@@ -2,6 +2,8 @@
 # slump flat (low repose). Rot into detritus if uneaten.
 id = 32
 name = "bloodworm"
+# The palette group it is poured from (SPEC §2.5).
+palette = "food"
 class = "powder"
 density = 1.8
 repose = 20.0

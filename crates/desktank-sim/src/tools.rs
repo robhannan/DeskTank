@@ -16,6 +16,10 @@
 //! out. Inspect reports the creature under the pointer, if any, and the
 //! cell's material. A creature slot in the palette adds one of its species
 //! per click.
+//!
+//! The palette is grouped ([`PaletteGroup`], [`Tools::palette_groups`]):
+//! hosts show a group selector and the open group's items, so every slot
+//! stays a short reach (and a number key) away.
 
 pub use crate::CreatureId;
 use crate::{BodyId, Brush, MaterialId, Placeable, SpeciesId, World};
@@ -27,34 +31,84 @@ pub const MAX_RADIUS: u32 = 24;
 /// Brush radius a new [`Tools`] starts with.
 pub const DEFAULT_RADIUS: u32 = 3;
 
-/// The first [`POUR_MATERIALS`], which keep keys 1–6 ahead of the tools.
-const T1_MATERIALS: usize = 6;
+/// A palette group: hosts show one group's items at a time, with a
+/// selector for the groups (SPEC §2.5).
+///
+/// The material groups come from data: each pourable material names its
+/// group in its TOML (`palette = "substrate"`), and materials without one
+/// aren't offered. The tools, devices and creatures groups are filled from
+/// code ([`Tool`], [`Placeable::ALL`], the species table).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaletteGroup {
+    /// Scoop, net, inspect and glue.
+    Tools,
+    /// Sand, gravel, soil, rock and driftwood.
+    Substrate,
+    /// Water and bubbles.
+    Water,
+    /// Fish food and plant fertilisers.
+    Food,
+    /// Seeds, cuttings, moss and algae.
+    Plants,
+    /// Waste and detritus.
+    Waste,
+    /// Placeable devices: bubbler, filter outlet.
+    Devices,
+    /// One slot per species.
+    Creatures,
+}
 
-/// Materials offered for pouring, in palette order: the T1 set (keys 1–6),
-/// then the T5 substrates, food, fertilisers and decay and the T6 life
-/// (after the tools).
-pub const POUR_MATERIALS: [&str; 20] = [
-    "sand",
-    "gravel",
-    "rock",
-    "water",
-    "air_bubble",
-    "flake_food",
-    "aquasoil",
-    "driftwood",
-    "sinking_pellet",
-    "bloodworm",
-    "algae_wafer",
-    "root_tab",
-    "liquid_fertiliser",
-    "co2_bubble",
-    "waste",
-    "detritus",
-    "seed",
-    "cutting",
-    "moss",
-    "algae",
-];
+impl PaletteGroup {
+    /// Every group, in palette order.
+    pub const ALL: [Self; 8] = [
+        Self::Tools,
+        Self::Substrate,
+        Self::Water,
+        Self::Food,
+        Self::Plants,
+        Self::Waste,
+        Self::Devices,
+        Self::Creatures,
+    ];
+
+    /// The name materials use for it (`palette = "…"`).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tools => "tools",
+            Self::Substrate => "substrate",
+            Self::Water => "water",
+            Self::Food => "food",
+            Self::Plants => "plants",
+            Self::Waste => "waste",
+            Self::Devices => "devices",
+            Self::Creatures => "creatures",
+        }
+    }
+
+    /// Display label.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tools => "Tools",
+            Self::Substrate => "Substrate",
+            Self::Water => "Water",
+            Self::Food => "Food",
+            Self::Plants => "Plants",
+            Self::Waste => "Waste",
+            Self::Devices => "Devices",
+            Self::Creatures => "Creatures",
+        }
+    }
+
+    /// Whether materials may name it: the tools, devices and creatures
+    /// groups are filled from code.
+    #[must_use]
+    pub fn holds_materials(self) -> bool {
+        !matches!(self, Self::Tools | Self::Devices | Self::Creatures)
+    }
+}
 
 /// What the primary button does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -192,35 +246,50 @@ impl Tools {
         }
     }
 
-    /// The palette for `world`'s materials: the [`POUR_MATERIALS`] it has,
-    /// then scoop, net, inspect and glue, then the later materials, the
-    /// placeables whose material it has and its species (appended, so the
-    /// earlier number keys stay put).
+    /// The palette for `world`, grouped: the non-empty groups in
+    /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
+    /// inspect and glue; each material group lists the materials naming it,
+    /// by ID; then the placeables whose material `world` has, and its
+    /// species by ID.
+    #[must_use]
+    pub fn palette_groups(world: &World) -> Vec<(PaletteGroup, Vec<PaletteItem>)> {
+        let table = world.materials();
+        PaletteGroup::ALL
+            .into_iter()
+            .map(|group| {
+                let items: Vec<_> = match group {
+                    PaletteGroup::Tools => [Tool::Scoop, Tool::Net, Tool::Inspect, Tool::Glue]
+                        .map(PaletteItem::Tool)
+                        .to_vec(),
+                    PaletteGroup::Devices => Placeable::ALL
+                        .into_iter()
+                        .filter(|p| table.id(p.material_name()).is_some())
+                        .map(|p| PaletteItem::Tool(Tool::Place(p)))
+                        .collect(),
+                    PaletteGroup::Creatures => world
+                        .species()
+                        .iter()
+                        .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
+                        .collect(),
+                    _ => table
+                        .iter()
+                        .filter(|m| m.palette == Some(group))
+                        .map(|m| PaletteItem::Material(m.id))
+                        .collect(),
+                };
+                (group, items)
+            })
+            .filter(|(_, items)| !items.is_empty())
+            .collect()
+    }
+
+    /// The palette for `world` as one list: [`Tools::palette_groups`]'
+    /// items, group after group.
     #[must_use]
     pub fn palette(world: &World) -> Vec<PaletteItem> {
-        let table = world.materials();
-        let materials = POUR_MATERIALS
-            .iter()
-            .filter_map(|n| table.id(n))
-            .map(PaletteItem::Material);
-        let (early, late) = (
-            materials.clone().take(T1_MATERIALS),
-            materials.skip(T1_MATERIALS),
-        );
-        let devices = Placeable::ALL
+        Self::palette_groups(world)
             .into_iter()
-            .filter(|p| table.id(p.material_name()).is_some())
-            .map(|p| PaletteItem::Tool(Tool::Place(p)));
-        let tools = [Tool::Scoop, Tool::Net, Tool::Inspect, Tool::Glue].map(PaletteItem::Tool);
-        let species = world
-            .species()
-            .iter()
-            .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)));
-        early
-            .chain(tools)
-            .chain(late)
-            .chain(devices)
-            .chain(species)
+            .flat_map(|(_, items)| items)
             .collect()
     }
 
@@ -834,16 +903,8 @@ mod tests {
     fn palette_selects_tools_and_materials() {
         let w = world();
         let items = Tools::palette(&w);
-        assert_eq!(
-            items.len(),
-            POUR_MATERIALS.len() + 2 + 4 + w.species().len()
-        );
-        assert!(items.len() <= 34, "the palette strip holds 34 slots");
-        assert_eq!(
-            items[9],
-            PaletteItem::Tool(Tool::Glue),
-            "glue stays on key 0"
-        );
+        let pourable = w.materials().iter().filter(|m| m.palette.is_some());
+        assert_eq!(items.len(), pourable.count() + 2 + 4 + w.species().len());
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
         t.select(PaletteItem::Tool(Tool::Inspect));
@@ -852,6 +913,70 @@ mod tests {
         assert_eq!((t.tool(), t.material()), (Tool::Pour, gravel));
         assert!(t.is_selected(PaletteItem::Material(gravel)));
         assert_eq!(items.iter().filter(|&&i| t.is_selected(i)).count(), 1);
+    }
+
+    #[test]
+    fn palette_groups_come_from_the_materials() {
+        let w = world();
+        let groups = Tools::palette_groups(&w);
+        let order: Vec<_> = groups.iter().map(|(g, _)| *g).collect();
+        assert_eq!(order, PaletteGroup::ALL, "every built-in group is filled");
+        let names = |g: PaletteGroup| -> Vec<String> {
+            let (_, items) = groups.iter().find(|(x, _)| *x == g).unwrap();
+            items
+                .iter()
+                .map(|&i| match i {
+                    PaletteItem::Material(m) => w.materials().get(m).unwrap().name.clone(),
+                    PaletteItem::Tool(t) => format!("{t:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(
+            names(PaletteGroup::Tools),
+            ["Scoop", "Net", "Inspect", "Glue"]
+        );
+        assert_eq!(
+            names(PaletteGroup::Substrate),
+            ["sand", "gravel", "rock", "aquasoil", "driftwood"]
+        );
+        assert_eq!(
+            names(PaletteGroup::Water),
+            ["water", "air_bubble", "co2_bubble"]
+        );
+        assert_eq!(
+            names(PaletteGroup::Plants),
+            ["seed", "cutting", "moss", "algae"]
+        );
+        assert_eq!(names(PaletteGroup::Waste), ["waste", "detritus"]);
+        assert_eq!(
+            names(PaletteGroup::Devices),
+            ["Place(Bubbler)", "Place(FilterOutlet)"]
+        );
+        // Every species, nerites included, has a slot in Creatures.
+        let creatures: Vec<_> = w
+            .species()
+            .iter()
+            .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
+            .collect();
+        assert!(w.species().iter().any(|s| s.name == "nerite"));
+        assert_eq!(
+            groups
+                .iter()
+                .find(|(g, _)| *g == PaletteGroup::Creatures)
+                .unwrap()
+                .1,
+            creatures
+        );
+        // Number keys pick within the open group: every slot is reachable.
+        assert!(groups.iter().all(|(_, items)| items.len() <= 10));
+        // Plant tissue, air and device cells aren't poured.
+        for name in ["air", "stem", "leaf", "root", "dead_plant", "bubbler"] {
+            let m = id(&w, name);
+            assert!(
+                !Tools::palette(&w).contains(&PaletteItem::Material(m)),
+                "{name}"
+            );
+        }
     }
 
     #[test]

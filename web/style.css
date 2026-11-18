@@ -89,20 +89,50 @@ canvas {
 
 .tools { flex-wrap: nowrap; }
 
-/* One row that scrolls sideways on small screens (19+ entries). */
-.palette {
-  position: relative;
+/* The group tabs over the open group's items; both rows wrap, so nothing
+   scrolls sideways at phone width. */
+.palette-box {
   display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
   gap: 6px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  padding: 4px 2px 6px;
 }
 
+.groups, .palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.palette { padding: 2px; }
+
 .palette .swatch { flex: 0 0 auto; white-space: nowrap; }
+.palette .swatch[hidden] { display: none; }
+
+.groups [role="tab"] {
+  min-height: 36px;
+  padding: 4px 10px;
+  color: var(--muted);
+  background: var(--bg);
+}
+
+.groups [role="tab"][aria-selected="true"] {
+  color: var(--ink);
+  background: var(--panel);
+  border-color: var(--accent);
+}
+
+/* A closed group holding the selection. */
+.groups [role="tab"][data-holds]::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--accent);
+}
 
 button, .swatch {
   font: inherit;
@@ -200,8 +230,8 @@ label { white-space: nowrap; }
 @media (max-width: 600px) {
   main { padding: 10px; }
   .tools { flex-wrap: wrap; }
-  .palette { flex-basis: 100%; }
-  .swatch { min-height: 44px; padding: 6px 8px; }
+  .palette-box { flex-basis: 100%; }
+  .swatch, .groups [role="tab"] { min-height: 44px; padding: 6px 8px; }
 }
 
 .hint {

@@ -2,7 +2,7 @@
 // WebGL2 and once with the default backend (WebGPU, falling back to WebGL2
 // where the browser has no adapter), with no console errors.
 import { expect, test } from "@playwright/test";
-import { framesDrawn, open, watchErrors } from "./support.mjs";
+import { choose, framesDrawn, open, watchErrors } from "./support.mjs";
 
 for (const [name, query] of [
   ["webgl2", "?backend=webgl2"],
@@ -100,8 +100,8 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   const canvas = page.locator("#tank");
-  // Clicking a swatch scrolls the long palette into view (and the canvas
-  // partly out), so bring the canvas back and measure it after each one.
+  // Clicking a tab or swatch may scroll the palette into view (and the
+  // canvas partly out), so bring the canvas back and measure it after each.
   const box = async () => {
     await canvas.scrollIntoViewIfNeeded();
     return canvas.boundingBox();
@@ -111,14 +111,14 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   expect(await cells("bubbler")).toBe(0);
 
   // A click with the bubbler places one (8 cells), which releases bubbles.
-  await page.getByRole("radio", { name: "Bubbler" }).click();
+  await choose(page, "Bubbler");
   let b = await box();
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.5);
   expect(await cells("bubbler")).toBe(8);
   await expect.poll(() => cells("air_bubble"), { timeout: 10_000 }).toBeGreaterThan(0);
 
   // Liquid fertiliser pours like any material.
-  await page.getByRole("radio", { name: "Liquid fertiliser" }).click();
+  await choose(page, "Liquid fertiliser");
   b = await box();
   await page.mouse.move(b.x + b.width * 0.2, b.y + b.height * 0.3);
   await page.mouse.down();

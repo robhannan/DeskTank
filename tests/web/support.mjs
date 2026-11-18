@@ -62,6 +62,17 @@ export const cellCount = (page, name) => page.evaluate((n) => window.desktank.ta
 export const stateHash = (page) => page.evaluate(() => window.desktank.tank.stateHash());
 export const gridSize = (page) => page.evaluate(() => [window.desktank.tank.width(), window.desktank.tank.height()]);
 
+// Selects the palette item labelled `name`: opens its group's tab, then
+// clicks it.
+export async function choose(page, name) {
+  const group = await page
+    .locator("#palette .swatch")
+    .evaluateAll((els, n) => els.find((b) => b.textContent === n)?.dataset.group, name);
+  expect(group, `${name} in the palette`).toBeTruthy();
+  await page.locator(`#groups [data-group="${group}"]`).click();
+  await page.getByRole("radio", { name, exact: true }).click();
+}
+
 // Emulated multi-touch through the Chrome DevTools Protocol (Playwright's
 // touchscreen only taps). Points are viewport CSS px; `fingers` lists every
 // finger down after the event.
