@@ -36,7 +36,18 @@ tolerance = 20.0
 decline = 0.01
 recovery = 0.02
 
+# Colour ramps per part, dark to light (sRGB, 1–8 shades). The renderer
+# picks a shade by position: higher on the stem (newer growth) and towards
+# a leaf's tip is lighter, a leaf's underside darker (T6d).
 [colours]
-root = ["#b8ad86", "#d9cfa8", "#ece4c4"]
-stem = ["#2f5f22", "#3f7a2e", "#55923d"]
-leaf = ["#4c8a30", "#5ea53b", "#6dbb45", "#86cf5a", "#a3e07a"]
+root = ["#a89c74", "#c9bd94", "#e4dbb8"]
+stem = ["#2a5420", "#35692a", "#447d33", "#55923d"]
+leaf = ["#3c7426", "#4c8a30", "#5ea53b", "#6dbb45", "#86cf5a", "#a3e07a"]
+
+# How each part is drawn at two texels per cell side (T6d): leaf
+# lanceolate | needle | round | feather; stem stalk | thick (fuzz | frond
+# for mats); root strand | thick.
+[look]
+leaf = "lanceolate"
+stem = "stalk"
+root = "strand"

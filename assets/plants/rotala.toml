@@ -28,7 +28,15 @@ tolerance = 15.0
 decline = 0.012
 recovery = 0.02
 
+# Green low down, through gold to red-orange at the top, where the light
+# is strongest.
 [colours]
-root = ["#b8ad86", "#d9cfa8", "#ece4c4"]
-stem = ["#6a4a2a", "#7e5a32", "#94703e"]
-leaf = ["#7a8f34", "#93a83e", "#b0b84a", "#cf9a4e", "#e07a52"]
+root = ["#a89c74", "#c9bd94", "#e4dbb8"]
+stem = ["#5a3c22", "#6a4a2a", "#7e5a32", "#94703e"]
+leaf = ["#5f7a2c", "#7a8f34", "#a3a83e", "#c99a44", "#e07a52", "#ee6448"]
+
+# Fine, narrow leaves on a thin stalk.
+[look]
+leaf = "needle"
+stem = "stalk"
+root = "strand"
