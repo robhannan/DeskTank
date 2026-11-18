@@ -1113,6 +1113,8 @@ directory for custom materials and species is a stretch goal.
     (headless offscreen renders; scripted pours make the output
     reproducible);
   - `desktank bench`;
+  - `desktank import FILE` and `desktank export FILE` (move a save to
+    and from the web version or another machine; WB3);
   - `desktank saver install|uninstall`.
 - **Single instance and IPC.**
   - An advisory lock (`fd-lock`) in the runtime dir is released
@@ -1741,7 +1743,7 @@ Each package depends only on the packages before it.
   owner, see PROGRESS. Later the palette was grouped (§2.5): group tabs
   over the open group's radio group, both wrapping, so nothing scrolls
   sideways on a phone.)*
-- [ ] **WB3 Web persistence and ownership** (after T8). IndexedDB saves
+- [x] **WB3 Web persistence and ownership** (after T8). IndexedDB saves
   using the §2.6 format, save on hide and `pagehide`, autosave,
   `navigator.storage.persist()`, export/import, Web Locks ownership with
   Take over, and the visibility pause. *Accept:*
@@ -1752,6 +1754,15 @@ Each package depends only on the packages before it.
   - an exported native save imports on the web and vice versa,
     letterboxed if the sizes differ;
   - a hidden tab runs no simulation ticks (checked by tick count).
+
+  *(WB3: saves are generations keyed `[tank, n]` in one IndexedDB object
+  store, each written in one transaction that also prunes to the newest 3
+  (the transaction stands in for write-fsync-rename). A viewer tab shows
+  the newest save paused with its controls inert and queues for the lock,
+  so it takes over by itself when the owner closes; an owner that doesn't
+  answer Take over within 1 s (a frozen tab) has the lock stolen
+  (`steal: true`). Native import and export are `desktank import FILE` and
+  `desktank export FILE` (§4.3).)*
 - [ ] **WB4 Installable PWA** (after WB3). Manifest, placeholder icons and
   a service worker, with paths relative to the `/DeskTank/` subpath
   (§3.5). *Accept:* a Playwright test checks the manifest (name, icons,

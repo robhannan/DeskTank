@@ -15,7 +15,7 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 - **Rust first** — idiomatic, safe Rust with platform-specific code isolated behind small, well-defined boundaries.
 - **Cross-platform** — macOS, Windows and Linux.
 
-**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water, glue rocks in place and place bubblers, with the mouse or touch (drag pours, two-finger drag scoops, long-press inspects). Add creatures from the palette. To make fish flee the pointer, enable **Fish avoid the pointer** in web Settings or press **A** in `desktank window`. Cursor avoidance starts off.
+**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water, glue rocks in place and place bubblers, with the mouse or touch (drag pours, two-finger drag scoops, long-press inspects). Add creatures from the palette. To make fish flee the pointer, enable **Fish avoid the pointer** in web Settings or press **A** in `desktank window`. Cursor avoidance starts off. The tank is saved in your browser (when you leave the page and every 5 minutes) and reopened next visit; **Export** and **Import** move it to and from the desktop app. Open it in a second tab and that tab shows "open in another tab" with **Take over**.
 
 ## Status
 
@@ -23,6 +23,8 @@ Early days: the falling-sand simulation core works (see the browser demo above) 
 
 ```sh
 cargo run --release -p desktank -- window   # the tank in a window: click a group tab in the palette (top left; G / Shift+G or scrolling over it also switch group), then an item (or keys 1–9 and 0 within the group) for a material, device or tool, left drag uses it, right drag scoops, scroll sets the brush size, F tints the nutrient, CO₂ and light fields, W changes the water, Q shows the water quality, P picks the plant species the plants slot pours, O cycles how it starts (seeds, cuttings or fragments, as the species allows); --time HH:MM lights it for a time of day. The tank is saved (to `~/Library/Application Support/DeskTank/tanks`, `%APPDATA%\DeskTank\tanks` or `~/.local/share/desktank/tanks`; `DESKTANK_DATA_DIR` overrides) every 5 minutes, when hidden and on close, and reopened next time; --fresh starts a new tank, --no-save neither loads nor saves
+cargo run --release -p desktank -- export tank.dtank   # copy the newest save to a file (opens on the web with Import)
+cargo run --release -p desktank -- import tank.dtank   # make a save file (e.g. the web's Export) the tank's newest save; quit the app first
 cargo run --release -p desktank -- bench    # 60 s scripted pour + settle, prints CPU, tick, GPU and memory numbers
 cargo run --release -p desktank -- capture --script crates/desktank/tests/scenes/starter.toml --out shots   # headless PNG capture
 ```
