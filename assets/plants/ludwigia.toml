@@ -1,0 +1,44 @@
+# Ludwigia (Ludwigia repens): an adaptable stem plant with round to oval
+# leaves in opposite pairs, olive-bronze low down and turning red towards
+# the tips, where the light is strongest. Moderate light and growth; cut
+# tops and side shoots root as new plants.
+id = 4
+name = "ludwigia"
+description = "A bronze-red stem plant with round leaves; moderate light."
+form = "stem"
+propagation = ["cuttings", "fragments"]
+
+[stem]
+height = 44
+internode = 2
+leaf_length = 3
+root_depth = 8
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.08, optimum = 0.6, max = 1.4 }
+nutrient = { min = 0.05, optimum = 0.5, max = 3.0 }
+co2 = { min = -1.0, optimum = 1.0, max = 4.0 }
+
+[growth]
+rate = 50.0
+size = 280
+cost = 0.012
+
+[hardiness]
+tolerance = 20.0
+decline = 0.01
+recovery = 0.02
+
+# Olive-bronze low down, through copper to crimson at the top: deeper and
+# redder than rotala's gold-to-orange.
+[colours]
+root = ["#a89c74", "#c9bd94", "#e4dbb8"]
+stem = ["#4a2e1e", "#5e3424", "#723c2a", "#884632"]
+leaf = ["#4a5a24", "#66662a", "#80582c", "#9a4630", "#b23a36", "#c8424a"]
+
+# Broad, blunt round leaves on a thin stalk.
+[look]
+leaf = "round"
+stem = "stalk"
+root = "strand"

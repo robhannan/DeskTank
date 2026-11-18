@@ -558,3 +558,91 @@ fn a_mixed_planting_is_deterministic() {
     assert_eq!(a.state_hash(), b.state_hash());
     assert_ne!(a.state_hash(), grow(10).state_hash());
 }
+
+/// One plant of each named species grown alone for 10 minutes in its own
+/// shallow tank under a lid `rows` thick (0: none). Returns each one's
+/// size and limit.
+fn grow_alone(names: &[&str], rows: usize, seed: u64) -> Vec<(u32, Limit)> {
+    names
+        .iter()
+        .map(|name| {
+            let mut w = bedded(48, 6, seed);
+            if rows > 0 {
+                lid(&mut w, 0, 160, rows);
+            }
+            let s = species(&w, name);
+            w.paint_plant(80, 30, 0, s, Propagule::Cuttings).unwrap();
+            run(&mut w, 10 * MINUTE);
+            check_table(&w);
+            let plants = plant_of(&w, s);
+            let size = plants.iter().map(desktank_sim::PlantInfo::size).sum();
+            (size, plants.first().map_or(Limit::None, |p| p.limit))
+        })
+        .collect()
+}
+
+#[test]
+fn ludwigia_cabomba_and_bacopa_grow_by_their_care() {
+    // Measured (seeds 0–1, cells after 10 minutes): open tank, ludwigia
+    // 135–136, cabomba 218–225, bacopa 104; under a 5-row rock lid
+    // (light about 0.4), ludwigia 110, cabomba 66–67, bacopa 99–100.
+    let names = ["ludwigia", "cabomba", "bacopa"];
+    for seed in 0..2 {
+        let open = grow_alone(&names, 0, seed);
+        let [(lud, _), (cab, _), (bac, _)] = open[..] else {
+            unreachable!()
+        };
+        // In strong light the fast cabomba leads and the slow bacopa trails.
+        assert!(cab > lud && lud > bac && bac > 50, "open: {open:?}");
+        let shaded = grow_alone(&names, 5, seed);
+        let [(s_lud, _), (s_cab, cab_limit), (s_bac, _)] = shaded[..] else {
+            unreachable!()
+        };
+        // Cabomba needs fairly strong light: shaded, it is the smallest,
+        // under half its open size and held back by light; undemanding
+        // bacopa hardly notices.
+        assert_eq!(cab_limit, Limit::TooLow(Factor::Light), "{shaded:?}");
+        assert!(
+            s_cab * 2 < cab && s_cab < s_bac && s_cab < s_lud,
+            "{shaded:?}"
+        );
+        assert!(s_bac * 10 >= bac * 8, "bacopa open {bac}, shaded {s_bac}");
+    }
+}
+
+#[test]
+fn christmas_moss_grows_over_rock_slower_than_java_moss() {
+    // Measured (seed 5): java moss grows 24 cells in 10 minutes, christmas
+    // moss 16.
+    let mut sizes = Vec::new();
+    for name in ["java_moss", "christmas_moss"] {
+        let mut w = world(160, 120, 5);
+        let rock = id(&w, "rock");
+        w.fill_rect(rect(60, 70, 100, 90), rock, Brush::Replace)
+            .unwrap();
+        let body = w.body_at(60, 70).unwrap();
+        assert!(w.set_anchored(body, true));
+        let moss = species(&w, name);
+        w.paint_plant(80, 60, 2, moss, Propagule::Fragments)
+            .unwrap();
+        run(&mut w, MINUTE);
+        let start: u32 = plant_of(&w, moss)
+            .iter()
+            .map(desktank_sim::PlantInfo::size)
+            .sum();
+        run(&mut w, 10 * MINUTE);
+        check_table(&w);
+        let end: u32 = plant_of(&w, moss)
+            .iter()
+            .map(desktank_sim::PlantInfo::size)
+            .sum();
+        assert!(start > 0 && end > start, "{name}: {start} -> {end}");
+        sizes.push(end - start);
+    }
+    assert!(
+        sizes[1] < sizes[0],
+        "java moss {}, christmas moss {}",
+        sizes[0],
+        sizes[1]
+    );
+}
