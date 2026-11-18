@@ -92,7 +92,8 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 - Start the PR title with one category emoji. Squash merges use the
   title as the commit subject on `main`, so history stays scannable:
   ⚡️ feature, 🐛 bug fix, 🏎️ performance, ♻️ refactor, 📝 docs,
-  ✅ tests only, 👷 CI, 🔧 config/tooling, 💄 UI polish, 🏷️ tag/release.
+  ✅ tests only, 👷 CI, 🔧 config/tooling, 💄 UI polish, 🎨 graphics
+  (art, sprites, shaders, how the tank looks), 🏷️ tag/release.
   Copy the emoji exactly as shown (some include the U+FE0F variation
   selector). Pick the dominant category. If a change fixes wrong
   behaviour, use 🐛 even when the fix is a speed-up; use 🏎️ only for
