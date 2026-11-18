@@ -15,6 +15,7 @@ mod placeable;
 mod rng;
 pub mod script;
 pub mod snapshot;
+pub mod species;
 pub mod tools;
 mod world;
 
@@ -26,7 +27,9 @@ pub use material::{
 };
 pub use placeable::Placeable;
 pub use script::{Player, Script, ScriptError};
+pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable};
 pub use world::{
-    BodyId, BodyInfo, Brush, CHUNK_SIZE, Ecosystem, MAX_SIDE, RANDOM_TICK_BUDGET, RandomTickStats,
-    SLEEP_TICKS, TICKS_PER_SECOND, World, WorldConfig, WorldError,
+    BodyId, BodyInfo, Brush, CHUNK_SIZE, Creature, CreatureId, Ecosystem, MAX_CREATURES, MAX_SIDE,
+    RANDOM_TICK_BUDGET, RandomTickStats, SLEEP_TICKS, TICKS_PER_SECOND, UnmetNeed, World,
+    WorldConfig, WorldError,
 };

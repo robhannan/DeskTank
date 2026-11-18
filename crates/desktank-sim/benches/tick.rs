@@ -1,7 +1,7 @@
-//! Simulation tick benches (SPEC §6.1, T1, T5, T6): a heavy pour must tick
-//! in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine, also
-//! with living cells (random ticks) and fields active, and with grown
-//! plants.
+//! Simulation tick benches (SPEC §6.1, T1, T5, T6, T7a): a heavy pour must
+//! tick in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine,
+//! also with living cells (random ticks) and fields active, with grown
+//! plants, and with the reference tank's 30 creatures swimming.
 //!
 //! `cargo bench -p desktank-sim`
 
@@ -89,6 +89,25 @@ fn bench_tick(c: &mut Criterion) {
         settled.awake_chunks() > 0
     } {}
     g.bench_function("settled", |b| b.iter(|| black_box(&mut settled).tick()));
+    // T7a: the settled tank with 30 creatures (SPEC §6.1's reference
+    // tank), ten of each species, swimming; with no food they edit no
+    // cells, so every chunk stays asleep.
+    let mut fish = settled.clone();
+    let species: Vec<_> = fish.species().iter().map(|s| s.id).collect();
+    // Spread along the tank, skipping spots the sand pile fills.
+    let mut column = 10;
+    while fish.creatures().len() < 30 {
+        let kind = species[fish.creatures().len() % species.len()];
+        let (top, bottom) = fish.zone_rows(kind).expect("zone");
+        let row = i64::try_from(usize::midpoint(top, bottom)).expect("row");
+        let _ = fish.add_creature(kind, column, row);
+        column = (column + 23) % 630;
+    }
+    let mut fish = advance(fish, 200);
+    g.bench_function("settled_with_fish", |b| {
+        b.iter(|| black_box(&mut fish).tick());
+    });
+    assert_eq!(fish.awake_chunks(), 0, "swimming wakes no chunk");
     // A rock body sinking through the water (D17), and the tank once it
     // and a dozen more rocks rest on the pile and the floor.
     let rock = settled.materials().id("rock").expect("rock");

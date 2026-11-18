@@ -4,4 +4,5 @@ name = "waste"
 class = "powder"
 density = 1.2
 repose = 30.0
+passable = true
 colour = "#5a4a2a"

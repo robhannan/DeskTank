@@ -172,7 +172,7 @@ fn glued_body_stays_put_while_its_support_is_scooped() {
         tools.press(&mut w, Button::Primary, (48, 66)),
         Outcome::Glued(1)
     );
-    tools.release(Button::Primary);
+    tools.release(&mut w, Button::Primary);
     assert!(w.body(body).unwrap().anchored);
     assert!(
         positions(&w, rock)
@@ -185,7 +185,7 @@ fn glued_body_stays_put_while_its_support_is_scooped() {
     for y in (76..96).step_by(4) {
         tools.press(&mut w, Button::Primary, (20, y));
         tools.moved(&mut w, (76, y));
-        tools.release(Button::Primary);
+        tools.release(&mut w, Button::Primary);
     }
     assert_eq!(w.cell(48, 74).unwrap().material, id(&w, "water"));
     for _ in 0..200 {
@@ -195,7 +195,7 @@ fn glued_body_stays_put_while_its_support_is_scooped() {
     // Ungluing (a click toggles) lets it drop.
     tools.select(PaletteItem::Tool(Tool::Glue));
     tools.press(&mut w, Button::Primary, (48, 66));
-    tools.release(Button::Primary);
+    tools.release(&mut w, Button::Primary);
     assert!(!w.body(body).unwrap().anchored);
     for _ in 0..10 {
         w.tick();
@@ -257,7 +257,7 @@ fn a_stroke_makes_one_body_held_until_released() {
         tools.hold(&mut w);
     }
     assert_eq!(positions(&w, rock), shape);
-    tools.release(Button::Primary);
+    tools.release(&mut w, Button::Primary);
     for _ in 0..12 {
         w.tick();
     }
@@ -280,7 +280,7 @@ fn glue_drag_glues_every_body_it_crosses() {
     tools.press(&mut w, Button::Primary, (20, 92));
     // The first body sets the way (glue); the drag glues the next two.
     assert_eq!(tools.moved(&mut w, (80, 92)), Outcome::Glued(2));
-    tools.release(Button::Primary);
+    tools.release(&mut w, Button::Primary);
     let glued: Vec<_> = w.bodies().map(|b| b.anchored).collect();
     assert_eq!(glued, [true, true, true, false]);
     // Sand isn't a body: glue does nothing there.
@@ -388,12 +388,14 @@ fn body_run(seed: u64) -> (u64, Vec<(BodyId, Rect, bool)>) {
             1..=30 => {
                 tools.moved(&mut w, (20 + t, 20 + t / 3));
             }
-            31 => tools.release(Button::Primary),
+            31 => {
+                tools.release(&mut w, Button::Primary);
+            }
             40 => {
                 w.paint(90, 30, 7, rock, Brush::Replace).unwrap();
                 tools.select(PaletteItem::Tool(Tool::Glue));
                 tools.press(&mut w, Button::Primary, (90, 30));
-                tools.release(Button::Primary);
+                tools.release(&mut w, Button::Primary);
             }
             60..=200 if t % 7 == 0 => {
                 w.paint(90 + (t % 13) - 6, 2, 2, sand, Brush::Pour).unwrap();
@@ -405,7 +407,7 @@ fn body_run(seed: u64) -> (u64, Vec<(BodyId, Rect, bool)>) {
             // The split applies at the tick after the cut.
             301 => {
                 tools.press(&mut w, Button::Primary, (98, 30));
-                tools.release(Button::Primary);
+                tools.release(&mut w, Button::Primary);
             }
             _ => {}
         }

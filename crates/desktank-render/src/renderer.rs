@@ -1,5 +1,6 @@
 //! GPU resources for one grid and one target format: the cell texture, the
-//! palette, the uniforms and the pipeline.
+//! palette, the uniforms, the sprite atlas and instances, and the two
+//! pipelines (the grid, then the creature sprites over it).
 
 use desktank_sim::{FieldKind, World};
 
@@ -7,13 +8,16 @@ use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, PaletteLayout};
 use crate::layout::Layout;
 use crate::palette;
+use crate::sprites::{self, Atlas};
 use crate::{Gpu, timer::GpuTimer};
 
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 112;
+const VIEW_BYTES: u64 = 128;
+/// Bytes per sprite instance.
+const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
 /// Field value shown at full strength by the overlay (light is 0–1).
 const FIELD_SHOW_MAX: f32 = 2.0;
@@ -26,7 +30,16 @@ pub struct Renderer {
     format: wgpu::TextureFormat,
     grid: (u32, u32),
     pipeline: wgpu::RenderPipeline,
+    sprite_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    /// Where each species' frames are in the atlas texture.
+    atlas: Atlas,
+    /// Per-instance sprite data, [`sprites::MAX_SPRITES`] slots.
+    instances: wgpu::Buffer,
+    /// Sprites to draw, and the instance bytes last written.
+    sprite_count: u32,
+    instance_bytes: Vec<u8>,
+    instance_scratch: Vec<f32>,
     view_buffer: wgpu::Buffer,
     cells: wgpu::Texture,
     /// The palette strip image (top-left corner of a fixed-size texture).
@@ -63,77 +76,39 @@ impl Renderer {
         let palette = create_palette(gpu, world);
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
+        let atlas = Atlas::build(world.species());
+        let atlas_texture = create_atlas(gpu, &atlas);
+        let instances = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sprites"),
+            size: INSTANCE_BYTES * sprites::MAX_SPRITES as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("view"),
             size: VIEW_BYTES,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let bind_layout = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tank"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(VIEW_BYTES),
-                    },
-                    count: None,
-                },
-                texture_entry(1),
-                texture_entry(2),
-                texture_entry(3),
-                texture_entry(4),
-            ],
-        });
-        let cells_view = cells.create_view(&wgpu::TextureViewDescriptor::default());
-        let palette_view = palette.create_view(&wgpu::TextureViewDescriptor::default());
-        let hud_view = hud.create_view(&wgpu::TextureViewDescriptor::default());
-        let fields_view = fields.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = d.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("tank"),
-            layout: &bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: view_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&cells_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&palette_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&hud_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&fields_view),
-                },
-            ],
-        });
-        let pipeline = create_pipeline(d, &bind_layout, format);
+        let bind_layout = create_bind_layout(d);
+        let bind_group = create_bind_group(
+            d,
+            &bind_layout,
+            &view_buffer,
+            [&cells, &palette, &hud, &fields, &atlas_texture],
+        );
+        let (pipeline, sprite_pipeline) = create_pipelines(d, &bind_layout, format);
         Self {
             format,
             grid,
             pipeline,
+            sprite_pipeline,
             bind_group,
+            atlas,
+            instances,
+            sprite_count: 0,
+            instance_bytes: Vec::new(),
+            instance_scratch: Vec::new(),
             view_buffer,
             cells,
             hud,
@@ -188,6 +163,21 @@ impl Renderer {
                 },
             );
         });
+    }
+
+    /// Writes one sprite instance per creature, if they changed since the
+    /// last upload.
+    pub fn upload_sprites(&mut self, gpu: &Gpu, world: &World) {
+        self.sprite_count = self.atlas.instances(world, &mut self.instance_scratch);
+        let bytes: Vec<u8> = self
+            .instance_scratch
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        if bytes != self.instance_bytes && !bytes.is_empty() {
+            gpu.queue.write_buffer(&self.instances, 0, &bytes);
+        }
+        self.instance_bytes = bytes;
     }
 
     /// Uploads the fields for the overlay if they changed since the last
@@ -297,7 +287,13 @@ impl Renderer {
             let cursor = cursor.map_or([0.0; 4], |c| {
                 [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
             });
-            hud.into_iter().chain(cursor).chain(daylight).chain([1.0])
+            #[allow(clippy::cast_precision_loss)] // target pixels
+            let target = [size.0 as f32, size.1 as f32, 0.0, 0.0];
+            hud.into_iter()
+                .chain(cursor)
+                .chain(daylight)
+                .chain([1.0])
+                .chain(target)
         };
         {
             #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
@@ -340,6 +336,11 @@ impl Renderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
+        if self.sprite_count > 0 {
+            pass.set_pipeline(&self.sprite_pipeline);
+            pass.set_vertex_buffer(0, self.instances.slice(..));
+            pass.draw(0..6, 0..self.sprite_count);
+        }
     }
 }
 
@@ -401,6 +402,98 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32))
     (texture, size)
 }
 
+/// The one bind group layout both pipelines share: the view uniform and
+/// five textures (cells, palette, HUD, fields, sprite atlas).
+fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("tank"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                // The sprite vertex shader places quads with the view.
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(VIEW_BYTES),
+                },
+                count: None,
+            },
+            texture_entry(1),
+            texture_entry(2),
+            texture_entry(3),
+            texture_entry(4),
+            texture_entry(5),
+        ],
+    })
+}
+
+/// The bind group: `view` at binding 0, then `textures` at 1–5.
+fn create_bind_group(
+    d: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::Buffer,
+    textures: [&wgpu::Texture; 5],
+) -> wgpu::BindGroup {
+    let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+    let mut entries = vec![wgpu::BindGroupEntry {
+        binding: 0,
+        resource: view.as_entire_binding(),
+    }];
+    for (binding, v) in (1..).zip(&views) {
+        entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(v),
+        });
+    }
+    d.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tank"),
+        layout,
+        entries: &entries,
+    })
+}
+
+/// The sprite atlas texture, filled from `atlas`.
+fn create_atlas(gpu: &Gpu, atlas: &Atlas) -> wgpu::Texture {
+    let size = wgpu::Extent3d {
+        width: atlas.size.0,
+        height: atlas.size.1,
+        depth_or_array_layers: 1,
+    };
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("atlas"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // sRGB-encoded, read raw like the palette.
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        texture.as_image_copy(),
+        &atlas.image,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(atlas.size.0 * 4),
+            rows_per_image: None,
+        },
+        size,
+    );
+    texture
+}
+
 /// The palette-strip texture, sized for the largest strip.
 fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
     d.create_texture(&wgpu::TextureDescriptor {
@@ -420,12 +513,13 @@ fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
     })
 }
 
-/// The full-screen-triangle pipeline drawing into `format`.
-fn create_pipeline(
+/// The full-screen-triangle grid pipeline and the instanced sprite
+/// pipeline, drawing into `format`.
+fn create_pipelines(
     d: &wgpu::Device,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
         source: wgpu::ShaderSource::Wgsl(include_str!("tank.wgsl").into()),
@@ -435,7 +529,12 @@ fn create_pipeline(
         bind_group_layouts: &[Some(bind_layout)],
         immediate_size: 0,
     });
-    d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let targets = [Some(wgpu::ColorTargetState {
+        format,
+        blend: None,
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    let grid = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("tank"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
@@ -451,15 +550,42 @@ fn create_pipeline(
             module: &shader,
             entry_point: Some("fs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+            targets: &targets,
         }),
         multiview_mask: None,
         cache: None,
-    })
+    });
+    // Per instance: top-left cell, size, atlas origin, flip (vec2 each).
+    let attributes = wgpu::vertex_attr_array![
+        0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2
+    ];
+    let sprites = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sprites"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_sprite"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: INSTANCE_BYTES,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &attributes,
+            })],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        // Transparent texels are discarded: no blending needed.
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_sprite"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    (grid, sprites)
 }
 
 /// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).

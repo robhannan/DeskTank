@@ -5,4 +5,5 @@ name = "cutting"
 class = "powder"
 density = 1.2
 repose = 30.0
+passable = true
 colour = "#5f9e3a"

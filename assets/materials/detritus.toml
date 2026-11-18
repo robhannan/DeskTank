@@ -5,4 +5,5 @@ name = "detritus"
 class = "powder"
 density = 1.15
 repose = 25.0
+passable = true
 colour = "#4a3b2a"

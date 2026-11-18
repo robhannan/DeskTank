@@ -361,7 +361,8 @@ function label(name) {
   return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replaceAll("_", " ");
 }
 
-// The palette is the sim's (WebTank.palette): materials, tools, devices.
+// The palette is the sim's (WebTank.palette): materials, tools, devices,
+// creatures.
 function buildPalette() {
   const entries = tank.palette();
   const colours = tank.paletteColours();
@@ -443,7 +444,8 @@ function showInspection() {
     const [name, x, y] = rest;
     inspectEl.textContent = `${label(name)} · cell ${x}, ${y}`;
   } else if (kind === "creature") {
-    inspectEl.textContent = `Creature ${rest[0]}`;
+    const [species, id, over, x, y] = rest;
+    inspectEl.textContent = `${label(species)} #${id} · over ${label(over)} · cell ${x}, ${y}`;
   } else {
     return;
   }
