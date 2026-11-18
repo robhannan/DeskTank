@@ -17,6 +17,12 @@
 //! tank for that time of day (default noon). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
+//! Creatures (T7a): the palette's creature slots add one per click; the net
+//! carries a creature and, let go above the water, lifts it out; inspect
+//! names the species in the title bar. `--fish N` stocks the tank with N
+//! creatures to start with. Swimming creatures redraw the tank every tick
+//! (20 fps, under the cap) even when every chunk sleeps.
+//!
 //! `--demo-pour N` feeds the same code a synthetic left drag sweeping
 //! across the upper tank for N seconds, then prints the CPU it used (the
 //! T4 acceptance measurement; real input can't be scripted without
@@ -30,6 +36,7 @@ use desktank_platform::process_stats;
 use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Palette, Tank, TankConfig, TankSurface, wgpu,
 };
+use desktank_sim::UnmetNeed;
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tools};
 use desktank_sim::{FieldKind, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
@@ -57,7 +64,7 @@ const SEED: u64 = 7;
 /// # Errors
 ///
 /// Returns an error if the event loop, window, GPU or world can't be set up.
-pub fn run(demo_pour: Option<u64>, time: Option<u16>) -> anyhow::Result<()> {
+pub fn run(demo_pour: Option<u64>, time: Option<u16>, fish: usize) -> anyhow::Result<()> {
     let event_loop = EventLoop::new().context("creating the event loop")?;
     let mut app = App {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
@@ -65,6 +72,7 @@ pub fn run(demo_pour: Option<u64>, time: Option<u16>) -> anyhow::Result<()> {
         )),
         origin: Instant::now(),
         time,
+        fish,
         state: None,
         error: None,
         demo: demo_pour.map(|secs| Demo {
@@ -83,6 +91,8 @@ struct App {
     origin: Instant,
     /// Time of day to light the tank for (minutes after midnight).
     time: Option<u16>,
+    /// Creatures to stock the tank with.
+    fish: usize,
     state: Option<Running>,
     error: Option<anyhow::Error>,
     demo: Option<Demo>,
@@ -109,7 +119,7 @@ impl Demo {
         };
         let t = now - t0;
         if t >= self.length {
-            s.tools.release(Button::Primary);
+            s.tools.release(s.tank.world_mut(), Button::Primary);
             let cpu = process_stats().cpu_time.saturating_sub(cpu0);
             eprintln!(
                 "desktank window: demo pour {:.1} s, CPU {:.2} s = {:.1}% of a core",
@@ -259,7 +269,7 @@ impl Running {
                 self.show(out);
             }
             // Over the palette (or gone): hide the outline; a stroke ends.
-            None => self.tools.leave(),
+            None => self.tools.leave(self.tank.world_mut()),
         }
     }
 
@@ -280,7 +290,7 @@ impl Running {
         }
     }
 
-    /// Reports an inspection in the title bar (the creature card is T7).
+    /// Reports an inspection in the title bar (a drawn card comes later).
     fn show(&self, out: Outcome) {
         let Outcome::Inspected(found) = out else {
             return;
@@ -295,7 +305,31 @@ impl Running {
                     .map_or("?", |m| m.name.as_str());
                 format!("{name} at ({x}, {y})")
             }
-            Inspection::Creature(id) => format!("creature {}", id.0),
+            Inspection::Creature {
+                id,
+                species,
+                x,
+                y,
+                material,
+            } => {
+                let world = self.tank.world();
+                let name = world
+                    .species()
+                    .get(species)
+                    .map_or("?", |s| s.name.as_str());
+                let over = world
+                    .materials()
+                    .get(material)
+                    .map_or("?", |m| m.name.as_str());
+                let need = match world.unmet_need(species) {
+                    Some(UnmetNeed::Depth { needs, .. }) => {
+                        format!(", needs {needs} cells of water")
+                    }
+                    Some(UnmetNeed::Air) => ", needs air at the surface".to_owned(),
+                    None => String::new(),
+                };
+                format!("{name} #{}{need} over {over} at ({x}, {y})", id.0)
+            }
         };
         self.window.set_title(&format!("DeskTank — {text}"));
     }
@@ -351,6 +385,11 @@ impl ApplicationHandler for App {
                 if let Some(minute) = self.time {
                     s.tank.set_time_of_day(minute);
                 }
+                if let Err(e) = scene::stock(s.tank.world_mut(), self.fish, SEED) {
+                    self.error = Some(e);
+                    event_loop.exit();
+                    return;
+                }
                 self.state = Some(s);
             }
             Err(e) => {
@@ -386,7 +425,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorLeft { .. } => {
                 s.cursor = None;
-                s.tools.leave();
+                s.tools.leave(s.tank.world_mut());
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let button = match button {
@@ -397,7 +436,8 @@ impl ApplicationHandler for App {
                 if state == ElementState::Pressed {
                     s.pressed(button);
                 } else {
-                    s.tools.release(button);
+                    let out = s.tools.release(s.tank.world_mut(), button);
+                    s.show(out);
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
