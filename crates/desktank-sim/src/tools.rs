@@ -1108,8 +1108,17 @@ mod tests {
                 .1,
             creatures
         );
-        // Number keys pick within the open group: every slot is reachable.
-        assert!(groups.iter().all(|(_, items)| items.len() <= 10));
+        // Number keys pick the open group's first ten slots: every slot is
+        // reachable but the Creatures group's past the tenth, which take a
+        // click (or the web's arrow keys). A palette row holds 23.
+        for (g, items) in &groups {
+            let most = if *g == PaletteGroup::Creatures {
+                23
+            } else {
+                10
+            };
+            assert!(items.len() <= most, "{g:?} has {} slots", items.len());
+        }
         // Plant tissue, air and device cells aren't poured.
         for name in ["air", "stem", "leaf", "root", "dead_plant", "bubbler"] {
             let m = id(&w, name);
