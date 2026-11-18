@@ -165,6 +165,34 @@ impl Field {
         self.active
     }
 
+    /// The field as saved (T8).
+    pub(crate) fn to_v1(&self) -> crate::save::v1::Field {
+        crate::save::v1::Field {
+            values: self.values.clone(),
+            active: self.active,
+        }
+    }
+
+    /// Restores saved values (which must fit this field and be finite and
+    /// non-negative) and whether it was settling.
+    pub(crate) fn load_v1(
+        &mut self,
+        saved: crate::save::v1::Field,
+    ) -> Result<(), crate::save::SaveError> {
+        if saved.values.len() != self.values.len()
+            || !saved.values.iter().all(|v| v.is_finite() && *v >= 0.0)
+        {
+            return Err(crate::save::SaveError::Invalid(format!(
+                "a field has {} values (wants {} finite, ≥ 0)",
+                saved.values.len(),
+                self.values.len()
+            )));
+        }
+        self.values = saved.values;
+        self.active = saved.active;
+        Ok(())
+    }
+
     pub(crate) fn set(&mut self, i: usize, v: f32) {
         self.values[i] = v;
     }

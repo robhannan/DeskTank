@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 mod bench;
 mod capture;
+mod persist;
 mod scene;
 mod window;
 
@@ -73,6 +74,13 @@ struct WindowArgs {
     /// Stock the tank with this many fish (every fish species in turn).
     #[arg(long, value_name = "N", default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=60))]
     fish: u16,
+    /// Start a new tank instead of opening the saved one (the older saves
+    /// are kept until newer ones replace them).
+    #[arg(long, conflicts_with = "no_save")]
+    fresh: bool,
+    /// Start a new tank and don't save it.
+    #[arg(long)]
+    no_save: bool,
 }
 
 #[derive(Debug, Args)]
@@ -153,7 +161,18 @@ impl Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
-        Command::Window(args) => window::run(args.demo_pour, args.time, usize::from(args.fish)),
+        Command::Window(args) => window::run(
+            args.demo_pour,
+            args.time,
+            usize::from(args.fish),
+            if args.no_save {
+                window::Saves::Off
+            } else if args.fresh {
+                window::Saves::Fresh
+            } else {
+                window::Saves::Load
+            },
+        ),
         Command::Bench(args) => bench::run(args.seconds, usize::from(args.fish)),
         Command::Capture(args) => capture::run(&capture::Options {
             seed: args.seed,
@@ -195,6 +214,8 @@ mod tests {
             (&["window"], "window"),
             (&["window", "--demo-pour", "10"], "window"),
             (&["window", "--time", "21:00"], "window"),
+            (&["window", "--fresh"], "window"),
+            (&["window", "--no-save"], "window"),
             (&["interact", "toggle"], "interact"),
             (&["feed"], "feed"),
             (&["feed", "pellets"], "feed"),

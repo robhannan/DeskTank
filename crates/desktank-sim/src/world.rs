@@ -23,6 +23,7 @@ pub use bodies::{BodyId, BodyInfo};
 
 mod creatures;
 mod life;
+mod persist;
 mod plants;
 
 use creatures::Creatures;

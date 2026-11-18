@@ -1,0 +1,336 @@
+//! Save files (SPEC §2.6, T8): a versioned envelope around a compressed
+//! snapshot of a [`World`].
+//!
+//! This module is the format only: bytes in, bytes out, with no file
+//! system, so the native app (files, an ownership lock, atomic writes) and
+//! the web (`IndexedDB`, WB3) share it.
+//!
+//! **Envelope** (little-endian, [`HEADER_LEN`] bytes, then the payload):
+//!
+//! | Bytes | Field |
+//! |---|---|
+//! | 0–7 | magic, [`MAGIC`] |
+//! | 8–9 | format version ([`FORMAT_VERSION`]) |
+//! | 10–11 | reserved, 0 |
+//! | 12–15 | payload length in bytes |
+//! | 16–19 | CRC-32 (IEEE) of the payload |
+//!
+//! **Payload**: an LZ4 block (its uncompressed size prepended as a
+//! little-endian `u32`) holding the `postcard` encoding of the version's
+//! snapshot (`save::v1::Save` for version 1). The grid inside it is stored
+//! as planes: material and state run-length encoded, colour noise as its
+//! difference from the noise a fresh tank has there (mostly zero runs for
+//! the LZ4 pass).
+//!
+//! **What is saved** is everything that changes as the tank runs, so a
+//! loaded world has the same [`World::state_hash`] and continues exactly as
+//! the saved one would have: the size, seed, tick and surface row; the
+//! grid; the chunks' pending work and sleep timers; the rigid bodies with
+//! their pose and reference shape (T4c) and the next body id (T4b); the
+//! random-tick lists and cursor, and the nutrient, CO₂ and light fields
+//! (T5); the plant table with its update bookkeeping (T6b); the creatures
+//! (T7). Random streams are derived from `(seed, tick, stream)` (SPEC
+//! §2.1), so no generator state is stored. Lookups built from the material,
+//! species and reaction tables are rebuilt on load; the tables come from
+//! the build, and the save records the name behind every material and
+//! species id so a load can check they still match. The built-in reaction
+//! table and field settings are assumed ([`World::new`]).
+//!
+//! **Versions.** A newer build reads every older version: each version
+//! keeps its snapshot types (`v1`, …) and a migration to the next, and
+//! [`decode`] runs them in turn. A version newer than the build is
+//! rejected.
+
+use thiserror::Error;
+
+use crate::material::MaterialTable;
+use crate::world::{World, WorldError};
+
+pub(crate) mod v1;
+
+/// The first eight bytes of every save.
+pub const MAGIC: [u8; 8] = *b"DeskTank";
+/// The format version [`encode`] writes.
+pub const FORMAT_VERSION: u16 = 1;
+/// Envelope header size in bytes.
+pub const HEADER_LEN: usize = 20;
+/// Largest uncompressed payload a save may declare (256 MiB): bounds the
+/// allocation a damaged or hostile file can ask for.
+const MAX_PAYLOAD: usize = 256 << 20;
+
+/// Why a save couldn't be read.
+#[derive(Debug, Error, PartialEq)]
+pub enum SaveError {
+    /// The bytes don't start with [`MAGIC`].
+    #[error("not a DeskTank save")]
+    NotASave,
+    /// The file is shorter than its header says.
+    #[error("the save is truncated ({have} of {want} bytes)")]
+    Truncated {
+        /// Bytes present.
+        have: usize,
+        /// Bytes the header declares.
+        want: usize,
+    },
+    /// The file is longer than its header says.
+    #[error("the save has {0} unexpected bytes after its payload")]
+    TrailingBytes(usize),
+    /// Written by a newer DeskTank (or an unknown version).
+    #[error("save format version {0} is not supported (this build reads 1..={FORMAT_VERSION})")]
+    UnsupportedVersion(u16),
+    /// The payload doesn't match its checksum.
+    #[error("the save's checksum doesn't match: it is damaged")]
+    Checksum,
+    /// The payload couldn't be decompressed or decoded.
+    #[error("the save's payload is damaged: {0}")]
+    Payload(String),
+    /// A material or species id now names something else (or nothing).
+    #[error("the save doesn't match this build: {0}")]
+    Mismatch(String),
+    /// The snapshot is inconsistent (sizes, indices out of range).
+    #[error("the save is invalid: {0}")]
+    Invalid(String),
+    /// The world couldn't be created.
+    #[error(transparent)]
+    World(#[from] WorldError),
+}
+
+/// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
+#[must_use]
+pub fn encode(world: &World) -> Vec<u8> {
+    let snapshot = world.to_v1();
+    // Serialising plain data to a Vec can't fail.
+    let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
+    let payload = lz4_flex::block::compress_prepend_size(&raw);
+    let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
+    out.extend_from_slice(&MAGIC);
+    out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    // Payloads are far below 4 GiB (MAX_SIDE² cells).
+    #[allow(clippy::cast_possible_truncation)]
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&crc32fast::hash(&payload).to_le_bytes());
+    out.extend_from_slice(&payload);
+    out
+}
+
+/// Reads a save file into a world built on `materials` (the table the save
+/// was written with, or a later one that keeps its ids).
+///
+/// # Errors
+///
+/// Returns an error if the bytes aren't an intact save of a supported
+/// version, or the snapshot doesn't fit the tables or itself.
+pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
+    let (version, payload) = open(bytes)?;
+    let raw = decompress(payload)?;
+    match version {
+        1 => {
+            let snapshot: v1::Save =
+                postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
+            World::from_v1(snapshot, materials)
+        }
+        v => Err(SaveError::UnsupportedVersion(v)),
+    }
+}
+
+/// Checks the envelope (magic, version, length, checksum) without decoding
+/// the snapshot. Returns the format version.
+///
+/// # Errors
+///
+/// As [`decode`], for the envelope.
+pub fn check(bytes: &[u8]) -> Result<u16, SaveError> {
+    open(bytes).map(|(version, _)| version)
+}
+
+/// Validates the envelope; returns the version and the payload.
+fn open(bytes: &[u8]) -> Result<(u16, &[u8]), SaveError> {
+    if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != MAGIC {
+        return Err(SaveError::NotASave);
+    }
+    if bytes.len() < HEADER_LEN {
+        return Err(SaveError::Truncated {
+            have: bytes.len(),
+            want: HEADER_LEN,
+        });
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+    let u32_at =
+        |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+    let version = u16_at(8);
+    if version == 0 || version > FORMAT_VERSION || u16_at(10) != 0 {
+        return Err(SaveError::UnsupportedVersion(version));
+    }
+    let len = u32_at(12) as usize;
+    let want = HEADER_LEN + len;
+    match bytes.len() {
+        have if have < want => return Err(SaveError::Truncated { have, want }),
+        have if have > want => return Err(SaveError::TrailingBytes(have - want)),
+        _ => {}
+    }
+    let payload = &bytes[HEADER_LEN..];
+    if crc32fast::hash(payload) != u32_at(16) {
+        return Err(SaveError::Checksum);
+    }
+    Ok((version, payload))
+}
+
+/// Decompresses an LZ4 block with its size prepended, refusing sizes above
+/// [`MAX_PAYLOAD`] or beyond what LZ4 can expand the input to.
+fn decompress(payload: &[u8]) -> Result<Vec<u8>, SaveError> {
+    let Some(size) = payload.get(..4) else {
+        return Err(SaveError::Payload("no size".to_owned()));
+    };
+    let size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]) as usize;
+    // LZ4 expands at most about 255:1.
+    if size > MAX_PAYLOAD || size > payload.len().saturating_mul(255) {
+        return Err(SaveError::Payload(format!("implausible size {size}")));
+    }
+    lz4_flex::block::decompress_size_prepended(payload)
+        .map_err(|e| SaveError::Payload(e.to_string()))
+}
+
+/// Run-length encodes `values`: (run length, value) pairs.
+pub(crate) fn runs<T: Copy + PartialEq>(values: impl IntoIterator<Item = T>) -> Vec<(u32, T)> {
+    let mut out: Vec<(u32, T)> = Vec::new();
+    for v in values {
+        match out.last_mut() {
+            Some((n, last)) if *last == v && *n < u32::MAX => *n += 1,
+            _ => out.push((1, v)),
+        }
+    }
+    out
+}
+
+/// Expands runs into exactly `len` values.
+///
+/// # Errors
+///
+/// Returns [`SaveError::Invalid`] if the runs don't add up to `len`.
+pub(crate) fn unrun<T: Copy>(
+    runs: &[(u32, T)],
+    len: usize,
+    what: &str,
+) -> Result<Vec<T>, SaveError> {
+    let total: u64 = runs.iter().map(|&(n, _)| u64::from(n)).sum();
+    if total != len as u64 {
+        return Err(SaveError::Invalid(format!(
+            "{what} covers {total} cells, the grid has {len}"
+        )));
+    }
+    let mut out = Vec::with_capacity(len);
+    for &(n, v) in runs {
+        out.extend(core::iter::repeat_n(v, n as usize));
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runs_round_trip() {
+        let v = [0u8, 0, 0, 5, 5, 1, 0, 0];
+        let r = runs(v);
+        assert_eq!(r, vec![(3, 0), (2, 5), (1, 1), (2, 0)]);
+        assert_eq!(unrun(&r, v.len(), "x").unwrap(), v);
+        assert!(unrun(&r, 9, "x").is_err());
+        assert_eq!(runs(core::iter::empty::<u8>()), Vec::new());
+    }
+
+    #[test]
+    fn rejects_snapshots_that_dont_fit() {
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 128,
+                height: 48,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let rock = world.materials().id("rock").unwrap();
+        world.paint(20, 10, 3, rock, crate::Brush::Pour).unwrap();
+        world.tick();
+        let good = world.to_v1();
+        let load = |s: v1::Save| World::from_v1(s, MaterialTable::builtin().unwrap());
+        assert!(load(good.clone()).is_ok());
+
+        let mut renamed = good.clone();
+        renamed.materials[0].name = "unobtainium".to_owned();
+        assert!(matches!(load(renamed), Err(SaveError::Mismatch(_))));
+        let mut gone = good.clone();
+        gone.species.push(v1::Named {
+            id: 250,
+            name: "kraken".to_owned(),
+        });
+        assert!(matches!(load(gone), Err(SaveError::Mismatch(_))));
+
+        let mut short = good.clone();
+        short.grid.variants.pop();
+        assert!(matches!(load(short), Err(SaveError::Invalid(_))));
+        let mut runs = good.clone();
+        runs.grid.materials[0].0 += 1;
+        assert!(matches!(load(runs), Err(SaveError::Invalid(_))));
+        let mut body = good.clone();
+        body.bodies[0].cells.push(128 * 48);
+        assert!(matches!(load(body), Err(SaveError::Invalid(_))));
+        let mut chunks = good.clone();
+        chunks.chunks.pop();
+        assert!(matches!(load(chunks), Err(SaveError::Invalid(_))));
+        let mut listed = good.clone();
+        // Cell (100, 0) lies in the second chunk.
+        listed.life.living[0].push(100);
+        assert!(matches!(load(listed), Err(SaveError::Invalid(_))));
+        let mut field = good.clone();
+        field.life.nutrient.values[0] = f32::NAN;
+        assert!(matches!(load(field), Err(SaveError::Invalid(_))));
+        let mut big = good;
+        big.width = 9000;
+        assert!(matches!(load(big), Err(SaveError::World(_))));
+    }
+
+    #[test]
+    fn rejects_bad_envelopes() {
+        let world = World::new(
+            crate::WorldConfig {
+                width: 16,
+                height: 16,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let good = encode(&world);
+        assert_eq!(check(&good), Ok(FORMAT_VERSION));
+        let t = || MaterialTable::builtin().unwrap();
+
+        assert_eq!(decode(b"PNG", t()).err(), Some(SaveError::NotASave));
+        assert!(matches!(
+            decode(&good[..good.len() - 1], t()),
+            Err(SaveError::Truncated { .. })
+        ));
+        let mut long = good.clone();
+        long.push(0);
+        assert_eq!(decode(&long, t()).err(), Some(SaveError::TrailingBytes(1)));
+        let mut newer = good.clone();
+        newer[8..10].copy_from_slice(&(FORMAT_VERSION + 1).to_le_bytes());
+        assert_eq!(
+            decode(&newer, t()).err(),
+            Some(SaveError::UnsupportedVersion(FORMAT_VERSION + 1))
+        );
+        let mut flipped = good.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 0x40;
+        assert_eq!(decode(&flipped, t()).err(), Some(SaveError::Checksum));
+        // A payload with a matching checksum that claims a huge size.
+        let mut bomb = good[..HEADER_LEN].to_vec();
+        let payload = [0xff, 0xff, 0xff, 0x7f, 0, 0];
+        bomb[12..16].copy_from_slice(&6u32.to_le_bytes());
+        bomb[16..20].copy_from_slice(&crc32fast::hash(&payload).to_le_bytes());
+        bomb.extend_from_slice(&payload);
+        assert!(matches!(decode(&bomb, t()), Err(SaveError::Payload(_))));
+    }
+}

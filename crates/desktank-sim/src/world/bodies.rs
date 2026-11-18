@@ -31,6 +31,8 @@ use crate::material::{GLUED_VARIANT_BIT, MaterialId, MovementClass};
 use shape::{ONE, Shape, TURN};
 
 use super::World;
+use super::persist::{rect_from_v1, rect_v1};
+use crate::save::{SaveError, v1};
 
 /// Ticks a body stays still after cells were last poured into it, so a
 /// stroke can draw a shape before it drops (2, so a host that runs two
@@ -415,6 +417,95 @@ impl World {
                 !w.intersect(r).is_empty()
             })
         })
+    }
+}
+
+impl World {
+    /// The body table as saved (T8).
+    pub(super) fn save_bodies(&self) -> Vec<v1::Body> {
+        self.bodies
+            .iter()
+            .map(|(&id, b)| v1::Body {
+                id,
+                material: b.material.0,
+                #[allow(clippy::cast_possible_truncation)] // cells < MAX_SIDE²
+                cells: b.cells.iter().map(|&i| i as u32).collect(),
+                bounds: rect_v1(b.bounds),
+                anchored: b.anchored,
+                pending: match b.pending {
+                    Pending::None => 0,
+                    Pending::Sort => 1,
+                    Pending::Split => 2,
+                },
+                awake: b.awake,
+                held_until: b.held_until,
+                shape: b.shape.to_v1(),
+                anchor: b.anchor,
+                drawn: b.drawn,
+                pos: b.pos,
+                vel: b.vel,
+                angle: b.angle,
+                spin: b.spin,
+                still: b.still,
+            })
+            .collect()
+    }
+
+    /// Restores the body table from a save.
+    pub(super) fn load_bodies(&mut self, saved: Vec<v1::Body>) -> Result<(), SaveError> {
+        let invalid = |what: &str, id: u16| SaveError::Invalid(format!("body {id}: {what}"));
+        self.bodies.clear();
+        for b in saved {
+            let id = b.id;
+            let material = MaterialId(b.material);
+            if id == 0 || self.bodies.contains_key(&id) {
+                return Err(invalid("id 0 or repeated", id));
+            }
+            if self.materials.get(material).is_none() {
+                return Err(invalid("unknown material", id));
+            }
+            let pending = match b.pending {
+                0 => Pending::None,
+                1 => Pending::Sort,
+                2 => Pending::Split,
+                _ => return Err(invalid("unknown pending step", id)),
+            };
+            // Poses within a few grids of the tank and speeds far above
+            // any reachable one, so the fixed-point maths can't overflow.
+            let side = i64::try_from(4 * super::MAX_SIDE).unwrap_or(i64::MAX);
+            let near =
+                |(x, y): (i64, i64), unit: i64| x.abs() <= side * unit && y.abs() <= side * unit;
+            let calm = b.vel.0.abs() <= 64 * ONE && b.vel.1.abs() <= 64 * ONE;
+            if !(near(b.anchor, 1) && near(b.pos, ONE) && calm && b.spin.abs() <= TURN) {
+                return Err(invalid("pose out of range", id));
+            }
+            let cells = b
+                .cells
+                .iter()
+                .map(|&i| self.cell_index(i, "a body"))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.bodies.insert(
+                id,
+                Body {
+                    material,
+                    cells,
+                    bounds: rect_from_v1(b.bounds, self.width, self.height)?,
+                    anchored: b.anchored,
+                    pending,
+                    awake: b.awake,
+                    held_until: b.held_until,
+                    shape: Shape::from_v1(b.shape)?,
+                    anchor: b.anchor,
+                    drawn: b.drawn,
+                    pos: b.pos,
+                    vel: b.vel,
+                    angle: b.angle,
+                    spin: b.spin,
+                    still: b.still,
+                },
+            );
+        }
+        Ok(())
     }
 }
 

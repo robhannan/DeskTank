@@ -30,6 +30,7 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
+use crate::save::{SaveError, v1};
 
 /// Living cells visited per tick by default (SPEC §2.1: 256 per display).
 pub const RANDOM_TICK_BUDGET: usize = 256;
@@ -459,6 +460,76 @@ impl World {
         }
         self.update_light();
         self.recompute_current();
+    }
+
+    /// The random-tick scheduler and fields as saved (T8). The lists keep
+    /// their order, which the rotation follows; the light is saved too, as
+    /// it is only recomputed at the next field step.
+    pub(super) fn save_life(&self) -> v1::Life {
+        let life = &self.life;
+        v1::Life {
+            budget: u32::try_from(life.budget).unwrap_or(u32::MAX),
+            cursor: life.cursor as u64,
+            living: life.living.lists.clone(),
+            devices: life.devices.lists.clone(),
+            food: life.food.lists.clone(),
+            devices_dirty: life.devices_dirty,
+            nutrient: life.nutrient.to_v1(),
+            co2: life.co2.to_v1(),
+            light: life.light.to_v1(),
+        }
+    }
+
+    /// Restores the scheduler and fields from a save, after the cells.
+    pub(super) fn load_life(&mut self, saved: v1::Life) -> Result<(), SaveError> {
+        for (name, lists) in [
+            ("living", &saved.living),
+            ("device", &saved.devices),
+            ("food", &saved.food),
+        ] {
+            if lists.len() != self.chunks.len() {
+                return Err(SaveError::Invalid(format!(
+                    "{} {name} lists for {} chunks",
+                    lists.len(),
+                    self.chunks.len()
+                )));
+            }
+            for (ci, list) in lists.iter().enumerate() {
+                for &i in list {
+                    let i = self.cell_index(i, name)?;
+                    if self.chunk_of(i) != ci {
+                        return Err(SaveError::Invalid(format!(
+                            "{name} cell {i} listed in chunk {ci}"
+                        )));
+                    }
+                }
+            }
+        }
+        // The current is a function of the device cells; working it out
+        // wakes the fields, so their saved state is restored after.
+        let life = &mut self.life;
+        for (registry, lists) in [
+            (&mut life.living, saved.living),
+            (&mut life.devices, saved.devices),
+            (&mut life.food, saved.food),
+        ] {
+            registry.total = lists.iter().map(Vec::len).sum();
+            registry.lists = lists;
+        }
+        self.recompute_current();
+        let life = &mut self.life;
+        life.budget = usize::try_from(saved.budget).unwrap_or(usize::MAX).max(1);
+        life.cursor = usize::try_from(saved.cursor).unwrap_or(0);
+        life.devices_dirty = saved.devices_dirty;
+        life.nutrient.load_v1(saved.nutrient)?;
+        life.co2.load_v1(saved.co2)?;
+        life.light.load_v1(saved.light)?;
+        // Recount every block's opacity at the next field step: the clean
+        // ones give back the light they have, the dirty ones catch up.
+        life.opacity_dirty.fill(true);
+        life.any_opacity_dirty = true;
+        life.version += 1;
+        Ok(())
     }
 
     pub(super) fn hash_life(&self, h: &mut Fnv64) {
