@@ -1507,7 +1507,7 @@ Each package depends only on the packages before it.
   crawlers that cling to plants, rock and glass, walk the bed and
   filter-feed flakes and detritus from two cells away.
 
-- [ ] **T8 Persistence.** The save envelope and format, ownership lock,
+- [x] **T8 Persistence.** The save envelope and format, ownership lock,
   atomic writes keeping the last 3, autosave and save on exit (§2.6).
   *Accept:*
   - save and load round-trip, giving the same state hash;
@@ -1515,6 +1515,13 @@ Each package depends only on the packages before it.
   - killing the process mid-save leaves a loadable previous save;
   - a corrupt save is moved aside, and the app starts with a fresh tank
     plus a logged error.
+
+  *T8:* `desktank_sim::save` (format, OS-agnostic) and
+  `desktank_platform::SaveStore` (files, lock, atomic writes). The lock is
+  on a `<tank>.lock` file beside the saves, because saves are replaced by
+  renames. A damaged newest save falls back to the next older one before
+  a fresh tank. The snapshot stores everything that feeds later ticks, so a
+  loaded tank continues tick for tick, not only with the same hash.
 - [ ] **T9 Life cycle.** Eggs and livebearing, growth stages, breeding
   rules, colour genetics (inheritance, reversion to wildtype, mutation),
   predation, the death causes available in simple mode (old age,

@@ -34,7 +34,14 @@
 //! `--demo-pour N` feeds the same code a synthetic left drag sweeping
 //! across the upper tank for N seconds, then prints the CPU it used (the
 //! T4 acceptance measurement; real input can't be scripted without
-//! accessibility permissions).
+//! accessibility permissions). It always starts a fresh tank and saves
+//! nothing.
+//!
+//! Saves (T8, [`crate::persist`]): the window opens the saved tank (at its
+//! saved size, letterboxed) or, with none, a new starter scene. It saves
+//! every 5 minutes while visible, when hidden and on close. `--fresh`
+//! starts a new tank (saved as the newest, the older saves kept);
+//! `--no-save` neither loads nor saves.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,6 +61,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::persist::Persistence;
 use crate::scene;
 
 /// Screen pixels per cell (SPEC §2.1 default).
@@ -67,12 +75,41 @@ const SCROLL_STEP_PX: f64 = 24.0;
 /// World seed for the window's starter scene.
 const SEED: u64 = 7;
 
+/// Which tank the window opens, and whether it saves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Saves {
+    /// Open the saved tank (or a new one) and save it.
+    Load,
+    /// Start a new tank and save it.
+    Fresh,
+    /// Start a new tank and save nothing.
+    Off,
+}
+
 /// Opens the window and runs until it is closed.
 ///
 /// # Errors
 ///
 /// Returns an error if the event loop, window, GPU or world can't be set up.
-pub fn run(demo_pour: Option<u64>, time: Option<u16>, fish: usize) -> anyhow::Result<()> {
+pub fn run(
+    demo_pour: Option<u64>,
+    time: Option<u16>,
+    fish: usize,
+    saves: Saves,
+) -> anyhow::Result<()> {
+    let saves = if demo_pour.is_some() {
+        Saves::Off
+    } else {
+        saves
+    };
+    let mut persist = match saves {
+        Saves::Off => None,
+        Saves::Load | Saves::Fresh => Some(Persistence::open(None)?),
+    };
+    let loaded = match (&mut persist, saves) {
+        (Some(p), Saves::Load) => p.load(),
+        _ => None,
+    };
     let event_loop = EventLoop::new().context("creating the event loop")?;
     let mut app = App {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
@@ -83,6 +120,8 @@ pub fn run(demo_pour: Option<u64>, time: Option<u16>, fish: usize) -> anyhow::Re
         fish,
         state: None,
         error: None,
+        persist,
+        saved: loaded,
         demo: demo_pour.map(|secs| Demo {
             length: Duration::from_secs(secs),
             start: None,
@@ -103,6 +142,10 @@ struct App {
     fish: usize,
     state: Option<Running>,
     error: Option<anyhow::Error>,
+    /// The saved tank, unless saving is off.
+    persist: Option<Persistence>,
+    /// The tank loaded from the last save, until the window opens.
+    saved: Option<World>,
     demo: Option<Demo>,
 }
 
@@ -196,7 +239,12 @@ struct Running {
 }
 
 impl Running {
-    fn new(instance: &wgpu::Instance, event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
+    /// Opens the window on `saved`, or on a new starter scene sized to it.
+    fn new(
+        instance: &wgpu::Instance,
+        event_loop: &ActiveEventLoop,
+        saved: Option<World>,
+    ) -> anyhow::Result<Self> {
         let attrs = Window::default_attributes()
             .with_title("DeskTank")
             .with_inner_size(LogicalSize::new(1280.0, 720.0))
@@ -212,16 +260,22 @@ impl Running {
         let gpu = pollster::block_on(Gpu::new(instance, Some(&surface), GpuOptions::default()))?;
         let size = window.inner_size();
         let surface = TankSurface::new(&gpu, surface, size.width, size.height)?;
-        // The grid covers the window as first opened; later resizes rescale.
-        let cells = |px: u32| (px / CELL_SCALE).clamp(16, MAX_GRID_SIDE) as usize;
-        let config = WorldConfig {
-            width: cells(size.width),
-            height: cells(size.height),
-            seed: SEED,
-            ..WorldConfig::default()
+        let world = if let Some(world) = saved {
+            world
+        } else {
+            // The grid covers the window as first opened; later resizes
+            // rescale.
+            let cells = |px: u32| (px / CELL_SCALE).clamp(16, MAX_GRID_SIDE) as usize;
+            let config = WorldConfig {
+                width: cells(size.width),
+                height: cells(size.height),
+                seed: SEED,
+                ..WorldConfig::default()
+            };
+            let mut world = World::new(config, MaterialTable::builtin()?)?;
+            scene::starter(&mut world, SEED)?;
+            world
         };
-        let mut world = World::new(config, MaterialTable::builtin()?)?;
-        scene::starter(&mut world, SEED)?;
         let tools = Tools::new(scene::material(&world, "sand")?);
         let groups = Tools::palette_groups(&world);
         let info = gpu.adapter.get_info();
@@ -527,12 +581,16 @@ impl ApplicationHandler for App {
         if self.state.is_some() {
             return;
         }
-        match Running::new(&self.instance, event_loop) {
+        let saved = self.saved.take();
+        let fresh = saved.is_none();
+        match Running::new(&self.instance, event_loop, saved) {
             Ok(mut s) => {
                 if let Some(minute) = self.time {
                     s.tank.set_time_of_day(minute);
                 }
-                if let Err(e) = scene::stock(s.tank.world_mut(), self.fish, SEED) {
+                // A loaded tank keeps the creatures it had.
+                let fish = if fresh { self.fish } else { 0 };
+                if let Err(e) = scene::stock(s.tank.world_mut(), fish, SEED) {
                     self.error = Some(e);
                     event_loop.exit();
                     return;
@@ -651,6 +709,15 @@ impl ApplicationHandler for App {
         s.sync_overlay();
     }
 
+    /// Saves on the way out. On macOS, quitting from the menu or the Dock
+    /// ends the process right after this, without returning from
+    /// `run_app`.
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if let (Some(p), Some(s)) = (&mut self.persist, &self.state) {
+            p.save(s.tank.world(), "saved on exit");
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let Some(s) = self.state.as_mut() else { return };
         // Not every platform sends an event for minimising, so ask.
@@ -663,6 +730,11 @@ impl ApplicationHandler for App {
             );
             s.was_visible = visible;
             s.tank.invalidate();
+            if !visible && let Some(p) = &mut self.persist {
+                // Paused from here on, so nothing changes until it shows
+                // again.
+                p.save(s.tank.world(), "saved while hidden");
+            }
         }
         if !s.visible() {
             // Hidden: world time stops and nothing wakes us but OS events.
@@ -679,6 +751,9 @@ impl ApplicationHandler for App {
             self.demo = None;
         }
         let req = s.tank.tick(self.origin.elapsed());
+        if let Some(p) = &mut self.persist {
+            p.autosave(s.tank.world(), Instant::now());
+        }
         // Holding still keeps pouring, once per tick run.
         for _ in 0..req.sim_ticks {
             s.tools.hold(s.tank.world_mut());
