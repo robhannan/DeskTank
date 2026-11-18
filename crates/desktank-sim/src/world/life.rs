@@ -24,7 +24,7 @@ use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 
 use super::{World, WorldConfig, WorldError};
-use crate::ecology::{Ecology, Gate, Release};
+use crate::ecology::{DIRS, Ecology, Gate, Gates, Release, powu};
 use crate::field::{FIELD_EVERY, FIELD_SCALE, Field, FieldKind};
 use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
@@ -41,8 +41,6 @@ const MIN_CURRENT: f32 = 0.25;
 
 const LIVING: u8 = 1;
 const DEVICE: u8 = 2;
-/// Blocks light: solids, substrate, food.
-const OPAQUE: u8 = 4;
 /// A dense liquid such as water (not air).
 const WATERY: u8 = 8;
 /// Liquids at least this dense count as water for light and current.
@@ -55,6 +53,29 @@ pub struct RandomTickStats {
     pub living: usize,
     /// Living cells visited (at most the budget).
     pub visited: usize,
+}
+
+/// The simple ecosystem at a glance (SPEC §2.3): the water-quality score and
+/// what it is made of.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Ecosystem {
+    /// Water quality from 0 (foul) to 1 (pristine): falls with excess
+    /// nutrients and pollutants (waste, detritus, dead plant matter), rises
+    /// with plants and water changes (`assets/fields.toml`, `[quality]`).
+    pub quality: f32,
+    /// Mean nutrient level over the water cells.
+    pub mean_nutrient: f32,
+    /// Water cells (dense liquids, not air).
+    pub water_cells: usize,
+    /// Plant cells (stems, leaves, roots, moss).
+    pub plant_cells: usize,
+    /// Pollutant cells.
+    pub pollutant_cells: usize,
+    /// Algae cells.
+    pub algae_cells: usize,
+    /// Fraction of the substrate surface covered by algae: of the columns
+    /// with any non-fluid cell, those whose top non-fluid cell is algae.
+    pub algae_coverage: f32,
 }
 
 /// Per-chunk lists of cell indices whose material has a flag.
@@ -133,7 +154,9 @@ pub(super) struct Life {
     nutrient: Field,
     co2: Field,
     light: Field,
-    /// Per field cell: fraction of opaque and of watery cells.
+    /// Per material: how much light a cell blocks, in 1/255.
+    opacity_of: Vec<u8>,
+    /// Per field cell: mean opacity and fraction of watery cells.
     opacity: Vec<(f32, f32)>,
     /// Scratch: field columns whose light needs recomputing.
     columns: Vec<bool>,
@@ -161,16 +184,18 @@ impl Life {
         seed: u64,
     ) -> Self {
         let mut flags = vec![0u8; 256];
+        // Unknown IDs behave as solid (see `World`), so they block light.
+        let mut opacity_of = vec![u8::MAX; 256];
         for m in materials.iter() {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // validated 0..=1
+            let o = (m.opacity * 255.0).round() as u8;
+            opacity_of[usize::from(m.id.0)] = o;
             let f = &mut flags[usize::from(m.id.0)];
             if eco.behaviour[usize::from(m.id.0)].is_living() {
                 *f |= LIVING;
             }
             if Some(m.id) == eco.bubbler.material || Some(m.id) == eco.current.material {
                 *f |= DEVICE;
-            }
-            if !m.class.is_fluid() {
-                *f |= OPAQUE;
             }
             if m.class == MovementClass::Liquid && m.density >= WATERY_DENSITY {
                 *f |= WATERY;
@@ -191,6 +216,7 @@ impl Life {
             nutrient: field.clone(),
             co2: field.clone(),
             light: field,
+            opacity_of,
             opacity: vec![(0.0, 0.0); blocks],
             columns: Vec::new(),
             opacity_dirty: vec![true; blocks],
@@ -315,6 +341,79 @@ impl World {
         self.life.stats
     }
 
+    /// A water change (SPEC §2.3, a tray action): the nutrient and CO₂
+    /// fields lose the configured fraction, as fresh water replaces old,
+    /// and the siphon removes waste, detritus, dead plant matter and
+    /// uneaten food, leaving water. Returns how many cells it siphoned.
+    pub fn water_change(&mut self) -> usize {
+        let cfg = self.life.eco.water_change;
+        let keep = 1.0 - cfg.fraction;
+        self.life.nutrient.scale(keep);
+        self.life.co2.scale(keep);
+        self.life.version += 1;
+        let Some(water) = self.life.water else {
+            return 0;
+        };
+        let mut siphoned = 0;
+        for i in 0..self.cells.len() {
+            if cfg.siphon.contains(self.cells[i].material) {
+                self.write_cell(i % self.width, i / self.width, water, &mut None);
+                siphoned += 1;
+            }
+        }
+        siphoned
+    }
+
+    /// The water-quality score and the counts behind it. Scans the whole
+    /// grid, so call it on demand (an inspect card, a tray menu, a test),
+    /// not every tick.
+    #[must_use]
+    pub fn ecosystem(&self) -> Ecosystem {
+        let q = self.life.eco.quality;
+        let nutrient = &self.life.nutrient;
+        let mut e = Ecosystem::default();
+        let mut nutrient_sum = 0.0_f64;
+        for (i, c) in self.cells.iter().enumerate() {
+            let m = c.material;
+            if self.life.flags[usize::from(m.0)] & WATERY != 0 {
+                e.water_cells += 1;
+                nutrient_sum += f64::from(nutrient.at_cell(i % self.width, i / self.width));
+            }
+            e.plant_cells += usize::from(q.plants.contains(m));
+            e.pollutant_cells += usize::from(q.pollutants.contains(m));
+            e.algae_cells += usize::from(Some(m) == q.algae);
+        }
+        let (mut surface, mut covered) = (0usize, 0usize);
+        for x in 0..self.width {
+            if let Some(m) = (0..self.height)
+                .map(|y| self.cells[y * self.width + x].material)
+                .find(|&m| !self.is_fluid(m))
+            {
+                surface += 1;
+                covered += usize::from(Some(m) == q.algae);
+            }
+        }
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // counts ≪ 2^24
+        {
+            e.algae_coverage = if surface == 0 {
+                0.0
+            } else {
+                covered as f32 / surface as f32
+            };
+            let water = e.water_cells.max(1) as f32;
+            e.mean_nutrient = (nutrient_sum / e.water_cells.max(1) as f64) as f32;
+            let per_mille = |n: usize| n as f32 * 1000.0 / water;
+            let excess = ((e.mean_nutrient - q.nutrient_ok) / (q.nutrient_bad - q.nutrient_ok))
+                .clamp(0.0, 1.0);
+            let pollution = (per_mille(e.pollutant_cells) / q.pollution_bad).min(1.0);
+            let plants = (per_mille(e.plant_cells) / q.plant_full).min(1.0);
+            e.quality = (1.0 - q.nutrient_weight * excess - q.pollution_weight * pollution
+                + q.plant_bonus * plants)
+                .clamp(0.0, 1.0);
+        }
+        e
+    }
+
     /// Whether cells of `material` are fluid (liquid or buoyant).
     pub(crate) fn is_fluid(&self, material: MaterialId) -> bool {
         self.props[usize::from(material.0)].class.is_fluid()
@@ -359,6 +458,7 @@ impl World {
         self.run_devices();
         self.run_current();
         self.random_ticks();
+        self.run_spawns();
         if self.tick.is_multiple_of(FIELD_EVERY) {
             self.step_fields();
         }
@@ -445,6 +545,7 @@ impl World {
         let (x, y) = (i % self.width, i / self.width);
         let b = &self.life.eco.behaviour[m];
         let (buffer, emit, decay, reactions) = (b.buffer, b.emit, b.decay, b.reactions.len());
+        let (wilt, grows) = (b.wilt, b.grows.len());
         let kf = f32::from(k);
         if let Some(buf) = buffer {
             // The state counts units drawn from a full buffer, so a fresh
@@ -485,11 +586,28 @@ impl World {
             }
             self.cells[i].state = age;
         }
+        if let Some(wt) = wilt {
+            let attached = wt.attached.is_empty()
+                || DIRS.iter().any(|&(dx, dy)| {
+                    self.at(x, y, dx, dy)
+                        .is_some_and(|j| wt.attached.contains(self.cells[j].material))
+                });
+            if !attached || !self.gates_open(wt.unless, x, y) {
+                // Failing: it may wilt, and doesn't grow or react meanwhile.
+                if self.life.chance(1.0 - powu(wt.keep_per_tick, k)) {
+                    self.write_cell(x, y, wt.into, &mut None);
+                }
+                return;
+            }
+        }
+        for r in 0..grows {
+            if self.grow(i, cell, r, k) {
+                return;
+            }
+        }
         for r in 0..reactions {
             let rule = self.life.eco.behaviour[m].reactions[r];
-            if let Some(g) = rule.gate
-                && !self.gate_open(g, x, y)
-            {
+            if !self.gates_open(rule.gates, x, y) {
                 continue;
             }
             let mut found = [0usize; 4];
@@ -519,9 +637,111 @@ impl World {
         }
     }
 
+    /// Tries `[[grow]]` rule `r` of the living cell `cell` at index `i`,
+    /// acting for `k` ticks. Returns whether it grew.
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn grow(&mut self, i: usize, cell: Cell, r: usize, k: u16) -> bool {
+        let g = self.life.eco.behaviour[usize::from(cell.material.0)].grows[r];
+        let (x, y) = (i % self.width, i / self.width);
+        let count = if g.makes == cell.material {
+            cell.state.saturating_add(1)
+        } else {
+            1
+        };
+        if count > g.max || !self.gates_open(g.needs, x, y) {
+            return false;
+        }
+        let mut found = [0usize; 4];
+        let mut n = 0;
+        for (bit, &(dx, dy)) in DIRS.iter().enumerate() {
+            if g.dirs & (1 << bit) == 0 {
+                continue;
+            }
+            let Some(j) = self.at(x, y, dx, dy) else {
+                continue;
+            };
+            if !g.into.contains(self.cells[j].material) {
+                continue;
+            }
+            if !g.touching.is_empty() || g.alone {
+                let (jx, jy) = (j % self.width, j / self.width);
+                let (mut touches, mut lonely) = (g.touching.is_empty(), true);
+                for &(ex, ey) in &DIRS {
+                    let Some(e) = self.at(jx, jy, ex, ey).filter(|&e| e != i) else {
+                        continue;
+                    };
+                    let em = self.cells[e].material;
+                    touches |= g.touching.contains(em);
+                    lonely &= em != g.makes;
+                }
+                if !touches || (g.alone && !lonely) {
+                    continue;
+                }
+            }
+            found[n] = j;
+            n += 1;
+        }
+        if n == 0 {
+            return false;
+        }
+        let keep = if g.boost.is_some_and(|b| self.gate_open(b, x, y)) {
+            g.keep_boosted
+        } else {
+            g.keep_per_tick
+        };
+        if !self.life.chance(1.0 - powu(keep, k)) {
+            return false;
+        }
+        let j = found[self.life.rng.next_u32() as usize % n];
+        self.write_cell(j % self.width, j / self.width, g.makes, &mut None);
+        self.cells[j].state = count;
+        if let Some(b) = g.becomes {
+            self.write_cell(x, y, b, &mut None);
+            self.cells[i].state = 1;
+        }
+        if let Some(c) = g.consume {
+            self.life.field_mut(c.field).add_at_cell(x, y, -c.amount);
+        }
+        true
+    }
+
+    /// Spores: each `[[spawn]]` makes its attempts for this tick, each at a
+    /// random column's first non-fluid cell.
+    fn run_spawns(&mut self) {
+        for s in 0..self.life.eco.spawns.len() {
+            let sp = self.life.eco.spawns[s];
+            #[allow(clippy::cast_precision_loss)] // width ≤ 8192
+            let expected = sp.per_column_tick * self.width as f64;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ≤ width
+            let mut n = expected.floor() as usize;
+            if self.life.chance(expected.fract()) {
+                n += 1;
+            }
+            for _ in 0..n {
+                let x = self.life.rng.next_u32() as usize % self.width;
+                let Some(y) = (0..self.height)
+                    .find(|&y| !self.is_fluid(self.cells[y * self.width + x].material))
+                else {
+                    continue;
+                };
+                if y == 0
+                    || !sp.on.contains(self.cells[y * self.width + x].material)
+                    || Some(self.cells[(y - 1) * self.width + x].material) != self.life.water
+                    || !self.gates_open(sp.when, x, y - 1)
+                {
+                    continue;
+                }
+                self.write_cell(x, y - 1, sp.material, &mut None);
+            }
+        }
+    }
+
     fn gate_open(&self, g: Gate, x: usize, y: usize) -> bool {
-        let v = self.life.field(g.field).at_cell(x, y);
-        if g.below { v < g.value } else { v > g.value }
+        g.holds(self.life.field(g.field).at_cell(x, y))
+    }
+
+    fn gates_open(&self, gates: Gates, x: usize, y: usize) -> bool {
+        gates.iter().all(|g| self.gate_open(g, x, y))
     }
 
     fn release(&mut self, r: Option<Release>, x: usize, y: usize) {
@@ -736,15 +956,15 @@ impl World {
             let (mut opaque, mut watery) = (0u32, 0u32);
             for y in y0..y1 {
                 for c in &self.cells[y * self.width + x0..y * self.width + x1] {
-                    let f = life.flags[usize::from(c.material.0)];
-                    opaque += u32::from(f & OPAQUE != 0);
-                    watery += u32::from(f & WATERY != 0);
+                    let m = usize::from(c.material.0);
+                    opaque += u32::from(life.opacity_of[m]);
+                    watery += u32::from(life.flags[m] & WATERY != 0);
                 }
             }
             #[allow(clippy::cast_precision_loss)] // ≤ 64
             let area = ((x1 - x0) * (y1 - y0)) as f32;
-            #[allow(clippy::cast_precision_loss)] // ≤ 64
-            let frac = (opaque as f32 / area, watery as f32 / area);
+            #[allow(clippy::cast_precision_loss)] // ≤ 64 × 255
+            let frac = (opaque as f32 / (area * 255.0), watery as f32 / area);
             life.opacity[b] = frac;
         }
         let cfg = life.eco.light;
@@ -768,23 +988,10 @@ impl World {
     }
 }
 
-/// `base^k` by squaring: plain multiplications, so it is the same on every
-/// IEEE platform (unlike `powi`).
-fn powu(base: f64, mut k: u16) -> f64 {
-    let (mut acc, mut b) = (1.0, base);
-    while k > 0 {
-        if k & 1 == 1 {
-            acc *= b;
-        }
-        b *= b;
-        k >>= 1;
-    }
-    acc
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{LIVING, powu};
+    use super::LIVING;
+    use crate::ecology::powu;
     use crate::{Brush, MaterialTable, Placeable, Rect, World, WorldConfig};
 
     /// Every living cell, by a full scan, in index order.
@@ -841,16 +1048,22 @@ mod tests {
             // tick stay listed until the next refresh (visits skip them).
             let (listed, living) = (listed(&w), scan(&w));
             assert_eq!(w.life.living.total, listed.len());
+            // Cells grown or spawned this tick are listed at the next
+            // refresh, which rescans the rects they changed.
+            let pending = |i: u32| {
+                let (x, y) = (i as usize % w.width, i as usize / w.width);
+                w.chunks.iter().any(|c| c.changed_next.contains(x, y))
+            };
             let missing = living
                 .iter()
-                .filter(|i| listed.binary_search(i).is_err())
+                .filter(|&&i| listed.binary_search(&i).is_err() && !pending(i))
                 .count();
             assert_eq!(missing, 0, "tick {k}: living cells not listed");
             let mut dedup = listed.clone();
             dedup.dedup();
             assert_eq!(dedup.len(), listed.len(), "tick {k}: listed twice");
             assert!(
-                listed.len() - living.len() <= 256,
+                listed.len().saturating_sub(living.len()) <= 256,
                 "tick {k}: too many stale"
             );
         }

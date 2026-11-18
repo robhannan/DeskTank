@@ -36,3 +36,28 @@ spread = 4
 material = "bubbler"
 emits = "air_bubble"
 rate = 0.7
+
+# The water change (T6, a tray action): replaces `fraction` of the water,
+# so the nutrient and CO₂ fields lose that fraction, and siphons these
+# materials out of the tank.
+[water_change]
+fraction = 0.5
+siphon = ["waste", "detritus", "dead_plant", "sinking_pellet", "bloodworm", "algae_wafer"]
+
+# The water-quality score (T6, SPEC §2.3), from 0 (foul) to 1 (pristine).
+# It loses up to `nutrient_weight` as the mean nutrient level in the water
+# rises from `nutrient_ok` to `nutrient_bad`, and up to `pollution_weight`
+# as pollutants reach `pollution_bad` cells per 1000 water cells; plants
+# add up to `plant_bonus` (reached at `plant_full` plant cells per 1000).
+# `algae` is the material whose cover of the substrate is reported.
+[quality]
+nutrient_ok = 0.5
+nutrient_bad = 1.5
+nutrient_weight = 0.6
+pollutants = ["waste", "detritus", "dead_plant"]
+pollution_bad = 20.0
+pollution_weight = 0.4
+plants = ["stem", "leaf", "root", "moss"]
+plant_full = 20.0
+plant_bonus = 0.2
+algae = "algae"

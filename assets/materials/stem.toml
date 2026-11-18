@@ -1,0 +1,8 @@
+# A plant's stem: grows upwards through water and puts out leaves. Plant
+# cells are solid and only let some light through.
+id = 72
+name = "stem"
+class = "solid"
+density = 1.1
+opacity = 0.3
+colour = "#3f7a2e"

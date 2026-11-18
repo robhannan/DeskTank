@@ -29,9 +29,12 @@
 //! x = 20             # footprint centre, in cells from the top left
 //! y = 60
 //! device = "bubbler" # "bubbler" or "filter_outlet" (see `Placeable`)
+//!
+//! [[water_change]]
+//! tick = 600         # tick to change the water on (see `World::water_change`)
 //! ```
 //!
-//! Pours and placements due on tick `t` are applied just before the world's
+//! Water changes, then placements, then pours due on tick `t` are applied just before the world's
 //! `t`-th tick (counting from 0), so they show from that tick on. Each
 //! `[[pour]]` entry is one stroke: the rigid cells of all its repeats form
 //! one body, held still until its last repeat (D17).
@@ -80,6 +83,9 @@ pub struct Script {
     /// Timed device placements.
     #[serde(default, rename = "place")]
     pub places: Vec<Place>,
+    /// Timed water changes.
+    #[serde(default, rename = "water_change")]
+    pub water_changes: Vec<WaterChange>,
 }
 
 impl Default for Script {
@@ -90,6 +96,7 @@ impl Default for Script {
             world: WorldSpec::default(),
             pours: Vec::new(),
             places: Vec::new(),
+            water_changes: Vec::new(),
         }
     }
 }
@@ -162,6 +169,14 @@ pub struct Place {
     pub y: i64,
     /// Device: a [`Placeable`] material name.
     pub device: String,
+}
+
+/// One `[[water_change]]` entry.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WaterChange {
+    /// Tick to change the water on.
+    pub tick: u64,
 }
 
 /// A brush as written in a script.
@@ -245,14 +260,17 @@ pub struct Player<'a> {
 }
 
 impl Player<'_> {
-    /// Applies the pours and placements due on `tick` (call before the
-    /// world's tick).
+    /// Applies the water changes, placements and pours due on `tick` (call
+    /// before the world's tick).
     ///
     /// # Errors
     ///
     /// Returns an error if a pour names an unknown material or a placement
     /// an unknown device.
     pub fn apply(&mut self, world: &mut World, tick: u64) -> Result<(), ScriptError> {
+        for _ in self.script.water_changes.iter().filter(|c| c.tick == tick) {
+            world.water_change();
+        }
         for p in self.script.places.iter().filter(|p| p.tick == tick) {
             let device = Placeable::from_name(&p.device)
                 .ok_or_else(|| ScriptError::UnknownDevice(p.device.clone()))?;
@@ -391,6 +409,20 @@ mod tests {
             Script::parse("[[place]]\ntick = 2\nx = 1\ny = 1\ndevice = \"heater\""),
             Err(ScriptError::UnknownDevice(_))
         ));
+    }
+
+    #[test]
+    fn changes_the_water() {
+        let s = Script::parse(
+            "[[pour]]\nx = 30\ny = 40\nradius = 3\nmaterial = \"detritus\"\n[[water_change]]\ntick = 5",
+        )
+        .unwrap();
+        let mut w = world(&s, 1);
+        let detritus = w.materials().id("detritus").unwrap();
+        s.run(&mut w, 5).unwrap();
+        assert!(w.material_counts()[usize::from(detritus.0)] > 0);
+        s.run(&mut w, 6).unwrap();
+        assert_eq!(w.material_counts()[usize::from(detritus.0)], 0);
     }
 
     #[test]

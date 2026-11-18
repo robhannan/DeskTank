@@ -26,6 +26,6 @@ pub use material::{
 pub use placeable::Placeable;
 pub use script::{Player, Script, ScriptError};
 pub use world::{
-    BodyId, BodyInfo, Brush, CHUNK_SIZE, MAX_SIDE, RANDOM_TICK_BUDGET, RandomTickStats,
+    BodyId, BodyInfo, Brush, CHUNK_SIZE, Ecosystem, MAX_SIDE, RANDOM_TICK_BUDGET, RandomTickStats,
     SLEEP_TICKS, TICKS_PER_SECOND, World, WorldConfig, WorldError,
 };
