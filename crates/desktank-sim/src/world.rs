@@ -126,6 +126,7 @@ pub enum Brush {
 struct Props {
     class: MovementClass,
     density: f32,
+    milli: i64,
     float_density: f32,
     dispersion: u8,
     /// Mean sideways run per row of drop, in 1/256 cells: `256 / tan(repose)`.
@@ -138,6 +139,7 @@ struct Props {
 const UNKNOWN: Props = Props {
     class: MovementClass::Solid,
     density: f32::INFINITY,
+    milli: 1_000_000,
     float_density: f32::INFINITY,
     dispersion: 0,
     run_k: 256,
@@ -231,6 +233,8 @@ impl World {
             props[usize::from(m.id.0)] = Props {
                 class: m.class,
                 density: m.density,
+                #[allow(clippy::cast_possible_truncation)] // Rounded and bounded before conversion.
+                milli: (m.density * 1000.0).round().clamp(1.0, 1_000_000.0) as i64,
                 float_density: m.float_density,
                 dispersion: m.dispersion,
                 run_k,

@@ -7,20 +7,28 @@
 //! rebuilt from the grid alone: the id is in each cell's `state` and the
 //! glued flag in the low bit of its variant ([`GLUED_VARIANT_BIT`]).
 //!
-//! Once per tick, before the movement pass, a body that isn't glued moves
-//! one cell down if every cell directly under it is a fluid (liquid or
-//! buoyant) lighter than it, or else one cell up if every cell directly
-//! above it is a heavier fluid. The fluid it displaces moves into the cells
-//! it vacates, so mass is conserved and the body keeps its shape. Powders,
-//! floaters, other bodies, solids and the grid edges hold it.
+//! Once per tick, before the movement pass, each body that isn't glued or
+//! held moves as a rigid object (T4c, [`motion`]): gravity, buoyancy and
+//! drag set its velocity; it moves a cell at a time through fluids, pushes
+//! grains aside when it lands hard, tips over about a contact when its
+//! centre of mass isn't over its support, and slides off steps. It keeps a
+//! reference shape ([`shape`]) and is redrawn from it whenever its drawn
+//! angle changes, so it turns without losing or duplicating cells. The
+//! fluid it displaces moves into the cells it vacates, so every cell is
+//! conserved.
 //!
-//! A body is only checked when something could have changed its support:
-//! it moved, was created, split or unglued, or a chunk it overlaps has work
-//! this tick. So a resting body costs a bounds check against its chunks per
-//! tick, never wakes them, and its chunks can sleep.
+//! A body is only stepped while awake: from when it is created, split,
+//! unglued or hit, or a chunk it overlaps has work this tick, until it has
+//! rested for a few ticks. So a resting body costs a bounds check against
+//! its chunks per tick, never wakes them, and its chunks can sleep.
+
+mod motion;
+mod shape;
 
 use crate::grid::Rect;
 use crate::material::{GLUED_VARIANT_BIT, MaterialId, MovementClass};
+
+use shape::{ONE, Shape, TURN};
 
 use super::World;
 
@@ -46,6 +54,9 @@ pub struct BodyInfo {
     pub cells: usize,
     /// Glued: it never moves.
     pub anchored: bool,
+    /// How far it has turned since its shape last changed, in 1/65536 turn
+    /// clockwise (0..65536).
+    pub angle: u16,
 }
 
 /// Tidying a body needs after edits; later variants include earlier ones.
@@ -72,6 +83,32 @@ pub(super) struct Body {
     awake: bool,
     /// Held still (being poured into) through this tick.
     held_until: u64,
+    /// Its shape at angle 0 (rebuilt whenever its cells change by edits).
+    shape: Shape,
+    /// World cell where the shape's bitmap corner is drawn.
+    anchor: (i64, i64),
+    /// Angle the cells are drawn at, a multiple of the raster step.
+    drawn: i64,
+    /// Centre of mass in 1/256 cells; it may run ahead of the drawn cells
+    /// by up to about half a cell.
+    pos: (i64, i64),
+    /// Velocity in 1/256 cell per tick.
+    vel: (i64, i64),
+    /// Angle (1/65536 turn) and spin (per tick), clockwise.
+    angle: i64,
+    spin: i64,
+    /// Ticks it has been at rest.
+    still: u16,
+}
+
+impl Body {
+    /// Where its centre of mass is as drawn.
+    fn drawn_com(&self) -> (i64, i64) {
+        (
+            self.anchor.0 * ONE + self.shape.com.0,
+            self.anchor.1 * ONE + self.shape.com.1,
+        )
+    }
 }
 
 impl World {
@@ -106,6 +143,9 @@ impl World {
         }
         b.anchored = anchored;
         b.awake = true;
+        b.still = 0;
+        b.vel = (0, 0);
+        b.spin = 0;
         let (material, cells) = (b.material, b.cells.clone());
         for i in cells {
             if self.is_member(i, id.0, material) {
@@ -140,6 +180,9 @@ impl World {
         if let Some(b) = self.bodies.get_mut(&id) {
             b.held_until = until;
             b.awake = true;
+            b.still = 0;
+            b.vel = (0, 0);
+            b.spin = 0;
         }
     }
 
@@ -201,6 +244,14 @@ impl World {
                     pending: Pending::None,
                     awake: true,
                     held_until: 0,
+                    shape: Shape::default(),
+                    anchor: (0, 0),
+                    drawn: 0,
+                    pos: (0, 0),
+                    vel: (0, 0),
+                    angle: 0,
+                    spin: 0,
+                    still: 0,
                 });
                 return id;
             }
@@ -247,7 +298,9 @@ impl World {
         b.cells = first;
         b.pending = Pending::None;
         b.awake = true;
-        let (anchored, held_until) = (b.anchored, b.held_until);
+        b.still = 0;
+        let (anchored, held_until, vel) = (b.anchored, b.held_until, b.vel);
+        self.reshape(id);
         for piece in pieces {
             let new = self.new_body(material, anchored);
             for &i in &piece {
@@ -257,7 +310,30 @@ impl World {
                 b.bounds = bounds(&piece, self.width);
                 b.cells = piece;
                 b.held_until = held_until;
+                b.vel = vel;
             }
+            self.reshape(new);
+        }
+    }
+
+    /// Takes the body's current cells as its shape at angle 0.
+    fn reshape(&mut self, id: u16) {
+        let Some(b) = self.bodies.get(&id) else {
+            return;
+        };
+        let w = self.width;
+        let cells: Vec<_> = b
+            .cells
+            .iter()
+            .map(|&i| (i % w, i / w, self.cells[i].variant & !GLUED_VARIANT_BIT))
+            .collect();
+        let (shape, anchor) = Shape::new(&cells);
+        if let Some(b) = self.bodies.get_mut(&id) {
+            b.anchor = anchor;
+            b.shape = shape;
+            b.drawn = 0;
+            b.angle = 0;
+            b.pos = b.drawn_com();
         }
     }
 
@@ -299,8 +375,7 @@ impl World {
         pieces
     }
 
-    /// Moves every body that can move one cell, lowest first so a stack
-    /// falls together.
+    /// Steps every awake body, lowest first so a stack falls together.
     fn move_bodies(&mut self) {
         let tick = self.tick;
         let mut order = Vec::new();
@@ -314,12 +389,9 @@ impl World {
         }
         order.sort_unstable();
         for (_, id) in order {
-            let moved = [1, -1].into_iter().find(|&dy| self.can_move(id, dy));
-            if let Some(dy) = moved {
-                self.shift(id, dy);
-            }
+            let awake = self.step_body(id);
             if let Some(b) = self.bodies.get_mut(&id) {
-                b.awake = moved.is_some();
+                b.awake = awake;
             }
         }
     }
@@ -344,58 +416,6 @@ impl World {
             })
         })
     }
-
-    /// Whether body `id` can move one row along `dy` (+1 down, -1 up):
-    /// every cell next to it that way is a fluid lighter (down) or heavier
-    /// (up) than it.
-    fn can_move(&self, id: u16, dy: isize) -> bool {
-        let Some(b) = self.bodies.get(&id) else {
-            return false;
-        };
-        let density = self.props[usize::from(b.material.0)].density;
-        b.cells.iter().all(|&i| {
-            let Some(j) = self.at(i % self.width, i / self.width, 0, dy) else {
-                return false;
-            };
-            if self.is_member(j, id, b.material) {
-                return true;
-            }
-            let p = self.props[usize::from(self.cells[j].material.0)];
-            let way = if dy > 0 {
-                p.density < density
-            } else {
-                p.density > density
-            };
-            p.class.is_fluid() && way
-        })
-    }
-
-    /// Moves body `id` one row along `dy`. Each cell swaps with the one
-    /// beyond it, leading edge first, so the fluid there passes through the
-    /// body to the cells it vacates.
-    fn shift(&mut self, id: u16, dy: isize) {
-        let Some(b) = self.bodies.get_mut(&id) else {
-            return;
-        };
-        let mut cells = core::mem::take(&mut b.cells);
-        let w = self.width;
-        if dy > 0 {
-            for c in cells.iter_mut().rev() {
-                self.swap(*c, *c + w);
-                *c += w;
-            }
-        } else {
-            for c in &mut cells {
-                self.swap(*c, *c - w);
-                *c -= w;
-            }
-        }
-        if let Some(b) = self.bodies.get_mut(&id) {
-            b.cells = cells;
-            b.bounds.y0 = b.bounds.y0.saturating_add_signed(dy);
-            b.bounds.y1 = b.bounds.y1.saturating_add_signed(dy);
-        }
-    }
 }
 
 fn info(id: u16, b: &Body) -> BodyInfo {
@@ -405,6 +425,8 @@ fn info(id: u16, b: &Body) -> BodyInfo {
         bounds: b.bounds,
         cells: b.cells.len(),
         anchored: b.anchored,
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..TURN
+        angle: b.angle.rem_euclid(TURN) as u16,
     }
 }
 
