@@ -1345,6 +1345,21 @@ Each package depends only on the packages before it.
     criterion bench;
   - a GIF in the PR of a rock sinking as one piece and a glued one
     hanging in place.
+- [x] **T4c Rigid-body physics** (D17 revised). Bodies accelerate, feel
+  buoyancy and drag, tip about their contacts and rotate, slide off steps,
+  push grains aside on impact and pass momentum to other bodies
+  (§2.1 [Rigid bodies](#rigid-bodies)). *Accept:*
+  - a rock balanced on a point topples onto a wider side, and a block
+    overhanging a ledge tips off it, keeping every cell;
+  - a flat slab lands level and sleeps without jitter;
+  - a rock accelerates in air and holds a terminal speed in water;
+    driftwood rises at under half the speed rock sinks;
+  - a rock dropped into sand embeds deeper than one set down gently, and
+    no grain is lost;
+  - glued bodies never move, and a body rests on a glued one;
+  - same seed and input give the same state hash; the settled benches
+    stay within noise of `main`;
+  - a GIF in the PR of a rock toppling and one embedding in sand.
 - [x] **T5 Materials, reactions and fields.** The reaction table; the
   nutrient, CO₂ and light fields; water current from a filter-outlet
   placeable and a bubbler placeable (which emits bubbles); food types;

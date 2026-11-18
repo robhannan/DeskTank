@@ -1,6 +1,7 @@
-//! SPEC T4b acceptance tests: rigid bodies (D17) sink as one piece, rest on
-//! powders and the floor, conserve mass, split when cut, stay put when
-//! glued, and let a settled scene sleep.
+//! SPEC T4b and T4c acceptance tests: rigid bodies (D17) move as one piece,
+//! accelerate, feel buoyancy and drag, topple, embed in sand, rest on
+//! powders, the floor and glued bodies, conserve mass, split when cut, stay
+//! put when glued, and let a settled scene sleep.
 
 use desktank_sim::tools::{Button, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
@@ -450,4 +451,122 @@ fn rock_topples_off_its_point() {
     assert_eq!(after.len(), before.len());
     assert_ne!(after, before);
     assert!(after.iter().filter(|p| p.1 == 63).count() > 1);
+}
+
+/// The topmost row of `material`'s cells after each of `ticks` ticks.
+fn top_rows(w: &mut World, m: MaterialId, ticks: usize) -> Vec<usize> {
+    (0..ticks)
+        .map(|_| {
+            w.tick();
+            positions(w, m).first().unwrap().1
+        })
+        .collect()
+}
+
+/// Rows moved per tick, averaged over the last `n` of `rows`.
+fn mean_speed(rows: &[usize], n: usize) -> f64 {
+    let tail = &rows[rows.len() - n..];
+    let moved = tail[0].abs_diff(tail[n - 1]);
+    f64::from(u32::try_from(moved).unwrap()) / f64::from(u32::try_from(n - 1).unwrap())
+}
+
+#[test]
+fn a_rock_accelerates_in_air_and_reaches_a_terminal_speed_in_water() {
+    let mut speeds = Vec::new();
+    for level in [0.0, 1.0] {
+        let mut w = world(64, 256, 3, level);
+        let rock = id(&w, "rock");
+        w.fill_rect(rect(28, 4, 36, 10), rock, Brush::Replace)
+            .unwrap();
+        let rows = top_rows(&mut w, rock, 70);
+        // It starts slowly and speeds up.
+        assert!(rows[10] - rows[0] < rows[30] - rows[20], "{rows:?}");
+        speeds.push((mean_speed(&rows[..50], 10), mean_speed(&rows, 10)));
+    }
+    let (air, water) = (speeds[0], speeds[1]);
+    // In air it hits the speed cap; in water drag holds it near a cell per
+    // tick, the same over the last 20 ticks.
+    assert!(air.1 > 3.0, "air {air:?}");
+    assert!((0.5..1.5).contains(&water.1), "water {water:?}");
+    assert!((water.0 - water.1).abs() < 0.25, "water {water:?}");
+}
+
+#[test]
+fn driftwood_rises_slower_than_rock_sinks() {
+    let mut w = world(64, 256, 3, 1.0);
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(28, 4, 36, 10), rock, Brush::Replace)
+        .unwrap();
+    let sinking = mean_speed(&top_rows(&mut w, rock, 80), 30);
+    let mut w = world(64, 256, 3, 1.0);
+    let wood = id(&w, "driftwood");
+    w.fill_rect(rect(28, 240, 36, 246), wood, Brush::Replace)
+        .unwrap();
+    let rising = mean_speed(&top_rows(&mut w, wood, 80), 30);
+    assert!(rising > 0.1, "wood {rising}");
+    assert!(rising * 2.0 < sinking, "wood {rising}, rock {sinking}");
+}
+
+#[test]
+fn a_flat_slab_lands_level_and_sleeps_without_jitter() {
+    let mut w = world(96, 64, 5, 1.0);
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(30, 40, 60, 44), rock, Brush::Replace)
+        .unwrap();
+    settle(&mut w, 300);
+    let body = w.bodies().next().unwrap();
+    assert_eq!(body.bounds, rect(30, 60, 60, 64));
+    let rest = positions(&w, rock);
+    for _ in 0..200 {
+        w.tick();
+    }
+    assert_eq!(w.awake_chunks(), 0);
+    assert_eq!(positions(&w, rock), rest);
+}
+
+#[test]
+fn a_rock_overhanging_a_ledge_tips_down_a_staircase() {
+    let mut w = world(96, 64, 4, 1.0);
+    let rock = id(&w, "rock");
+    // Glued steps, 4 wide and 3 rows apart, falling to the right.
+    for s in 0..10 {
+        w.fill_rect(
+            rect(10 + s * 4, 30 + s * 3, 14 + s * 4, 64),
+            rock,
+            Brush::Replace,
+        )
+        .unwrap();
+    }
+    let steps: Vec<_> = w.bodies().map(|b| b.id).collect();
+    for s in &steps {
+        w.set_anchored(*s, true);
+    }
+    let stairs: Vec<_> = steps.iter().map(|&s| w.body(s).unwrap().bounds).collect();
+    // A block on the top step, its centre past the step's edge.
+    w.fill_rect(rect(11, 24, 17, 30), rock, Brush::Replace)
+        .unwrap();
+    let block = w.body_at(12, 26).unwrap();
+    settle(&mut w, 2000);
+    let end = w.body(block).unwrap();
+    assert_eq!(end.cells, 36);
+    assert!(end.bounds.x0 > 11 && end.bounds.y1 > 30, "{:?}", end.bounds);
+    // The glued steps never moved.
+    let now: Vec<_> = steps.iter().map(|&s| w.body(s).unwrap().bounds).collect();
+    assert_eq!(now, stairs);
+}
+
+#[test]
+fn a_rock_rests_on_a_glued_pillar() {
+    let mut w = world(64, 64, 8, 1.0);
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(26, 40, 38, 64), rock, Brush::Replace)
+        .unwrap();
+    let pillar = w.bodies().next().unwrap().id;
+    w.set_anchored(pillar, true);
+    w.fill_rect(rect(27, 20, 37, 26), rock, Brush::Replace)
+        .unwrap();
+    let top = w.body_at(30, 22).unwrap();
+    settle(&mut w, 500);
+    assert_eq!(w.body(pillar).unwrap().bounds, rect(26, 40, 38, 64));
+    assert_eq!(w.body(top).unwrap().bounds, rect(27, 34, 37, 40));
 }
