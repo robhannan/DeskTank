@@ -4,13 +4,14 @@
 //! into one RGBA texture (sRGB-encoded, read raw with `textureLoad` like
 //! the palette). Each frame, every creature becomes one instance: its
 //! top-left cell, on-screen size, atlas frame, mirror and quarter turns,
-//! drawn as a quad by the sprite pipeline at the grid's cell scale (one
-//! texel per cell). A crawler on a wall is turned a quarter, so its quad
-//! swaps width and height and the shader turns the texel lookup; quarter
-//! turns keep the pixel art crisp. WebGL2-safe: a per-instance vertex
+//! drawn as a quad by the sprite pipeline at the grid's cell scale, with
+//! [`TEXELS_PER_CELL`] texels per cell side (half a cell per texel). A
+//! crawler on a wall is turned a quarter, so its quad swaps width and
+//! height and the shader turns the texel lookup; quarter turns keep the
+//! pixel art crisp. WebGL2-safe: a per-instance vertex
 //! buffer, no storage buffers.
 
-use desktank_sim::{SpeciesTable, World};
+use desktank_sim::{SpeciesTable, TEXELS_PER_CELL, World};
 
 /// Atlas width in texels; species shelves stack downwards.
 pub const ATLAS_WIDTH: usize = 256;
@@ -26,6 +27,7 @@ pub const INSTANCE_FLOATS: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Entry {
     origin: (usize, usize),
+    /// Frame size in texels.
     size: (usize, usize),
     frames: usize,
 }
@@ -51,7 +53,7 @@ impl Atlas {
         let mut placed = Vec::new();
         let mut y = 0;
         for s in species.iter() {
-            let (w, h) = s.size();
+            let (w, h) = (s.sprite.width, s.sprite.height);
             let per_row = (ATLAS_WIDTH / w).max(1);
             let n = s.sprite.frames.len();
             entries[usize::from(s.id.0)] = Some(Entry {
@@ -65,7 +67,7 @@ impl Atlas {
         let height = y.max(1);
         let mut image = vec![0; ATLAS_WIDTH * height * 4];
         for (s, y0, per_row) in placed {
-            let (w, h) = s.size();
+            let (w, h) = (s.sprite.width, s.sprite.height);
             for (f, texels) in s.sprite.frames.iter().enumerate() {
                 let (fx, fy) = ((f % per_row) * w, y0 + (f / per_row) * h);
                 for (i, t) in texels.iter().enumerate() {
@@ -106,8 +108,10 @@ impl Atlas {
             let frame = usize::try_from(phase % e.frames as u64).unwrap_or(0);
             let (ox, oy) = Self::frame_origin(&e, frame);
             let (cx, cy) = c.centre();
+            // On-screen size in cells: the body, half the frame's texels.
+            let (w, h) = (e.size.0 / TEXELS_PER_CELL, e.size.1 / TEXELS_PER_CELL);
             #[allow(clippy::cast_precision_loss)] // sprite sides and atlas texels are small
-            let (w, h, ox, oy) = (e.size.0 as f32, e.size.1 as f32, ox as f32, oy as f32);
+            let (w, h, ox, oy) = (w as f32, h as f32, ox as f32, oy as f32);
             let turn = c.turn() % 4;
             let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
             let flip = if c.facing_left() { 1.0 } else { 0.0 };
@@ -127,26 +131,26 @@ impl Atlas {
     }
 }
 
-/// An 8×8 palette icon for species `id`: its first frame centred, `None`
-/// where transparent.
+/// Pixel `(x, y)` of an 8×8 palette icon for species `id`: its hand-drawn
+/// icon centred, `None` where transparent.
+#[allow(clippy::many_single_char_names)] // pixel maths
 #[must_use]
-#[allow(clippy::many_single_char_names)] // texel maths
 pub fn icon(
     species: &SpeciesTable,
     id: desktank_sim::SpeciesId,
     x: u32,
     y: u32,
 ) -> Option<[u8; 3]> {
-    let s = species.get(id)?;
-    let (w, h) = s.size();
+    let icon = &species.get(id)?.sprite.icon;
+    let (w, h) = (icon.width, icon.height);
     let (ox, oy) = (8_usize.saturating_sub(w) / 2, 8_usize.saturating_sub(h) / 2);
     let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
-    let (sx, sy) = (x.checked_sub(ox)?, y.checked_sub(oy)?);
-    if sx >= w || sy >= h {
+    let (ix, iy) = (x.checked_sub(ox)?, y.checked_sub(oy)?);
+    if ix >= w || iy >= h {
         return None;
     }
-    let t = s.sprite.frames.first()?[sy * w + sx];
-    (t[3] > 0).then_some([t[0], t[1], t[2]])
+    let p = icon.pixels[iy * w + ix];
+    (p[3] > 0).then_some([p[0], p[1], p[2]])
 }
 
 #[cfg(test)]
@@ -209,6 +213,9 @@ mod tests {
         let mut out = Vec::new();
         atlas.instances(&w, &mut out);
         let (fw, fh) = w.species().get(nerite).unwrap().size();
+        // Quads are in cells: the body, half the sprite's texels.
+        let sprite = &w.species().get(nerite).unwrap().sprite;
+        assert_eq!((fw * 2, fh * 2), (sprite.width, sprite.height));
         #[allow(clippy::cast_precision_loss)]
         let swapped = [fh as f32, fw as f32];
         assert_eq!(out[2..4], swapped);
@@ -221,15 +228,29 @@ mod tests {
     }
 
     #[test]
-    fn icons_centre_the_first_frame() {
+    fn icons_centre_the_hand_drawn_icon() {
         let w = world();
-        let betta = w.species().id("betta").unwrap();
-        let s = w.species().get(betta).unwrap();
-        let opaque = (0..8)
-            .flat_map(|y| (0..8).map(move |x| (x, y)))
-            .filter(|&(x, y)| icon(w.species(), betta, x, y).is_some())
-            .count();
-        let want = s.sprite.frames[0].iter().filter(|t| t[3] > 0).count();
-        assert_eq!(opaque, want);
+        for name in ["neon_tetra", "corydoras", "betta", "nerite"] {
+            let id = w.species().id(name).unwrap();
+            let art = &w.species().get(id).unwrap().sprite.icon;
+            let (ox, oy) = ((8 - art.width) / 2, (8 - art.height) / 2);
+            for y in 0..8_u32 {
+                for x in 0..8_u32 {
+                    let (ix, iy) = (x as usize, y as usize);
+                    let want =
+                        (ix >= ox && iy >= oy && ix - ox < art.width && iy - oy < art.height)
+                            .then(|| art.pixels[(iy - oy) * art.width + ix - ox])
+                            .filter(|p| p[3] > 0)
+                            .map(|p| [p[0], p[1], p[2]]);
+                    assert_eq!(icon(w.species(), id, x, y), want, "{name} ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_shader_draws_the_same_texels_per_cell() {
+        let want = format!("const TEXELS_PER_CELL: f32 = {TEXELS_PER_CELL}.0;");
+        assert!(include_str!("tank.wgsl").contains(&want));
     }
 }

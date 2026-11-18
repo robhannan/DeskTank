@@ -126,7 +126,8 @@ function loadSettings() {
   }
   const int = (v, lo, hi, d) => (Number.isInteger(v) && v >= lo && v <= hi ? v : d);
   return {
-    scale: int(saved.scale, 0, 8, DEFAULTS.scale),
+    // Even scales only (or 1): an odd one saved by an older version rounds down.
+    scale: ((s) => (s > 1 ? s & ~1 : s))(int(saved.scale, 0, 8, DEFAULTS.scale)),
     fps: ["auto", "30", "15"].includes(saved.fps) ? saved.fps : DEFAULTS.fps,
     field: FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
     avoidCursor: saved.avoidCursor === true,

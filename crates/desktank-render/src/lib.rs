@@ -37,7 +37,7 @@ pub use wgpu;
 
 pub use gpu::{Gpu, GpuError, GpuOptions};
 pub use hud::{BrushPreview, Palette, PaletteHit, PaletteLayout};
-pub use layout::Layout;
+pub use layout::{Layout, even_scale};
 pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;
 pub use surface::{SurfaceError, TankSurface};

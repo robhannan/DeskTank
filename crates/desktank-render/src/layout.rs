@@ -1,7 +1,12 @@
-//! Where the grid sits in a target: integer scale, centred.
+//! Where the grid sits in a target: even integer scale, centred.
+//!
+//! Creature sprites have two texels per cell side, so an even scale gives
+//! every texel the same whole number of pixels. Scale 1 is the fallback
+//! when 2 doesn't fit: each pixel then shows one texel of its 2×2 block.
 
 /// Placement of a `grid` of cells in a target of `target` pixels: the largest
-/// integer scale that fits (at least 1), centred, with the rest letterboxed.
+/// even integer scale that fits, or 1 if 2 doesn't, centred, with the rest
+/// letterboxed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     /// Screen pixels per cell side.
@@ -19,7 +24,7 @@ impl Layout {
     pub fn fit(grid: (u32, u32), target: (u32, u32)) -> Self {
         let sx = target.0 / grid.0.max(1);
         let sy = target.1 / grid.1.max(1);
-        let scale = sx.min(sy).max(1);
+        let scale = even_scale(sx.min(sy));
         let centre = |t: u32, g: u32| (i64::from(t) - i64::from(g) * i64::from(scale)) / 2;
         Self {
             scale,
@@ -40,6 +45,12 @@ impl Layout {
     }
 }
 
+/// `scale` rounded down to an even number, or 1 below 2.
+#[must_use]
+pub fn even_scale(scale: u32) -> u32 {
+    if scale >= 2 { scale & !1 } else { 1 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,10 +63,18 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_largest_integer_scale_and_centres() {
+    fn picks_the_largest_even_scale_and_centres() {
+        // Scale 3 would fit; sprites want an even one.
         let l = Layout::fit((640, 360), (2000, 1500));
-        assert_eq!(l.scale, 3);
-        assert_eq!(l.offset, ((2000 - 1920) / 2, (1500 - 1080) / 2));
+        assert_eq!(l.scale, 2);
+        assert_eq!(l.offset, ((2000 - 1280) / 2, (1500 - 720) / 2));
+        assert_eq!(Layout::fit((640, 360), (3000, 2000)).scale, 4);
+        // Under 2, the fallback is 1.
+        assert_eq!(Layout::fit((640, 360), (1000, 600)).scale, 1);
+        assert_eq!(
+            (0..10).map(even_scale).collect::<Vec<_>>(),
+            [1, 1, 2, 2, 4, 4, 6, 6, 8, 8]
+        );
     }
 
     #[test]
@@ -68,9 +87,9 @@ mod tests {
     #[test]
     fn maps_pixels_to_cells() {
         let l = Layout::fit((640, 360), (2000, 1500));
-        assert_eq!(l.cell_at(40.0, 210.0), (0, 0));
-        assert_eq!(l.cell_at(42.9, 212.9), (0, 0));
-        assert_eq!(l.cell_at(43.0, 213.0), (1, 1));
-        assert_eq!(l.cell_at(39.0, 209.0), (-1, -1));
+        assert_eq!(l.cell_at(360.0, 390.0), (0, 0));
+        assert_eq!(l.cell_at(361.9, 391.9), (0, 0));
+        assert_eq!(l.cell_at(362.0, 392.0), (1, 1));
+        assert_eq!(l.cell_at(359.0, 389.0), (-1, -1));
     }
 }

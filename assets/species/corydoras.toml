@@ -12,18 +12,54 @@ max_speed = 7.0
 diet = ["sinking_pellet", "algae_wafer", "bloodworm", "flake_food", "algae", "detritus"]
 
 [sprite]
-colours = { t = "#c9b48a", d = "#6b5a3e", k = "#0c1016", w = "#efe6d2" }
+colours = { t = "#c9b48a", l = "#e3d3ac", d = "#6b5a3e", s = "#a08c68", k = "#0c1016", e = "#ffffff", w = "#efe6d2" }
 frames = [
     [
-        "...d....",
-        "d.tttdt.",
-        "ddtdttdk",
-        "d.wwwww.",
+        ".....dd.........",
+        "....dsdd........",
+        "s..tttdtttll....",
+        "sdttdttdttkel...",
+        "dstdttdttdttttl.",
+        "sd.ttttdtttttttl",
+        "s...wwwwwwwwwwl.",
+        ".....s.s....w.w.",
     ],
     [
-        "...d....",
-        "..tttdt.",
-        "ddtdttdk",
-        "..wwwww.",
+        ".....dd.........",
+        "....dsdd........",
+        "...tttdtttll....",
+        ".sttdttdttkel...",
+        "sdtdttdttdttttl.",
+        ".s.ttttdtttttttl",
+        "....wwwwwwwwwwl.",
+        ".....s.s....w.w.",
     ],
+    [
+        ".....dd.........",
+        "....dsdd........",
+        "s..tttdtttll....",
+        "sdttdttdttkel...",
+        "dstdttdttdttttl.",
+        "sd.ttttdtttttttl",
+        "s...wwwwwwwwwwl.",
+        "......s.s....w.w",
+    ],
+    [
+        ".....dd.........",
+        "....dsdd........",
+        "...tttdtttll....",
+        ".sttdttdttkel...",
+        "sdtdttdttdttttl.",
+        ".s.ttttdtttttttl",
+        "....wwwwwwwwwwl.",
+        "......s.s....w.w",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "...d....",
+    "s.tdttl.",
+    "sdtdtdkl",
+    "s.wwwwwl",
+    "...s.w.w",
 ]

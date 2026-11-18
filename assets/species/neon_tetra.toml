@@ -15,17 +15,47 @@ max_speed = 10.0
 diet = ["flake_food", "bloodworm"]
 
 [sprite]
-# Facing right; '.' is transparent. Two frames: a tail flick.
-colours = { b = "#2f8cff", r = "#e0373f", w = "#dfe8f0", k = "#0c1016", s = "#8fa3b5" }
+# Facing right; '.' is transparent. Two texels per cell side. Four frames:
+# a tail sweep, with glints drifting along the iridescent stripe.
+colours = { b = "#2f8cff", c = "#9fe6ff", r = "#e0373f", w = "#dfe8f0", k = "#0c1016", e = "#ffffff", s = "#8fa3b5" }
 frames = [
     [
-        "s.bbbb.",
-        "ssbbbbk",
-        "s.rrrr.",
+        ".....sss......",
+        "s..bbcbbbcbek.",
+        "ssbcbbbcbbbkkw",
+        "ssrrrrrrrwwww.",
+        "s..rrrrrwwww..",
+        "....ss..s.....",
     ],
     [
-        "..bbbb.",
-        "ssbbbbk",
-        "..rrrr.",
+        "s....sss......",
+        "ss.bbbcbbbcek.",
+        "ssbbcbbbcbbkkw",
+        ".srrrrrrrwwww.",
+        "...rrrrrwwww..",
+        "....ss..s.....",
     ],
+    [
+        ".....sss......",
+        "s..cbbbcbbbek.",
+        "ssbbbcbbbcbkkw",
+        "ssrrrrrrrwwww.",
+        "s..rrrrrwwww..",
+        "....ss..s.....",
+    ],
+    [
+        ".....sss......",
+        "...bcbbbcbbek.",
+        ".sbbbbcbbbckkw",
+        "ssrrrrrrrwwww.",
+        "ss.rrrrrwwww..",
+        "s...ss..s.....",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "...sss..",
+    "s.bbcbbk",
+    "ssrrrrww",
+    "s...ss..",
 ]
