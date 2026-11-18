@@ -201,6 +201,8 @@ function setCanvasSize([w, h]) {
 function replaceTank(next) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
+  // It keeps the plant species and propagule picks too.
+  if (tank) next.keepPlantPicks(tank);
   tank?.free();
   tank = next;
   tank.select(selected);
@@ -382,9 +384,6 @@ function label(name) {
 // The plants slot pours the species picked here (the sim's list), as the
 // propagule picked in the second picker (only the species' own methods).
 function buildPlantPicker() {
-  // A new tank keeps the species and propagule picked for the last one.
-  const kept = plantPickEl.value;
-  const keptWay = propagulePickEl.value;
   plantPickEl.replaceChildren(
     ...tank.plantSpecies().map((entry, i) => {
       const [name, ...description] = entry.split(" ");
@@ -395,9 +394,7 @@ function buildPlantPicker() {
       return o;
     }),
   );
-  if (kept !== "") tank.setPlantSpecies(Number(kept));
   plantPickEl.value = String(tank.plantSpeciesSelected());
-  if (keptWay !== "") tank.setPlantPropagule(keptWay);
   buildPropagulePicker();
 }
 

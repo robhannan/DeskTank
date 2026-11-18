@@ -393,6 +393,15 @@ impl Tools {
         ok
     }
 
+    /// Takes `other`'s plant species and propagule picks as they are (the
+    /// stored propagule pick too, even one its species doesn't grow from),
+    /// for a host replacing its tank. Species ids are stable across
+    /// worlds; one this world lacks resolves to the default species.
+    pub fn keep_plant_picks(&mut self, other: &Self) {
+        self.plant = other.plant;
+        self.propagule = other.propagule;
+    }
+
     /// Picks the next propagule the picked species grows from (wrapping),
     /// for hosts without a picker of their own. Returns it.
     pub fn next_plant_propagule(&mut self, world: &World) -> Option<Propagule> {

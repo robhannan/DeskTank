@@ -471,6 +471,12 @@ fn the_plants_slot_pours_the_picked_propagule_within_the_species() {
     // A species change keeps a choice it allows and falls back otherwise.
     tools.set_plant_species(rotala);
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Cuttings));
+    // A host's new tools keep both picks as they are.
+    let mut fresh = Tools::new(id(&w, "sand"));
+    fresh.keep_plant_picks(&tools);
+    assert_eq!(fresh.plant_species(&w), Some(rotala));
+    fresh.set_plant_species(hyg);
+    assert_eq!(fresh.plant_propagule(&w), Some(Propagule::Seeds));
     tools.set_plant_species(hyg);
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Seeds));
     // Cycling goes through hygrophila's three methods and wraps.

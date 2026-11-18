@@ -81,15 +81,17 @@ pub enum ScriptError {
     /// A pour names a plant species the table doesn't have.
     #[error("unknown plant species {0:?}")]
     UnknownPlantSpecies(String),
-    /// A pour names a propagule its plant species doesn't grow from, or
-    /// names one without a plant.
+    /// A pour names a propagule its plant species doesn't grow from.
     #[error("plant species {plant:?} doesn't grow from {propagule:?}")]
     BadPropagule {
-        /// The plant species name (empty if the pour names none).
+        /// The plant species name.
         plant: String,
         /// The propagule name.
         propagule: &'static str,
     },
+    /// A pour names a propagule but no plant.
+    #[error("propagule {0:?} needs a plant")]
+    PropaguleWithoutPlant(&'static str),
     /// A `[[creature]]` entry asks for more creatures than a tank holds.
     #[error("count {0} is more than a tank holds")]
     TooMany(u32),
@@ -293,10 +295,7 @@ impl Script {
             .filter(|p| p.plant.is_none())
             .find_map(|p| p.propagule)
         {
-            return Err(ScriptError::BadPropagule {
-                plant: String::new(),
-                propagule: q.name(),
-            });
+            return Err(ScriptError::PropaguleWithoutPlant(q.name()));
         }
         if let Some(c) = script.creatures.iter().find(|c| c.count > MAX_COUNT) {
             return Err(ScriptError::TooMany(c.count));
@@ -503,7 +502,7 @@ mod tests {
         // A propagule needs a plant, and a known name.
         assert!(matches!(
             Script::parse("[[pour]]\nx = 1\ny = 1\nmaterial = \"sand\"\npropagule = \"seeds\""),
-            Err(ScriptError::BadPropagule { .. })
+            Err(ScriptError::PropaguleWithoutPlant("seeds"))
         ));
         assert!(Script::parse(&pour("propagule = \"spores\"")).is_err());
     }

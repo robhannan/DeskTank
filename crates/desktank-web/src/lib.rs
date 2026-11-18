@@ -360,6 +360,14 @@ impl WebTank {
             .is_some_and(|p| self.tools.set_plant_propagule(self.tank.world(), p))
     }
 
+    /// Takes `old`'s plant species and propagule picks, for a new tank
+    /// replacing it (a stored propagule pick survives even while the picked
+    /// species doesn't grow from it).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = keepPlantPicks))]
+    pub fn keep_plant_picks(&mut self, old: &WebTank) {
+        self.tools.keep_plant_picks(&old.tools);
+    }
+
     /// Plants in the tank.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantCount))]
     #[must_use]

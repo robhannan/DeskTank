@@ -20,9 +20,10 @@
 //! tank for that time of day (default noon). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
-//! Plants (T6b): the palette's plants slot pours the seeds or cuttings of
-//! the species named in the title bar; clicking it again (or `P`) picks the
-//! next species. Inspect shows a plant's species, age, health, size and
+//! Plants (T6b): the palette's plants slot pours the species named in the
+//! title bar as the propagule named there (seeds, cuttings or fragments);
+//! clicking it again (or `P`) picks the next species, `O` the next
+//! propagule that species grows from. Inspect shows a plant's species, age, health, size and
 //! what limits its growth in the title bar.
 //!
 //! Creatures (T7a): the palette's creature slots add one per click; the net

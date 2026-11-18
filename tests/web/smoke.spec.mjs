@@ -183,10 +183,15 @@ test("the propagule picker offers the species' own methods and pours seeds", asy
   await expect(way).toBeDisabled();
   await species.selectOption({ label: "Java moss" });
   await expect(way.locator("option")).toHaveText(["Fragments"]);
-  // Back on hygrophila the seeds pick still holds, and survives a reset.
+  // Back on hygrophila the seeds pick still holds; it survives a reset,
+  // even one made while on a species without seeds.
   await species.selectOption({ label: "Hygrophila" });
   await expect(way).toHaveValue("seeds");
+  await species.selectOption({ label: "Rotala" });
   await page.getByRole("button", { name: "Reset" }).click();
+  await expect(species).toHaveValue(String((await tank("plantSpecies")).findIndex((n) => n.startsWith("rotala "))));
+  await expect(way).toHaveValue("cuttings");
+  await species.selectOption({ label: "Hygrophila" });
   await expect.poll(() => tank("plantPropagule")).toBe("seeds");
   await expect(way).toHaveValue("seeds");
   expect(errors).toEqual([]);
