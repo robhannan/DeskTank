@@ -66,17 +66,21 @@ fn planted() -> World {
     advance(w, 30 * 60 * 20)
 }
 
-/// T6b: the living tank with 500 plants of every species: hygrophila in
-/// three of every four columns along the bed, rotala (which needs strong
-/// light) on four glued rock shelves with aquasoil a third of the way down,
-/// and java moss on four glued rocks, grown for 10 minutes and left until
-/// every chunk sleeps (or 10 more minutes pass).
+/// T6b, T6c: the living tank with 500 plants of every form: hygrophila in
+/// three of every four columns along most of the bed and amazon sword,
+/// vallisneria and cryptocoryne spreading by runners along the rest; four
+/// glued rock shelves with aquasoil a third of the way down, two with
+/// rotala (which needs strong light) and two carpeting with dwarf
+/// hairgrass and Monte Carlo; and java moss on four glued rocks, grown for
+/// 10 minutes and left until every chunk sleeps (or 10 more minutes pass).
 fn five_hundred_plants() -> World {
     let mut w = settled_living();
     let t = w.materials().clone();
     let (rock, soil) = (t.id("rock").expect("rock"), t.id("aquasoil").expect("soil"));
     let ids = |n| w.plant_species().id(n).expect("species");
     let (hyg, rotala, moss) = (ids("hygrophila"), ids("rotala"), ids("java_moss"));
+    let carpets = [ids("dwarf_hairgrass"), ids("monte_carlo")];
+    let rosettes = [ids("amazon_sword"), ids("vallisneria"), ids("cryptocoryne")];
     let glue = |w: &mut World, x: usize, y: usize| {
         let body = w.body_at(x, y).expect("body");
         w.set_anchored(body, true);
@@ -97,15 +101,28 @@ fn five_hundred_plants() -> World {
             ..shelf
         };
         w.fill_rect(bed, soil, Brush::Replace).expect("bed");
-        for x in (x0 + 2..x0 + 78).step_by(4) {
-            w.paint_plant(
-                i64::try_from(x).expect("x"),
-                110,
-                0,
-                rotala,
-                Propagule::Cuttings,
-            )
-            .expect("rotala");
+        if k % 2 == 0 {
+            for x in (x0 + 2..x0 + 78).step_by(4) {
+                w.paint_plant(
+                    i64::try_from(x).expect("x"),
+                    110,
+                    0,
+                    rotala,
+                    Propagule::Cuttings,
+                )
+                .expect("rotala");
+            }
+        } else {
+            for x in (x0 + 4..x0 + 78).step_by(8) {
+                w.paint_plant(
+                    i64::try_from(x).expect("x"),
+                    110,
+                    0,
+                    carpets[k / 2],
+                    Propagule::Runners,
+                )
+                .expect("carpet");
+            }
         }
         let x = 140 + 160 * i64::try_from(k).expect("k");
         w.paint(x, 220, 8, rock, Brush::Replace).expect("rock");
@@ -115,9 +132,13 @@ fn five_hundred_plants() -> World {
                 .expect("moss");
         }
     }
-    for x in (0..640).filter(|x| x % 4 != 3) {
+    for x in (0..584).filter(|x| x % 4 != 3) {
         w.paint_plant(x, 346, 0, hyg, Propagule::Cuttings)
             .expect("cutting");
+    }
+    for (k, x) in (592..640).step_by(9).enumerate() {
+        w.paint_plant(x, 346, 0, rosettes[k % 3], Propagule::Runners)
+            .expect("rosette");
     }
     let mut w = advance(w, 10 * 60 * 20);
     for _ in 0..10 * 60 * 20 {
@@ -126,9 +147,17 @@ fn five_hundred_plants() -> World {
         }
         w.tick();
     }
-    for s in [hyg, rotala, moss] {
+    for s in [hyg, rotala, moss]
+        .into_iter()
+        .chain(carpets)
+        .chain(rosettes)
+    {
         assert!(w.plants().any(|p| p.species == s), "{s:?} grew");
     }
+    assert!(
+        w.plants().any(|p| p.parent.is_some()),
+        "runners rooted plants"
+    );
     assert!(w.plant_count() >= 500, "{} plants", w.plant_count());
     w
 }

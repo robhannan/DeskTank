@@ -141,6 +141,19 @@ fn plant_species_scene_matches_reference() {
     check("plant_species");
 }
 
+/// T6c: amazon sword (on a root tab), vallisneria and cryptocoryne grown
+/// for 15 minutes, with runners and runner-rooted plants.
+#[test]
+fn plant_rosettes_scene_matches_reference() {
+    check("plant_rosettes");
+}
+
+/// T6c: dwarf hairgrass and Monte Carlo carpets grown for 15 minutes.
+#[test]
+fn plant_carpets_scene_matches_reference() {
+    check("plant_carpets");
+}
+
 /// Creatures (T7a): sprites of every species over the starter bed, after
 /// they have swum for 30 s and come for food.
 #[test]
