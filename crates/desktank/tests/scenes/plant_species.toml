@@ -1,0 +1,54 @@
+# Plant species side by side (T6d): rotala, hygrophila and java moss on a
+# glued rock, grown for 8 minutes in an aquasoil bed, so each species'
+# shapes and colour ramp are checked.
+ticks = 9600
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 22
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 44
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 74
+y = 20
+radius = 0
+plant = "hygrophila"
+
+[[pour]]
+x = 98
+y = 20
+radius = 0
+plant = "hygrophila"
+
+[[pour]]
+x = 134
+y = 72
+radius = 9
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 134
+y = 72
+radius = 11
+plant = "java_moss"
