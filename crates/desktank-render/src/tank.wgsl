@@ -1,6 +1,8 @@
 // The cell grid drawn as pixel art: each fragment finds its cell (integer
 // scale, nearest by construction), looks up (material, variant) in the
-// palette, darkens water with depth and tints by the time of day. The interact overlay (palette
+// palette, tints plant cells by their plant's health (T6b: the cell's state
+// bytes are its plant id, a texel of the plant texture), darkens water with
+// depth and tints by the time of day. The interact overlay (palette
 // and brush outline) is drawn on top. Creature sprites are instanced quads
 // drawn after the grid (vs_sprite / fs_sprite), one atlas texel per cell.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
@@ -44,6 +46,8 @@ struct View {
 @group(0) @binding(4) var fields: texture_2d<f32>;
 // Creature sprite frames (sRGB-encoded RGBA; alpha 0 is transparent).
 @group(0) @binding(5) var atlas: texture_2d<f32>;
+// Health tint per plant id: id & 255 across, id >> 8 down.
+@group(0) @binding(6) var plant_tints: texture_2d<f32>;
 
 // The fields at `cell`, interpolated between field-cell centres.
 fn field_at(cell: vec2<f32>) -> vec3<f32> {
@@ -89,12 +93,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
         return out(view.backdrop.rgb);
     }
-    let mv = textureLoad(cells, vec2<i32>(cell), 0).rg;
-    let idx = vec2<i32>(round(mv * 255.0));
+    let texel = textureLoad(cells, vec2<i32>(cell), 0);
+    let idx = vec2<i32>(round(texel.rg * 255.0));
     let c = textureLoad(palette, idx, 0);
+    // Palette alpha flags: 1 darkens with depth, 0.5 a plant part, 0 none.
+    let tinted = select(0.0, 1.0, c.a > 0.75);
     let depth = clamp((cell.y - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
-    let light = 1.0 - view.depth_dim * depth * c.a;
+    let light = 1.0 - view.depth_dim * depth * tinted;
     var rgb = c.rgb * light * view.daylight.rgb;
+    if c.a > 0.25 && c.a < 0.75 {
+        let plant = vec2<i32>(round(texel.ba * 255.0));
+        rgb = rgb * textureLoad(plant_tints, plant, 0).rgb;
+    }
     // Debug overlay: tint by a field's value.
     let mode = view.hud_size.z;
     if mode > 0.5 {
