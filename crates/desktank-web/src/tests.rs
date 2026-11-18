@@ -161,8 +161,12 @@ fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
 fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
     let mut t = tank();
     let species = t.plant_species();
-    assert_eq!(species.len(), 3);
+    assert_eq!(species.len(), 7);
     assert!(species[0].starts_with("hygrophila "));
+    for name in ["ludwigia", "cabomba", "bacopa", "christmas_moss"] {
+        let entry = format!("{name} ");
+        assert!(species.iter().any(|s| s.starts_with(&entry)), "{name}");
+    }
     assert_eq!(t.plant_species_selected(), 0);
     let moss = species
         .iter()

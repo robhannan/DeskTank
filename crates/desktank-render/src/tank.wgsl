@@ -314,15 +314,22 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
         if shape == STEM_FUZZ || shape == STEM_FROND {
             // A mat: texels facing water fray, and growing tips are lighter.
             let d = sub * 2 - 1;
-            let exposed = is_water(at + vec2<i32>(d.x, 0)) || is_water(at + vec2<i32>(0, d.y));
+            let water_x = is_water(at + vec2<i32>(d.x, 0));
+            let water_y = is_water(at + vec2<i32>(0, d.y));
+            let exposed = water_x || water_y;
             let h = hash(at * 2 + sub);
             if shape == STEM_FUZZ {
                 covered = !exposed || (h & 7u) < 5u;
                 step = 1 + i32((h >> 3u) % 4u) + select(0, 3, exposed);
             } else {
-                // Layered fronds: a dark lower row under a lighter, ragged upper one.
-                covered = !top || !exposed || (h & 3u) != 0u;
-                step = select(1, 4, top) + i32((h >> 3u) % 3u) + select(0, 1, exposed);
+                // Layered fronds: exposed edges break into regular tiers (a
+                // gap every third texel along the edge), each tier's first
+                // texel the lightest, over a dark inner row, where java moss's
+                // fuzz frays at random.
+                let t = at * 2 + sub;
+                let k = select(t.x, t.y, water_x && !water_y) % 3;
+                covered = !exposed || k != 2;
+                step = i32((h >> 3u) & 1u) + select(0, 3, exposed) + select(0, 3, exposed && k == 0);
             }
         } else {
             let left = kin(at, vec2<i32>(-1, 0), me);

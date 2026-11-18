@@ -605,11 +605,16 @@ struct HardinessDef {
 }
 
 /// The plant species embedded in the binary (T6b: T6's plant and moss, and
-/// a high-light stem plant).
+/// a high-light stem plant; then ludwigia, cabomba, bacopa and christmas
+/// moss).
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/hygrophila.toml"),
     include_str!("../../../assets/plants/java_moss.toml"),
     include_str!("../../../assets/plants/rotala.toml"),
+    include_str!("../../../assets/plants/ludwigia.toml"),
+    include_str!("../../../assets/plants/cabomba.toml"),
+    include_str!("../../../assets/plants/bacopa.toml"),
+    include_str!("../../../assets/plants/christmas_moss.toml"),
 ];
 
 /// All plant species, ordered by ID.
@@ -914,7 +919,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 3);
+        assert_eq!(t.len(), 7);
         let first = t.default_species().unwrap();
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
@@ -1044,6 +1049,73 @@ mod tests {
                 PlantSpeciesTable::from_toml_sources(&[&src], &m),
                 Err(PlantSpeciesError::Parse { .. })
             ));
+        }
+    }
+
+    #[test]
+    fn ludwigia_cabomba_bacopa_and_christmas_moss_load_with_their_care_and_look() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let get = |n: &str| t.get(t.id(n).unwrap()).unwrap();
+        let stem = |n: &str| match &get(n).form {
+            Form::Stem(f) => f.clone(),
+            Form::Mat(_) => panic!("{n} is a stem plant"),
+        };
+        let (hyg, rotala, java) = (get("hygrophila"), get("rotala"), get("java_moss"));
+        let (ludwigia, cabomba, bacopa, xmas) = (
+            get("ludwigia"),
+            get("cabomba"),
+            get("bacopa"),
+            get("christmas_moss"),
+        );
+        // Ludwigia: round leaves on a stalk, reddening up the stem; light
+        // between hygrophila's and rotala's.
+        assert_eq!(
+            (ludwigia.look.leaf, ludwigia.look.stem),
+            (LeafShape::Round, StemShape::Stalk)
+        );
+        let red = |c: [u8; 3]| c[0] > c[1] && c[0] > c[2];
+        assert!(red(*ludwigia.colours.leaf.last().unwrap()));
+        assert!(!red(ludwigia.colours.leaf[0]));
+        assert!(ludwigia.prefer.light.optimum > hyg.prefer.light.optimum);
+        assert!(ludwigia.prefer.light.optimum < rotala.prefer.light.optimum);
+        // Cabomba: feathery fans, the longest leaves, fast, wanting fairly
+        // strong light and quick to suffer outside it.
+        assert_eq!(cabomba.look.leaf, LeafShape::Feather);
+        assert!(stem("cabomba").leaf_length > stem("hygrophila").leaf_length);
+        assert!(cabomba.prefer.light.min > ludwigia.prefer.light.min);
+        assert!(cabomba.growth.rate > rotala.growth.rate);
+        assert!(cabomba.hardiness.tolerance < hyg.hardiness.tolerance);
+        // Bacopa: round leaves on a thick stem, short and fleshy; the
+        // slowest stem plant and the hardiest.
+        assert_eq!(
+            (bacopa.look.leaf, bacopa.look.stem),
+            (LeafShape::Round, StemShape::Thick)
+        );
+        assert!(stem("bacopa").leaf_length < stem("ludwigia").leaf_length);
+        for other in [hyg, rotala, ludwigia, cabomba] {
+            assert!(bacopa.growth.rate < other.growth.rate, "{}", other.name);
+            assert!(bacopa.hardiness.tolerance > other.hardiness.tolerance);
+        }
+        // Christmas moss: a frond mat, brighter than java moss and slower.
+        assert!(matches!(&xmas.form, Form::Mat(f) if f.on.len() == 2));
+        assert_eq!(
+            (java.look.stem, xmas.look.stem),
+            (StemShape::Fuzz, StemShape::Frond)
+        );
+        let bright = |c: [u8; 3]| u32::from(c[0]) + u32::from(c[1]) + u32::from(c[2]);
+        assert!(bright(xmas.colour()) > bright(java.colour()));
+        assert!(xmas.growth.rate < java.growth.rate);
+        assert_eq!(
+            xmas.propagules().collect::<Vec<_>>(),
+            [Propagule::Fragments]
+        );
+        // Each species has its own swatch colour in the picker.
+        let all: Vec<_> = t.iter().collect();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[..i] {
+                assert_ne!(a.colour(), b.colour(), "{} {}", a.name, b.name);
+            }
         }
     }
 

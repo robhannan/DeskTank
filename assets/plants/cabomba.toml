@@ -1,0 +1,42 @@
+# Cabomba (Cabomba caroliniana): a fast, tall stem plant whose finely
+# divided leaves spread in fan-shaped whorls. It needs fairly strong light
+# and drops leaves soon when shaded or starved; broken pieces root easily.
+id = 5
+name = "cabomba"
+description = "A fast, feathery stem plant that needs fairly strong light."
+form = "stem"
+propagation = ["cuttings", "fragments"]
+
+[stem]
+height = 52
+internode = 2
+leaf_length = 4
+root_depth = 6
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.2, optimum = 0.85, max = 1.6 }
+nutrient = { min = 0.08, optimum = 0.5, max = 3.0 }
+co2 = { min = -1.0, optimum = 1.2, max = 4.0 }
+
+[growth]
+rate = 70.0
+size = 320
+cost = 0.012
+
+[hardiness]
+tolerance = 12.0
+decline = 0.015
+recovery = 0.02
+
+# A bright lime green, yellower and lighter than hygrophila.
+[colours]
+root = ["#a89c74", "#c9bd94", "#e4dbb8"]
+stem = ["#3e6a22", "#4c7e28", "#5c9430", "#6ca838"]
+leaf = ["#4a8c22", "#5ea42a", "#74bc32", "#8cd03e", "#a6e052", "#c4ee74"]
+
+# Long feathery fans (a midrib with fine teeth) on a thin stalk.
+[look]
+leaf = "feather"
+stem = "stalk"
+root = "strand"
