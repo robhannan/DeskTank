@@ -256,28 +256,8 @@ impl World {
             }
         }
 
-        let chunks_x = width.div_ceil(CHUNK_SIZE);
-        let chunks_y = height.div_ceil(CHUNK_SIZE);
-        let mut chunks = Vec::with_capacity(chunks_x * chunks_y);
-        for cy in 0..chunks_y {
-            for cx in 0..chunks_x {
-                let bounds = Rect {
-                    x0: cx * CHUNK_SIZE,
-                    y0: cy * CHUNK_SIZE,
-                    x1: ((cx + 1) * CHUNK_SIZE).min(width),
-                    y1: ((cy + 1) * CHUNK_SIZE).min(height),
-                };
-                chunks.push(Chunk {
-                    bounds,
-                    work: Rect::EMPTY,
-                    work_next: Rect::EMPTY,
-                    changed: Rect::EMPTY,
-                    changed_next: Rect::EMPTY,
-                    idle_ticks: SLEEP_TICKS,
-                    awake: false,
-                });
-            }
-        }
+        let (chunks_x, chunks_y) = (width.div_ceil(CHUNK_SIZE), height.div_ceil(CHUNK_SIZE));
+        let chunks = asleep_chunks(width, height);
         let rngs = (0..chunks.len() as u64)
             .map(|c| chunk_stream(seed, 0, c))
             .collect();
@@ -884,6 +864,32 @@ impl World {
             }
         }
     }
+}
+
+/// Every chunk of a `width × height` grid, row-major, asleep.
+fn asleep_chunks(width: usize, height: usize) -> Vec<Chunk> {
+    let (chunks_x, chunks_y) = (width.div_ceil(CHUNK_SIZE), height.div_ceil(CHUNK_SIZE));
+    let mut chunks = Vec::with_capacity(chunks_x * chunks_y);
+    for cy in 0..chunks_y {
+        for cx in 0..chunks_x {
+            let bounds = Rect {
+                x0: cx * CHUNK_SIZE,
+                y0: cy * CHUNK_SIZE,
+                x1: ((cx + 1) * CHUNK_SIZE).min(width),
+                y1: ((cy + 1) * CHUNK_SIZE).min(height),
+            };
+            chunks.push(Chunk {
+                bounds,
+                work: Rect::EMPTY,
+                work_next: Rect::EMPTY,
+                changed: Rect::EMPTY,
+                changed_next: Rect::EMPTY,
+                idle_ticks: SLEEP_TICKS,
+                awake: false,
+            });
+        }
+    }
+    chunks
 }
 
 /// `256 / tan(repose)`: the mean sideways run per row of drop, in 1/256
