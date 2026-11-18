@@ -15,15 +15,18 @@
 //! button is down; letting go above the water (or outside the tank) lifts it
 //! out. Inspect reports the creature under the pointer, if any, or the
 //! plant, and the cell's material. A creature slot in the palette adds one
-//! of its species per click. The one plants slot (T6b) pours the seeds or
-//! cuttings of the species picked with [`Tools::set_plant_species`].
+//! of its species per click. The one plants slot (T6b) pours the species
+//! picked with [`Tools::set_plant_species`], as the propagule (seeds,
+//! cuttings or fragments) picked with [`Tools::set_plant_propagule`].
 //!
 //! The palette is grouped ([`PaletteGroup`], [`Tools::palette_groups`]):
 //! hosts show a group selector and the open group's items, so every slot
 //! stays a short reach (and a number key) away.
 
 pub use crate::CreatureId;
-use crate::{BodyId, Brush, MaterialId, Placeable, PlantId, PlantSpeciesId, SpeciesId, World};
+use crate::{
+    BodyId, Brush, MaterialId, Placeable, PlantId, PlantSpeciesId, Propagule, SpeciesId, World,
+};
 
 /// Smallest brush radius in cells (a single cell).
 pub const MIN_RADIUS: u32 = 0;
@@ -128,8 +131,8 @@ pub enum Tool {
     Place(Placeable),
     /// Add a creature of this species, once per click.
     AddCreature(SpeciesId),
-    /// Pour the seeds or cuttings of the picked plant species
-    /// ([`Tools::plant_species`]).
+    /// Pour the picked plant species ([`Tools::plant_species`]) as the
+    /// picked propagule ([`Tools::plant_propagule`]).
     Plant,
 }
 
@@ -247,6 +250,10 @@ pub struct Tools {
     material: MaterialId,
     /// The species the plants slot pours (0: the default species).
     plant: PlantSpeciesId,
+    /// The propagule picked for it (`None`: the species' default). Kept
+    /// across species changes; one a species doesn't grow from falls back
+    /// to that species' default ([`Tools::plant_propagule`]).
+    propagule: Option<Propagule>,
     radius: u32,
     pointer: Option<(i64, i64)>,
     stroke: Option<Stroke>,
@@ -260,6 +267,7 @@ impl Tools {
             tool: Tool::Pour,
             material,
             plant: PlantSpeciesId(0),
+            propagule: None,
             radius: DEFAULT_RADIUS,
             pointer: None,
             stroke: None,
@@ -352,9 +360,50 @@ impl Tools {
     }
 
     /// Picks the plant species the plants slot pours. Doesn't change the
-    /// selected tool.
+    /// selected tool. The picked propagule stays if the species grows from
+    /// it; otherwise the species' default is poured.
     pub fn set_plant_species(&mut self, species: PlantSpeciesId) {
         self.plant = species;
+    }
+
+    /// The propagule the plants slot pours, as `world` resolves it: the
+    /// picked one if the picked species grows from it, else the species'
+    /// [`crate::PlantSpecies::default_propagule`].
+    #[must_use]
+    pub fn plant_propagule(&self, world: &World) -> Option<Propagule> {
+        let s = world.plant_species().for_state(u16::from(self.plant.0))?;
+        Some(
+            self.propagule
+                .filter(|&p| s.grows_from(p))
+                .unwrap_or_else(|| s.default_propagule()),
+        )
+    }
+
+    /// Picks the propagule the plants slot pours, if the picked species
+    /// grows from it (as `world` resolves the species). Returns whether it
+    /// was taken. Doesn't change the selected tool.
+    pub fn set_plant_propagule(&mut self, world: &World, propagule: Propagule) -> bool {
+        let ok = world
+            .plant_species()
+            .for_state(u16::from(self.plant.0))
+            .is_some_and(|s| s.grows_from(propagule));
+        if ok {
+            self.propagule = Some(propagule);
+        }
+        ok
+    }
+
+    /// Picks the next propagule the picked species grows from (wrapping),
+    /// for hosts without a picker of their own. Returns it.
+    pub fn next_plant_propagule(&mut self, world: &World) -> Option<Propagule> {
+        let s = world.plant_species().for_state(u16::from(self.plant.0))?;
+        let current = self.plant_propagule(world)?;
+        let next = s
+            .propagules()
+            .find(|&p| p > current)
+            .or_else(|| s.propagules().next())?;
+        self.propagule = Some(next);
+        Some(next)
     }
 
     /// Picks the next plant species after the current one (wrapping), for
@@ -589,14 +638,14 @@ impl Tools {
     /// One brush disc at `c` for the stroke in progress; returns how many
     /// cells changed. A pour adds rigid cells to the stroke's body.
     fn stamp(&mut self, world: &mut World, c: (i64, i64)) -> usize {
-        let plant = self.plant_species(world);
+        let plant = self.plant_species(world).zip(self.plant_propagule(world));
         let Some(stroke) = self.stroke.as_mut() else {
             return 0;
         };
         if stroke.action == Action::Plant {
             // A known species and a clipped disc: this can't fail.
             return plant
-                .and_then(|s| world.paint_plant(c.0, c.1, self.radius, s).ok())
+                .and_then(|(s, p)| world.paint_plant(c.0, c.1, self.radius, s, p).ok())
                 .unwrap_or(0);
         }
         if stroke.action == Action::Pour {
