@@ -1,0 +1,159 @@
+# Nerites on every kind of face (T7b): up a glued rock pillar, upside
+# down under its arm and on both panes of glass. Each turns its foot onto
+# the face it holds.
+ticks = 230
+
+[world]
+width = 80
+height = 45
+
+[[pour]]
+x = 0
+y = 43
+dx = 1
+repeat = 80
+radius = 2
+material = "sand"
+brush = "replace"
+
+[[pour]]
+x = 28
+y = 39
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 37
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 35
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 33
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 31
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 29
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 27
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 25
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 23
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 21
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 18
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 17
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 28
+y = 15
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 30
+y = 15
+dx = 1
+repeat = 26
+radius = 2
+material = "rock"
+brush = "replace"
+glued = true
+
+# Once the sand bed and the arm are poured: one on the sand, heading for
+# the pillar.
+[[creature]]
+tick = 80
+species = "nerite"
+x = 14
+y = 39
+
+# Under the arm.
+[[creature]]
+tick = 80
+species = "nerite"
+x = 54
+y = 18
+
+# On each pane of glass.
+[[creature]]
+tick = 80
+species = "nerite"
+x = 2
+y = 20
+
+[[creature]]
+tick = 80
+species = "nerite"
+x = 77
+y = 30

@@ -48,7 +48,7 @@ const LABELS = {
 const FIELDS = ["", "nutrient", "co2", "light"];
 
 const SETTINGS_KEY = "desktank.settings.v1";
-const DEFAULTS = Object.freeze({ scale: 0, fps: "auto", field: "", stats: true, seed: 1, radius: 3 });
+const DEFAULTS = Object.freeze({ scale: 0, fps: "auto", field: "", avoidCursor: false, stats: true, seed: 1, radius: 3 });
 
 const params = new URLSearchParams(location.search);
 const wantBackend = params.get("backend") ?? "auto";
@@ -118,6 +118,7 @@ function loadSettings() {
     scale: int(saved.scale, 0, 8, DEFAULTS.scale),
     fps: ["auto", "30", "15"].includes(saved.fps) ? saved.fps : DEFAULTS.fps,
     field: FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
+    avoidCursor: saved.avoidCursor === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
     seed: int(saved.seed, 0, 0xffffffff, DEFAULTS.seed),
     radius: int(saved.radius, 0, 24, DEFAULTS.radius), // the tank clamps it too
@@ -143,6 +144,7 @@ function showSettings() {
   $("set-scale").value = String(settings.scale);
   $("set-fps").value = settings.fps;
   $("set-field").value = settings.field;
+  $("set-avoid-cursor").checked = settings.avoidCursor;
   $("set-stats").checked = settings.stats;
   seedInput.value = settings.seed;
   brushInput.value = settings.radius;
@@ -151,6 +153,7 @@ function showSettings() {
   if (tank) {
     tank.setMaxFps(maxFps());
     tank.setFieldOverlay(settings.field);
+    tank.setCursorAvoidance(settings.avoidCursor);
     tank.setRadius(settings.radius);
     kick();
   }
@@ -663,6 +666,7 @@ function wireSettings(resetTank) {
   });
   $("set-fps").addEventListener("change", (e) => update({ fps: e.target.value }));
   $("set-field").addEventListener("change", (e) => update({ field: e.target.value }));
+  $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: e.target.checked }));
   $("set-stats").addEventListener("change", (e) => {
     update({ stats: e.target.checked });
     updateStats();

@@ -1,5 +1,5 @@
 # A small schooling tetra (placeholder art, D11): keeps to mid-water and
-# takes flakes and bloodworms. Schooling itself comes with T7b.
+# takes flakes and bloodworms.
 id = 1
 name = "neon_tetra"
 zone = "mid"

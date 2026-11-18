@@ -3,9 +3,12 @@
 //! Every species' frames are packed side by side, one shelf per species,
 //! into one RGBA texture (sRGB-encoded, read raw with `textureLoad` like
 //! the palette). Each frame, every creature becomes one instance: its
-//! top-left cell, size and atlas frame, drawn as a quad by the sprite
-//! pipeline at the grid's cell scale (one texel per cell). WebGL2-safe:
-//! a per-instance vertex buffer, no storage buffers.
+//! top-left cell, on-screen size, atlas frame, mirror and quarter turns,
+//! drawn as a quad by the sprite pipeline at the grid's cell scale (one
+//! texel per cell). A crawler on a wall is turned a quarter, so its quad
+//! swaps width and height and the shader turns the texel lookup; quarter
+//! turns keep the pixel art crisp. WebGL2-safe: a per-instance vertex
+//! buffer, no storage buffers.
 
 use desktank_sim::{SpeciesTable, World};
 
@@ -15,7 +18,8 @@ pub const ATLAS_WIDTH: usize = 256;
 pub const MAX_SPRITES: usize = 256;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
-/// Floats per instance: cell (2), size (2), atlas origin (2), flip (2).
+/// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
+/// mirror and quarter turns clockwise (2).
 pub const INSTANCE_FLOATS: usize = 8;
 
 /// Where one species' frames sit in the atlas.
@@ -104,8 +108,19 @@ impl Atlas {
             let (cx, cy) = c.centre();
             #[allow(clippy::cast_precision_loss)] // sprite sides and atlas texels are small
             let (w, h, ox, oy) = (e.size.0 as f32, e.size.1 as f32, ox as f32, oy as f32);
+            let turn = c.turn() % 4;
+            let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
             let flip = if c.facing_left() { 1.0 } else { 0.0 };
-            out.extend_from_slice(&[cx - w / 2.0, cy - h / 2.0, w, h, ox, oy, flip, 0.0]);
+            out.extend_from_slice(&[
+                cx - w / 2.0,
+                cy - h / 2.0,
+                w,
+                h,
+                ox,
+                oy,
+                flip,
+                f32::from(turn),
+            ]);
             n += 1;
         }
         n
@@ -177,6 +192,32 @@ mod tests {
         let (cx, cy) = w.creatures()[0].centre();
         assert!((out[0] + out[2] / 2.0 - cx).abs() < 1e-6);
         assert!((out[1] + out[3] / 2.0 - cy).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_crawler_on_the_glass_is_turned_with_its_quad_swapped() {
+        let mut w = world();
+        let atlas = Atlas::build(w.species());
+        let nerite = w.species().id("nerite").unwrap();
+        // Against the left glass: the foot turns to point left.
+        w.add_creature(nerite, 2, 30).unwrap();
+        for _ in 0..20 {
+            w.tick();
+        }
+        let c = &w.creatures()[0];
+        assert_eq!(c.turn(), 1);
+        let mut out = Vec::new();
+        atlas.instances(&w, &mut out);
+        let (fw, fh) = w.species().get(nerite).unwrap().size();
+        #[allow(clippy::cast_precision_loss)]
+        let swapped = [fh as f32, fw as f32];
+        assert_eq!(out[2..4], swapped);
+        assert!((out[7] - 1.0).abs() < f32::EPSILON);
+        // The quad covers the turned body exactly.
+        let b = w.creature_body(c);
+        #[allow(clippy::cast_precision_loss)]
+        let corner = [b.x0 as f32, b.y0 as f32];
+        assert_eq!(out[0..2], corner);
     }
 
     #[test]

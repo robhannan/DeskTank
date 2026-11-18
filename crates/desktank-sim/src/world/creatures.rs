@@ -1,8 +1,6 @@
-//! Creatures (SPEC §2.4, T7a): entities, not cells. Each swims with simple
-//! steering — wander towards random targets inside its species' depth
-//! zone, or dart towards the nearest food it eats while hungry — never
-//! enters a cell it can't swim through, and eats food cells within a cell
-//! of its body.
+//! Creatures (SPEC §2.4) steer in fixed point, collide with the cell grid
+//! and eat within a cell of their bodies. Species data selects schooling,
+//! substrate walking, contour grazing and trips to the air interface.
 //!
 //! - **Fixed point.** Positions and velocities are integers in 1/256 cell
 //!   (velocities per tick), so every platform computes the same motion and
@@ -15,11 +13,18 @@
 //!   substrate, bodies, plants and air block it. If the world moves a
 //!   solid into a creature (a pour, a growing plant) it hops to the nearest
 //!   free spot.
+//! - **Attachment.** A surface crawler turns in quarter turns so its foot
+//!   (the sprite's bottom row) rests on the face it holds: the floor
+//!   upright, a wall on its side, a ceiling upside down. Its body box turns
+//!   with it, so a 5×3 snail on a wall covers 3×5 cells. The turn is
+//!   creature state (hashed); swimmers and walkers stay upright.
 //! - **Randomness** comes from a PCG stream per creature per tick, derived
 //!   from `(seed, tick, creature id)`, so it never depends on update order.
 //! - **Cost.** Creatures are updated every tick, after the cells, and wake
 //!   a chunk only when they eat (SPEC §2.1). Food is found through a
 //!   registry of food cells kept like the living lists, not by scanning.
+
+mod steering;
 
 use core::mem;
 
@@ -31,7 +36,7 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::species::{SpeciesId, SpeciesTable};
+use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
 
 /// Most creatures a world holds (SPEC §2.4: the default population cap per
 /// display, which protects the budget).
@@ -67,6 +72,11 @@ const WATER_DENSITY: f32 = 0.5;
 /// Sideways speed, in 1/256 cell per tick, past which a creature turns to
 /// face the way it swims.
 const TURN_SPEED: i32 = 12;
+
+/// Where a crawler's foot points for each quarter turn clockwise: down,
+/// left, up, right (one clockwise turn maps `(x, y)` to `(-y, x)`, as y
+/// grows downwards).
+const FEET: [(i32, i32); 4] = [(0, 1), (-1, 0), (0, -1), (1, 0)];
 
 /// A creature handle, unique within a world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -109,10 +119,16 @@ pub struct Creature {
     food: Option<u32>,
     /// A food cell it couldn't reach, skipped by the search.
     ignore: Option<u32>,
+    /// Mirrored in its own frame (sprites are drawn facing right).
     facing_left: bool,
+    /// Quarter turns clockwise (0..4): which way its foot points, see
+    /// [`FEET`]. Only surface crawlers turn.
+    turn: u8,
     /// Held in the net up to this tick (0: free).
     held_until: u64,
-    /// Food cells eaten so far.
+    /// Next tick when an air-breather must surface.
+    next_breath: u64,
+    /// Food or grazing cells eaten so far.
     eaten: u32,
 }
 
@@ -144,10 +160,19 @@ impl Creature {
         (i64::from(self.x >> 8), i64::from(self.y >> 8))
     }
 
-    /// Whether it faces left (sprites are drawn facing right).
+    /// Whether its sprite is mirrored, before [`Creature::turn`] applies
+    /// (sprites are drawn facing right). Upright, this means it faces left.
     #[must_use]
     pub fn facing_left(&self) -> bool {
         self.facing_left
+    }
+
+    /// Quarter turns clockwise its sprite and body are rotated by, after
+    /// mirroring: 0 upright (foot down), 1 foot left, 2 upside down, 3 foot
+    /// right. Only surface crawlers turn.
+    #[must_use]
+    pub fn turn(&self) -> u8 {
+        self.turn
     }
 
     /// Food cells eaten so far.
@@ -160,6 +185,17 @@ impl Creature {
     #[must_use]
     pub fn hungry(&self) -> bool {
         self.satiety <= FULL - BITE
+    }
+
+    /// Mirrors it so its head leads along `(dx, dy)` in its turned frame,
+    /// where the sprite's right points along the foot turned anticlockwise.
+    /// A move across that axis leaves it as it was.
+    fn face_along(&mut self, dx: i32, dy: i32) {
+        let (fx, fy) = FEET[usize::from(self.turn)];
+        let ahead = dx * fy - dy * fx;
+        if ahead != 0 {
+            self.facing_left = ahead < 0;
+        }
     }
 }
 
@@ -176,6 +212,9 @@ struct Kind {
     accel: i32,
     /// Depth band as fractions of the water column.
     depth: [f32; 2],
+    schooling: bool,
+    zone: Zone,
+    breathes_air: bool,
     edible: [bool; 256],
 }
 
@@ -185,6 +224,10 @@ struct Kind {
 pub(super) struct Creatures {
     species: SpeciesTable,
     list: Vec<Creature>,
+    /// Cell-space input from a host with avoidance enabled.
+    cursor: Option<(i32, i32)>,
+    /// Reused start-of-tick snapshots for schooling, in creature id order.
+    school: Vec<Schoolmate>,
     next_id: u32,
     kinds: Vec<Option<Kind>>,
     /// Per material: a creature's body may overlap it.
@@ -193,6 +236,16 @@ pub(super) struct Creatures {
     air: MaterialId,
     /// Bumped whenever a creature is added, removed, moves or turns.
     version: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Schoolmate {
+    id: CreatureId,
+    species: SpeciesId,
+    x: i32,
+    y: i32,
+    vx: i32,
+    vy: i32,
 }
 
 impl Creatures {
@@ -233,12 +286,17 @@ impl Creatures {
                 top,
                 accel: (top / 6).max(2),
                 depth: s.depth,
+                schooling: s.temperament == Temperament::Schooling,
+                zone: s.zone,
+                breathes_air: s.breathes_air,
                 edible,
             });
         }
         Self {
             species,
             list: Vec::new(),
+            cursor: None,
+            school: Vec::new(),
             next_id: 1,
             kinds,
             swim,
@@ -270,6 +328,16 @@ impl Creatures {
 }
 
 impl World {
+    /// Sets the pointer cell fish avoid. A missing or out-of-tank pointer
+    /// disables avoidance. Hosts supply this input only when enabled.
+    pub fn set_creature_cursor(&mut self, cell: Option<(i64, i64)>) {
+        self.creatures.cursor = cell
+            .filter(|&(x, y)| {
+                (0..to_i64(self.width)).contains(&x) && (0..to_i64(self.height)).contains(&y)
+            })
+            .map(|(x, y)| (centre_of(x), centre_of(y)));
+    }
+
     /// The species table.
     #[must_use]
     pub fn species(&self) -> &SpeciesTable {
@@ -303,7 +371,16 @@ impl World {
     #[must_use]
     pub fn creature_body(&self, creature: &Creature) -> Rect {
         self.kind(creature.species)
-            .and_then(|k| body(k, creature.x, creature.y, self.width, self.height))
+            .and_then(|k| {
+                body(
+                    k,
+                    creature.turn,
+                    creature.x,
+                    creature.y,
+                    self.width,
+                    self.height,
+                )
+            })
             .unwrap_or(Rect::EMPTY)
     }
 
@@ -341,10 +418,10 @@ impl World {
             return Err(WorldError::PopulationCap(MAX_CREATURES));
         }
         let (fx, fy) = (centre_of(x), centre_of(y));
-        let (fx, fy) = if self.fits(&k, fx, fy) {
+        let (fx, fy) = if self.fits(&k, 0, fx, fy) {
             (fx, fy)
         } else {
-            self.nearest_fit(&k, fx, fy).ok_or(WorldError::NoRoom)?
+            self.nearest_fit(&k, 0, fx, fy).ok_or(WorldError::NoRoom)?
         };
         let id = CreatureId(self.creatures.next_id);
         self.creatures.next_id += 1;
@@ -362,7 +439,9 @@ impl World {
             food: None,
             ignore: None,
             facing_left: id.0 % 2 == 1,
+            turn: 0,
             held_until: 0,
+            next_breath: self.tick + u64::from(id.0 % 20),
             eaten: 0,
         });
         self.creatures.version += 1;
@@ -408,14 +487,12 @@ impl World {
             return false;
         };
         let (fx, fy) = (centre_of(x), centre_of(y));
-        if (fx, fy) == (c.x, c.y) || !self.fits(&k, fx, fy) {
+        if (fx, fy) == (c.x, c.y) || !self.fits(&k, c.turn, fx, fy) {
             return false;
         }
         let tick = self.tick;
         if let Some(c) = self.creature_mut(id) {
-            if fx != c.x {
-                c.facing_left = fx < c.x;
-            }
+            c.face_along(fx - c.x, fy - c.y);
             (c.x, c.y, c.vx, c.vy) = (fx, fy, 0, 0);
             c.held_until = c.held_until.max(tick + HOLD_TICKS);
         }
@@ -431,9 +508,16 @@ impl World {
         Some(zone(k, self.surface_row, self.height))
     }
 
-    /// Whether `creature`'s body centre is inside its species' zone.
+    /// Whether the creature is in its depth band and, for a surface grazer,
+    /// touching a submerged support.
     #[must_use]
     pub fn in_zone(&self, creature: &Creature) -> bool {
+        if let Some(k) = self.kind(creature.species)
+            && k.zone == Zone::Surfaces
+            && !self.on_surface(k, creature.turn, creature.x, creature.y)
+        {
+            return false;
+        }
         self.zone_rows(creature.species)
             .is_some_and(|(top, bottom)| {
                 let row = usize::try_from(creature.y >> 8).unwrap_or(usize::MAX);
@@ -459,7 +543,7 @@ impl World {
         h.write(&(self.creatures.list.len() as u64).to_le_bytes());
         for c in &self.creatures.list {
             h.write(&c.id.0.to_le_bytes());
-            h.write(&[c.species.0, u8::from(c.facing_left)]);
+            h.write(&[c.species.0, u8::from(c.facing_left), c.turn]);
             for v in [c.x, c.y, c.vx, c.vy, c.tx, c.ty] {
                 h.write(&v.to_le_bytes());
             }
@@ -469,6 +553,7 @@ impl World {
                 h.write(&v.map_or(u64::MAX, u64::from).to_le_bytes());
             }
             h.write(&c.held_until.to_le_bytes());
+            h.write(&c.next_breath.to_le_bytes());
             h.write(&c.eaten.to_le_bytes());
         }
     }
@@ -479,6 +564,19 @@ impl World {
             return;
         }
         let mut list = mem::take(&mut self.creatures.list);
+        self.creatures.school.clear();
+        for c in &list {
+            if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
+                self.creatures.school.push(Schoolmate {
+                    id: c.id,
+                    species: c.species,
+                    x: c.x,
+                    y: c.y,
+                    vx: c.vx,
+                    vy: c.vy,
+                });
+            }
+        }
         let mut changed = false;
         for c in &mut list {
             changed |= self.update_creature(c);
@@ -494,13 +592,13 @@ impl World {
         let Some(k) = self.kind(c.species).copied() else {
             return false;
         };
-        let before = (c.x, c.y, c.facing_left);
+        let before = (c.x, c.y, c.facing_left, c.turn);
         if c.held_until >= self.tick {
             return false;
         }
         // The world moved something solid into it: hop out.
-        if !self.fits(&k, c.x, c.y) {
-            if let Some((x, y)) = self.nearest_fit(&k, c.x, c.y) {
+        if !self.fits(&k, c.turn, c.x, c.y) {
+            if let Some((x, y)) = self.nearest_fit(&k, c.turn, c.x, c.y) {
                 (c.x, c.y, c.vx, c.vy) = (x, y, 0, 0);
                 c.retarget = 0;
             }
@@ -509,27 +607,26 @@ impl World {
         let mut rng = chunk_stream(self.seed, self.tick, CREATURE_STREAM + u64::from(c.id.0));
         c.satiety = c.satiety.saturating_sub(1);
         let hungry = c.hungry();
+        if k.zone == Zone::Surfaces {
+            self.crawl(&k, c);
+            if hungry && self.life.food_cells() > 0 {
+                self.eat(&k, c);
+            }
+            return (c.x, c.y, c.facing_left, c.turn) != before;
+        }
         self.choose_food(&k, c, hungry);
 
-        // Steer towards the food, or the wander target inside the zone.
-        let (tx, ty, speed) = if let Some(i) = c.food {
-            let i = i as usize;
-            let cell = |v: usize| centre_of(i64::try_from(v).unwrap_or(0));
-            (cell(i % self.width), cell(i / self.width), k.top)
-        } else {
-            let near = dist(c.tx - c.x, c.ty - c.y) <= REACHED;
-            if c.retarget == 0 || near {
-                self.pick_target(&k, c, &mut rng);
-            } else {
-                c.retarget -= 1;
-            }
-            (c.tx, c.ty, k.cruise)
-        };
-        steer(&k, c, tx, ty, speed, c.food.is_some());
+        let (tx, ty, speed) = self.steering_target(&k, c, &mut rng);
+        steer(&k, c, tx, ty, speed, speed == k.top);
+        // Walkers keep a downward bias even on long, nearly horizontal
+        // routes. A one-row step lets them follow a sloping sand bed.
+        if k.zone == Zone::Bottom {
+            c.vy = k.cruise;
+        }
 
         // Move, sliding along whatever blocks one axis.
         let blocked = !self.try_move(&k, c);
-        if hungry && self.eat(&k, c) {
+        if hungry && self.life.food_cells() > 0 && self.eat(&k, c) {
             c.food = None;
         } else if blocked {
             (c.vx, c.vy) = (0, 0);
@@ -543,7 +640,7 @@ impl World {
         } else if c.vx < -TURN_SPEED {
             c.facing_left = true;
         }
-        (c.x, c.y, c.facing_left) != before
+        (c.x, c.y, c.facing_left, c.turn) != before
     }
 
     /// Keeps `c` heading for food while hungry: a new search when its food
@@ -555,7 +652,7 @@ impl World {
         }
         let lost = c
             .food
-            .is_none_or(|i| !k.edible[usize::from(self.cells[i as usize].material.0)]);
+            .is_some_and(|i| !k.edible[usize::from(self.cells[i as usize].material.0)]);
         if lost || (self.tick + u64::from(c.id.0)).is_multiple_of(SEARCH_EVERY) {
             c.food = self.nearest_food(k, c);
         }
@@ -567,11 +664,22 @@ impl World {
         if (c.vx, c.vy) == (0, 0) {
             return true;
         }
+        if k.zone == Zone::Bottom
+            && c.vx != 0
+            && !self.fits(k, c.turn, c.x, c.y + ONE)
+            && !self.fits(k, c.turn, c.x + c.vx, c.y)
+            && self.fits(k, c.turn, c.x, c.y - ONE)
+            && self.fits(k, c.turn, c.x + c.vx, c.y - ONE)
+        {
+            c.x += c.vx;
+            c.y -= ONE;
+            return true;
+        }
         for (dx, dy) in [(c.vx, c.vy), (c.vx, 0), (0, c.vy)] {
             if (dx, dy) == (0, 0) {
                 continue;
             }
-            if self.fits(k, c.x + dx, c.y + dy) {
+            if self.fits(k, c.turn, c.x + dx, c.y + dy) {
                 c.x += dx;
                 c.y += dy;
                 if dx == 0 {
@@ -588,7 +696,7 @@ impl World {
 
     /// Eats one food cell within a cell of the body, if there is one.
     fn eat(&mut self, k: &Kind, c: &mut Creature) -> bool {
-        let Some(b) = body(k, c.x, c.y, self.width, self.height) else {
+        let Some(b) = body(k, c.turn, c.x, c.y, self.width, self.height) else {
             return false;
         };
         let reach = Rect {
@@ -682,7 +790,7 @@ impl World {
 
     /// The nearest spot within [`UNSTUCK_RADIUS`] cells where the body
     /// fits, searching rings outwards in a fixed order.
-    fn nearest_fit(&self, k: &Kind, x: i32, y: i32) -> Option<(i32, i32)> {
+    fn nearest_fit(&self, k: &Kind, turn: u8, x: i32, y: i32) -> Option<(i32, i32)> {
         for r in 1..=UNSTUCK_RADIUS {
             for dy in -r..=r {
                 for dx in -r..=r {
@@ -690,7 +798,7 @@ impl World {
                         continue;
                     }
                     let (nx, ny) = (x + dx * ONE, y + dy * ONE);
-                    if self.fits(k, nx, ny) {
+                    if self.fits(k, turn, nx, ny) {
                         return Some((nx, ny));
                     }
                 }
@@ -699,10 +807,10 @@ impl World {
         None
     }
 
-    /// Whether a body centred at `(x, y)` (fixed point) lies inside the
-    /// grid on swimmable cells only.
-    fn fits(&self, k: &Kind, x: i32, y: i32) -> bool {
-        let Some(b) = body(k, x, y, self.width, self.height) else {
+    /// Whether a body turned `turn` and centred at `(x, y)` (fixed point)
+    /// lies inside the grid on swimmable cells only.
+    fn fits(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+        let Some(b) = body(k, turn, x, y, self.width, self.height) else {
             return false;
         };
         (b.y0..b.y1).all(|row| {
@@ -752,14 +860,24 @@ fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool
     c.vy = i32::try_from(vy.clamp(-rise, rise)).unwrap_or(0);
 }
 
-/// The cells a body centred at `(x, y)` (fixed point) covers, rounded
-/// outwards; `None` if any part is outside the grid.
-fn body(k: &Kind, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
-    let (left, top) = (x - k.w * ONE / 2, y - k.h * ONE / 2);
+/// A body's width and height in cells once turned `turn` quarter turns.
+fn extent(k: &Kind, turn: u8) -> (i32, i32) {
+    if turn % 2 == 1 {
+        (k.h, k.w)
+    } else {
+        (k.w, k.h)
+    }
+}
+
+/// The cells a body turned `turn` and centred at `(x, y)` (fixed point)
+/// covers, rounded outwards; `None` if any part is outside the grid.
+fn body(k: &Kind, turn: u8, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
+    let (wide, tall) = extent(k, turn);
+    let (left, top) = (x - wide * ONE / 2, y - tall * ONE / 2);
     let x0 = usize::try_from(left.div_euclid(ONE)).ok()?;
     let y0 = usize::try_from(top.div_euclid(ONE)).ok()?;
-    let x1 = usize::try_from((left + k.w * ONE + ONE - 1).div_euclid(ONE)).ok()?;
-    let y1 = usize::try_from((top + k.h * ONE + ONE - 1).div_euclid(ONE)).ok()?;
+    let x1 = usize::try_from((left + wide * ONE + ONE - 1).div_euclid(ONE)).ok()?;
+    let y1 = usize::try_from((top + tall * ONE + ONE - 1).div_euclid(ONE)).ok()?;
     (x1 <= width && y1 <= height).then_some(Rect { x0, y0, x1, y1 })
 }
 

@@ -15,7 +15,7 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 - **Rust first** — idiomatic, safe Rust with platform-specific code isolated behind small, well-defined boundaries.
 - **Cross-platform** — macOS, Windows and Linux.
 
-**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water, glue rocks in place and place bubblers, with the mouse or touch (drag pours, two-finger drag scoops, long-press inspects).
+**[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water, glue rocks in place and place bubblers, with the mouse or touch (drag pours, two-finger drag scoops, long-press inspects). Add creatures from the palette. To make fish flee the pointer, enable **Fish avoid the pointer** in web Settings or press **A** in `desktank window`. Cursor avoidance starts off.
 
 ## Status
 

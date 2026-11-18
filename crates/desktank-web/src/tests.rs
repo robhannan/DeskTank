@@ -390,3 +390,26 @@ fn same_seed_same_world() {
     };
     assert_eq!(run(), run());
 }
+
+#[test]
+fn fish_avoid_only_an_enabled_pointer_over_the_canvas() {
+    let simulate = |enabled, leave, x| {
+        let mut t = paused();
+        t.select(slot(&t, "creature neon_tetra"));
+        down(&mut t, PRIMARY, 64, 40);
+        t.pointer_up(PRIMARY);
+        drag(&mut t, x, 40);
+        // Toggling the setting applies to an already stationary pointer.
+        t.set_cursor_avoidance(enabled);
+        if leave {
+            t.pointer_leave();
+        }
+        for _ in 0..24 {
+            t.step();
+        }
+        t.tank.world().creatures()[0].cell()
+    };
+    assert_eq!(simulate(false, false, 61), simulate(true, true, 61));
+    assert!(simulate(true, false, 61).0 > 70);
+    assert!(simulate(true, false, 67).0 < 58);
+}

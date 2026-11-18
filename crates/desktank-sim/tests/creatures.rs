@@ -1,4 +1,4 @@
-//! SPEC T7a acceptance tests: creatures never enter solid cells, keep to
+//! SPEC T7 acceptance tests: creatures never enter solid cells, keep to
 //! their zones, find and eat food, replay deterministically, and the net,
 //! inspect and add tools work on them.
 #![allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
@@ -98,7 +98,10 @@ fn busy_tank(seed: u64) -> World {
     for x in [14, 26, 40] {
         w.set_cell(x, 20, cutting).unwrap();
     }
-    for (i, name) in ["neon_tetra", "corydoras", "betta"].iter().enumerate() {
+    for (i, name) in ["neon_tetra", "corydoras", "betta", "nerite"]
+        .iter()
+        .enumerate()
+    {
         let s = species(&w, name);
         for j in 0..3_i64 {
             let x = 16 + 36 * j + i64::try_from(i).unwrap() * 6;
@@ -135,10 +138,15 @@ fn no_creature_enters_a_solid_cell_in_100k_ticks() {
             }
         }
     }
-    assert_eq!(w.creatures().len(), 9);
+    assert_eq!(w.creatures().len(), 12);
     // They swim, not sit stuck: each moved on most ticks.
     for (i, &n) in moved.iter().enumerate() {
-        assert!(n > 50_000, "creature {i} moved on only {n} ticks");
+        let min = if w.creatures()[i].species() == species(&w, "nerite") {
+            8_000
+        } else {
+            50_000
+        };
+        assert!(n > min, "creature {i} moved on only {n} ticks");
     }
     // The plants grew around them.
     let stem = id(&w, "stem");
@@ -331,6 +339,20 @@ const SCRIPT: &str = r#"
     x = 60
     y = 60
     count = 2
+    [[creature]]
+    species = "betta"
+    x = 20
+    y = 25
+    [[creature]]
+    species = "nerite"
+    x = 40
+    y = 65
+    [[pour]]
+    tick = 300
+    x = 60
+    y = 72
+    radius = 2
+    material = "detritus"
     [[pour]]
     tick = 200
     x = 64
@@ -348,7 +370,7 @@ fn same_seed_and_script_give_the_same_state_hash() {
         w
     };
     let (a, b, c) = (make(9), make(9), make(10));
-    assert_eq!(a.creatures().len(), 7);
+    assert_eq!(a.creatures().len(), 9);
     assert_eq!(a.state_hash(), b.state_hash());
     assert_eq!(a.creatures(), b.creatures());
     assert_ne!(a.state_hash(), c.state_hash());
@@ -527,4 +549,256 @@ fn shallow_water_and_a_full_tank_are_flagged() {
     .unwrap();
     assert_eq!(full.unmet_need(betta), Some(desktank_sim::UnmetNeed::Air));
     assert_eq!(full.unmet_need(species(&full, "corydoras")), None);
+}
+
+#[test]
+fn dispersed_tetras_form_a_school() {
+    for seed in [4, 77] {
+        let mut w = world(320, 120, seed);
+        let tetra = species(&w, "neon_tetra");
+        let lengths = 3.0 * w.species().get(tetra).unwrap().size().0 as f32;
+        for i in 0..8 {
+            w.add_creature(tetra, 15 + 40 * i, 45 + (i % 3) * 14)
+                .unwrap();
+        }
+        let mut together = 0;
+        let ticks = 6_000;
+        for _ in 0..ticks {
+            w.tick();
+            let nearest = |fish: &Creature| {
+                let (x, y) = fish.centre();
+                w.creatures()
+                    .iter()
+                    .filter(|c| c.id() != fish.id())
+                    .map(|c| {
+                        let (mx, my) = c.centre();
+                        (mx - x).hypot(my - y)
+                    })
+                    .fold(f32::INFINITY, f32::min)
+            };
+            let mean = w.creatures().iter().map(nearest).sum::<f32>() / w.creatures().len() as f32;
+            together += u32::from(mean <= lengths);
+        }
+        eprintln!("seed {seed}: close school on {together}/{ticks} ticks");
+        assert!(together * 5 >= ticks * 4);
+    }
+}
+
+#[test]
+fn walker_follows_a_stepped_bed() {
+    let mut w = world(112, 80, 7);
+    sand_bed(&mut w, 5);
+    // A stable one-row ledge on the bed.
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(55, 74, 112, 75), rock, Brush::Replace)
+        .unwrap();
+    w.set_anchored(w.body_at(60, 74).unwrap(), true);
+    let fish = w.add_creature(species(&w, "corydoras"), 20, 42).unwrap();
+    run(&mut w, 300);
+    let mut contacts = 0;
+    let mut range = (112, 0);
+    for _ in 0..3_000 {
+        w.tick();
+        let c = w.creature(fish).unwrap();
+        let b = w.creature_body(c);
+        contacts +=
+            u32::from((b.x0..b.x1).any(|x| !swimmable(&w, w.cell(x, b.y1).unwrap().material)));
+        range = (range.0.min(c.cell().0), range.1.max(c.cell().0));
+    }
+    assert!(contacts > 2_900, "on the substrate {contacts}/3000 ticks");
+    assert!(
+        range.0 < 45 && range.1 > 65,
+        "did not cross the ledge: {range:?}"
+    );
+}
+
+#[test]
+fn betta_revisits_air_and_skims_for_flakes() {
+    let mut w = world(128, 100, 19);
+    let surface = w.surface_row();
+    let fish = w.add_creature(species(&w, "betta"), 60, 50).unwrap();
+    let mut visits = 0;
+    let mut away = true;
+    let mut skimmed = false;
+    let mut ate_at_surface = false;
+    let mut start_x = 0;
+    for _ in 0..2_400 {
+        w.tick();
+        let c = w.creature(fish).unwrap();
+        let b = w.creature_body(c);
+        if b.y0 > surface + 2 {
+            away = true;
+        }
+        if b.y0 == surface {
+            let x = c.cell().0;
+            ate_at_surface |= c.eaten() == 1;
+            if away {
+                visits += 1;
+                away = false;
+                start_x = x;
+                if visits == 1 {
+                    w.set_cell(b.x1 + 4, surface, id(&w, "flake_food")).unwrap();
+                }
+            }
+            skimmed |= (x - start_x).abs() >= 4;
+        }
+    }
+    assert!(visits >= 3, "air visits with a dive between: {visits}");
+    assert!(skimmed);
+    assert!(ate_at_surface);
+}
+
+#[test]
+fn nerite_traces_the_faces_of_a_submerged_rock() {
+    let mut w = world(100, 80, 7);
+    w.fill_rect(rect(35, 35, 65, 50), id(&w, "rock"), Brush::Replace)
+        .unwrap();
+    w.set_anchored(w.body_at(44, 42).unwrap(), true);
+    let snail = w.add_creature(species(&w, "nerite"), 47, 28).unwrap();
+    let mut faces = [false; 4];
+    for _ in 0..1_800 {
+        w.tick();
+        let c = w.creature(snail).unwrap();
+        assert_eq!(solid_under(&w, c), None);
+        let (x, y) = c.cell();
+        // The 5×3 shell turns to 3×5 on the sides, foot on the rock.
+        let turn = c.turn();
+        faces[0] |= (35..65).contains(&x) && y == 33 && turn == 0;
+        faces[1] |= (35..50).contains(&y) && x == 66 && turn == 1;
+        faces[2] |= (35..65).contains(&x) && y == 51 && turn == 2;
+        faces[3] |= (35..50).contains(&y) && x == 33 && turn == 3;
+    }
+    assert_eq!(faces, [true; 4]);
+}
+
+/// Whether the cells just past `c`'s foot (the side its turn points to)
+/// hold something solid, or are the tank glass.
+fn foot_held(w: &World, c: &Creature) -> bool {
+    let b = w.creature_body(c);
+    let solid = |x: usize, y: usize| {
+        let m = w.cell(x, y).unwrap().material;
+        m != id(w, "air") && !swimmable(w, m)
+    };
+    match c.turn() {
+        0 => b.y1 == w.height() || (b.x0..b.x1).any(|x| solid(x, b.y1)),
+        1 => b.x0 == 0 || (b.y0..b.y1).any(|y| solid(b.x0 - 1, y)),
+        2 => b.y0 == 0 || (b.x0..b.x1).any(|x| solid(x, b.y0 - 1)),
+        _ => b.x1 == w.width() || (b.y0..b.y1).any(|y| solid(b.x1, y)),
+    }
+}
+
+#[test]
+fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
+    // A glued Γ: a pillar on the sand with an arm reaching right over it.
+    let mut w = world(120, 80, 7);
+    sand_bed(&mut w, 6);
+    let rock = id(&w, "rock");
+    for r in [rect(40, 40, 46, 74), rect(46, 40, 80, 46)] {
+        w.fill_rect(r, rock, Brush::Replace).unwrap();
+        w.set_anchored(w.body_at(r.x0, r.y0).unwrap(), true);
+    }
+    let snail = w.add_creature(species(&w, "nerite"), 20, 72).unwrap();
+    let (mut held, mut led, ticks) = (0, 0, 4_000);
+    // First tick on each leg: up the pillar (foot right), upside down
+    // under the arm, down the pillar's far side (foot left), upright on
+    // the sand beyond it, then up the tank glass (foot right).
+    let mut legs = [None; 5];
+    let mut last = w.creature(snail).map(|c| (c.centre(), c.turn())).unwrap();
+    for _ in 0..ticks {
+        w.tick();
+        let c = w.creature(snail).unwrap();
+        assert_eq!(solid_under(&w, c), None, "tick {}", w.tick_count());
+        assert!(w.in_zone(c), "came off at tick {}", w.tick_count());
+        held += u32::from(foot_held(&w, c));
+        let b = w.creature_body(c);
+        let size = (b.x1 - b.x0, b.y1 - b.y0);
+        assert_eq!(
+            size,
+            if c.turn().is_multiple_of(2) {
+                (5, 3)
+            } else {
+                (3, 5)
+            }
+        );
+        // The head (the sprite's right, mirrored or not, then turned)
+        // leads along any move across the turned body's length.
+        let ((x, y), turn) = (c.centre(), c.turn());
+        if turn == last.1 && (x, y) != last.0 {
+            let (fx, fy) = [(0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (1.0, 0.0)][usize::from(turn)];
+            let ahead = (x - last.0.0) * fy - (y - last.0.1) * fx;
+            let ahead = if c.facing_left() { -ahead } else { ahead };
+            assert!(ahead >= 0.0, "tail first at tick {}", w.tick_count());
+            led += u32::from(ahead > 0.0);
+        }
+        last = ((x, y), turn);
+        let leg = match turn {
+            3 if b.x1 == 40 && b.y1 < 70 => Some(0),
+            2 if b.y0 == 46 && b.x0 >= 50 && b.x1 <= 76 => Some(1),
+            1 if b.x0 == 46 && b.y0 > 50 && b.y1 < 70 => Some(2),
+            0 if b.y1 == 74 && b.x0 > 50 && b.x1 < 110 => Some(3),
+            3 if b.x1 == 120 && b.y1 < 60 => Some(4),
+            _ => None,
+        };
+        if let Some(i) = leg {
+            legs[i].get_or_insert(w.tick_count());
+        }
+    }
+    let legs = legs.map(|t| t.expect("every leg is reached"));
+    assert!(legs.is_sorted(), "legs in order: {legs:?}");
+    assert!(led > 300, "moved head first {led} times");
+    // Only outside corners, where it holds on diagonally, leave the foot
+    // off a face.
+    assert!(
+        held * 100 >= ticks * 95,
+        "foot held on {held} of {ticks} ticks"
+    );
+}
+
+#[test]
+fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
+    for name in ["corydoras", "nerite"] {
+        for meal in ["algae", "detritus"] {
+            let mut w = world(128, 64, 7);
+            sand_bed(&mut w, 6);
+            let food = id(&w, meal);
+            w.fill_rect(rect(34, 57, 46, 58), food, Brush::Replace)
+                .unwrap();
+            let grazer = w.add_creature(species(&w, name), 40, 54).unwrap();
+            let mut control = w.clone();
+            control.remove_creature(grazer);
+            run(&mut w, 40);
+            run(&mut control, 40);
+            let c = w.creature(grazer).unwrap();
+            assert_eq!(c.eaten(), 4, "{name} grazing {meal}");
+            assert!(!c.hungry());
+            let (after, before) = (w.ecosystem(), control.ecosystem());
+            if meal == "algae" {
+                assert_eq!(after.algae_cells + 4, before.algae_cells);
+                assert!(after.algae_coverage < before.algae_coverage);
+            } else {
+                assert_eq!(after.pollutant_cells + 4, before.pollutant_cells);
+            }
+        }
+    }
+}
+
+#[test]
+fn pointer_input_repels_fish_and_clears_on_leave() {
+    let mut w = world(160, 96, 44);
+    let fish = w.add_creature(species(&w, "neon_tetra"), 80, 45).unwrap();
+    let mut left = w.clone();
+    let mut right = w.clone();
+    left.set_creature_cursor(Some((77, 45)));
+    right.set_creature_cursor(Some((83, 45)));
+    run(&mut left, 24);
+    run(&mut right, 24);
+    assert!(left.creature(fish).unwrap().cell().0 > 86);
+    assert!(right.creature(fish).unwrap().cell().0 < 74);
+    let mut cleared = w.clone();
+    cleared.set_creature_cursor(Some((77, 45)));
+    cleared.set_creature_cursor(None);
+    w.set_creature_cursor(Some((i64::MAX, -1)));
+    run(&mut w, 80);
+    run(&mut cleared, 80);
+    assert_eq!(w.state_hash(), cleared.state_hash());
 }
