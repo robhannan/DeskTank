@@ -159,6 +159,14 @@ struct Hidden {
     minimised: bool,
 }
 
+/// What the palette overlay last showed: the open group, the selection
+/// (group, item) and the plant species the plants slot pours.
+type Shown = (
+    usize,
+    Option<(usize, usize)>,
+    Option<desktank_sim::PlantSpeciesId>,
+);
+
 struct Running {
     window: Arc<Window>,
     gpu: Gpu,
@@ -184,11 +192,7 @@ struct Running {
     scroll_lines: f64,
     /// Open group, selection and plant species last given to the tank
     /// (`None` before the first).
-    shown: Option<(
-        usize,
-        Option<(usize, usize)>,
-        Option<desktank_sim::PlantSpeciesId>,
-    )>,
+    shown: Option<Shown>,
 }
 
 impl Running {
@@ -462,7 +466,11 @@ impl Running {
     fn next_plant_species(&mut self) {
         self.tools.next_plant_species(self.tank.world());
         let slot = PaletteItem::Tool(Tool::Plant);
-        if let Some(g) = self.groups.iter().position(|(_, items)| items.contains(&slot)) {
+        if let Some(g) = self
+            .groups
+            .iter()
+            .position(|(_, items)| items.contains(&slot))
+        {
             self.open = g;
         }
         self.tools.select(slot);

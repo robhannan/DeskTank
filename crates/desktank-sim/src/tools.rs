@@ -50,7 +50,7 @@ pub enum PaletteGroup {
     Water,
     /// Fish food and plant fertilisers.
     Food,
-    /// Seeds, cuttings, moss and algae.
+    /// The plants slot (seeds and cuttings of a picked species) and algae.
     Plants,
     /// Waste and detritus.
     Waste,
@@ -987,7 +987,10 @@ mod tests {
         let w = world();
         let items = Tools::palette(&w);
         let pourable = w.materials().iter().filter(|m| m.palette.is_some());
-        assert_eq!(items.len(), pourable.count() + 1 + 2 + 4 + w.species().len());
+        assert_eq!(
+            items.len(),
+            pourable.count() + 1 + 2 + 4 + w.species().len()
+        );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
         t.select(PaletteItem::Tool(Tool::Inspect));
@@ -1026,10 +1029,7 @@ mod tests {
             names(PaletteGroup::Water),
             ["water", "air_bubble", "co2_bubble"]
         );
-        assert_eq!(
-            names(PaletteGroup::Plants),
-            ["seed", "cutting", "moss", "algae"]
-        );
+        assert_eq!(names(PaletteGroup::Plants), ["Plant", "algae"]);
         assert_eq!(names(PaletteGroup::Waste), ["waste", "detritus"]);
         assert_eq!(
             names(PaletteGroup::Devices),
