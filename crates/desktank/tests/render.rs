@@ -161,3 +161,11 @@ fn climbing_scene_matches_reference() {
 fn invertebrates_scene_matches_reference() {
     check("invertebrates");
 }
+
+/// More fish: a harlequin rasbora school, male guppies and honey gouramis
+/// come up for flakes over the starter bed, and otocinclus on a rock, the
+/// glass and the bed.
+#[test]
+fn fish_scene_matches_reference() {
+    check("fish");
+}

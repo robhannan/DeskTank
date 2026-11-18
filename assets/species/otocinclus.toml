@@ -1,0 +1,62 @@
+# An otocinclus (placeholder art, D11): a small grey-brown sucker-mouth
+# catfish with a dark stripe from snout to tail. It clings to the glass,
+# plants and rock as a surface crawler, like the nerite, rasping off algae
+# films and mulm as it goes.
+id = 11
+name = "otocinclus"
+zone = "surfaces"
+depth = [0.0, 1.0]
+min_depth = 10
+# Real-world body length in cm (real 3.5–4 cm), at two cells per cm.
+length_cm = 3.5
+temperament = "peaceful"
+speed = 3.0
+max_speed = 3.0
+diet = ["algae", "detritus", "algae_wafer"]
+
+[sprite]
+# Facing right, belly and sucker mouth down; two texels per cell side. 14
+# texels (7 cells, 3.5 cm) from tail to snout: a 7x3-cell sprite, odd on
+# both sides, so a quarter turn on the glass never leaves it on half
+# cells. Four frames: the fins paddle and the tail flicks.
+colours = { g = "#9c8f74", d = "#6a5f4c", s = "#2a2520", w = "#d9cfb6", m = "#4a4238", f = "#b7aa8c", k = "#0c1016", e = "#ffffff" }
+frames = [
+    [
+        "......dd......",
+        "d...dggdggdd..",
+        "dggdgggggggek.",
+        "sssssssssssskg",
+        "dg.wwwwwwwwwwm",
+        "....f.f...f...",
+    ],
+    [
+        "......dd......",
+        "....dggdggdd..",
+        "dggdgggggggek.",
+        "sssssssssssskg",
+        "dg.wwwwwwwwwwm",
+        ".....f.f...f..",
+    ],
+    [
+        "......dd......",
+        "d...dggdggdd..",
+        "dggdgggggggek.",
+        "sssssssssssskg",
+        "dg.wwwwwwwwwwm",
+        "....f.f...f...",
+    ],
+    [
+        "......dd......",
+        "d...dggdggdd..",
+        "dggdgggggggek.",
+        "sssssssssssskg",
+        ".g.wwwwwwwwwwm",
+        "...f.f...f....",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "d.ddgd.",
+    "ssssssk",
+    "d.wwwwm",
+]

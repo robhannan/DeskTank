@@ -1,0 +1,82 @@
+# A honey gourami, Trichogaster chuna (placeholder art, D11): a small,
+# gentle labyrinth fish of the upper and middle water, drawn as a male in
+# breeding colour (honey gold with a dark blue-black throat and belly). It
+# rises to gulp air at the surface like the betta, but swims slower and
+# keeps to itself. Eats flakes, bloodworms and pellets.
+id = 8
+name = "honey_gourami"
+zone = "surface"
+depth = [0.0, 0.5]
+min_depth = 20
+# Real-world body length in cm (real 4–5 cm), at two cells per cm.
+length_cm = 4.5
+breathes_air = true
+temperament = "peaceful"
+speed = 2.5
+max_speed = 6.0
+diet = ["flake_food", "bloodworm", "sinking_pellet"]
+
+[sprite]
+# Facing right; two texels per cell side. 18 texels (9 cells, 4.5 cm)
+# from tail to snout, a deep body with long dorsal and anal fins and a
+# thread-like ventral feeler below the throat: a 9x5-cell sprite. Four
+# frames: the rounded tail sweeps and the feeler sways.
+colours = { o = "#e89a32", h = "#f7c766", d = "#c06e22", t = "#2b2c48", u = "#5a4660", f = "#f2c784", r = "#c9782e", v = "#f4dc9a", k = "#0c1016", e = "#ffffff" }
+frames = [
+    [
+        "......rffffr......",
+        "f...rfhhhhhhf.....",
+        "ff.doohhhhhhhoo...",
+        "fffdoooooooooooek.",
+        "frfdooooooooooukko",
+        "fffddooooooouttttt",
+        "ff.rddooooouttttt.",
+        "f...rfddddutttt...",
+        "......rfffr.v.....",
+        "............v.....",
+    ],
+    [
+        "......rffffr......",
+        "ff..rfhhhhhhf.....",
+        "fffdoohhhhhhhoo...",
+        "frfdoooooooooooek.",
+        "fffdooooooooooukko",
+        "frfddooooooouttttt",
+        "fffrddooooouttttt.",
+        "ff..rfddddutttt...",
+        "......rfffr.v.....",
+        "...........v......",
+    ],
+    [
+        "......rffffr......",
+        "f...rfhhhhhhf.....",
+        "ff.doohhhhhhhoo...",
+        "fffdoooooooooooek.",
+        "frfdooooooooooukko",
+        "fffddooooooouttttt",
+        "ff.rddooooouttttt.",
+        "f...rfddddutttt...",
+        "......rfffr.v.....",
+        "............v.....",
+    ],
+    [
+        "......rffffr......",
+        "....rfhhhhhhf.....",
+        ".f.doohhhhhhhoo...",
+        "fffdoooooooooooek.",
+        "frfdooooooooooukko",
+        "fffddooooooouttttt",
+        ".f.rddooooouttttt.",
+        "....rfddddutttt...",
+        "......rfffr.v.....",
+        ".............v....",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "...fff..",
+    "f.dhhhh.",
+    "fdoooook",
+    "fdoouttt",
+    "f..ff.v.",
+]

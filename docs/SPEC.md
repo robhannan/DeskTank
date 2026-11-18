@@ -426,17 +426,23 @@ target computes the same bits.
   livebearer such as a guppy, a betta, a corydoras, cherry and amano-type
   shrimp, a nerite-type and a ramshorn-type snail, and a dwarf frog that
   surfaces to breathe. Fictional species are a stretch goal.
-  *Shipped so far (7):* neon tetra, betta, corydoras, nerite, cherry
-  shrimp (*Neocaridina davidi*), amano shrimp (*Caridina multidentata*)
-  and Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
-  the examples above). Two species keys extend the list above: `reach`
+  *Shipped so far (11):* neon tetra, betta, corydoras, nerite, cherry
+  shrimp (*Neocaridina davidi*), amano shrimp (*Caridina multidentata*),
+  Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
+  the examples above), honey gourami (*Trichogaster chuna*, an
+  air-breather like the betta), guppy (*Poecilia reticulata*, the
+  livebearer, drawn as a male until T9), harlequin rasbora
+  (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
+  sucker-mouth catfish that crawls surfaces like the nerite). Two species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2) and `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp). Every species also gives its
-  real-world body length, `length_cm` (nose to tail without antennae, a
-  crab's carapace), and is drawn at a shared 2 cells per cm, so species
+  real-world body length, `length_cm` (nose to tail without antennae or
+  an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
-  1.5 cm), cherry shrimp 2.5 cm, neon tetra 3.5 cm, amano shrimp 4 cm.
+  1.5 cm), cherry shrimp 2.5 cm, guppy 3 cm (4.5 cm with its tail), neon
+  tetra and otocinclus 3.5 cm, amano shrimp 4 cm, harlequin rasbora and
+  honey gourami 4.5 cm.
 - **Behaviour** is steering-based:
   - wander;
   - schooling for schoolers;
@@ -1530,6 +1536,10 @@ Each package depends only on the packages before it.
   10 s and graze algae and detritus; Thai micro crabs are surface
   crawlers that cling to plants, rock and glass, walk the bed and
   filter-feed flakes and detritus from two cells away.
+  *More fish:* honey gouramis (upper half, air visits like the betta),
+  male guppies (roaming the middle and upper water), harlequin rasboras
+  (schooling with their own kind only) and otocinclus (surface crawlers
+  grazing algae) use the existing behaviours with no new species key.
 
 - [x] **T8 Persistence.** The save envelope and format, ownership lock,
   atomic writes keeping the last 3, autosave and save on exit (§2.6).

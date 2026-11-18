@@ -1,0 +1,65 @@
+# More fish: a harlequin rasbora school, male guppies and honey gouramis,
+# all drawn up towards the surface by flakes poured at tick 500, and
+# otocinclus on a glued rock (grazing its algae film), the tank glass and
+# the bed.
+ticks = 700
+
+[world]
+starter = true
+
+[[pour]]
+x = 112
+y = 62
+radius = 7
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 112
+y = 54
+radius = 1
+material = "algae"
+
+[[creature]]
+species = "harlequin_rasbora"
+x = 20
+y = 48
+count = 7
+dx = 9
+
+[[creature]]
+species = "guppy"
+x = 30
+y = 26
+count = 3
+dx = 45
+
+[[creature]]
+species = "honey_gourami"
+x = 70
+y = 20
+count = 2
+dx = 50
+
+[[creature]]
+species = "otocinclus"
+x = 112
+y = 52
+
+[[creature]]
+species = "otocinclus"
+x = 154
+y = 50
+
+[[creature]]
+species = "otocinclus"
+x = 60
+y = 80
+
+[[pour]]
+tick = 500
+x = 60
+y = 2
+radius = 2
+material = "flake_food"
