@@ -661,12 +661,97 @@ fn nerite_traces_the_faces_of_a_submerged_rock() {
         let c = w.creature(snail).unwrap();
         assert_eq!(solid_under(&w, c), None);
         let (x, y) = c.cell();
-        faces[0] |= (35..65).contains(&x) && y == 33;
-        faces[1] |= (35..50).contains(&y) && x == 67;
-        faces[2] |= (35..65).contains(&x) && y == 51;
-        faces[3] |= (35..50).contains(&y) && x == 32;
+        // The 5×3 shell turns to 3×5 on the sides, foot on the rock.
+        let turn = c.turn();
+        faces[0] |= (35..65).contains(&x) && y == 33 && turn == 0;
+        faces[1] |= (35..50).contains(&y) && x == 66 && turn == 1;
+        faces[2] |= (35..65).contains(&x) && y == 51 && turn == 2;
+        faces[3] |= (35..50).contains(&y) && x == 33 && turn == 3;
     }
     assert_eq!(faces, [true; 4]);
+}
+
+/// Whether the cells just past `c`'s foot (the side its turn points to)
+/// hold something solid, or are the tank glass.
+fn foot_held(w: &World, c: &Creature) -> bool {
+    let b = w.creature_body(c);
+    let solid = |x: usize, y: usize| {
+        let m = w.cell(x, y).unwrap().material;
+        m != id(w, "air") && !swimmable(w, m)
+    };
+    match c.turn() {
+        0 => b.y1 == w.height() || (b.x0..b.x1).any(|x| solid(x, b.y1)),
+        1 => b.x0 == 0 || (b.y0..b.y1).any(|y| solid(b.x0 - 1, y)),
+        2 => b.y0 == 0 || (b.x0..b.x1).any(|x| solid(x, b.y0 - 1)),
+        _ => b.x1 == w.width() || (b.y0..b.y1).any(|y| solid(b.x1, y)),
+    }
+}
+
+#[test]
+fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
+    // A glued Γ: a pillar on the sand with an arm reaching right over it.
+    let mut w = world(120, 80, 7);
+    sand_bed(&mut w, 6);
+    let rock = id(&w, "rock");
+    for r in [rect(40, 40, 46, 74), rect(46, 40, 80, 46)] {
+        w.fill_rect(r, rock, Brush::Replace).unwrap();
+        w.set_anchored(w.body_at(r.x0, r.y0).unwrap(), true);
+    }
+    let snail = w.add_creature(species(&w, "nerite"), 20, 72).unwrap();
+    let (mut held, mut led, ticks) = (0, 0, 4_000);
+    // First tick on each leg: up the pillar (foot right), upside down
+    // under the arm, down the pillar's far side (foot left), upright on
+    // the sand beyond it, then up the tank glass (foot right).
+    let mut legs = [None; 5];
+    let mut last = w.creature(snail).map(|c| (c.centre(), c.turn())).unwrap();
+    for _ in 0..ticks {
+        w.tick();
+        let c = w.creature(snail).unwrap();
+        assert_eq!(solid_under(&w, c), None, "tick {}", w.tick_count());
+        assert!(w.in_zone(c), "came off at tick {}", w.tick_count());
+        held += u32::from(foot_held(&w, c));
+        let b = w.creature_body(c);
+        let size = (b.x1 - b.x0, b.y1 - b.y0);
+        assert_eq!(
+            size,
+            if c.turn().is_multiple_of(2) {
+                (5, 3)
+            } else {
+                (3, 5)
+            }
+        );
+        // The head (the sprite's right, mirrored or not, then turned)
+        // leads along any move across the turned body's length.
+        let ((x, y), turn) = (c.centre(), c.turn());
+        if turn == last.1 && (x, y) != last.0 {
+            let (fx, fy) = [(0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (1.0, 0.0)][usize::from(turn)];
+            let ahead = (x - last.0.0) * fy - (y - last.0.1) * fx;
+            let ahead = if c.facing_left() { -ahead } else { ahead };
+            assert!(ahead >= 0.0, "tail first at tick {}", w.tick_count());
+            led += u32::from(ahead > 0.0);
+        }
+        last = ((x, y), turn);
+        let leg = match turn {
+            3 if b.x1 == 40 && b.y1 < 70 => Some(0),
+            2 if b.y0 == 46 && b.x0 >= 50 && b.x1 <= 76 => Some(1),
+            1 if b.x0 == 46 && b.y0 > 50 && b.y1 < 70 => Some(2),
+            0 if b.y1 == 74 && b.x0 > 50 && b.x1 < 110 => Some(3),
+            3 if b.x1 == 120 && b.y1 < 60 => Some(4),
+            _ => None,
+        };
+        if let Some(i) = leg {
+            legs[i].get_or_insert(w.tick_count());
+        }
+    }
+    let legs = legs.map(|t| t.expect("every leg is reached"));
+    assert!(legs.is_sorted(), "legs in order: {legs:?}");
+    assert!(led > 300, "moved head first {led} times");
+    // Only outside corners, where it holds on diagonally, leave the foot
+    // off a face.
+    assert!(
+        held * 100 >= ticks * 95,
+        "foot held on {held} of {ticks} ticks"
+    );
 }
 
 #[test]

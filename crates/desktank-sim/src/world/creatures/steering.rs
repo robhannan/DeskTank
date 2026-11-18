@@ -3,47 +3,85 @@
 use rand_pcg::Pcg32;
 
 use super::{
-    Creature, Kind, ONE, REACHED, TICKS_PER_SECOND, World, Zone, body, centre_of, dist, to_i64,
+    Creature, FEET, Kind, ONE, REACHED, TICKS_PER_SECOND, World, Zone, body, centre_of, dist,
+    extent, to_i64,
 };
 
 impl World {
     /// One pixel step at the species' cruising speed. Trace the contour
     /// with solid material on the right, including inside/outside corners.
     /// A scooped support or a net drop into open water lets the snail sink.
+    /// After the step it turns its foot onto the face it holds.
     pub(super) fn crawl(&self, k: &Kind, c: &mut Creature) {
         let interval = u64::try_from((ONE + k.cruise / 2) / k.cruise).unwrap_or(1);
         if !(self.tick + u64::from(c.id.0)).is_multiple_of(interval) {
             return;
         }
-        let free = |dx, dy| self.fits(k, c.x + dx * ONE, c.y + dy * ONE);
-        let face = self.support_face(k, c.x, c.y);
-        let heading = if (c.vx, c.vy) != (0, 0) && (face.is_some() || self.at_corner(k, c.x, c.y)) {
-            (c.vx.signum(), c.vy.signum())
-        } else if let Some((x, y)) = face {
-            (y, -x)
-        } else {
-            if free(0, 1) {
-                c.y += ONE;
-            }
-            (c.vx, c.vy) = (0, 0);
-            return;
-        };
+        let turn = c.turn;
+        let free = |dx, dy| self.fits(k, turn, c.x + dx * ONE, c.y + dy * ONE);
+        let face = self.support_face(k, turn, c.x, c.y);
+        let heading =
+            if (c.vx, c.vy) != (0, 0) && (face.is_some() || self.at_corner(k, turn, c.x, c.y)) {
+                (c.vx.signum(), c.vy.signum())
+            } else if let Some((x, y)) = face {
+                (y, -x)
+            } else {
+                if free(0, 1) {
+                    c.y += ONE;
+                }
+                (c.vx, c.vy) = (0, 0);
+                return;
+            };
         let (dx, dy) = heading;
         if let Some((x, y)) = [(-dy, dx), heading, (dy, -dx), (-dx, -dy)]
             .into_iter()
-            .find(|&(x, y)| free(x, y) && self.on_surface(k, c.x + x * ONE, c.y + y * ONE))
+            .find(|&(x, y)| free(x, y) && self.on_surface(k, turn, c.x + x * ONE, c.y + y * ONE))
         {
             c.x += x * ONE;
             c.y += y * ONE;
             (c.vx, c.vy) = (x * k.cruise, y * k.cruise);
-            if x != 0 {
-                c.facing_left = x < 0;
+        }
+        // Only diagonal support (an outside corner): keep the turn until a
+        // face is found, so it doesn't flicker.
+        if let Some(face) = self.support_face(k, c.turn, c.x, c.y) {
+            self.attach(k, c, face);
+        }
+        c.face_along(c.vx, c.vy);
+    }
+
+    /// Turns `c` so its foot rests on `face`. The new box keeps the old
+    /// box's edge on that face and slides along it, nearest first and ahead
+    /// before behind, by up to the difference in its sides; if no spot fits
+    /// and touches the face, `c` keeps its turn.
+    fn attach(&self, k: &Kind, c: &mut Creature, face: (i32, i32)) {
+        let Some(turn) = FEET.iter().position(|&f| f == face) else {
+            return;
+        };
+        let turn = u8::try_from(turn).unwrap_or(0);
+        if turn == c.turn {
+            return;
+        }
+        let ((ow, oh), (nw, nh)) = (extent(k, c.turn), extent(k, turn));
+        let (fx, fy) = face;
+        let (x, y) = (
+            c.x + fx * (ow - nw) * ONE / 2,
+            c.y + fy * (oh - nh) * ONE / 2,
+        );
+        // Along the face, signed so positive is the way it was going.
+        let (ax, ay) = (fy.abs(), fx.abs());
+        let ahead = if c.vx * ax + c.vy * ay < 0 { -1 } else { 1 };
+        let slide = (k.w - k.h).abs();
+        for s in std::iter::once(0).chain((1..=slide).flat_map(|s| [s, -s])) {
+            let (nx, ny) = (x + ax * ahead * s * ONE, y + ay * ahead * s * ONE);
+            if self.fits(k, turn, nx, ny) && self.supported(k, turn, nx + fx * ONE, ny + fy * ONE) {
+                (c.x, c.y, c.turn) = (nx, ny, turn);
+                return;
             }
         }
     }
 
-    fn supported(&self, k: &Kind, x: i32, y: i32) -> bool {
-        let Some(b) = body(k, x, y, self.width, self.height) else {
+    fn supported(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+        let Some(b) = body(k, turn, x, y, self.width, self.height) else {
             return true; // tank glass
         };
         (b.y0..b.y1).any(|y| {
@@ -56,20 +94,23 @@ impl World {
         })
     }
 
-    fn support_face(&self, k: &Kind, x: i32, y: i32) -> Option<(i32, i32)> {
-        [(0, 1), (1, 0), (-1, 0), (0, -1)]
-            .into_iter()
-            .find(|&(dx, dy)| self.supported(k, x + dx * ONE, y + dy * ONE))
+    /// The side a body turned `turn` at `(x, y)` holds on to: the face under
+    /// its foot if there is one, so a crawler in an inside corner keeps its
+    /// turn, then down, right, left and up.
+    fn support_face(&self, k: &Kind, turn: u8, x: i32, y: i32) -> Option<(i32, i32)> {
+        std::iter::once(FEET[usize::from(turn)])
+            .chain([(0, 1), (1, 0), (-1, 0), (0, -1)])
+            .find(|&(dx, dy)| self.supported(k, turn, x + dx * ONE, y + dy * ONE))
     }
 
-    fn at_corner(&self, k: &Kind, x: i32, y: i32) -> bool {
+    fn at_corner(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
         [(1, 1), (-1, 1), (1, -1), (-1, -1)]
             .into_iter()
-            .any(|(dx, dy)| self.supported(k, x + dx * ONE, y + dy * ONE))
+            .any(|(dx, dy)| self.supported(k, turn, x + dx * ONE, y + dy * ONE))
     }
 
-    pub(super) fn on_surface(&self, k: &Kind, x: i32, y: i32) -> bool {
-        self.support_face(k, x, y).is_some() || self.at_corner(k, x, y)
+    pub(super) fn on_surface(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+        self.support_face(k, turn, x, y).is_some() || self.at_corner(k, turn, x, y)
     }
 
     pub(super) fn steering_target(
@@ -133,7 +174,7 @@ impl World {
             } else {
                 // Rise vertically, moving sideways under ledges until
                 // there is open water overhead.
-                let tx = if self.fits(k, c.x, c.y - ONE) {
+                let tx = if self.fits(k, c.turn, c.x, c.y - ONE) {
                     c.x
                 } else {
                     c.tx
