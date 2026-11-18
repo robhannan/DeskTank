@@ -106,7 +106,7 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 
 ## Review
 
-1. Spawn an adversarial reviewer using the host's subagent support. Give it the diff command
+1. Spawn the named `desktank-reviewer` subagent for an adversarial review. Give it the diff command
    (`git diff origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
    tell it to post ONE PR comment whose first line is exactly
@@ -116,8 +116,8 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    changes) or **out of scope** (pre-existing, new feature, or a
    nice-to-have).
    It must post with `GITHUB_TOKEN= gh pr comment <n> --body-file <file>`
-   and must not modify, commit or push anything. If you cannot spawn agents,
-   say so in your report instead of skipping the review.
+   and must not modify, commit or push anything. If nested spawning is unavailable, ask the orchestrator to spawn
+   the named reviewer with the same brief. Report any unavailable review.
 2. Verify each finding against the code before acting; reviewers can be
    wrong.
 3. **Keep the PR's scope fixed.** Review fixes are only for defects in
