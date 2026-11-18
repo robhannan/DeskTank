@@ -11,7 +11,7 @@
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use desktank_sim::{Brush, MaterialTable, Rect, World, WorldConfig};
+use desktank_sim::{Brush, MaterialTable, Propagule, Rect, World, WorldConfig};
 
 /// The default 640×360 tank with a sand column covering 20% of the grid
 /// (160×288 cells) dropped into the middle, above 72 rows of water.
@@ -98,18 +98,26 @@ fn five_hundred_plants() -> World {
         };
         w.fill_rect(bed, soil, Brush::Replace).expect("bed");
         for x in (x0 + 2..x0 + 78).step_by(4) {
-            w.paint_plant(i64::try_from(x).expect("x"), 110, 0, rotala)
-                .expect("rotala");
+            w.paint_plant(
+                i64::try_from(x).expect("x"),
+                110,
+                0,
+                rotala,
+                Propagule::Cuttings,
+            )
+            .expect("rotala");
         }
         let x = 140 + 160 * i64::try_from(k).expect("k");
         w.paint(x, 220, 8, rock, Brush::Replace).expect("rock");
         glue(&mut w, usize::try_from(x).expect("x"), 220);
         for dx in [-6, -3, 0, 3, 6] {
-            w.paint_plant(x + dx, 205, 0, moss).expect("moss");
+            w.paint_plant(x + dx, 205, 0, moss, Propagule::Fragments)
+                .expect("moss");
         }
     }
     for x in (0..640).filter(|x| x % 4 != 3) {
-        w.paint_plant(x, 346, 0, hyg).expect("cutting");
+        w.paint_plant(x, 346, 0, hyg, Propagule::Cuttings)
+            .expect("cutting");
     }
     let mut w = advance(w, 10 * 60 * 20);
     for _ in 0..10 * 60 * 20 {

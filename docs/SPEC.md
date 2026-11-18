@@ -683,7 +683,9 @@ stays a material film, not individuals.
     moves with it or is torn off is settled in T6c.
   - **Propagation:** runners and buds make child plants (parent id set);
     mature plants of seeding species drop seeds now and then; the palette
-    pours a species' seeds or cuttings; fragments come from cuts.
+    pours a species' seeds, cuttings or fragments (one it lists; a
+    poured fragment is the `cutting` material); fragments also come from
+    cuts.
 - <a id="plant-appearance"></a>**Appearance.** Effects are computed at
   render time where possible, so a change in a plant's look costs no
   chunk wakes and no cell rewrites.
@@ -733,7 +735,8 @@ stays a material film, not individuals.
     stands in for it (new growth is at the top).
 - **Interaction.** The palette gets one plants slot with a species picker
   (the palette strip is short, §9 T4) in `desktank window` and on the
-  web, pouring that species' seeds or cuttings. Inspect shows species,
+  web, and a propagule picker listing only that species' methods (seeds,
+  cuttings, fragments), pouring the species as the picked propagule. Inspect shows species,
   age, health, size and what is limiting growth (for example, "light too
   low"). The water-quality score counts plant cells from the table.
 

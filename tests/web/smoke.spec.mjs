@@ -157,3 +157,42 @@ test("the plants slot pours the species picked beside it", async ({ page }) => {
   await expect(picker).toHaveValue(String(moss));
   expect(errors).toEqual([]);
 });
+
+test("the propagule picker offers the species' own methods and pours seeds", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  const tank = (f, ...a) => page.evaluate(([f, a]) => window.desktank.tank[f](...a), [f, a]);
+  const species = page.locator("#plant-species");
+  const way = page.locator("#plant-propagule");
+  // Hygrophila (the default) grows from all three; cuttings come first.
+  await expect(way.locator("option")).toHaveText(["Seeds", "Cuttings", "Fragments"]);
+  await expect(way).toHaveValue("cuttings");
+  await expect(way).toBeEnabled();
+  // Picking seeds selects the plants slot, and a click pours seeds.
+  await way.selectOption("seeds");
+  await expect(page.getByRole("radio", { name: "Plants" })).toHaveAttribute("aria-checked", "true");
+  expect(await tank("plantPropagule")).toBe("seeds");
+  const canvas = page.locator("#tank");
+  await canvas.scrollIntoViewIfNeeded();
+  const b = await canvas.boundingBox();
+  await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
+  expect(await tank("materialCount", "seed")).toBeGreaterThan(0);
+  // Rotala only grows from cuttings; java moss only from fragments.
+  await species.selectOption({ label: "Rotala" });
+  await expect(way.locator("option")).toHaveText(["Cuttings"]);
+  await expect(way).toBeDisabled();
+  await species.selectOption({ label: "Java moss" });
+  await expect(way.locator("option")).toHaveText(["Fragments"]);
+  // Back on hygrophila the seeds pick still holds; it survives a reset,
+  // even one made while on a species without seeds.
+  await species.selectOption({ label: "Hygrophila" });
+  await expect(way).toHaveValue("seeds");
+  await species.selectOption({ label: "Rotala" });
+  await page.getByRole("button", { name: "Reset" }).click();
+  await expect(species).toHaveValue(String((await tank("plantSpecies")).findIndex((n) => n.startsWith("rotala "))));
+  await expect(way).toHaveValue("cuttings");
+  await species.selectOption({ label: "Hygrophila" });
+  await expect.poll(() => tank("plantPropagule")).toBe("seeds");
+  await expect(way).toHaveValue("seeds");
+  expect(errors).toEqual([]);
+});
