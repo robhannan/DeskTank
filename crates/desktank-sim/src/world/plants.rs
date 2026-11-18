@@ -43,8 +43,8 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable, plant_position,
-    plant_variant,
+    Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable, Propagule,
+    plant_position, plant_variant,
 };
 
 /// Most plants a tank holds by default (SPEC §2.7 *Cap*), set from
@@ -335,27 +335,32 @@ impl World {
         self.plants.cap = cap.clamp(1, usize::from(u16::MAX));
     }
 
-    /// Pours `species`' seeds or cuttings (as [`PlantSpecies::propagule`]
-    /// says) into the fluid cells of a disc, like [`World::paint`] with
-    /// [`super::Brush::Pour`]. Returns how many cells changed.
+    /// Pours `species`' `propagule` (its material,
+    /// [`Propagule::material_name`]) into the fluid cells of a disc, like
+    /// [`World::paint`] with [`super::Brush::Pour`]. Returns how many cells
+    /// changed.
     ///
     /// # Errors
     ///
-    /// Returns an error if the species is unknown or the table has no seed
-    /// or cutting material.
+    /// Returns an error if the species is unknown, doesn't grow from
+    /// `propagule`, or the table lacks its material.
     pub fn paint_plant(
         &mut self,
         cx: i64,
         cy: i64,
         radius: u32,
         species: PlantSpeciesId,
+        propagule: Propagule,
     ) -> Result<usize, WorldError> {
         let s = self
             .plants
             .species
             .get(species)
             .ok_or(WorldError::UnknownPlantSpecies(species))?;
-        let name = s.propagule();
+        if !s.grows_from(propagule) {
+            return Err(WorldError::PlantPropagule(species, propagule));
+        }
+        let name = propagule.material_name();
         let material = self
             .materials
             .id(name)

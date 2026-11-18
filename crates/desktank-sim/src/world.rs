@@ -15,7 +15,7 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, MovementClass};
 
-use crate::plants::{PlantSpeciesId, plant_variant};
+use crate::plants::{PlantSpeciesId, Propagule, plant_variant};
 use crate::rng::{chunk_stream, splitmix64};
 use crate::species::SpeciesId;
 use bodies::Body;
@@ -105,6 +105,9 @@ pub enum WorldError {
     /// The plant species ID isn't in the table.
     #[error("unknown plant species id {}", .0.0)]
     UnknownPlantSpecies(PlantSpeciesId),
+    /// The plant species doesn't grow from that propagule.
+    #[error("plant species {} doesn't grow from {}", .0.0, .1.name())]
+    PlantPropagule(PlantSpeciesId, Propagule),
     /// The tank already holds the most creatures it may.
     #[error("the tank is full ({0} creatures)")]
     PopulationCap(usize),

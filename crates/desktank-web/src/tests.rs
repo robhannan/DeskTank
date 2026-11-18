@@ -132,6 +132,32 @@ fn palette_groups_follow_the_sim() {
 }
 
 #[test]
+fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
+    let mut t = tank();
+    assert_eq!(t.plant_species_selected(), 0, "hygrophila");
+    assert_eq!(t.plant_propagules(), ["seeds", "cuttings", "fragments"]);
+    assert_eq!(t.plant_propagule(), "cuttings");
+    assert!(!t.set_plant_propagule("spores"));
+    assert!(t.set_plant_propagule("seeds"));
+    assert_eq!(t.plant_propagule(), "seeds");
+    t.select(slot(&t, "plant plants"));
+    t.set_radius(0);
+    down(&mut t, PRIMARY, 60, 30);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.material_count("seed"), 1);
+    // Rotala only grows from cuttings: seeds fall back, and can't be picked.
+    let rotala = t
+        .plant_species()
+        .iter()
+        .position(|s| s.starts_with("rotala "))
+        .unwrap();
+    t.set_plant_species(u32::try_from(rotala).unwrap());
+    assert_eq!(t.plant_propagules(), ["cuttings"]);
+    assert_eq!(t.plant_propagule(), "cuttings");
+    assert!(!t.set_plant_propagule("seeds"));
+}
+
+#[test]
 fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
     let mut t = tank();
     let species = t.plant_species();
