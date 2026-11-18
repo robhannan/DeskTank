@@ -1,7 +1,8 @@
 # An amano shrimp, Caridina multidentata (placeholder art, D11): a larger
 # translucent grey-green shrimp, about 4.5 cm long, with a dashed brown
 # line along its side. A tireless algae grazer and a bold scavenger: it
-# eats every food in the tank and darts after it faster than the cherries.
+# takes every prepared food as well as algae and mulm, and darts after it
+# faster than the cherries.
 id = 6
 name = "amano_shrimp"
 zone = "bottom"

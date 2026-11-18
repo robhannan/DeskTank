@@ -341,7 +341,7 @@ fn validate(
         return Err(invalid("max_speed must be at most 16 cells per second"));
     }
     if !(1..=MAX_REACH).contains(&d.reach) {
-        return Err(invalid("reach must be 1..=4 cells"));
+        return Err(invalid("reach must be 1..=MAX_REACH (4) cells"));
     }
     if let Some(every) = d.hop_every {
         if d.zone != Zone::Bottom {
@@ -636,9 +636,32 @@ mod tests {
             Err(SpeciesError::Invalid { .. })
         ));
         assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nreach = 5"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        // Only bottom walkers hop, every 1..=600 s.
+        assert!(matches!(
             bad("min_depth = 10", "min_depth = 10\nhop_every = 5.0"),
             Err(SpeciesError::Invalid { .. })
         ));
+        let walker = |extra: &str| {
+            let src = OK
+                .replace("zone = \"mid\"", "zone = \"bottom\"")
+                .replace("min_depth = 10", &format!("min_depth = 10\n{extra}"));
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        for every in ["0.5", "601.0", "nan", "inf"] {
+            assert!(
+                matches!(
+                    walker(&format!("hop_every = {every}")),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "hop_every = {every}"
+            );
+        }
+        let ok = walker("hop_every = 6.0\nreach = 4").unwrap();
+        let s = ok.get(SpeciesId(9)).unwrap();
+        assert_eq!((s.hop_every, s.reach), (Some(6.0), 4));
         assert!(matches!(
             bad("zone = \"mid\"", "zone = \"sky\""),
             Err(SpeciesError::Parse { .. })

@@ -138,20 +138,27 @@ mod tests {
             .iter()
             .filter(|s| s.zone != Zone::Surfaces)
             .count();
-        for s in world.species().iter() {
-            assert_eq!(
-                world
-                    .creatures()
-                    .iter()
-                    .filter(|c| c.species() == s.id)
-                    .count(),
-                if s.zone == Zone::Surfaces {
-                    0
-                } else {
-                    30 / stocked
-                }
-            );
+        // Round robin: every swimmer and walker gets 30 / n, the first
+        // 30 % n one more; crawlers none.
+        for (i, s) in world
+            .species()
+            .iter()
+            .filter(|s| s.zone != Zone::Surfaces)
+            .enumerate()
+        {
+            let n = world
+                .creatures()
+                .iter()
+                .filter(|c| c.species() == s.id)
+                .count();
+            assert_eq!(n, 30 / stocked + usize::from(i < 30 % stocked));
         }
+        assert!(
+            world
+                .creatures()
+                .iter()
+                .all(|c| world.species().get(c.species()).unwrap().zone != Zone::Surfaces)
+        );
         assert_eq!(stock(&mut world, 1000, 7).unwrap(), MAX_CREATURES - 30);
     }
 }

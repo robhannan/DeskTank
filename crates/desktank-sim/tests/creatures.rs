@@ -932,3 +932,28 @@ fn thai_micro_crab_clings_to_plants_and_walks_the_bottom() {
     assert!(on_plant > 300, "on plants {on_plant} ticks");
     assert!(on_bed > 100, "walking the bed {on_bed} ticks");
 }
+
+#[test]
+fn a_hop_never_lifts_a_shrimp_out_of_a_shallow_zone() {
+    for name in ["cherry_shrimp", "amano_shrimp"] {
+        let mut w = World::new(
+            WorldConfig {
+                width: 160,
+                height: 90,
+                seed: 3,
+                water_level: 0.45,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        sand_bed(&mut w, 8);
+        let shrimp = w.add_creature(species(&w, name), 60, 80).unwrap();
+        run(&mut w, 200);
+        let mut out = 0;
+        for _ in 0..6_000 {
+            w.tick();
+            out += u32::from(!w.in_zone(w.creature(shrimp).unwrap()));
+        }
+        assert_eq!(out, 0, "{name} out of its zone on {out} ticks");
+    }
+}
