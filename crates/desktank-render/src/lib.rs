@@ -1,6 +1,6 @@
-//! DeskTank renderer: grid texture and palette shader (sprites and lighting
-//! come later). Draws a [`desktank_sim`] world to a surface or an offscreen
-//! target.
+//! DeskTank renderer: grid texture and palette shader, plus instanced
+//! creature sprites from an atlas. Draws a [`desktank_sim`] world to a
+//! surface or an offscreen target.
 //!
 //! The core is loop-agnostic (SPEC §4.2): a host owns the window or canvas,
 //! the event loop and surface creation, and drives a [`Tank`] by calling
@@ -24,6 +24,7 @@ mod offscreen;
 mod pacing;
 mod palette;
 mod renderer;
+mod sprites;
 mod surface;
 mod tank;
 mod timer;

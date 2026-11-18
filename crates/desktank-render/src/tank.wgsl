@@ -1,8 +1,10 @@
 // The cell grid drawn as pixel art: each fragment finds its cell (integer
 // scale, nearest by construction), looks up (material, variant) in the
 // palette, darkens water with depth and tints by the time of day. The interact overlay (palette strip
-// and brush outline) is drawn on top. WebGL2-safe: textureLoad on 8-bit
-// unorm textures, one uniform buffer, no storage buffers.
+// and brush outline) is drawn on top. Creature sprites are instanced quads
+// drawn after the grid (vs_sprite / fs_sprite), one atlas texel per cell.
+// WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
+// per-instance vertex buffer, no storage buffers.
 
 struct View {
     // Grid size in cells.
@@ -30,6 +32,8 @@ struct View {
     cursor: vec4<f32>,
     // Day and night: a colour multiplier for the tank (rgb; 1 by day).
     daylight: vec4<f32>,
+    // Target size in pixels (xy).
+    target_size: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -38,6 +42,8 @@ struct View {
 @group(0) @binding(3) var hud: texture_2d<f32>;
 // Nutrient, CO2 and light per 8x8-cell field cell, for the overlay.
 @group(0) @binding(4) var fields: texture_2d<f32>;
+// Creature sprite frames (sRGB-encoded RGBA; alpha 0 is transparent).
+@group(0) @binding(5) var atlas: texture_2d<f32>;
 
 // The fields at `cell`, interpolated between field-cell centres.
 fn field_at(cell: vec2<f32>) -> vec3<f32> {
@@ -117,4 +123,56 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 fn out(c: vec3<f32>) -> vec4<f32> {
     let linear = select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
     return vec4<f32>(select(c, linear, view.srgb_target > 0.5), 1.0);
+}
+
+struct SpriteOut {
+    @builtin(position) pos: vec4<f32>,
+    // Atlas texel coordinate, interpolated across the quad.
+    @location(0) texel: vec2<f32>,
+};
+
+// One creature's quad: two triangles over its sprite, the top-left snapped
+// to a target pixel and each texel one cell wide.
+@vertex
+fn vs_sprite(
+    @builtin(vertex_index) i: u32,
+    // Top-left in cells (fractional), size in texels (= cells), the frame's
+    // top-left texel in the atlas, and x > 0.5 to mirror (facing left).
+    @location(0) cell: vec2<f32>,
+    @location(1) size: vec2<f32>,
+    @location(2) origin: vec2<f32>,
+    @location(3) flip: vec2<f32>,
+) -> SpriteOut {
+    // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
+    let corner = vec2<f32>(
+        select(0.0, 1.0, i == 1u || i == 4u || i == 5u),
+        select(0.0, 1.0, i == 2u || i == 3u || i == 5u),
+    );
+    let top_left = round(view.offset + cell * view.scale);
+    let px = top_left + corner * size * view.scale;
+    let ndc = vec2<f32>(px.x / view.target_size.x * 2.0 - 1.0, 1.0 - px.y / view.target_size.y * 2.0);
+    var u = corner.x * size.x;
+    if flip.x > 0.5 {
+        u = size.x - u;
+    }
+    var o: SpriteOut;
+    o.pos = vec4<f32>(ndc, 0.0, 1.0);
+    o.texel = origin + vec2<f32>(u, corner.y * size.y);
+    return o;
+}
+
+@fragment
+fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
+    // The palette strip stays on top.
+    if view.hud.w > 0.5 {
+        let p = floor((v.pos.xy - view.hud.xy) / view.hud.z);
+        if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy) {
+            discard;
+        }
+    }
+    let t = textureLoad(atlas, vec2<i32>(floor(v.texel)), 0);
+    if t.a < 0.5 {
+        discard;
+    }
+    return out(t.rgb * view.daylight.rgb);
 }
