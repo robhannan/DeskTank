@@ -222,7 +222,7 @@ fn is_water(at: vec2<i32>) -> bool {
 
 // A static per-texel hash (texel coordinates in the grid's 2x texel space).
 fn hash(p: vec2<i32>) -> u32 {
-    var h = u32(p.x) * 0x8da6b343u ^ u32(p.y) * 0xd8163841u;
+    var h = (u32(p.x) * 0x8da6b343u) ^ (u32(p.y) * 0xd8163841u);
     h = (h ^ (h >> 13u)) * 0x5bd1e995u;
     return h ^ (h >> 15u);
 }
