@@ -1,0 +1,42 @@
+# Bacopa (Bacopa caroliniana): a slow, undemanding stem plant with thick,
+# fleshy, rounded leaves in pairs on a stout stem. It gets by in low light
+# and lean water and is slow to suffer, but slow to grow.
+id = 6
+name = "bacopa"
+description = "A slow, undemanding stem plant with thick, fleshy leaves."
+form = "stem"
+propagation = ["cuttings"]
+
+[stem]
+height = 40
+internode = 2
+leaf_length = 2
+root_depth = 10
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.03, optimum = 0.5, max = 2.0 }
+nutrient = { min = 0.02, optimum = 0.3, max = 3.0 }
+co2 = { min = -1.0, optimum = 0.8, max = 4.0 }
+
+[growth]
+rate = 25.0
+size = 220
+cost = 0.008
+
+[hardiness]
+tolerance = 35.0
+decline = 0.008
+recovery = 0.02
+
+# A muted, waxy sage green on a pale fleshy stem.
+[colours]
+root = ["#a89c74", "#c9bd94", "#e4dbb8"]
+stem = ["#58703a", "#688444", "#7a964e", "#8ca85a"]
+leaf = ["#466e3a", "#557f42", "#66924c", "#79a458", "#8db668", "#a6c880"]
+
+# Short, round, fleshy leaves on a full-width stem.
+[look]
+leaf = "round"
+stem = "thick"
+root = "strand"
