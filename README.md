@@ -22,7 +22,7 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 Early days: the falling-sand simulation core works (see the browser demo above) and renders in a window. Working commands:
 
 ```sh
-cargo run --release -p desktank -- window   # the tank in a window: click the palette (top left) or keys 1–9 and 0 for a material, device or tool, left drag uses it, right drag scoops, scroll sets the brush size, F tints the nutrient, CO₂ and light fields, W changes the water, Q shows the water quality; --time HH:MM lights it for a time of day
+cargo run --release -p desktank -- window   # the tank in a window: click a group tab in the palette (top left; G / Shift+G or scrolling over it also switch group), then an item (or keys 1–9 and 0 within the group) for a material, device or tool, left drag uses it, right drag scoops, scroll sets the brush size, F tints the nutrient, CO₂ and light fields, W changes the water, Q shows the water quality; --time HH:MM lights it for a time of day
 cargo run --release -p desktank -- bench    # 60 s scripted pour + settle, prints CPU, tick, GPU and memory numbers
 cargo run --release -p desktank -- capture --script crates/desktank/tests/scenes/starter.toml --out shots   # headless PNG capture
 ```
