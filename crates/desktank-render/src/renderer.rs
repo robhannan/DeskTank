@@ -2,7 +2,7 @@
 //! palette, the uniforms, the sprite atlas and instances, and the two
 //! pipelines (the grid, then the creature sprites over it).
 
-use desktank_sim::{FieldKind, World};
+use desktank_sim::{FieldKind, Part, World};
 
 use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, PaletteLayout};
@@ -16,7 +16,7 @@ use crate::{Gpu, timer::GpuTimer};
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 128;
+const VIEW_BYTES: u64 = 144;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -53,6 +53,9 @@ pub struct Renderer {
     /// Health tint per plant id (T6b), and its CPU copy.
     plants: wgpu::Texture,
     plant_tints: PlantTints,
+    /// Material ids of the root, stem and leaf parts and of water, for the
+    /// shader's plant shapes (-1 if missing).
+    plant_parts: [f32; 4],
     /// Uniform bytes last written.
     view: Vec<u8>,
     scratch: Vec<u8>,
@@ -81,6 +84,10 @@ impl Renderer {
         let palette = create_palette(gpu, world);
         let plant_tints = PlantTints::default();
         let plants = create_plants(gpu, &plant_tints);
+        let species = create_species(gpu, world);
+        let material = |name: &str| world.materials().id(name).map_or(-1.0, |m| f32::from(m.0));
+        let [root, stem, leaf] = Part::ALL.map(|p| material(p.material_name()));
+        let plant_parts = [root, stem, leaf, material("water")];
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
         let atlas = Atlas::build(world.species());
@@ -102,7 +109,15 @@ impl Renderer {
             d,
             &bind_layout,
             &view_buffer,
-            [&cells, &palette, &hud, &fields, &atlas_texture, &plants],
+            [
+                &cells,
+                &palette,
+                &hud,
+                &fields,
+                &atlas_texture,
+                &plants,
+                &species,
+            ],
         );
         let (pipeline, sprite_pipeline) = create_pipelines(d, &bind_layout, format);
         Self {
@@ -124,6 +139,7 @@ impl Renderer {
             fields_version: None,
             plants,
             plant_tints,
+            plant_parts,
             view: Vec::new(),
             scratch: Vec::new(),
         }
@@ -337,6 +353,7 @@ impl Renderer {
                 .chain(daylight)
                 .chain([1.0])
                 .chain(target)
+                .chain(self.plant_parts)
         };
         {
             #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
@@ -455,6 +472,37 @@ fn create_plants(gpu: &Gpu, tints: &PlantTints) -> wgpu::Texture {
     texture
 }
 
+/// The species texture (T6d): ramps, shapes and sizes per species id.
+fn create_species(gpu: &Gpu, world: &World) -> wgpu::Texture {
+    let size = wgpu::Extent3d {
+        width: side(plants::SPECIES_WIDTH),
+        height: side(plants::SIDE),
+        depth_or_array_layers: 1,
+    };
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("plant species"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // sRGB-encoded, read raw like the palette.
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        texture.as_image_copy(),
+        &plants::species_image(world.plant_species()),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(side(plants::SPECIES_WIDTH * 4)),
+            rows_per_image: None,
+        },
+        size,
+    );
+    texture
+}
+
 /// The field-overlay texture: one RGBA texel per field cell.
 fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32)) {
     let field = world.field(FieldKind::Nutrient);
@@ -477,7 +525,8 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32))
 }
 
 /// The one bind group layout both pipelines share: the view uniform and
-/// six textures (cells, palette, HUD, fields, sprite atlas, plant tints).
+/// seven textures (cells, palette, HUD, fields, sprite atlas, plant tints,
+/// plant species).
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
     let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -509,16 +558,17 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
             texture_entry(4),
             texture_entry(5),
             texture_entry(6),
+            texture_entry(7),
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–6.
+/// The bind group: `view` at binding 0, then `textures` at 1–7.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 6],
+    textures: [&wgpu::Texture; 7],
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {

@@ -718,6 +718,19 @@ stays a material film, not individuals.
     the rows whose tint changed. (The species ramps and the
     position/age shades are T6d; T6b draws the material palette tinted
     by health.)
+    *T6d:* the plant texel's alpha holds the plant's species id, and a
+    species texture (32×256, one row per species id) holds each part's
+    ramp resampled to 8 shades, the part shapes and the sizes (stem
+    height, root depth, leaf length). A plant cell is drawn at two
+    texels per cell side (as sprites, D19): the shader reads its
+    same-plant neighbours (which side a leaf grows from, its tip, the
+    stem node it hangs from, a stem's nodes and tip, a root's links, a
+    mat's water-facing sides) and the species' shape decides which
+    texels are covered and their ramp shade; uncovered texels show the
+    neighbouring non-plant cell. Shades rise with height on the stem
+    (stem position / species height), towards leaf tips and on leaf
+    tops, plus the noise bits. Per-cell age isn't stored, so height
+    stands in for it (new growth is at the top).
 - **Interaction.** The palette gets one plants slot with a species picker
   (the palette strip is short, §9 T4) in `desktank window` and on the
   web, pouring that species' seeds or cuttings. Inspect shows species,
@@ -1475,6 +1488,14 @@ Each package depends only on the packages before it.
     its frame cap, and it draws nothing on battery or while hidden;
   - with sway off, a settled planted tank draws no extra frames (a
     frame-count test).
+
+  *Partly done (visual subset):* per-part species colour ramps with
+  position shades and the health tint, drawn at two texels per cell side
+  with per-species part shapes (`[look]` in the species TOML: leaf
+  lanceolate, needle, round or feather; stem stalk or thick, fuzz or
+  frond for mats; root strand or thick), and the `plant_species`
+  reference image of healthy plants. Colouration in strong light, dying
+  translucency, night folding, pearling and sway are open.
 - [x] **T7 Creatures.** Species TOML (including depth and surface
   needs), the sprite atlas pipeline with placeholder art (D11), steering
   (wander, schooling, zones, bottom-walking, surface-grazing,
