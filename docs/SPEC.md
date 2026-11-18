@@ -1451,7 +1451,9 @@ Each package depends only on the packages before it.
   unheld schoolmate and separate from close neighbours. Corydoras follow
   one-cell substrate steps. Nerites trace submerged contours, including the
   underside of rock, turning in quarter turns so the foot rests on the face
-  they hold; the body box turns with the sprite, and the turn is sim state. Air-breathing bettas return to the air interface every
+  they hold (at outside corners, held only diagonally, they keep their turn
+  until a face is found); the body box turns with the sprite, and the turn
+  is sim state. Air-breathing bettas return to the air interface every
   20 simulated seconds and skim there for 3 seconds. Grazing a cell gives
   the same satiety as one food cell. Cursor avoidance starts off in both hosts.
   In seeded tests the school met the spacing limit on 97.0% of ticks,

@@ -96,6 +96,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T5: fields are not saved yet (T8 must store nutrient and CO₂, which the state hash includes) and their f32 maths is only bit-identical across IEEE platforms without fused multiply-add.
 - T5/T6: nutrients diffuse through substrate and rock as through water, and each plant cell feeds from its own field cell; slowing diffusion in solids and feeding stems through their roots are open (T6 left both as they were).
 - T7: a nerite climbing the glass reverses at the water line and walks back tail-first round the contour (solid on its left), so in a floor-and-glass corner it turns back up instead of walking on. Steering by a remembered side, or wandering off a face, would let it roam the whole tank.
+- T7: an even-sized crawler sprite sits on half cells, so after a quarter turn its rounded collision box is a cell wider than the sprite on the foot side. No species is even-sized yet; snap the centre to whole cells when one is added (PR #19 review).
 - T7: crawler turns are quarter turns only; a sloping sand bed shows as a staircase of upright steps. Diagonal poses would need extra sprite frames.
 - T6: a stem cut below (scoop, or a wilted cell) leaves the part above standing; plants don't check they are still connected to their roots.
 - T6: leaves grow only sideways (a fern-like ladder) and stems don't branch; diagonal leaves, branching and per-species plant shapes are open.
