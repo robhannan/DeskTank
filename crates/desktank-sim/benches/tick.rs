@@ -1,6 +1,7 @@
-//! Simulation tick benches (SPEC §6.1, T1, T5): a heavy pour must tick in
-//! ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine, also
-//! with living cells (random ticks) and fields active.
+//! Simulation tick benches (SPEC §6.1, T1, T5, T6): a heavy pour must tick
+//! in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference machine, also
+//! with living cells (random ticks) and fields active, and with grown
+//! plants.
 //!
 //! `cargo bench -p desktank-sim`
 
@@ -51,6 +52,17 @@ fn settled_living() -> World {
     } {}
     assert_eq!(w.random_tick_stats().visited, w.random_tick_budget());
     w
+}
+
+/// The living tank with 16 cuttings grown for 30 minutes of world time: a
+/// planted tank whose plants have (nearly) finished growing.
+fn planted() -> World {
+    let mut w = settled_living();
+    let cutting = w.materials().id("cutting").expect("cutting");
+    for x in (20..640).step_by(40) {
+        w.paint(x, 40, 0, cutting, Brush::Pour).expect("cutting");
+    }
+    advance(w, 30 * 60 * 20)
 }
 
 fn advance(mut w: World, ticks: u32) -> World {
@@ -110,6 +122,12 @@ fn bench_tick(c: &mut Criterion) {
         b.iter(|| black_box(&mut living).tick());
     });
     assert_eq!(living.awake_chunks(), 0, "the living tank stays asleep");
+    // T6: the same tank planted and grown; plants still put out the odd
+    // leaf, which wakes its chunk for a second.
+    let mut planted = planted();
+    g.bench_function("planted", |b| {
+        b.iter(|| black_box(&mut planted).tick());
+    });
     g.finish();
 }
 

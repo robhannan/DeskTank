@@ -18,8 +18,9 @@ use crate::scene;
 pub struct Options {
     /// World seed.
     pub seed: u64,
-    /// Time of day as minutes after midnight. Day and night don't exist
-    /// yet, so this is accepted and validated but changes nothing.
+    /// Local time of day as minutes after midnight, for day and night
+    /// lighting (default noon, untinted). It only tints the drawing; the
+    /// simulation is the same at every hour.
     pub time: Option<u16>,
     /// Output size in pixels.
     pub size: (u32, u32),
@@ -48,7 +49,6 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
         }
         None => Script::default(),
     };
-    let _ = opts.time; // Passed through for day/night (T-later); no effect yet.
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let gpu = pollster::block_on(Gpu::new(&instance, None, GpuOptions::default()))?;
@@ -59,6 +59,9 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
     }
     let mut tank = Tank::new(world, TankConfig::default());
     tank.set_field_overlay(opts.field);
+    if let Some(minute) = opts.time {
+        tank.set_time_of_day(minute);
+    }
     fs::create_dir_all(&opts.out).with_context(|| format!("creating {}", opts.out.display()))?;
 
     let mut player = script.player();

@@ -1,0 +1,6 @@
+# Roots grow down and sideways through the substrate.
+id = 74
+name = "root"
+class = "solid"
+density = 1.1
+colour = "#d9cfa8"

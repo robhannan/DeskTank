@@ -1,6 +1,6 @@
 // The cell grid drawn as pixel art: each fragment finds its cell (integer
 // scale, nearest by construction), looks up (material, variant) in the
-// palette and darkens water with depth. The interact overlay (palette strip
+// palette, darkens water with depth and tints by the time of day. The interact overlay (palette strip
 // and brush outline) is drawn on top. WebGL2-safe: textureLoad on 8-bit
 // unorm textures, one uniform buffer, no storage buffers.
 
@@ -28,6 +28,8 @@ struct View {
     hud_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
+    // Day and night: a colour multiplier for the tank (rgb; 1 by day).
+    daylight: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -86,7 +88,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let c = textureLoad(palette, idx, 0);
     let depth = clamp((cell.y - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
     let light = 1.0 - view.depth_dim * depth * c.a;
-    var rgb = c.rgb * light;
+    var rgb = c.rgb * light * view.daylight.rgb;
     // Debug overlay: tint by a field's value.
     let mode = view.hud_size.z;
     if mode > 0.5 {

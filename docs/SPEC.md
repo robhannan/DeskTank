@@ -337,6 +337,28 @@ Plants are structures of cells: roots, stems, leaves. A plant grows by
 converting nearby water cells while it has nutrients, light and CO₂.
 Without them it wilts and drops dead plant matter.
 
+*T6:* `assets/reactions.toml` gained three rule kinds, run on random ticks
+like the rest. `[[grow]]`: a cell grows a `makes` cell into a neighbour
+that is one of `into`, along given directions, with probability `p` per
+second while all its field `needs` hold (a `boost` multiplies `p`, e.g.
+CO₂ doubles plant growth), optionally only where the new cell touches one
+of `touching` or no other `makes` cell (`alone`), turning itself into
+`becomes` and taking `consume` from a field. Each plant cell's `state`
+counts its distance from where its part began (stem height, leaf length,
+root depth), capped by `max`. `[[wilt]]`: a cell becomes `into` with
+probability `p` per second while one of its `unless` needs fails or it
+touches none of `attached`. `[[spawn]]`: a rate of attempts per second
+per 64 columns, each at a random column's first non-fluid cell; if it is
+one of `on` and the water cell above meets `when`, the material appears
+there (algae spores). `when`/`needs`/`unless` take one condition or a
+list of up to 4. Materials gained `opacity` (0–1, how much light a cell
+blocks; plant tissue 0.3–0.5) for the light field. Seeds and cuttings
+are powders that root when resting on substrate; stems, leaves, roots,
+moss and algae are solid; dead plant matter is a powder that becomes
+detritus after 120 s. Keep-probabilities `(1 − p)^(1/20)` come from a
+Newton-iteration root with plain arithmetic, not `powf`, so every
+target computes the same bits.
+
 ### 2.3 Ecosystem (D3)
 
 - **Simple mode** (the default):
@@ -354,6 +376,43 @@ Without them it wilts and drops dead plant matter.
   - a heater temperature setting.
 
   Each species has tolerances for these values.
+- *T6 (simple mode):*
+  - **Plants.** A seed (slow, mean 50 s) or cutting (2 s) resting on
+    sand, gravel or aquasoil roots into it and becomes a stem base while
+    nutrient > 0.1 and light > 0.1. Stems grow up to 48 cells, leaves a
+    row apart up to 3 cells sideways, roots up to 10 cells through the
+    substrate; each new cell takes 0.01 nutrient. Stems and leaves wilt
+    into dead plant matter at 1% per second while nutrient ≤ 0.02 or
+    light ≤ 0.05. *Measured N:* a fed (aquasoil bed) and lit cutting grows
+    185–235 cells in 10 simulated minutes (seeds 0–5, 160×120 tank); the
+    acceptance test requires N = 150.
+  - **Moss** grows over rock and driftwood only (each new cell must touch
+    one), needs little (nutrient > 0.05, light > 0.05), and falls off as
+    dead plant matter when it touches neither.
+  - **Algae** spores settle on substrate, rock and wood where the water
+    above has nutrient > 0.6 and light > 0.15 (0.2 attempts per second
+    per 64 columns); the film creeps over those surfaces under the same
+    conditions and dies back (to water) once nutrient ≤ 0.6. Aquasoil
+    alone buffers to 0.4, so only excess nutrients grow algae. *Coverage*
+    is the fraction of columns whose top non-fluid cell is algae.
+  - **Water quality** (`World::ecosystem`, 0–1, computed on demand): 1,
+    minus up to 0.6 as the mean nutrient over water cells rises from 0.5
+    to 1.5, minus up to 0.4 as waste, detritus and dead plant matter reach
+    20 cells per 1000 water cells, plus up to 0.2 for plants (20 cells per
+    1000); constants in `assets/fields.toml` `[quality]`.
+  - **Water change** (`World::water_change`, a tray action; `W` in
+    `desktank window`, `[[water_change]]` in scripts): the nutrient and
+    CO₂ fields lose 50% and waste, detritus, dead plant matter and uneaten
+    sinking food are siphoned out.
+  - *Overfeeding, measured:* a 320×180 sand tank given 40 pinches of
+    pellets (about 1500) over 10 minutes reaches a mean nutrient of 0.8
+    as the food rots; algae covers 28–35% of the substrate at 20 minutes
+    and all of it at 30. A water change halves the nutrients to 0.4 and
+    the algae is gone (< 1%) 10 minutes later.
+  - **Day and night** (`desktank_sim::daylight`): the host injects the
+    local time of day; it tints the drawn tank (untinted 07:30–19:30, warm
+    dawn and dusk ramps, blue moonlight overnight) and nothing else, so
+    plants grow at any hour and the hour never wakes a chunk.
 
 ### 2.4 Creatures
 
@@ -1164,7 +1223,7 @@ Each package depends only on the packages before it.
   - the current moves floating and liquid cells in the expected
     direction;
   - random ticks stay within their per-tick budget.
-- [ ] **T6 Plants and the simple ecosystem.** Plant growth from seeds
+- [x] **T6 Plants and the simple ecosystem.** Plant growth from seeds
   and cuttings, moss, algae, the water-quality score, the water-change
   action, and day/night lighting from the injected time of day.
   *Accept:*
@@ -1174,6 +1233,9 @@ Each package depends only on the packages before it.
     the substrate surface within 30 simulated minutes, and a water
     change brings it below 1% within 30 more minutes;
   - captures at 4 times of day each match a reference image.
+
+  *Done:* N = 150 (measured 185–235); mechanisms and numbers in §2.2 and
+  §2.3 (*T6*).
 - [ ] **T7 Creatures.** Species TOML (including depth and surface
   needs), the sprite atlas pipeline with placeholder art (D11), steering
   (wander, schooling, zones, bottom-walking, surface-grazing,

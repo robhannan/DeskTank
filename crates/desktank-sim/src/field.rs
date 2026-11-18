@@ -144,6 +144,16 @@ impl Field {
         self.values.iter().map(|&v| f64::from(v)).sum()
     }
 
+    /// Multiplies every value by `factor` (at least 0), as a water change
+    /// dilutes the tank.
+    pub(crate) fn scale(&mut self, factor: f32) {
+        let factor = factor.max(0.0);
+        for v in &mut self.values {
+            *v *= factor;
+        }
+        self.active = true;
+    }
+
     /// Makes the next step run even if nothing was added (the current
     /// changed, so a resting field may start moving).
     pub(crate) fn wake(&mut self) {

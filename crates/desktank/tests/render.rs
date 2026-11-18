@@ -36,23 +36,23 @@ fn read_png(path: &Path) -> (u32, u32, Vec<u8>) {
     (info.width, info.height, buf)
 }
 
-/// Captures `scene` and returns the PNG path, or `None` if there is no GPU
-/// adapter outside CI.
-fn capture(scene: &str) -> Option<PathBuf> {
+/// Captures `scene` (lit for `time`, `HH:MM`, if given) into `name` and
+/// returns the PNG path, or `None` if there is no GPU adapter outside CI.
+fn capture(scene: &str, name: &str, time: Option<&str>) -> Option<PathBuf> {
     let out = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("render")
-        .join(scene);
+        .join(name);
     let _ = std::fs::remove_dir_all(&out);
     let script = manifest()
         .join("tests/scenes")
         .join(format!("{scene}.toml"));
-    let output = Command::new(env!("CARGO_BIN_EXE_desktank"))
-        .args(["capture", "--seed", SEED, "--size", SIZE, "--script"])
-        .arg(&script)
-        .arg("--out")
-        .arg(&out)
-        .output()
-        .unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_desktank"));
+    command.args(["capture", "--seed", SEED, "--size", SIZE, "--script"]);
+    command.arg(&script);
+    if let Some(t) = time {
+        command.args(["--time", t]);
+    }
+    let output = command.arg("--out").arg(&out).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
         if stderr.contains("no suitable GPU adapter")
@@ -68,12 +68,22 @@ fn capture(scene: &str) -> Option<PathBuf> {
 }
 
 fn check(scene: &str) {
-    let Some(got_path) = capture(scene) else {
+    check_named(scene, scene, None);
+}
+
+/// Checks `scene` lit for `time` (`HH:MM`) against `<scene>_HHMM.png`.
+fn check_at(scene: &str, time: &str) {
+    let name = format!("{scene}_{}", time.replace(':', ""));
+    check_named(scene, &name, Some(time));
+}
+
+fn check_named(scene: &str, name: &str, time: Option<&str>) {
+    let Some(got_path) = capture(scene, name, time) else {
         return;
     };
     let reference = manifest()
         .join("tests/reference")
-        .join(format!("{scene}.png"));
+        .join(format!("{name}.png"));
     if std::env::var_os("DESKTANK_BLESS").is_some() {
         std::fs::copy(&got_path, &reference).unwrap();
         eprintln!("blessed {}", reference.display());
@@ -84,11 +94,11 @@ fn check(scene: &str) {
     assert_eq!(
         (gw, gh),
         (rw, rh),
-        "{scene}: size differs from the reference"
+        "{name}: size differs from the reference"
     );
     let diff = support::compare(&got, &want, MAX_DELTA_E);
     eprintln!(
-        "{scene}: {} of {} pixels over ΔE {MAX_DELTA_E} ({:.3}%), max ΔE {:.2}",
+        "{name}: {} of {} pixels over ΔE {MAX_DELTA_E} ({:.3}%), max ΔE {:.2}",
         diff.over,
         diff.total,
         diff.fraction() * 100.0,
@@ -96,7 +106,7 @@ fn check(scene: &str) {
     );
     assert!(
         diff.fraction() <= MAX_FRACTION,
-        "{scene}: {:.3}% of pixels differ by more than ΔE {MAX_DELTA_E} (max ΔE {:.2}); \
+        "{name}: {:.3}% of pixels differ by more than ΔE {MAX_DELTA_E} (max ΔE {:.2}); \
          capture at {}, reference at {}; if the change is intended, rerun with DESKTANK_BLESS=1",
         diff.fraction() * 100.0,
         diff.max,
@@ -113,4 +123,12 @@ fn starter_scene_matches_reference() {
 #[test]
 fn layers_scene_matches_reference() {
     check("layers");
+}
+
+/// Day and night (T6): the planted tank at night, dawn, midday and dusk.
+#[test]
+fn planted_scene_matches_reference_at_four_times_of_day() {
+    for time in ["00:00", "06:30", "12:00", "20:30"] {
+        check_at("planted", time);
+    }
 }

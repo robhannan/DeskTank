@@ -1,0 +1,55 @@
+# A planted tank (T6): an aquasoil bed with cuttings and seeds, and a glued
+# rock with moss, grown for 6 minutes. The render test captures it at four
+# times of day.
+ticks = 7200
+
+[world]
+water_level = 0.92
+
+# The bed: overlapping discs along the floor.
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 118
+y = 74
+radius = 7
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 118
+y = 74
+radius = 9
+material = "moss"
+
+[[pour]]
+x = 24
+y = 20
+radius = 0
+material = "cutting"
+
+[[pour]]
+x = 52
+y = 20
+radius = 0
+material = "cutting"
+
+[[pour]]
+x = 76
+y = 20
+radius = 1
+material = "seed"
+
+[[pour]]
+x = 146
+y = 20
+radius = 0
+material = "cutting"

@@ -1,0 +1,7 @@
+# Leaves grow sideways from a stem, a row apart.
+id = 73
+name = "leaf"
+class = "solid"
+density = 1.1
+opacity = 0.3
+colour = "#6dbb45"

@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use desktank_sim::{FieldKind, TICKS_PER_SECOND, World};
+use desktank_sim::{FieldKind, TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
 use crate::grid::DirtyRects;
@@ -56,6 +56,8 @@ pub struct Tank {
     field_overlay: Option<FieldKind>,
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
+    /// Local time of day, minutes after midnight (day and night).
+    time_of_day: u16,
 }
 
 impl Tank {
@@ -76,7 +78,27 @@ impl Tank {
             cursor: None,
             field_overlay: None,
             fields_drawn: 0,
+            time_of_day: daylight::NOON,
         }
+    }
+
+    /// Sets the local time of day (minutes after midnight) the tank is lit
+    /// for (SPEC §2.6: day and night follow local time; the host injects
+    /// it). Asks for a frame only if the tint changes, so a host can call
+    /// this every minute. Default: noon.
+    pub fn set_time_of_day(&mut self, minute: u16) {
+        let minute = minute % daylight::MINUTES_PER_DAY;
+        let bits = |m: u16| daylight::tint(m).map(f32::to_bits);
+        if bits(minute) != bits(self.time_of_day) {
+            self.needs_frame = true;
+        }
+        self.time_of_day = minute;
+    }
+
+    /// The local time of day the tank is lit for, minutes after midnight.
+    #[must_use]
+    pub fn time_of_day(&self) -> u16 {
+        self.time_of_day
     }
 
     /// Tints the tank by a field's value (a debug overlay), or with `None`
@@ -318,6 +340,7 @@ impl Tank {
             target,
             size,
             self.world.surface_row(),
+            daylight::tint(self.time_of_day),
             (palette, self.cursor, self.field_overlay),
             self.timer.as_ref(),
         );
