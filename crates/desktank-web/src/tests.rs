@@ -525,3 +525,121 @@ fn fish_avoid_only_an_enabled_pointer_over_the_canvas() {
     assert!(simulate(true, false, 61).0 > 70);
     assert!(simulate(true, false, 67).0 < 58);
 }
+
+/// Saves (WB3): the native app's format, in both directions.
+mod saves {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn file(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
+    }
+
+    /// The native T8 fixture (`desktank-sim`'s `busy` scene, seed 1, 1200
+    /// ticks) and its state hash; `tests/web/saves.spec.mjs` imports the
+    /// same file on the web and checks the same hash.
+    const NATIVE_FIXTURE: &str = "../desktank-sim/tests/fixtures/v1.dtank";
+    const NATIVE_HASH: &str = "00359e05e22eea40";
+
+    /// The `layers` render scene at seed 1, saved by this crate; the web test
+    /// exports the same scene from the page and compares the bytes, so the
+    /// wasm build writes exactly what the native one does.
+    const SCENE: &str = "../desktank/tests/scenes/layers.toml";
+    const SCENE_FIXTURE: &str = "tests/fixtures/layers-seed1.dtank";
+
+    #[test]
+    fn a_saved_tank_reopens_where_it_was() {
+        let mut t = tank();
+        assert!(!t.save_needed(), "a new tank");
+        t.select(slot(&t, "material sand"));
+        down(&mut t, PRIMARY, 64, 20);
+        t.pointer_up(PRIMARY);
+        assert!(t.save_needed());
+        for _ in 0..40 {
+            t.step();
+        }
+        let bytes = t.save();
+        assert!(!t.save_needed(), "saved");
+        // A different canvas: the grid keeps its size, letterboxed.
+        let mut u = WebTank::from_save(&bytes, 1000, 300).unwrap();
+        assert_eq!((u.width(), u.height()), (128, 72));
+        assert_eq!(u.cell_scale(), 4);
+        assert_eq!(u.state_hash(), t.state_hash());
+        assert!(!u.save_needed(), "a loaded tank");
+        assert_eq!(u.save(), bytes, "re-encodes identically");
+        // Both carry on tick for tick.
+        for _ in 0..40 {
+            t.step();
+            u.step();
+        }
+        assert_eq!(u.state_hash(), t.state_hash());
+        assert!(t.save_needed());
+    }
+
+    #[test]
+    fn ticks_and_paused_edits_need_a_save() {
+        let mut t = tank();
+        t.frame(0.0);
+        let _ = t.save();
+        t.frame(1000.0 * MS);
+        assert!(t.save_needed(), "ticks ran");
+        let mut p = paused();
+        p.feed();
+        assert!(p.save_needed(), "feeding while paused");
+        let _ = p.save();
+        p.frame(5000.0 * MS);
+        assert!(!p.save_needed(), "paused: nothing ran");
+        p.select(slot(&p, "creature neon_tetra"));
+        down(&mut p, PRIMARY, 64, 40);
+        assert!(p.save_needed(), "a creature added");
+    }
+
+    #[test]
+    fn rejects_what_isnt_a_save() {
+        assert!(WebTank::from_save(b"not a save", 100, 100).is_err());
+        let mut bytes = tank().save();
+        let mid = bytes.len() / 2;
+        bytes[mid] ^= 0x40;
+        assert!(WebTank::from_save(&bytes, 100, 100).is_err());
+        // Too large for WebGL2.
+        let big = World::new(
+            WorldConfig {
+                width: 2100,
+                height: 8,
+                seed: 1,
+                water_level: 0.5,
+            },
+            builtin().unwrap(),
+        )
+        .unwrap();
+        let err = WebTank::from_save(&save::encode(&big), 100, 100)
+            .err()
+            .unwrap();
+        assert!(err.contains("2100x8"), "{err}");
+    }
+
+    #[test]
+    fn a_native_save_opens() {
+        let bytes = std::fs::read(file(NATIVE_FIXTURE)).unwrap();
+        let mut t = WebTank::from_save(&bytes, 1280, 720).unwrap();
+        assert_eq!((t.width(), t.height(), t.tick_count()), (200, 120, 1200.0));
+        assert_eq!(t.cell_scale(), 6, "letterboxed at the largest even fit");
+        assert_eq!(t.state_hash(), NATIVE_HASH);
+        assert_eq!(t.save(), bytes, "exports the same bytes");
+    }
+
+    #[test]
+    fn the_scene_fixture_is_what_native_writes() {
+        let source = std::fs::read_to_string(file(SCENE)).unwrap();
+        let mut t = WebTank::from_script(&source, 1, 1280, 720).unwrap();
+        let bytes = t.save();
+        let path = file(SCENE_FIXTURE);
+        if std::env::var_os("DESKTANK_BLESS").is_some() {
+            std::fs::write(&path, &bytes).unwrap();
+        }
+        assert!(
+            std::fs::read(&path).unwrap() == bytes,
+            "re-bless with DESKTANK_BLESS=1"
+        );
+    }
+}
