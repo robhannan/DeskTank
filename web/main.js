@@ -42,8 +42,16 @@ const LABELS = {
   algae_wafer: "Algae wafers",
   root_tab: "Root tabs",
   co2_bubble: "CO₂",
-  seed: "Seeds",
-  cutting: "Cuttings",
+};
+// What holds a plant back, by `Limit::key` (the inspect card).
+const LIMITS = {
+  none: "growing well",
+  "light-low": "light too low",
+  "light-high": "light too strong",
+  "nutrient-low": "nutrients too low",
+  "nutrient-high": "nutrients too high",
+  "co2-low": "CO₂ too low",
+  "co2-high": "CO₂ too high",
 };
 const FIELDS = ["", "nutrient", "co2", "light"];
 
@@ -65,6 +73,7 @@ const seedInput = $("seed");
 const brushInput = $("brush");
 const paletteEl = $("palette");
 const groupsEl = $("groups");
+const plantPickEl = $("plant-species");
 
 let settings = loadSettings();
 let tank;
@@ -196,6 +205,7 @@ function replaceTank(next) {
   tank.select(selected);
   showSettings();
   setRunning(tank.running());
+  buildPlantPicker();
   buildPalette();
 }
 
@@ -368,9 +378,40 @@ function label(name) {
   return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replaceAll("_", " ");
 }
 
+// The plants slot pours the species picked here (the sim's list).
+function buildPlantPicker() {
+  // A new tank keeps the species picked for the last one.
+  const kept = plantPickEl.value;
+  plantPickEl.replaceChildren(
+    ...tank.plantSpecies().map((entry, i) => {
+      const [name, ...description] = entry.split(" ");
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = label(name);
+      o.title = description.join(" ");
+      return o;
+    }),
+  );
+  if (kept !== "") tank.setPlantSpecies(Number(kept));
+  plantPickEl.value = String(tank.plantSpeciesSelected());
+}
+
+function pickPlant() {
+  tank.setPlantSpecies(Number(plantPickEl.value));
+  const slot = tank.palette().findIndex((e) => e.startsWith("plant "));
+  const colour = tank.paletteColours()[slot];
+  const button = paletteEl.children[slot];
+  if (button) {
+    button.firstElementChild?.style.setProperty("--c", colour);
+    openGroup = button.dataset.group;
+    choose(slot);
+  }
+}
+
 // The palette is the sim's (WebTank.palette): materials, tools, devices,
-// creatures, in groups (WebTank.paletteGroups). The group tabs show one
-// group's items at a time; the selection can be in a closed group.
+// creatures and the plants slot, in groups (WebTank.paletteGroups). The
+// group tabs show one group's items at a time; the selection can be in a
+// closed group.
 function buildPalette() {
   const entries = tank.palette();
   const colours = tank.paletteColours();
@@ -512,6 +553,11 @@ function showInspection() {
   if (kind === "cell") {
     const [name, x, y] = rest;
     inspectEl.textContent = `${label(name)} · cell ${x}, ${y}`;
+  } else if (kind === "plant") {
+    const [species, id, age, health, cells, limit, x, y] = rest;
+    const s = Number(age);
+    const old = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+    inspectEl.textContent = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
   } else if (kind === "creature") {
     const [species, id, over, x, y] = rest;
     inspectEl.textContent = `${label(species)} #${id} · over ${label(over)} · cell ${x}, ${y}`;
@@ -689,6 +735,7 @@ function wireInput() {
 
   paletteEl.addEventListener("keydown", paletteKeys);
   groupsEl.addEventListener("keydown", groupKeys);
+  plantPickEl.addEventListener("change", pickPlant);
   playBtn.addEventListener("click", () => setRunning(!tank.running()));
   stepBtn.addEventListener("click", step);
   $("feed").addEventListener("click", () => {

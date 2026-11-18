@@ -69,7 +69,7 @@ pub struct Ecosystem {
     pub mean_nutrient: f32,
     /// Water cells (dense liquids, not air).
     pub water_cells: usize,
-    /// Plant cells (stems, leaves, roots, moss).
+    /// Plant cells (every plant's parts, from the plant table).
     pub plant_cells: usize,
     /// Pollutant cells.
     pub pollutant_cells: usize,
@@ -152,7 +152,7 @@ pub(super) struct Life {
     budget: usize,
     cursor: usize,
     stats: RandomTickStats,
-    rng: Pcg32,
+    pub(super) rng: Pcg32,
     /// Scratch list of cell indices for one batch.
     batch: Vec<u32>,
     nutrient: Field,
@@ -173,21 +173,25 @@ pub(super) struct Life {
     current_blocks: Vec<usize>,
     devices_dirty: bool,
     /// Bumped whenever a field changes, for renderers.
-    version: u64,
+    pub(super) version: u64,
     water: Option<MaterialId>,
     air: Option<MaterialId>,
 }
 
 impl Life {
+    /// Life for a `size` (width, height) grid of `chunks` chunks; the
+    /// random ticks also visit `plants` (plant parts, seeds and cuttings,
+    /// T6b).
     pub(super) fn new(
         materials: &MaterialTable,
         eco: Ecology,
-        width: usize,
-        height: usize,
+        size: (usize, usize),
         chunks: usize,
         seed: u64,
         foods: &[MaterialId],
+        plants: &[MaterialId],
     ) -> Self {
+        let (width, height) = size;
         let mut flags = vec![0u8; 256];
         // Unknown IDs behave as solid (see `World`), so they block light.
         let mut opacity_of = vec![u8::MAX; 256];
@@ -196,7 +200,7 @@ impl Life {
             let o = (m.opacity * 255.0).round() as u8;
             opacity_of[usize::from(m.id.0)] = o;
             let f = &mut flags[usize::from(m.id.0)];
-            if eco.behaviour[usize::from(m.id.0)].is_living() {
+            if eco.behaviour[usize::from(m.id.0)].is_living() || plants.contains(&m.id) {
                 *f |= LIVING;
             }
             if Some(m.id) == eco.bubbler.material || Some(m.id) == eco.current.material {
@@ -239,7 +243,7 @@ impl Life {
         }
     }
 
-    fn field_mut(&mut self, kind: FieldKind) -> &mut Field {
+    pub(super) fn field_mut(&mut self, kind: FieldKind) -> &mut Field {
         match kind {
             FieldKind::Nutrient => &mut self.nutrient,
             FieldKind::Co2 => &mut self.co2,
@@ -266,7 +270,7 @@ impl Life {
         &self.food.lists
     }
 
-    fn chance(&mut self, p: f64) -> bool {
+    pub(super) fn chance(&mut self, p: f64) -> bool {
         f64::from(self.rng.next_u32()) < p * 4_294_967_296.0
     }
 }
@@ -288,11 +292,11 @@ impl World {
         w.life = Life::new(
             &w.materials,
             ecology,
-            w.width,
-            w.height,
+            (w.width, w.height),
             w.chunks.len(),
             w.seed,
             &foods,
+            &w.plants.living_materials(),
         );
         w.init_life();
         Ok(w)
@@ -401,10 +405,10 @@ impl World {
                 e.water_cells += 1;
                 nutrient_sum += f64::from(nutrient.at_cell(i % self.width, i / self.width));
             }
-            e.plant_cells += usize::from(q.plants.contains(m));
             e.pollutant_cells += usize::from(q.pollutants.contains(m));
             e.algae_cells += usize::from(Some(m) == q.algae);
         }
+        e.plant_cells = self.plant_cells();
         let (mut surface, mut covered) = (0usize, 0usize);
         for x in 0..self.width {
             if let Some(m) = (0..self.height)
@@ -481,6 +485,10 @@ impl World {
         self.run_current();
         self.random_ticks();
         self.run_spawns();
+        // Plants grow, drop leaves and die after their cells were sampled;
+        // the tidy then keeps the table matching the grid.
+        self.update_plants();
+        self.tidy_plants();
         if self.tick.is_multiple_of(FIELD_EVERY) {
             self.step_fields();
         }
@@ -565,6 +573,9 @@ impl World {
         let m = usize::from(cell.material.0);
         if self.life.flags[m] & LIVING == 0 {
             return; // changed since it was indexed
+        }
+        if self.visit_plant(i, cell, k) {
+            return;
         }
         let (x, y) = (i % self.width, i / self.width);
         let b = &self.life.eco.behaviour[m];

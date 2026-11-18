@@ -13,16 +13,17 @@
 //!
 //! The net catches the creature under the pointer and carries it while the
 //! button is down; letting go above the water (or outside the tank) lifts it
-//! out. Inspect reports the creature under the pointer, if any, and the
-//! cell's material. A creature slot in the palette adds one of its species
-//! per click.
+//! out. Inspect reports the creature under the pointer, if any, or the
+//! plant, and the cell's material. A creature slot in the palette adds one
+//! of its species per click. The one plants slot (T6b) pours the seeds or
+//! cuttings of the species picked with [`Tools::set_plant_species`].
 //!
 //! The palette is grouped ([`PaletteGroup`], [`Tools::palette_groups`]):
 //! hosts show a group selector and the open group's items, so every slot
 //! stays a short reach (and a number key) away.
 
 pub use crate::CreatureId;
-use crate::{BodyId, Brush, MaterialId, Placeable, SpeciesId, World};
+use crate::{BodyId, Brush, MaterialId, Placeable, PlantId, PlantSpeciesId, SpeciesId, World};
 
 /// Smallest brush radius in cells (a single cell).
 pub const MIN_RADIUS: u32 = 0;
@@ -49,7 +50,7 @@ pub enum PaletteGroup {
     Water,
     /// Fish food and plant fertilisers.
     Food,
-    /// Seeds, cuttings, moss and algae.
+    /// The plants slot (seeds and cuttings of a picked species) and algae.
     Plants,
     /// Waste and detritus.
     Waste,
@@ -127,6 +128,9 @@ pub enum Tool {
     Place(Placeable),
     /// Add a creature of this species, once per click.
     AddCreature(SpeciesId),
+    /// Pour the seeds or cuttings of the picked plant species
+    /// ([`Tools::plant_species`]).
+    Plant,
 }
 
 /// One entry in the palette.
@@ -156,6 +160,17 @@ pub enum Inspection {
         /// Column.
         x: usize,
         /// Row.
+        y: usize,
+        /// The material there.
+        material: MaterialId,
+    },
+    /// A plant, and the cell under the pointer (one of its cells).
+    Plant {
+        /// The plant.
+        id: PlantId,
+        /// Column under the pointer.
+        x: usize,
+        /// Row under the pointer.
         y: usize,
         /// The material there.
         material: MaterialId,
@@ -209,6 +224,8 @@ struct Stroke {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Pour,
+    /// Pour a plant species' seeds or cuttings.
+    Plant,
     Scoop,
     /// Glue (`Some(true)`) or free bodies; `None` until the stroke first
     /// touches a body, which it toggles, setting the way for the rest.
@@ -228,6 +245,8 @@ enum Action {
 pub struct Tools {
     tool: Tool,
     material: MaterialId,
+    /// The species the plants slot pours (0: the default species).
+    plant: PlantSpeciesId,
     radius: u32,
     pointer: Option<(i64, i64)>,
     stroke: Option<Stroke>,
@@ -240,6 +259,7 @@ impl Tools {
         Self {
             tool: Tool::Pour,
             material,
+            plant: PlantSpeciesId(0),
             radius: DEFAULT_RADIUS,
             pointer: None,
             stroke: None,
@@ -249,7 +269,8 @@ impl Tools {
     /// The palette for `world`, grouped: the non-empty groups in
     /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
     /// inspect and glue; each material group lists the materials naming it,
-    /// by ID; then the placeables whose material `world` has, and its
+    /// by ID (the plants group starts with the plants slot); then the
+    /// placeables whose material `world` has, and its
     /// species by ID.
     #[must_use]
     pub fn palette_groups(world: &World) -> Vec<(PaletteGroup, Vec<PaletteItem>)> {
@@ -271,6 +292,21 @@ impl Tools {
                         .iter()
                         .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
                         .collect(),
+                    // The plants slot (if `world` has plant species and
+                    // their seeds and cuttings) leads its group.
+                    PaletteGroup::Plants => {
+                        let slot = (!world.plant_species().is_empty()
+                            && ["seed", "cutting"].iter().all(|n| table.id(n).is_some()))
+                        .then_some(PaletteItem::Tool(Tool::Plant));
+                        slot.into_iter()
+                            .chain(
+                                table
+                                    .iter()
+                                    .filter(|m| m.palette == Some(group))
+                                    .map(|m| PaletteItem::Material(m.id)),
+                            )
+                            .collect()
+                    }
                     _ => table
                         .iter()
                         .filter(|m| m.palette == Some(group))
@@ -305,6 +341,36 @@ impl Tools {
         self.material
     }
 
+    /// The plant species the plants slot pours, as `world` resolves it
+    /// (the default species until one is picked).
+    #[must_use]
+    pub fn plant_species(&self, world: &World) -> Option<PlantSpeciesId> {
+        world
+            .plant_species()
+            .for_state(u16::from(self.plant.0))
+            .map(|s| s.id)
+    }
+
+    /// Picks the plant species the plants slot pours. Doesn't change the
+    /// selected tool.
+    pub fn set_plant_species(&mut self, species: PlantSpeciesId) {
+        self.plant = species;
+    }
+
+    /// Picks the next plant species after the current one (wrapping), for
+    /// hosts without a picker of their own. Returns it.
+    pub fn next_plant_species(&mut self, world: &World) -> Option<PlantSpeciesId> {
+        let table = world.plant_species();
+        let current = self.plant_species(world)?;
+        let next = table
+            .iter()
+            .map(|s| s.id)
+            .find(|&id| id > current)
+            .or_else(|| table.iter().next().map(|s| s.id))?;
+        self.plant = next;
+        Some(next)
+    }
+
     /// Brush radius in cells.
     #[must_use]
     pub fn radius(&self) -> u32 {
@@ -331,8 +397,14 @@ impl Tools {
     #[must_use]
     pub fn preview(&self) -> Option<(i64, i64, u32)> {
         let painting = match self.stroke {
-            Some(s) => matches!(s.action, Action::Pour | Action::Scoop | Action::Glue(_)),
-            None => matches!(self.tool, Tool::Pour | Tool::Scoop | Tool::Glue),
+            Some(s) => matches!(
+                s.action,
+                Action::Pour | Action::Plant | Action::Scoop | Action::Glue(_)
+            ),
+            None => matches!(
+                self.tool,
+                Tool::Pour | Tool::Plant | Tool::Scoop | Tool::Glue
+            ),
         };
         let (x, y) = self.pointer?;
         painting.then_some((x, y, self.radius))
@@ -371,6 +443,7 @@ impl Tools {
         let action = match (button, self.tool) {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
+            (Button::Primary, Tool::Plant) => Action::Plant,
             (Button::Primary, Tool::Glue) => Action::Glue(None),
             (Button::Primary, Tool::Net) => {
                 Action::Net(world.creature_at(cell.0, cell.1).and_then(|id| {
@@ -388,7 +461,9 @@ impl Tools {
             body: None,
         });
         match action {
-            Action::Pour | Action::Scoop => Outcome::Painted(self.stamp(world, cell)),
+            Action::Pour | Action::Plant | Action::Scoop => {
+                Outcome::Painted(self.stamp(world, cell))
+            }
             Action::Glue(_) => Outcome::Glued(self.glue(world, cell)),
             Action::Inspect => inspect(world, cell),
             Action::Place => match self.tool {
@@ -427,7 +502,7 @@ impl Tools {
                 }
                 Outcome::Glued(changed)
             }
-            Action::Pour | Action::Scoop => {
+            Action::Pour | Action::Plant | Action::Scoop => {
                 // Discs half a radius apart still overlap into a solid band,
                 // and a wide brush costs a fraction of a disc per cell.
                 let stride = usize::try_from(self.radius / 2).unwrap_or(1).max(1);
@@ -497,7 +572,7 @@ impl Tools {
     /// tick run (several times after a catch-up).
     pub fn hold(&mut self, world: &mut World) -> usize {
         match self.stroke {
-            Some(s) if matches!(s.action, Action::Pour | Action::Scoop) => {
+            Some(s) if matches!(s.action, Action::Pour | Action::Plant | Action::Scoop) => {
                 self.stamp(world, s.last)
             }
             Some(Stroke {
@@ -514,9 +589,16 @@ impl Tools {
     /// One brush disc at `c` for the stroke in progress; returns how many
     /// cells changed. A pour adds rigid cells to the stroke's body.
     fn stamp(&mut self, world: &mut World, c: (i64, i64)) -> usize {
+        let plant = self.plant_species(world);
         let Some(stroke) = self.stroke.as_mut() else {
             return 0;
         };
+        if stroke.action == Action::Plant {
+            // A known species and a clipped disc: this can't fail.
+            return plant
+                .and_then(|s| world.paint_plant(c.0, c.1, self.radius, s).ok())
+                .unwrap_or(0);
+        }
         if stroke.action == Action::Pour {
             // Built-in materials and a clipped disc: this can't fail.
             let Ok((changed, body)) = world.paint_into(
@@ -621,15 +703,16 @@ fn inspect(world: &World, c: (i64, i64)) -> Outcome {
     let creature = world
         .creature_at(c.0, c.1)
         .and_then(|id| world.creature(id));
-    Outcome::Inspected(match creature {
-        Some(found) => Inspection::Creature {
+    Outcome::Inspected(match (creature, world.plant_at(x, y)) {
+        (Some(found), _) => Inspection::Creature {
             id: found.id(),
             species: found.species(),
             x,
             y,
             material,
         },
-        None => Inspection::Cell { x, y, material },
+        (None, Some(id)) => Inspection::Plant { id, x, y, material },
+        (None, None) => Inspection::Cell { x, y, material },
     })
 }
 
@@ -904,7 +987,10 @@ mod tests {
         let w = world();
         let items = Tools::palette(&w);
         let pourable = w.materials().iter().filter(|m| m.palette.is_some());
-        assert_eq!(items.len(), pourable.count() + 2 + 4 + w.species().len());
+        assert_eq!(
+            items.len(),
+            pourable.count() + 1 + 2 + 4 + w.species().len()
+        );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
         t.select(PaletteItem::Tool(Tool::Inspect));
@@ -943,10 +1029,7 @@ mod tests {
             names(PaletteGroup::Water),
             ["water", "air_bubble", "co2_bubble"]
         );
-        assert_eq!(
-            names(PaletteGroup::Plants),
-            ["seed", "cutting", "moss", "algae"]
-        );
+        assert_eq!(names(PaletteGroup::Plants), ["Plant", "algae"]);
         assert_eq!(names(PaletteGroup::Waste), ["waste", "detritus"]);
         assert_eq!(
             names(PaletteGroup::Devices),

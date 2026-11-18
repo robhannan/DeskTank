@@ -15,6 +15,7 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, MovementClass};
 
+use crate::plants::{PlantSpeciesId, plant_variant};
 use crate::rng::{chunk_stream, splitmix64};
 use crate::species::SpeciesId;
 use bodies::Body;
@@ -22,11 +23,14 @@ pub use bodies::{BodyId, BodyInfo};
 
 mod creatures;
 mod life;
+mod plants;
 
 use creatures::Creatures;
 pub use creatures::{Creature, CreatureId, MAX_CREATURES, UnmetNeed};
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
+use plants::Plants;
+pub use plants::{MAX_PLANTS, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, UPDATE_SECONDS};
 
 /// Side of a square chunk, in cells.
 pub const CHUNK_SIZE: usize = 64;
@@ -95,6 +99,12 @@ pub enum WorldError {
     /// The species ID isn't in the table.
     #[error("unknown species id {}", .0.0)]
     UnknownSpecies(SpeciesId),
+    /// The built-in plant species are invalid.
+    #[error("plant species: {0}")]
+    PlantSpecies(String),
+    /// The plant species ID isn't in the table.
+    #[error("unknown plant species id {}", .0.0)]
+    UnknownPlantSpecies(PlantSpeciesId),
     /// The tank already holds the most creatures it may.
     #[error("the tank is full ({0} creatures)")]
     PopulationCap(usize),
@@ -196,6 +206,8 @@ pub struct World {
     life: Life,
     /// Species and creatures (T7).
     creatures: Creatures,
+    /// Plant species and the plant table (T6b, D18).
+    plants: Plants,
 }
 
 impl World {
@@ -268,14 +280,15 @@ impl World {
         let ecology =
             Ecology::builtin_for(&materials).map_err(|e| WorldError::Ecology(e.to_string()))?;
         let (creatures, foods) = Creatures::builtin(&materials, water, air)?;
+        let plants = Plants::new(&materials)?;
         let life = Life::new(
             &materials,
             ecology,
-            width,
-            height,
+            (width, height),
             chunks.len(),
             seed,
             &foods,
+            &plants.living_materials(),
         );
 
         let mut world = Self {
@@ -299,6 +312,7 @@ impl World {
             next_body: 1,
             life,
             creatures,
+            plants,
         };
         world.init_life();
         Ok(world)
@@ -392,7 +406,7 @@ impl World {
     }
 
     /// A stable 64-bit hash of the size, tick, every cell, the nutrient
-    /// and CO₂ fields and the creatures.
+    /// and CO₂ fields, the creatures and the plant table.
     #[must_use]
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::new();
@@ -405,6 +419,7 @@ impl World {
         }
         self.hash_life(&mut h);
         self.hash_creatures(&mut h);
+        self.hash_plants(&mut h);
         h.finish()
     }
 
@@ -453,7 +468,9 @@ impl World {
     /// [`World::paint`] continuing a stroke: rigid cells join `body` if it
     /// still exists and is of `material`, otherwise a new body. Returns how
     /// many cells changed and the body the stroke now pours into (pass it
-    /// to the next call). A body being poured into is held still until two
+    /// to the next call; `None` for a material that isn't rigid). Plant
+    /// part cells (stem, leaf, root) one call writes form one new plant of
+    /// the default species. A body being poured into is held still until two
     /// ticks after the last call, so a stroke can draw a shape before it
     /// drops.
     ///
@@ -470,7 +487,8 @@ impl World {
         body: Option<BodyId>,
     ) -> Result<(usize, Option<BodyId>), WorldError> {
         self.check_material(material)?;
-        let mut body = body.map(|b| b.0);
+        let rigid = self.props[usize::from(material.0)].class == MovementClass::Rigid;
+        let mut body = body.map(|b| b.0).filter(|_| rigid);
         if let Some(id) = body {
             self.hold(id);
         }
@@ -498,11 +516,12 @@ impl World {
                 }
             }
         }
-        Ok((changed, body.map(BodyId)))
+        Ok((changed, body.filter(|_| rigid).map(BodyId)))
     }
 
     /// Fills a rectangle (clipped to the grid). Returns how many cells
-    /// changed. Rigid cells it writes form one new body.
+    /// changed. Rigid cells it writes form one new body, and plant part
+    /// cells one new plant of the default species.
     ///
     /// # Errors
     ///
@@ -544,8 +563,10 @@ impl World {
                 self.rngs[i] = chunk_stream(self.seed, self.tick, i as u64);
             }
         }
-        // Rigid bodies first: whole objects, one cell per tick.
+        // Rigid bodies first: whole objects, one cell per tick. Then the
+        // plants edits cut or added to.
         self.update_bodies();
+        self.tidy_plants();
         // Even ticks sweep rows left to right, odd ticks right to left.
         let rightward = self.tick.is_multiple_of(2);
         // Falling materials: bottom-up, so a column falls together.
@@ -609,21 +630,38 @@ impl World {
         true
     }
 
-    /// Writes a fresh cell. Overwriting a body's cell marks the body for a
-    /// split; a rigid cell joins `body` (see [`World::paint_into`]).
-    fn write_cell(&mut self, x: usize, y: usize, material: MaterialId, body: &mut Option<u16>) {
+    /// Writes a fresh cell. Overwriting a body's or a plant's cell marks it
+    /// for a split; a rigid cell joins body `group` and a plant part cell
+    /// plant `group` (see [`World::paint_into`]). A part cell with no room
+    /// for a new plant (the cap) is written as dead plant matter.
+    fn write_cell(&mut self, x: usize, y: usize, material: MaterialId, group: &mut Option<u16>) {
         let i = y * self.width + x;
         let old = self.cells[i];
         if self.props[usize::from(old.material.0)].class == MovementClass::Rigid {
             self.body_removed(old.state);
         }
+        if self.plants.part(old.material).is_some() {
+            self.plant_removed(old.state);
+        }
         let mut cell = Cell::new(material, variant(self.seed, self.tick, i));
         if self.props[usize::from(material.0)].class == MovementClass::Rigid {
             cell.variant &= !GLUED_VARIANT_BIT;
-            let id = self.join_body(body, material);
+            let id = self.join_body(group, material);
             cell.state = id;
             if id != 0 && self.body_added(id, i) {
                 cell.variant |= GLUED_VARIANT_BIT;
+            }
+        } else if let Some(part) = self.plants.part(material) {
+            match self.join_plant(group, part, i) {
+                0 => {
+                    if let Some(dead) = self.plants.dead() {
+                        cell.material = dead;
+                    }
+                }
+                id => {
+                    cell.state = id;
+                    cell.variant = plant_variant(cell.variant, 0);
+                }
             }
         }
         self.cells[i] = cell;

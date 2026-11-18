@@ -215,8 +215,10 @@ impl WebTank {
 
     /// The palette, in order, as `"<kind> <name>"`: kind `material` (pour
     /// it; the name is the material's), `tool` (`scoop`, `glue`, `net`,
-    /// `inspect`), `device` (place it; the name is its material's) or
-    /// `creature` (add one; the name is the species').
+    /// `inspect`), `device` (place it; the name is its material's),
+    /// `creature` (add one; the name is the species') or `plant` (the one
+    /// plants slot, named `plants`: pour the species
+    /// [`WebTank::set_plant_species`] picked).
     #[must_use]
     pub fn palette(&self) -> Vec<String> {
         self.palette
@@ -259,6 +261,11 @@ impl WebTank {
                     PaletteItem::Tool(Tool::AddCreature(s)) => {
                         world.species().get(s).map(|s| s.colour)
                     }
+                    PaletteItem::Tool(Tool::Plant) => self
+                        .tools
+                        .plant_species(world)
+                        .and_then(|id| world.plant_species().get(id))
+                        .map(desktank_sim::PlantSpecies::colour),
                     PaletteItem::Tool(_) => None,
                 };
                 colour.map_or_else(String::new, |[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"))
@@ -275,6 +282,57 @@ impl WebTank {
             .iter()
             .map(|s| s.name.clone())
             .collect()
+    }
+
+    /// Plant species, ordered by ID, as `"<name> <description>"` (the plants
+    /// slot's picker).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantSpecies))]
+    #[must_use]
+    pub fn plant_species(&self) -> Vec<String> {
+        self.tank
+            .world()
+            .plant_species()
+            .iter()
+            .map(|s| format!("{} {}", s.name, s.description))
+            .collect()
+    }
+
+    /// Index (in [`WebTank::plant_species`]) of the species the plants slot
+    /// pours.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantSpeciesSelected))]
+    #[must_use]
+    pub fn plant_species_selected(&self) -> u32 {
+        let world = self.tank.world();
+        let picked = self.tools.plant_species(world);
+        let i = world
+            .plant_species()
+            .iter()
+            .position(|s| Some(s.id) == picked);
+        count(i.unwrap_or(0))
+    }
+
+    /// Picks the species the plants slot pours, by index in
+    /// [`WebTank::plant_species`] (ignored if out of range). Doesn't change
+    /// the selected tool.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setPlantSpecies))]
+    pub fn set_plant_species(&mut self, index: u32) {
+        let id = self
+            .tank
+            .world()
+            .plant_species()
+            .iter()
+            .nth(index as usize)
+            .map(|s| s.id);
+        if let Some(id) = id {
+            self.tools.set_plant_species(id);
+        }
+    }
+
+    /// Plants in the tank.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantCount))]
+    #[must_use]
+    pub fn plant_count(&self) -> u32 {
+        count(self.tank.world().plant_count())
     }
 
     /// Creatures in the tank.
@@ -401,8 +459,10 @@ impl WebTank {
     }
 
     /// What inspect found since the last call, once: `"cell <material>
-    /// <column> <row>"`, `"creature <species> <id> <material> <column>
-    /// <row>"`, or `""` if nothing new.
+    /// <column> <row>"`, `"plant <species> <id> <age seconds> <health %>
+    /// <cells> <limit> <column> <row>"` (limit as
+    /// [`desktank_sim::Limit::key`]), `"creature <species> <id> <material>
+    /// <column> <row>"`, or `""` if nothing new.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
     pub fn take_inspection(&mut self) -> String {
         core::mem::take(&mut self.inspection)
@@ -698,6 +758,7 @@ impl WebTank {
                     .get(s)
                     .map_or_else(String::new, |s| s.name.clone()),
             ),
+            PaletteItem::Tool(Tool::Plant) => ("plant", "plants".to_owned()),
             PaletteItem::Tool(t) => (
                 "tool",
                 match t {
@@ -705,7 +766,7 @@ impl WebTank {
                     Tool::Glue => "glue",
                     Tool::Net => "net",
                     Tool::Inspect => "inspect",
-                    Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) => "pour",
+                    Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) | Tool::Plant => "pour",
                 }
                 .to_owned(),
             ),
@@ -724,6 +785,23 @@ impl WebTank {
                         let table = self.tank.world().materials();
                         let name = table.get(material).map_or("?", |m| m.name.as_str());
                         format!("cell {name} {x} {y}")
+                    }
+                    Inspection::Plant { id, x, y, .. } => {
+                        let world = self.tank.world();
+                        world.plant(id).map_or_else(String::new, |p| {
+                            let name = world
+                                .plant_species()
+                                .get(p.species)
+                                .map_or("?", |s| s.name.as_str());
+                            format!(
+                                "plant {name} {} {:.0} {:.0} {} {} {x} {y}",
+                                id.0,
+                                p.age.floor(),
+                                p.health * 100.0,
+                                p.size(),
+                                p.limit.key()
+                            )
+                        })
                     }
                     Inspection::Creature {
                         id,

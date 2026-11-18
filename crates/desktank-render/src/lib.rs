@@ -9,7 +9,8 @@
 //!
 //! The renderer stays within wgpu's WebGL2 downlevel limits (SPEC §3.5): no
 //! compute shaders, no storage buffers, `Rg8Unorm` / `Rgba8Unorm` textures
-//! read with `textureLoad` (nearest by construction), and a device created
+//! read with `textureLoad` (nearest by construction; six textures per
+//! stage, under WebGL2's 16), and a device created
 //! with [`wgpu::Limits::downlevel_webgl2_defaults`].
 //!
 //! OS-agnostic; any `unsafe` needed for raw-handle surface creation belongs in
@@ -23,6 +24,7 @@ mod layout;
 mod offscreen;
 mod pacing;
 mod palette;
+mod plants;
 mod renderer;
 mod sprites;
 mod surface;

@@ -613,6 +613,11 @@ stays a material film, not individuals.
   - The part-local position T6 keeps in `state` (distance from where a
     part began) moves to the variant byte or is derived from the plant's
     form; T6b fixes the layout.
+    *T6b:* the variant byte holds the part-local position in its low 6
+    bits (capped at 63) and colour noise in its top 2; a seed or
+    cutting's `state` holds the species id it grows into (0 for the
+    default, the lowest id). The generic parts so far are root, stem and
+    leaf (a mat's cells are stems); T6c adds the rest.
   - The table holds age and health, which the grid can't rebuild, so
     saves store it (§2.6). Ids, part counts and bounds are checked
     against the grid in tests.
@@ -629,7 +634,12 @@ stays a material film, not individuals.
     old age only if the species has a lifespan. Grazing (T7) removes
     cells and costs health.
   - **Cap.** A plant population cap per tank, set from measurement in
-    T6b, alongside the creature cap (T9).
+    T6b, alongside the creature cap (T9). *T6b:* 2048 plants
+    (`MAX_PLANTS`, `World::set_plant_cap`); at the cap seeds and
+    cuttings stay unrooted and cut pieces become dead plant matter. A
+    settled tank with 528 plants (21,745 cells) ticks in 11.3 µs (M3
+    Max), and the plant update visits at most 16 plants a tick, so the
+    cap guards the table and the tint texture, not the tick.
 - **Cost.** Plant cells are still visited by random ticks within the
   budget (§2.1), and a visit looks up its plant's species. A slow **plant
   update** (each plant about every 5 s of world time, a bounded number of
@@ -690,7 +700,13 @@ stays a material film, not individuals.
     reads a plant cell's id and looks up its plant texel (a 256×256
     texture covers every id) and its species ramp. This stays within the
     WebGL2 limits (§3.5). It doubles the bytes of each dirty-rectangle
-    upload; 🔍 T6b measures that against the §6.1 budgets.
+    upload; 🔍 T6b measures that against the §6.1 budgets. *T6b:*
+    `desktank bench` (2560×1440, M3 Max) spends 2.94 ms of CPU per
+    frame while pouring against 2.86 ms with `Rg8Unorm` (+3%), GPU time
+    unchanged, RSS +0.7 MB; within §6.1. The plant texture uploads only
+    the rows whose tint changed. (The species ramps and the
+    position/age shades are T6d; T6b draws the material palette tinted
+    by health.)
 - **Interaction.** The palette gets one plants slot with a species picker
   (the palette strip is short, §9 T4) in `desktank window` and on the
   web, pouring that species' seeds or cuttings. Inspect shows species,
@@ -1398,7 +1414,7 @@ Each package depends only on the packages before it.
 
   *Done:* N = 150 (measured 185–235); mechanisms and numbers in §2.2 and
   §2.3 (*T6*).
-- [ ] **T6b Plant individuals and species** (D18, §2.7). The plant table
+- [x] **T6b Plant individuals and species** (D18, §2.7). The plant table
   and plant ids in cell `state`; generic part materials; species TOML in
   `assets/plants/` with preference ranges, growth rate, size, hardiness,
   propagation and colour ramps; T6's plant and moss become the first two
@@ -1421,6 +1437,9 @@ Each package depends only on the packages before it.
   - same seed and script give the same state hash; the T1 and T5 bench
     budgets hold, with a 500-plant settled case in the criterion bench;
     the cost of the wider texture upload is measured and recorded.
+
+  *Done:* species hygrophila (T6's plant), java moss (T6's moss) and
+  rotala; layout, cap and upload cost in §2.7 (*T6b*).
 - [ ] **T6c Growth forms and propagation** (§2.7
   [Growth forms](#growth-forms)). Stems with branching and surface
   trailing, rosettes, carpets, floaters, epiphytes and mats; runners,

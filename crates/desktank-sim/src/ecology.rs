@@ -10,8 +10,9 @@
 //! - `[[emit]]`: a cell adds `rate` per second to a field, up to `up_to`;
 //! - `[[buffer]]`: a cell stores up to `capacity` and trades with a field
 //!   towards `level`;
-//! - `[[grow]]` (T6): a cell grows a new cell into a neighbour (plants,
-//!   moss, algae), while fields allow, up to a structure size;
+//! - `[[grow]]` (T6): a cell grows a new cell into a neighbour (algae),
+//!   while fields allow, up to a structure size (plants are individuals of
+//!   species from T6b, `desktank_sim::plants`);
 //! - `[[wilt]]` (T6): a cell turns into another while a need fails or it
 //!   touches none of the materials it must cling to;
 //! - `[[spawn]]` (T6): cells appear on exposed surfaces (algae spores).
@@ -274,7 +275,6 @@ struct QualityDef {
     pollutants: Vec<String>,
     pollution_bad: f32,
     pollution_weight: f32,
-    plants: Vec<String>,
     plant_full: f32,
     plant_bonus: f32,
     algae: String,
@@ -486,7 +486,6 @@ pub struct QualityConfig {
     /// The material whose cover of the substrate is reported.
     pub algae: Option<MaterialId>,
     pub(crate) pollutants: MaterialSet,
-    pub(crate) plants: MaterialSet,
 }
 
 /// A diffusing field's constants.
@@ -818,7 +817,7 @@ const MAX_SPAWN_RATE: f32 = 20.0;
 
 /// Chance per tick of not firing, for a chance `p` per second:
 /// `(1 - p)^(1/20)`, by [`nth_root`] so it is the same on every target.
-fn keep_per_tick(p: f32) -> f64 {
+pub(crate) fn keep_per_tick(p: f32) -> f64 {
     nth_root(1.0 - f64::from(p), TICKS_PER_SECOND)
 }
 
@@ -1020,7 +1019,6 @@ fn quality(
         plant_bonus: d.plant_bonus,
         algae: lookup(&d.algae, materials, strict)?,
         pollutants: set(&d.pollutants, materials, strict)?,
-        plants: set(&d.plants, materials, strict)?,
     })
 }
 
@@ -1160,9 +1158,9 @@ mod tests {
         assert!(!b("sand").is_living());
         assert_eq!(eco.current.material, t.id("filter_outlet"));
         assert_eq!(eco.bubbler.emits, t.id("air_bubble"));
-        // T6: plants, moss and algae.
-        assert_eq!(b("stem").grows.len(), 2);
-        assert!(b("leaf").wilt.is_some() && b("seed").grows[0].becomes == t.id("stem"));
+        // T6: algae (plants are species from T6b, `crate::plants`).
+        assert_eq!(b("algae").grows.len(), 1);
+        assert!(b("algae").wilt.is_some() && !b("stem").is_living());
         assert!(b("dead_plant").decay.is_some());
         assert_eq!(eco.spawns.len(), 1);
         assert_eq!(eco.spawns[0].material, t.id("algae").unwrap());
@@ -1209,7 +1207,7 @@ mod tests {
         };
         let grow = |extra: &str| {
             format!(
-                "[[grow]]\nmaterial = \"moss\"\ninto = [\"water\"]\nmakes = \"moss\"\np = 0.5\n{extra}"
+                "[[grow]]\nmaterial = \"algae\"\ninto = [\"water\"]\nmakes = \"algae\"\np = 0.5\n{extra}"
             )
         };
         assert!(!bad(&grow("dirs = [\"up\"]")));
@@ -1225,10 +1223,10 @@ mod tests {
              dirs = [\"up\"]\np = 0.5\n[[decay]]\nmaterial = \"detritus\"\nafter = 5.0\ninto = \"water\""
         ));
         assert!(bad(
-            "[[grow]]\nmaterial = \"moss\"\ninto = [\"water\"]\nmakes = \"driftwood\"\ndirs = [\"up\"]\np = 0.5"
+            "[[grow]]\nmaterial = \"algae\"\ninto = [\"water\"]\nmakes = \"driftwood\"\ndirs = [\"up\"]\np = 0.5"
         ));
         assert!(bad(
-            "[[wilt]]\nmaterial = \"moss\"\ninto = \"water\"\np = 0.5"
+            "[[wilt]]\nmaterial = \"algae\"\ninto = \"water\"\np = 0.5"
         ));
         assert!(bad(
             "[[spawn]]\nmaterial = \"algae\"\non = [\"sand\"]\nrate = 0.0"

@@ -171,36 +171,36 @@ fn co2_speeds_growth() {
 
 #[test]
 fn moss_grows_over_rock_and_unattached_moss_falls_off() {
+    // T6b: moss is the java_moss species; its cuttings root where they
+    // land on rock or wood, and its cells are plant stems.
     let mut w = world(160, 120, 5);
-    let (rock, moss) = (id(&w, "rock"), id(&w, "moss"));
+    let (rock, water) = (id(&w, "rock"), id(&w, "water"));
     w.fill_rect(rect(60, 70, 100, 90), rock, Brush::Replace)
         .unwrap();
     let body = w.body_at(60, 70).unwrap();
     assert!(w.set_anchored(body, true));
-    // A blob of moss over the rock's top left corner: some of it touches
-    // the rock, the rest hangs in the water.
-    w.paint(60, 70, 6, moss, Brush::Pour).unwrap();
-    let poured = count(&w, &["moss"]);
+    let moss = w.plant_species().id("java_moss").unwrap();
+    // Cuttings poured over the rock: those landing on it root.
+    w.paint_plant(80, 60, 2, moss).unwrap();
     run(&mut w, 3 * MINUTE);
     let attached = |w: &World| {
         let mut n = 0;
         for y in 1..w.height() - 1 {
             for x in 1..w.width() - 1 {
-                if w.cell(x, y).unwrap().material == moss {
-                    let touches = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dy)| {
-                        let c = w.cell(x.wrapping_add_signed(dx), y.wrapping_add_signed(dy));
-                        c.is_some_and(|c| c.material == rock)
-                    });
-                    assert!(touches, "moss at ({x}, {y}) isn't on the rock");
-                    n += 1;
-                }
+                let Some(p) = w.plant_at(x, y) else { continue };
+                assert_eq!(w.plant(p).unwrap().species, moss);
+                let touches = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dy)| {
+                    let c = w.cell(x.wrapping_add_signed(dx), y.wrapping_add_signed(dy));
+                    c.is_some_and(|c| c.material == rock)
+                });
+                assert!(touches, "moss at ({x}, {y}) isn't on the rock");
+                n += 1;
             }
         }
         n
     };
     let kept = attached(&w);
-    assert!(kept > 0 && kept < poured, "kept {kept} of {poured}");
-    assert!(count(&w, &["dead_plant", "detritus"]) > 0);
+    assert!(kept > 0, "no moss rooted on the rock");
     // It creeps along the rock: water holds a little nutrient here.
     for fy in 0..w.field(FieldKind::Nutrient).height() {
         for fx in 0..w.field(FieldKind::Nutrient).width() {
@@ -210,6 +210,19 @@ fn moss_grows_over_rock_and_unattached_moss_falls_off() {
     run(&mut w, 10 * MINUTE);
     let grown = attached(&w);
     assert!(grown >= kept + 20, "moss grew from {kept} to {grown}");
+    // Take away the right half of the rock below its top row: the moss on
+    // top there touches nothing and falls off as dead plant matter.
+    w.fill_rect(rect(80, 71, 100, 90), water, Brush::Replace)
+        .unwrap();
+    w.fill_rect(rect(80, 70, 100, 71), water, Brush::Replace)
+        .unwrap();
+    let on_top = |w: &World| (80..100).filter(|&x| w.plant_at(x, 69).is_some()).count();
+    assert!(on_top(&w) > 0, "moss covered the right half's top");
+    run(&mut w, 2 * MINUTE);
+    assert!(count(&w, &["dead_plant", "detritus"]) > 0);
+    assert_eq!(on_top(&w), 0, "the moss there fell off");
+    // What is left (and has crept onto the new face) is all on the rock.
+    assert!(attached(&w) > 0);
 }
 
 /// A sand-bottomed tank with no plants, fed far too much: a pinch of

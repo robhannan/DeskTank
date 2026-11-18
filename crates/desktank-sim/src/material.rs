@@ -192,7 +192,6 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/stem.toml"),
     include_str!("../../../assets/materials/leaf.toml"),
     include_str!("../../../assets/materials/root.toml"),
-    include_str!("../../../assets/materials/moss.toml"),
     include_str!("../../../assets/materials/algae.toml"),
 ];
 

@@ -140,3 +140,57 @@ fn srgb_targets_show_the_same_colours() {
         }
     }
 }
+
+#[test]
+fn a_starving_plant_yellows_without_rewriting_its_cells() {
+    let Some(gpu) = gpu() else { return };
+    let materials = MaterialTable::builtin().unwrap();
+    let leaf = materials.id("leaf").unwrap();
+    let leaf_colour = materials.get(leaf).unwrap().colour;
+    let config = WorldConfig {
+        width: 16,
+        height: 8,
+        seed: 1,
+        water_level: 1.0,
+    };
+    let mut world = World::new(config, materials).unwrap();
+    // One small plant (a leaf patch, the default species), in water with
+    // no nutrients at all: it starves.
+    world
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: 3,
+                y0: 4,
+                x1: 6,
+                y1: 6,
+            },
+            leaf,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    tank.step();
+    let healthy = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    // The cell at (4, 5) covers pixels 24..28 × 20..24.
+    let before = px(&healthy, 25, 21);
+    for (got, base) in before.iter().zip(leaf_colour) {
+        assert!(
+            got.abs_diff(base) <= 24,
+            "leaf {before:?} vs {leaf_colour:?}"
+        );
+    }
+    // A minute later its health has fallen (not yet to the 0.5 at which
+    // leaves drop); no cell changed in the last ticks, yet the tank wants
+    // a frame and draws it yellower.
+    for _ in 0..60 * 20 {
+        tank.step();
+    }
+    let p = tank.world().plants().next().unwrap();
+    assert!(p.health < 0.8 && p.health > 0.5, "{p:?}");
+    assert_eq!(tank.world().dirty_rects().count(), 0);
+    assert!(tank.frame_wanted());
+    let starving = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    let after = px(&starving, 25, 21);
+    assert!(after[2] + 8 < before[2], "{before:?} -> {after:?}");
+    assert!(after[0] >= before[0], "{before:?} -> {after:?}");
+}
