@@ -10,8 +10,45 @@ max_speed = 2.0
 diet = ["algae", "detritus"]
 
 [sprite]
-colours = { g = "#d9a548", b = "#623e27", f = "#ba9772", k = "#312626" }
+colours = { g = "#d9a548", l = "#f2cc78", b = "#623e27", o = "#b8862f", f = "#ba9772", d = "#9c7b58", k = "#312626" }
 frames = [
-    [".bgb.", "bgbgk", ".ffff"],
-    [".bgb.", "bgbgk", "ffff."],
+    [
+        "...blgb...",
+        ".gbggbgg..",
+        "ggbggbggb.",
+        "booboobook",
+        "ffffffffkf",
+        ".ddfffffff",
+    ],
+    [
+        "...blgb...",
+        ".gbggbgg..",
+        "ggbggbggb.",
+        "booboobook",
+        "ffffffffkf",
+        ".ffddfffff",
+    ],
+    [
+        "...blgb...",
+        ".gbggbgg..",
+        "ggbggbggbk",
+        "booboobook",
+        "ffffffffkf",
+        ".ffffddfff",
+    ],
+    [
+        "...blgb...",
+        ".gbggbgg..",
+        "ggbggbggbk",
+        "booboobook",
+        "ffffffffkf",
+        ".ffffffddf",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    ".lbgb..",
+    "gbgbgb.",
+    "obobobk",
+    "fffffkf",
 ]

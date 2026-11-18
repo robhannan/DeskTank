@@ -31,7 +31,7 @@ pub use plants::{
     Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,
 };
 pub use script::{Player, Script, ScriptError};
-pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable};
+pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL};
 pub use world::{
     BodyId, BodyInfo, Brush, CHUNK_SIZE, Creature, CreatureId, Ecosystem, MAX_CREATURES,
     MAX_PLANTS, MAX_SIDE, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, RANDOM_TICK_BUDGET,

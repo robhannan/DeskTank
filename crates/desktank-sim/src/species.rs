@@ -3,8 +3,10 @@
 //!
 //! Each species is one file in `assets/species/`. Its sprite is pixel art
 //! written as rows of characters, one per texel, with a colour key; the
-//! renderer packs every species' frames into one atlas texture. The sprite
-//! also sets the creature's body: the cells it covers and collides with.
+//! renderer packs every species' frames into one atlas texture. Sprites
+//! are drawn at [`TEXELS_PER_CELL`] texels per cell side, so their sides
+//! must be even, and the sprite sets the creature's body: the cells it
+//! covers and collides with (half its texel size).
 //!
 //! Units (SPEC §2.1): speeds are in cells per second of world time, depths
 //! in cells or as a fraction of the water column (0 the surface, 1 the
@@ -22,8 +24,13 @@ use crate::material::{MaterialId, MaterialTable};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpeciesId(pub u8);
 
-/// Largest sprite side, in texels (= cells).
-pub const MAX_SPRITE_SIDE: usize = 16;
+/// Sprite texels per cell side: creatures are drawn at twice the grid's
+/// resolution, so a 14×6-texel sprite has a 7×3-cell body.
+pub const TEXELS_PER_CELL: usize = 2;
+/// Largest sprite side, in texels (16 cells).
+pub const MAX_SPRITE_SIDE: usize = 32;
+/// Largest palette icon side, in pixels (a palette slot's face).
+pub const MAX_ICON_SIDE: usize = 8;
 /// Fastest allowed speed, in cells per second: under one cell per tick, so
 /// a body never skips past a cell it would collide with.
 pub const MAX_SPEED: f32 = 16.0;
@@ -55,7 +62,8 @@ pub enum Temperament {
 }
 
 /// Pixel art for a species, facing right: `frames` of `width × height`
-/// RGBA texels (sRGB; alpha 0 or 255), row-major from the top left.
+/// RGBA texels (sRGB; alpha 0 or 255), row-major from the top left. Both
+/// sides are even ([`TEXELS_PER_CELL`] texels per cell).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sprite {
     /// Width in texels.
@@ -64,6 +72,21 @@ pub struct Sprite {
     pub height: usize,
     /// Animation frames.
     pub frames: Vec<Vec<[u8; 4]>>,
+    /// The palette icon: hand-drawn at one pixel per cell, at most
+    /// [`MAX_ICON_SIDE`] a side, in the same colours.
+    pub icon: Icon,
+}
+
+/// A species' palette icon: `width × height` RGBA pixels (alpha 0 or 255),
+/// row-major from the top left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Icon {
+    /// Width in pixels.
+    pub width: usize,
+    /// Height in pixels.
+    pub height: usize,
+    /// The pixels.
+    pub pixels: Vec<[u8; 4]>,
 }
 
 /// One species, validated.
@@ -90,17 +113,21 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
-    /// Its pixel art; the sprite size is the body size.
+    /// Its pixel art; half its size in texels is the body size in cells.
     pub sprite: Sprite,
     /// Its main colour (the commonest in the first frame), for swatches.
     pub colour: [u8; 3],
 }
 
 impl Species {
-    /// Body size in cells, `(width, height)`.
+    /// Body size in cells, `(width, height)`: the sprite's size in texels
+    /// over [`TEXELS_PER_CELL`].
     #[must_use]
     pub fn size(&self) -> (usize, usize) {
-        (self.sprite.width, self.sprite.height)
+        (
+            self.sprite.width / TEXELS_PER_CELL,
+            self.sprite.height / TEXELS_PER_CELL,
+        )
     }
 
     /// Whether it eats `material`.
@@ -168,6 +195,7 @@ struct SpeciesDef {
 struct SpriteDef {
     colours: BTreeMap<String, String>,
     frames: Vec<Vec<String>>,
+    icon: Vec<String>,
 }
 
 /// The species embedded in the binary (T7a placeholders, D11).
@@ -344,35 +372,58 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
         .ok_or("a sprite needs at least one frame")?;
     let height = first.len();
     let width = first.first().map_or(0, |r| r.chars().count());
-    if !(1..=MAX_SPRITE_SIDE).contains(&width) || !(1..=MAX_SPRITE_SIDE).contains(&height) {
-        return Err("sprite sides must be 1..=16 texels");
+    if !(2..=MAX_SPRITE_SIDE).contains(&width) || !(2..=MAX_SPRITE_SIDE).contains(&height) {
+        return Err("sprite sides must be 2..=32 texels");
+    }
+    if width % TEXELS_PER_CELL != 0 || height % TEXELS_PER_CELL != 0 {
+        return Err("sprite sides must be even (two texels per cell)");
     }
     let mut frames = Vec::with_capacity(def.frames.len());
     for rows in &def.frames {
         if rows.len() != height {
             return Err("every sprite frame must be the same size");
         }
-        let mut texels = Vec::with_capacity(width * height);
-        for row in rows {
-            if row.chars().count() != width {
-                return Err("every sprite row must be the same width");
-            }
-            for c in row.chars() {
-                texels.push(match c {
-                    '.' => [0; 4],
-                    c => *key
-                        .get(&c)
-                        .ok_or("sprite uses a character with no colour")?,
-                });
-            }
-        }
-        frames.push(texels);
+        frames.push(texels(rows, width, &key)?);
     }
+    let icon_height = def.icon.len();
+    let icon_width = def.icon.first().map_or(0, |r| r.chars().count());
+    if !(1..=MAX_ICON_SIDE).contains(&icon_width) || !(1..=MAX_ICON_SIDE).contains(&icon_height) {
+        return Err("icon sides must be 1..=8 pixels");
+    }
+    let icon = Icon {
+        width: icon_width,
+        height: icon_height,
+        pixels: texels(&def.icon, icon_width, &key)?,
+    };
     Ok(Sprite {
         width,
         height,
         frames,
+        icon,
     })
+}
+
+/// Rows of `width` keyed characters as RGBA texels.
+fn texels(
+    rows: &[String],
+    width: usize,
+    key: &BTreeMap<char, [u8; 4]>,
+) -> Result<Vec<[u8; 4]>, &'static str> {
+    let mut out = Vec::with_capacity(width * rows.len());
+    for row in rows {
+        if row.chars().count() != width {
+            return Err("every sprite row must be the same width");
+        }
+        for c in row.chars() {
+            out.push(match c {
+                '.' => [0; 4],
+                c => *key
+                    .get(&c)
+                    .ok_or("sprite uses a character with no colour")?,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// The commonest opaque colour of the first frame (the first one wins a
@@ -417,7 +468,11 @@ mod tests {
         diet = ["flake_food"]
         [sprite]
         colours = { a = "#102030", b = "#405060" }
-        frames = [["aab", ".a."], ["aab", "a.a"]]
+        frames = [
+            ["aabbaa", "aabbaa", ".aa...", ".aa..."],
+            ["aabbaa", "aabbaa", "aa..aa", "aa..aa"],
+        ]
+        icon = ["aab", "a.a"]
     "##;
 
     #[test]
@@ -430,6 +485,8 @@ mod tests {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert!(!s.diet.is_empty(), "{name} eats something");
             assert!(s.sprite.frames.len() >= 2, "{name} animates");
+            let icon = &s.sprite.icon;
+            assert!(icon.pixels.iter().any(|p| p[3] > 0), "{name} has an icon");
             let (w, h) = s.size();
             assert!(w <= 8 && h <= 8, "{name} fits a palette slot");
         }
@@ -447,10 +504,14 @@ mod tests {
     fn parses_sprites_and_colours() {
         let t = SpeciesTable::from_toml_sources(&[OK], &materials()).unwrap();
         let s = t.get(SpeciesId(9)).unwrap();
+        assert_eq!((s.sprite.width, s.sprite.height), (6, 4));
         assert_eq!(s.size(), (3, 2));
         assert_eq!(s.sprite.frames[0][0], [0x10, 0x20, 0x30, 255]);
-        assert_eq!(s.sprite.frames[0][3], [0; 4]);
+        assert_eq!(s.sprite.frames[0][12], [0; 4]);
         assert_eq!(s.colour, [0x10, 0x20, 0x30]);
+        assert_eq!((s.sprite.icon.width, s.sprite.icon.height), (3, 2));
+        assert_eq!(s.sprite.icon.pixels[2], [0x40, 0x50, 0x60, 255]);
+        assert_eq!(s.sprite.icon.pixels[4], [0; 4]);
     }
 
     #[test]
@@ -473,13 +534,45 @@ mod tests {
             bad("[\"flake_food\"]", "[\"cake\"]"),
             Err(SpeciesError::UnknownFood { .. })
         ));
+        // Ragged rows, an unkeyed character, odd sides.
         assert!(matches!(
-            bad("\"a.a\"", "\"a.\""),
+            bad("\"aa..aa\", \"aa..aa\"]", "\"aa..aa\", \"aa..a\"]"),
             Err(SpeciesError::Invalid { .. })
         ));
         assert!(matches!(
-            bad("\"a.a\"", "\"a.z\""),
+            bad("\"aa..aa\", \"aa..aa\"]", "\"aa..aa\", \"aa..az\"]"),
             Err(SpeciesError::Invalid { .. })
+        ));
+        // Icons: at most 8 a side, every row the same width, keyed colours.
+        for icon in [
+            "[\"aaaaaaaaa\"]",
+            "[\"a\", \"a\", \"a\", \"a\", \"a\", \"a\", \"a\", \"a\", \"a\"]",
+            "[]",
+            "[\"aa\", \"a\"]",
+            "[\"az\"]",
+        ] {
+            assert!(
+                matches!(
+                    bad("icon = [\"aab\", \"a.a\"]", &format!("icon = {icon}")),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "{icon}"
+            );
+        }
+        let odd_width = OK
+            .replace("aabbaa", "aabbaaa")
+            .replace(".aa...", ".aa....")
+            .replace("aa..aa", "aa..aaa");
+        assert!(matches!(
+            SpeciesTable::from_toml_sources(&[&odd_width], &m),
+            Err(SpeciesError::Invalid { reason, .. }) if reason.contains("even")
+        ));
+        let odd_height = OK
+            .replace("\".aa...\"]", "\".aa...\", \"aaaaaa\"]")
+            .replace("\"aa..aa\"]", "\"aa..aa\", \"aaaaaa\"]");
+        assert!(matches!(
+            SpeciesTable::from_toml_sources(&[&odd_height], &m),
+            Err(SpeciesError::Invalid { reason, .. }) if reason.contains("even")
         ));
         assert!(matches!(
             bad("zone = \"mid\"", "zone = \"sky\""),
