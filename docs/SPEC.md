@@ -885,13 +885,14 @@ modes; it is a "window mode" in a page.
   T2 adds the wasm32 CI build that enforces this.
 - **Device loss**: WebGL context loss or WebGPU device loss recreates the
   renderer from the simulation state, which is unaffected.
-- **Grid size and scale**: the cell scale is a whole number (2–8, as in
-  §2.1). On the web it is chosen per device as the largest integer that
-  gives at least 320 cells across the viewport, and can be overridden in
-  settings. The grid size is fixed when a tank is created.
+- **Grid size and scale**: the cell scale is an even whole number (2–8,
+  as in §2.1; D19), or 1 when 2 doesn't fit. On the web it is chosen per
+  device as the largest even scale that gives at least 320 cells across
+  the viewport, and can be overridden in settings (1, 2, 4, 6 or 8). The
+  grid size is fixed when a tank is created.
   - A tank opened later in a different-sized viewport, or imported from
     another device, keeps its own grid size. It is drawn at the largest
-    integer scale that fits, letterboxed.
+    even scale that fits (1 if 2 doesn't), letterboxed.
 - **Input**: pointer and touch events. The page is always interactive,
   with no click-through, so the interact tools (§2.5) are simply
   available. Touch maps:
@@ -1010,8 +1011,9 @@ directory for custom materials and species is a stretch goal.
   maps material and variant to a palette colour, then applies lighting:
   quantised pixel-art caustics, day/night, and plant shadow. Creatures
   are instanced sprites from an atlas. Their position is interpolated
-  between ticks at screen-pixel precision, and texels are drawn at the
-  cell scale, so motion is smooth while the art stays crisp. Water
+  between ticks at screen-pixel precision, and sprites have two texels
+  per cell side (D19), drawn at half the cell scale, so motion is smooth
+  while the art stays crisp. Water
   is opaque in wallpaper mode and transparent or tinted in overlay mode.
 - **Frame pacing**: no continuous redraw. The loop sleeps until the next
   frame deadline at the target fps (`ControlFlow::WaitUntil`, or a
@@ -1752,6 +1754,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
 | D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole, can topple and can embed in loose substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
+| D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
