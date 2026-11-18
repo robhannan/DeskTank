@@ -1,0 +1,75 @@
+# A guppy, Poecilia reticulata (placeholder art, D11), drawn as a male: a
+# slim silver-grey body about 3 cm long with orange and blue patches and a
+# black spot, and a large orange delta tail spotted with blue. An active
+# swimmer of the middle and upper water that roams on its own rather than
+# schooling. Eats flakes and bloodworms. Every guppy is a male for now:
+# females (larger, plainer, short-tailed) and colour strains come with
+# T9's per-individual size and colour genetics.
+id = 9
+name = "guppy"
+zone = "mid"
+depth = [0.1, 0.55]
+min_depth = 20
+# Real-world body length in cm without the tail (real males 1.5–3.5 cm),
+# at two cells per cm.
+length_cm = 3.0
+breathes_air = false
+temperament = "peaceful"
+speed = 4.5
+max_speed = 9.0
+diet = ["flake_food", "bloodworm"]
+
+[sprite]
+# Facing right; two texels per cell side. The body is 10 texels (5 cells)
+# from the tail's base to the snout, the fan tail 8 more: a 9x4-cell
+# sprite, 4.5 cm with the tail. Four frames: the tail fans and flexes.
+colours = { s = "#b8c4c8", g = "#7e8e98", o = "#ff7a2c", b = "#2f74e0", n = "#151a22", w = "#e8eef0", t = "#ff6430", y = "#ffb347", c = "#3d6ee8", d = "#4aa0c0", k = "#0c1016", e = "#ffffff" }
+frames = [
+    [
+        "ytty..............",
+        "ttcttty.....dd....",
+        "tcttcttt.ggdddgg..",
+        "ttcttttcsoosbbsek.",
+        "tttcttctssoonsskks",
+        "ttcttcttwwwwwwwws.",
+        "tcttcty...ww......",
+        "yttty.............",
+    ],
+    [
+        ".tty..............",
+        "yttctty.....dd....",
+        "ttcttctt.ggdddgg..",
+        "tcttcttcsoosbbsek.",
+        "ttcttcttssoonsskks",
+        "tcttcttcwwwwwwwws.",
+        "yttctty...ww......",
+        ".ttty.............",
+    ],
+    [
+        "ytty..............",
+        "ttcttty.....dd....",
+        "tcttcttt.ggdddgg..",
+        "ttcttttcsoosbbsek.",
+        "tttcttctssoonsskks",
+        "ttcttcttwwwwwwwws.",
+        "tcttcty...ww......",
+        "yttty.............",
+    ],
+    [
+        "yttty.............",
+        "tcttcty.....dd....",
+        "ttcttctt.ggdddgg..",
+        "tttcttcssoosbbsek.",
+        "tcttcttcssoonsskks",
+        "ttcttcttwwwwwwwws.",
+        "ttcttty...ww......",
+        "ytty..............",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "yt......",
+    "tct.gdd.",
+    "ttcsobek",
+    "tct.www.",
+]

@@ -119,10 +119,10 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
-    /// Real-world body length in cm, nose to tail without antennae (a
-    /// crab's carapace), drawn at [`CELLS_PER_CM`]: the sprite is at least
-    /// this long and adds only what lies outside it, such as antennae, fins
-    /// or a crab's legs.
+    /// Real-world body length in cm, nose to tail without antennae or an
+    /// outsized fin tail such as a male guppy's (a crab's carapace), drawn
+    /// at [`CELLS_PER_CM`]: the sprite is at least this long and adds only
+    /// what lies outside it, such as antennae, fins or a crab's legs.
     pub length_cm: f32,
     /// How far past its body it takes food, in cells (1..=[`MAX_REACH`]):
     /// 1 for a mouth at the body's edge, more for a filter feeder's fans.
@@ -233,6 +233,10 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/cherry_shrimp.toml"),
     include_str!("../../../assets/species/amano_shrimp.toml"),
     include_str!("../../../assets/species/thai_micro_crab.toml"),
+    include_str!("../../../assets/species/honey_gourami.toml"),
+    include_str!("../../../assets/species/guppy.toml"),
+    include_str!("../../../assets/species/harlequin_rasbora.toml"),
+    include_str!("../../../assets/species/otocinclus.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -532,7 +536,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 7);
+        assert_eq!(t.len(), 11);
         for name in [
             "neon_tetra",
             "corydoras",
@@ -541,6 +545,10 @@ mod tests {
             "cherry_shrimp",
             "amano_shrimp",
             "thai_micro_crab",
+            "honey_gourami",
+            "guppy",
+            "harlequin_rasbora",
+            "otocinclus",
         ] {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert!(!s.diet.is_empty(), "{name} eats something");
@@ -571,10 +579,63 @@ mod tests {
             (crab.zone, crab.reach, crab.size()),
             (Zone::Surfaces, 2, (3, 3))
         );
-        assert!(
-            crab.size().0 % 2 == 1 && crab.size().1 % 2 == 1,
-            "odd crawler sides"
+        // Every crawler's body is odd on both sides, so it stays on whole
+        // cells after a quarter turn.
+        for s in t.iter().filter(|s| s.zone == Zone::Surfaces) {
+            let (w, h) = s.size();
+            assert!(w % 2 == 1 && h % 2 == 1, "{} has even sides", s.name);
+        }
+        // The honey gourami breathes air like the betta, slower and over a
+        // deeper band; the harlequin schools and the otocinclus crawls and
+        // grazes.
+        let gourami = t.get(t.id("honey_gourami").unwrap()).unwrap();
+        assert!(gourami.breathes_air);
+        assert_eq!(gourami.zone, Zone::Surface);
+        assert!(gourami.speed < betta.speed && gourami.depth[1] > betta.depth[1]);
+        let guppy = t.get(t.id("guppy").unwrap()).unwrap();
+        assert_ne!(guppy.temperament, Temperament::Schooling);
+        let rasbora = t.get(t.id("harlequin_rasbora").unwrap()).unwrap();
+        assert_eq!(
+            (rasbora.zone, rasbora.temperament),
+            (Zone::Mid, Temperament::Schooling)
         );
+        let oto = t.get(t.id("otocinclus").unwrap()).unwrap();
+        assert_eq!((oto.zone, oto.size()), (Zone::Surfaces, (7, 3)));
+        assert!(oto.eats(algae));
+    }
+
+    /// The fish at [`CELLS_PER_CM`]: a male guppy's body is the shortest
+    /// (its fan tail drawn past it), then the neon and otocinclus, with the
+    /// harlequin and honey gourami the longest and deepest.
+    #[test]
+    fn fish_are_sized_to_scale() {
+        let t = SpeciesTable::builtin_for(&materials()).unwrap();
+        let get = |name| t.get(t.id(name).unwrap()).unwrap();
+        // Sprite width in cm, fins included.
+        #[allow(clippy::cast_precision_loss)]
+        let drawn = |s: &Species| s.size().0 as f32 / CELLS_PER_CM;
+        let (guppy, tetra, oto, rasbora, gourami) = (
+            get("guppy"),
+            get("neon_tetra"),
+            get("otocinclus"),
+            get("harlequin_rasbora"),
+            get("honey_gourami"),
+        );
+        assert!(guppy.length_cm < tetra.length_cm);
+        assert!(tetra.length_cm <= oto.length_cm && oto.length_cm < rasbora.length_cm);
+        // Real-world ranges.
+        assert!((2.5..=3.5).contains(&guppy.length_cm));
+        assert!((3.5..=4.0).contains(&oto.length_cm));
+        assert!((4.0..=4.5).contains(&rasbora.length_cm));
+        assert!((4.0..=5.0).contains(&gourami.length_cm));
+        // The guppy's fan tail adds 1–1.5 cm; the others are drawn to
+        // length.
+        assert!((1.0..=1.5).contains(&(drawn(guppy) - guppy.length_cm)));
+        for s in [oto, rasbora, gourami] {
+            assert!((drawn(s) - s.length_cm).abs() < 0.01, "{}", s.name);
+        }
+        assert!(rasbora.size().1 > tetra.size().1, "harlequins are deeper");
+        assert!(gourami.size().1 > rasbora.size().1, "gouramis are deeper");
     }
 
     /// Real-world sizes at [`CELLS_PER_CM`]: the Thai micro crab is the

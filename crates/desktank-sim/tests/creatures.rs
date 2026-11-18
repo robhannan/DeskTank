@@ -106,13 +106,17 @@ fn busy_tank(seed: u64) -> World {
         "cherry_shrimp",
         "amano_shrimp",
         "thai_micro_crab",
+        "honey_gourami",
+        "guppy",
+        "harlequin_rasbora",
+        "otocinclus",
     ]
     .iter()
     .enumerate()
     {
         let s = species(&w, name);
         for j in 0..3_i64 {
-            let x = 12 + 36 * j + i64::try_from(i).unwrap() * 5;
+            let x = 12 + 36 * j + i64::try_from(i).unwrap() * 3;
             w.add_creature(s, x, 50).unwrap();
         }
     }
@@ -146,12 +150,12 @@ fn no_creature_enters_a_solid_cell_in_100k_ticks() {
             }
         }
     }
-    assert_eq!(w.creatures().len(), 21);
+    assert_eq!(w.creatures().len(), 33);
     // They swim, not sit stuck: each moved on most ticks. Crawlers take a
-    // step every 10 (nerite) or 13 (crab) ticks.
+    // step every 7 (otocinclus), 10 (nerite) or 13 (crab) ticks.
     for (i, &n) in moved.iter().enumerate() {
         let s = w.creatures()[i].species();
-        let min = if s == species(&w, "nerite") {
+        let min = if s == species(&w, "nerite") || s == species(&w, "otocinclus") {
             8_000
         } else if s == species(&w, "thai_micro_crab") {
             6_000
@@ -187,7 +191,7 @@ fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
     for (k, (s, _)) in ids.iter().enumerate() {
         for j in 0..4_i64 {
             // Start everyone mid-tank, out of most zones.
-            let x = 20 + j * 36 + i64::try_from(k).unwrap() * 4;
+            let x = 20 + j * 36 + i64::try_from(k).unwrap() * 2;
             w.add_creature(*s, x, 60).unwrap();
         }
     }
@@ -273,6 +277,15 @@ fn food_is_found_and_eaten_within_10_seconds() {
         ("neon_tetra", (110, 45), "bloodworm", (70, 30)),
         ("corydoras", (30, 76), "sinking_pellet", (75, 40)),
         ("corydoras", (120, 76), "algae_wafer", (80, 40)),
+        ("honey_gourami", (120, 20), "flake_food", (75, surface - 2)),
+        ("guppy", (30, 30), "flake_food", (75, surface - 2)),
+        (
+            "harlequin_rasbora",
+            (110, 45),
+            "flake_food",
+            (70, surface - 2),
+        ),
+        ("harlequin_rasbora", (30, 45), "bloodworm", (70, 30)),
     ];
     for (name, start, food, at) in cases {
         let t = ticks_to_eat(name, start, food, at, limit);
@@ -509,7 +522,7 @@ fn the_palette_adds_creatures_of_each_species() {
     let mut t = Tools::new(id(&w, "sand"));
     for (k, &s) in adders.iter().enumerate() {
         t.select(PaletteItem::Tool(Tool::AddCreature(s)));
-        let x = 20 + 20 * i64::try_from(k).unwrap();
+        let x = 12 + 13 * i64::try_from(k).unwrap();
         let Outcome::Added(c) = t.press(&mut w, Button::Primary, (x, 40)) else {
             panic!("no creature added");
         };
@@ -625,10 +638,16 @@ fn walker_follows_a_stepped_bed() {
 }
 
 #[test]
-fn betta_revisits_air_and_skims_for_flakes() {
+fn air_breathers_revisit_air_and_skim_for_flakes() {
+    for name in ["betta", "honey_gourami"] {
+        air_visits_and_skims(name);
+    }
+}
+
+fn air_visits_and_skims(name: &str) {
     let mut w = world(128, 100, 19);
     let surface = w.surface_row();
-    let fish = w.add_creature(species(&w, "betta"), 60, 50).unwrap();
+    let fish = w.add_creature(species(&w, name), 60, 50).unwrap();
     let mut visits = 0;
     let mut away = true;
     let mut skimmed = false;
@@ -655,9 +674,12 @@ fn betta_revisits_air_and_skims_for_flakes() {
             skimmed |= (x - start_x).abs() >= 4;
         }
     }
-    assert!(visits >= 3, "air visits with a dive between: {visits}");
-    assert!(skimmed);
-    assert!(ate_at_surface);
+    assert!(
+        visits >= 3,
+        "{name}: air visits with a dive between: {visits}"
+    );
+    assert!(skimmed, "{name} skimmed the surface");
+    assert!(ate_at_surface, "{name} ate at the surface");
 }
 
 #[test]
@@ -768,9 +790,10 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
 
 #[test]
 fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
-    let grazers: [(&str, &[&str]); 5] = [
+    let grazers: [(&str, &[&str]); 6] = [
         ("corydoras", &["algae", "detritus"]),
         ("nerite", &["algae", "detritus"]),
+        ("otocinclus", &["algae", "detritus"]),
         ("cherry_shrimp", &["algae", "detritus"]),
         ("amano_shrimp", &["algae", "detritus"]),
         ("thai_micro_crab", &["detritus"]),
@@ -956,4 +979,126 @@ fn a_hop_never_lifts_a_shrimp_out_of_a_shallow_zone() {
         }
         assert_eq!(out, 0, "{name} out of its zone on {out} ticks");
     }
+}
+
+/// Mean distance from each creature of `s` to its nearest neighbour of
+/// the same species.
+fn mean_nearest_mate(w: &World, s: SpeciesId) -> f32 {
+    let fish: Vec<_> = w.creatures().iter().filter(|c| c.species() == s).collect();
+    let nearest = |f: &Creature| {
+        let (x, y) = f.centre();
+        fish.iter()
+            .filter(|c| c.id() != f.id())
+            .map(|c| {
+                let (mx, my) = c.centre();
+                (mx - x).hypot(my - y)
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+    fish.iter().map(|f| nearest(f)).sum::<f32>() / fish.len() as f32
+}
+
+#[test]
+fn harlequins_and_neons_each_school_with_their_own_kind() {
+    for seed in [4, 77] {
+        // Both species dispersed and interleaved (every harlequin starts
+        // between neons), and each species alone with the same ids.
+        let stocked = |neons: bool, harlequins: bool| {
+            let mut w = world(320, 120, seed);
+            let (tetra, rasbora) = (species(&w, "neon_tetra"), species(&w, "harlequin_rasbora"));
+            for i in 0..8 {
+                let c = w
+                    .add_creature(tetra, 15 + 40 * i, 45 + (i % 3) * 14)
+                    .unwrap();
+                if !neons {
+                    w.remove_creature(c);
+                }
+            }
+            for i in 0..8 {
+                if harlequins {
+                    w.add_creature(rasbora, 35 + 40 * i, 52 + (i % 3) * 10)
+                        .unwrap();
+                }
+            }
+            w
+        };
+        let (mut w, mut alone_t, mut alone_r) = (
+            stocked(true, true),
+            stocked(true, false),
+            stocked(false, true),
+        );
+        let (tetra, rasbora) = (species(&w, "neon_tetra"), species(&w, "harlequin_rasbora"));
+        let only = |w: &World, s| -> Vec<Creature> {
+            w.creatures()
+                .iter()
+                .filter(|c| c.species() == s)
+                .cloned()
+                .collect()
+        };
+        let lengths = |s| 3.0 * w.species().get(s).unwrap().size().0 as f32;
+        let (near_t, near_r) = (lengths(tetra), lengths(rasbora));
+        let (mut tight_t, mut tight_r, ticks) = (0, 0, 6_000);
+        for _ in 0..ticks {
+            w.tick();
+            alone_t.tick();
+            alone_r.tick();
+            // Neither species follows or steers by the other: each swims
+            // exactly as it does alone.
+            assert_eq!(only(&w, tetra), alone_t.creatures());
+            assert_eq!(only(&w, rasbora), alone_r.creatures());
+            tight_t += u32::from(mean_nearest_mate(&w, tetra) <= near_t);
+            tight_r += u32::from(mean_nearest_mate(&w, rasbora) <= near_r);
+        }
+        eprintln!("seed {seed}: neons {tight_t}, harlequins {tight_r} of {ticks} ticks schooled");
+        assert!(tight_r * 5 >= ticks * 4, "harlequins schooled {tight_r}");
+        assert!(tight_t * 5 >= ticks * 4, "neons schooled {tight_t}");
+    }
+}
+
+#[test]
+fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
+    let mut w = world(120, 80, 9);
+    sand_bed(&mut w, 6);
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(70, 46, 84, 74), rock, Brush::Replace)
+        .unwrap();
+    w.set_anchored(w.body_at(76, 60).unwrap(), true);
+    // A film on the rock's left face and top, about 45 cells from the
+    // start.
+    let algae = id(&w, "algae");
+    w.fill_rect(rect(69, 50, 70, 66), algae, Brush::Replace)
+        .unwrap();
+    w.fill_rect(rect(72, 45, 82, 46), algae, Brush::Replace)
+        .unwrap();
+    let oto = w.add_creature(species(&w, "otocinclus"), 20, 72).unwrap();
+    // The same tank without it, for the algae it took.
+    let mut control = w.clone();
+    control.remove_creature(oto);
+    let limit = 30 * TICKS_PER_SECOND;
+    let mut first = None;
+    for t in 1..=limit {
+        w.tick();
+        control.tick();
+        let c = w.creature(oto).unwrap();
+        assert_eq!(solid_under(&w, c), None);
+        if first.is_none() && c.eaten() > 0 {
+            first = Some(t);
+            // Its first bite is at the rock's film: its body within a cell.
+            let b = w.creature_body(c);
+            assert!(
+                b.x1 >= 69 && b.x0 <= 83 && b.y1 >= 45,
+                "first bite at {b:?}"
+            );
+        }
+        if c.eaten() >= 4 {
+            break;
+        }
+    }
+    let t = first.expect("otocinclus grazed within 30 s");
+    eprintln!("otocinclus grazed after {:.1} s", f64::from(t) / 20.0);
+    let eaten = w.creature(oto).unwrap().eaten();
+    assert!(eaten >= 4, "grazed {eaten} cells");
+    // Every bite was a cell of the film.
+    let cells = |w: &World| w.material_counts()[usize::from(algae.0)];
+    assert_eq!(cells(&control) - cells(&w), eaten as usize);
 }

@@ -1,0 +1,71 @@
+# A harlequin rasbora, Trigonostigma heteromorpha (placeholder art, D11): a
+# deep-bodied copper-orange schooling fish with a black triangular wedge on
+# its rear half, pointing to the tail. Schools with its own kind in mid
+# water (not with the neons) and takes flakes and bloodworms.
+id = 10
+name = "harlequin_rasbora"
+zone = "mid"
+depth = [0.3, 0.7]
+min_depth = 24
+# Real-world body length in cm (real 4–4.5 cm), at two cells per cm.
+length_cm = 4.5
+breathes_air = false
+temperament = "schooling"
+speed = 4.5
+max_speed = 9.0
+diet = ["flake_food", "bloodworm"]
+
+[sprite]
+# Facing right; two texels per cell side. 18 texels (9 cells, 4.5 cm)
+# from the forked tail to the snout, and deeper than the neon: a 9x4-cell
+# sprite. Four frames: the tail lobes sweep.
+colours = { o = "#e47a3e", h = "#f29060", p = "#eaa088", n = "#1b1418", d = "#b85a30", f = "#e8603e", l = "#f4b088", k = "#0c1016", e = "#ffffff" }
+frames = [
+    [
+        ".........dd.......",
+        "ff......ddhhhh....",
+        "fff..oonnnnooopp..",
+        ".ffonnnnnnnooooek.",
+        ".ffoooonnnnooookkp",
+        "fff..llllnnllllpp.",
+        "ff.....lllllll....",
+        ".........ff.......",
+    ],
+    [
+        ".........dd.......",
+        "f.......ddhhhh....",
+        "ff...oonnnnooopp..",
+        "fffonnnnnnnooooek.",
+        ".ffoooonnnnooookkp",
+        "ff...llllnnllllpp.",
+        "fff....lllllll....",
+        ".........ff.......",
+    ],
+    [
+        ".........dd.......",
+        "ff......ddhhhh....",
+        "fff..oonnnnooopp..",
+        ".ffonnnnnnnooooek.",
+        ".ffoooonnnnooookkp",
+        "fff..llllnnllllpp.",
+        "ff.....lllllll....",
+        ".........ff.......",
+    ],
+    [
+        ".........dd.......",
+        "fff.....ddhhhh....",
+        "ff...oonnnnooopp..",
+        ".ffonnnnnnnooooek.",
+        "fffoooonnnnooookkp",
+        "ff...llllnnllllpp.",
+        "f......lllllll....",
+        ".........ff.......",
+    ],
+]
+# The palette icon, at one pixel per cell.
+icon = [
+    "....dd..",
+    "ff.ohnhp",
+    ".fonnnek",
+    "ff.llnlp",
+]
