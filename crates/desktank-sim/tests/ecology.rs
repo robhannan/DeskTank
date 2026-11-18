@@ -536,8 +536,8 @@ fn driftwood_floats_up_and_rests_at_the_surface() {
     let (top, bottom) = (*rows.iter().min().unwrap(), *rows.iter().max().unwrap());
     let surface = w.surface_row();
     // It rises through the water and stops under the air.
-    assert_eq!(
-        top, surface,
+    assert!(
+        top < surface && surface <= bottom,
         "wood rows {top}..={bottom}, surface {surface}"
     );
     assert!(bottom > top);

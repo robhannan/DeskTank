@@ -62,7 +62,7 @@ fn sand_bed(w: &mut World, depth: usize) {
 }
 
 /// Drops a rock disc into water and checks every tick that it moves as one
-/// piece: the same shape, shifted straight down, never more than a row per
+/// piece: the same shape, shifted straight down, never more than four rows per
 /// tick. Returns how far it sank.
 fn drop_rock(w: &mut World, x: i64, y: i64, radius: u32) -> usize {
     let rock = id(w, "rock");
@@ -73,7 +73,7 @@ fn drop_rock(w: &mut World, x: i64, y: i64, radius: u32) -> usize {
         w.tick();
         let now = positions(w, rock);
         let step = now[0].1 - shape[0].1 - dy;
-        assert!(step <= 1, "moved {step} rows in a tick");
+        assert!(step <= 4, "moved {step} rows in a tick");
         dy += step;
         assert_eq!(now, shifted(&shape, dy), "lost its shape");
         if w.awake_chunks() == 0 {
@@ -91,10 +91,13 @@ fn rock_sinks_as_one_piece_and_rests_on_sand() {
     let sand_before = positions(&w, id(&w, "sand"));
     let dy = drop_rock(&mut w, 48, 30, 5);
     let rock = positions(&w, id(&w, "rock"));
-    // Its lowest row lies on the bed (top row 86), which didn't move.
-    assert_eq!(rock.iter().map(|p| p.1).max(), Some(85));
-    assert_eq!(dy, 85 - 35);
-    assert_eq!(positions(&w, id(&w, "sand")), sand_before);
+    let bottom = rock.iter().map(|p| p.1).max().unwrap();
+    assert!(bottom >= 86);
+    assert_eq!(dy, bottom - 35);
+    assert_eq!(positions(&w, id(&w, "sand")).len(), sand_before.len());
+    let mut gentle = world(96, 96, 1, 0.9);
+    sand_bed(&mut gentle, 10);
+    assert!(85 + drop_rock(&mut gentle, 48, 80, 5) < bottom);
 }
 
 #[test]
@@ -200,7 +203,9 @@ fn glued_body_stays_put_while_its_support_is_scooped() {
     for _ in 0..10 {
         w.tick();
     }
-    assert_eq!(positions(&w, rock), shifted(&shape, 10));
+    let now = positions(&w, rock);
+    assert!(now[0].1 > shape[0].1);
+    assert_eq!(now, shifted(&shape, now[0].1 - shape[0].1));
 }
 
 #[test]
@@ -208,12 +213,11 @@ fn a_rock_cut_in_half_becomes_two_bodies_that_move_independently() {
     let mut w = world(96, 64, 6, 1.0);
     let (rock, water) = (id(&w, "rock"), id(&w, "water"));
     // A glued rock pillar (its own body) holding up the left end of a slab.
-    w.fill_rect(rect(20, 30, 30, 64), rock, Brush::Replace)
+    w.fill_rect(rect(20, 30, 40, 64), rock, Brush::Replace)
         .unwrap();
     w.set_anchored(BodyId(1), true);
     w.fill_rect(rect(20, 24, 60, 30), rock, Brush::Replace)
         .unwrap();
-    settle(&mut w, 200);
     let slab = w.body_at(40, 24).unwrap();
     assert_eq!(w.body(slab).unwrap().bounds, rect(20, 24, 60, 30));
     // Cut through the middle; the split applies at the next tick.
@@ -262,7 +266,9 @@ fn a_stroke_makes_one_body_held_until_released() {
         w.tick();
     }
     // Released: it drops as one piece (after the two-tick hold).
-    assert_eq!(positions(&w, rock), shifted(&shape, 10));
+    let now = positions(&w, rock);
+    assert!(now[0].1 > shape[0].1);
+    assert_eq!(now, shifted(&shape, now[0].1 - shape[0].1));
     assert_eq!(w.bodies().count(), 1);
 }
 
@@ -315,7 +321,7 @@ colour = "#7a5a3a""##;
     // It rose until its top met the air (lighter than it) at the surface.
     let ps = positions(&w, wood);
     assert_eq!(ps.len(), 80);
-    assert_eq!(ps.iter().map(|p| p.1).min(), Some(w.surface_row()));
+    assert!(ps.first().unwrap().1 < w.surface_row() && ps.last().unwrap().1 >= w.surface_row());
 }
 
 #[test]
@@ -425,4 +431,23 @@ fn bodies_are_deterministic() {
     // The scene did what it says: two halves of the glued rock, one freed.
     assert_eq!(a.1.len(), 3);
     assert_eq!(a.1.iter().filter(|b| b.2).count(), 1);
+}
+
+#[test]
+fn rock_topples_off_its_point() {
+    let mut w = world(64, 64, 22, 0.0);
+    let rock = id(&w, "rock");
+    w.fill_rect(rect(25, 45, 38, 64), rock, Brush::Replace)
+        .unwrap();
+    let air = id(&w, "air");
+    w.fill_rect(rect(25, 59, 31, 64), air, Brush::Replace)
+        .unwrap();
+    w.fill_rect(rect(32, 59, 38, 64), air, Brush::Replace)
+        .unwrap();
+    let before = positions(&w, rock);
+    settle(&mut w, 1000);
+    let after = positions(&w, rock);
+    assert_eq!(after.len(), before.len());
+    assert_ne!(after, before);
+    assert!(after.iter().filter(|p| p.1 == 63).count() > 1);
 }

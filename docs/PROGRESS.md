@@ -99,7 +99,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T5: tests for the random-tick rotation (each living cell visited once per ⌈living/budget⌉ ticks) and wasm determinism (PR #12 review). (The web palette now comes from `Tools::palette`, tested in WB2.)
 - T5: a refresh moves a chunk's touched living entries to the end of its list, so a rotation can visit some cells twice and skip others; ages stay within ±10% in tests, but keeping list order stable would make visits exact (PR #12 review).
 - T5: the field rest threshold leaves a tiny CO₂ residual that never drains, and `Field::step` copies the whole grid even when only a patch moves (PR #12 review).
-- T4b: bodies don't move sideways, slide off slopes or rotate; a body resting on a single grain stays put. A tipping or sliding rule is a later option.
+- T4c adds fixed-point rigid-body motion, toppling around contacts and impact-dependent burial in loose grains.
 - T4b: save files (T8) can rebuild the body table from the grid (id in `state`, glued in the variant bit); the next id counter should be saved or recomputed.
 
 - `desktank capture` leaves stale `frame_NNNN.png` files from an earlier, longer run in `--out`; consider a warning or `--clean` (PR #8 review).

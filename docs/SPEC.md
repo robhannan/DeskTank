@@ -218,7 +218,7 @@ It can run as any combination of four desktop **display modes**, or in a browser
     water surface, or under the lid of a full tank.
   - <a id="rigid-bodies"></a>**Rigid bodies** (D17, T4b). Rigid materials
     (rock, later driftwood) form **bodies**: objects that move as one piece
-    and don't rotate.
+    and rotate about unstable supports.
     - A body is the set of rigid cells whose state holds its id (1–65535).
       The world keeps a body table (id → material, cells, bounds, glued
       flag) in a `BTreeMap`, so passes over it run in id order. The table
@@ -231,20 +231,11 @@ It can run as any combination of four desktop **display modes**, or in a browser
       one body with `World::paint_into`. A body being poured into is
       **held still** until two ticks after the last stamp, so a stroke can
       draw a shape and it drops when released.
-    - **Motion.** Once per tick, before the movement pass, a body that
-      isn't glued or held moves **one cell down** if every cell directly
-      under it is a fluid (liquid or buoyant) lighter than it; otherwise
-      **one cell up** if every cell directly above it is a heavier fluid.
-      Each body cell swaps with the cell beyond it, leading edge first,
-      so the displaced fluid passes to the cells the body vacates: mass is
-      conserved and the shape kept. One cell per tick is the falling speed
-      of every other class (§2.1 *Movement per tick*). Bodies move lowest
-      first, so a stack falls together.
-    - **Support.** Powders, floaters, solids, other bodies, the floor and
-      the walls hold a body; it rests on sand rather than tunnelling. A
-      body lighter than water (driftwood) rises until its top meets air at
-      the surface. Bodies are never displaced, so powder and liquid
-      falling onto a body rest on it.
+    - **Motion.** Gravity accelerates released bodies. Displaced fluid supplies
+      buoyancy and drag. Translation advances one cell at a time within a tick
+      to detect obstacles. A body can tip around its support, transfer momentum
+      to another free body, or push grains aside on impact. The rotated outline
+      preserves the number of cells. Bodies at rest sleep until disturbed.
     - **Splitting.** Overwriting a body's cells (scoop, a replace brush)
       marks it; at the next tick its remaining cells are split into
       4-connected pieces. The piece holding the lowest cell index keeps
@@ -1717,7 +1708,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D14 | **No code signing** for now. |
 | D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal. |
 | D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
-| D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole without rotating and rests on substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
+| D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole, can topple and can embed in loose substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
