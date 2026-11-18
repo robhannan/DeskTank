@@ -248,6 +248,7 @@ impl SaveStore {
 
 /// Flushes a rename in `dir` to disk. Windows can't open a directory as a
 /// file; NTFS journals the rename itself.
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 fn sync_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
