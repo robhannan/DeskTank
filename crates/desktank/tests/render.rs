@@ -162,7 +162,8 @@ fn invertebrates_scene_matches_reference() {
 }
 
 /// More fish: a harlequin rasbora school, male guppies and honey gouramis
-/// over the starter bed, and otocinclus on a rock and the glass.
+/// come up for flakes over the starter bed, and otocinclus on a rock, the
+/// glass and the bed.
 #[test]
 fn fish_scene_matches_reference() {
     check("fish");

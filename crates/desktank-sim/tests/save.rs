@@ -192,7 +192,9 @@ fn a_version_1_fixture_loads() {
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(save::check(&bytes), Ok(1));
     let mut w = save::decode(&bytes, table()).unwrap();
-    // What the fixture was written with (seed 1, 1200 ticks of `busy`).
+    // What the fixture was written with (seed 1, 1200 ticks of `busy` as
+    // it was then, with the first seven species; `busy` now adds every
+    // species, so re-blessing writes a different, larger tank).
     assert_eq!((w.width(), w.height(), w.tick_count()), (200, 120, 1200));
     assert_eq!(w.plant_count(), 11);
     assert_eq!(w.creatures().len(), 7);

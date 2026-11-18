@@ -119,10 +119,10 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
-    /// Real-world body length in cm, nose to tail without antennae (a
-    /// crab's carapace), drawn at [`CELLS_PER_CM`]: the sprite is at least
-    /// this long and adds only what lies outside it, such as antennae, fins
-    /// or a crab's legs.
+    /// Real-world body length in cm, nose to tail without antennae or an
+    /// outsized fin tail such as a male guppy's (a crab's carapace), drawn
+    /// at [`CELLS_PER_CM`]: the sprite is at least this long and adds only
+    /// what lies outside it, such as antennae, fins or a crab's legs.
     pub length_cm: f32,
     /// How far past its body it takes food, in cells (1..=[`MAX_REACH`]):
     /// 1 for a mouth at the body's edge, more for a filter feeder's fans.

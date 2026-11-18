@@ -1071,23 +1071,34 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     w.fill_rect(rect(72, 45, 82, 46), algae, Brush::Replace)
         .unwrap();
     let oto = w.add_creature(species(&w, "otocinclus"), 20, 72).unwrap();
-    let limit = 60 * TICKS_PER_SECOND;
+    // The same tank without it, for the algae it took.
+    let mut control = w.clone();
+    control.remove_creature(oto);
+    let limit = 30 * TICKS_PER_SECOND;
     let mut first = None;
     for t in 1..=limit {
         w.tick();
+        control.tick();
         let c = w.creature(oto).unwrap();
         assert_eq!(solid_under(&w, c), None);
         if first.is_none() && c.eaten() > 0 {
             first = Some(t);
+            // Its first bite is at the rock's film: its body within a cell.
+            let b = w.creature_body(c);
+            assert!(
+                b.x1 >= 69 && b.x0 <= 83 && b.y1 >= 45,
+                "first bite at {b:?}"
+            );
         }
         if c.eaten() >= 4 {
             break;
         }
     }
-    let t = first.expect("otocinclus grazed within 60 s");
+    let t = first.expect("otocinclus grazed within 30 s");
     eprintln!("otocinclus grazed after {:.1} s", f64::from(t) / 20.0);
-    let c = w.creature(oto).unwrap();
-    assert!(c.eaten() >= 4, "grazed {} cells", c.eaten());
-    // At the rock, not on the bed.
-    assert!(c.cell().0 >= 60, "grazing at {:?}", c.cell());
+    let eaten = w.creature(oto).unwrap().eaten();
+    assert!(eaten >= 4, "grazed {eaten} cells");
+    // Every bite was a cell of the film.
+    let cells = |w: &World| w.material_counts()[usize::from(algae.0)];
+    assert_eq!(cells(&control) - cells(&w), eaten as usize);
 }

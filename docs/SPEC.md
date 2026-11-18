@@ -437,8 +437,8 @@ target computes the same bits.
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2) and `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp). Every species also gives its
-  real-world body length, `length_cm` (nose to tail without antennae, a
-  crab's carapace), and is drawn at a shared 2 cells per cm, so species
+  real-world body length, `length_cm` (nose to tail without antennae or
+  an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
   1.5 cm), cherry shrimp 2.5 cm, guppy 3 cm (4.5 cm with its tail), neon
   tetra and otocinclus 3.5 cm, amano shrimp 4 cm, harlequin rasbora and
