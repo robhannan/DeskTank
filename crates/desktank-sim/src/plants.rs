@@ -296,8 +296,9 @@ pub struct Propagation {
     pub fragments: bool,
 }
 
-/// Colour ramps per part, dark to light (sRGB). T6d draws them; until
-/// then the palette swatch and the web picker use them.
+/// Colour ramps per part, dark to light (sRGB). The renderer shades each
+/// plant cell from its part's ramp by position (T6d); the palette swatch
+/// and the web picker use the middle leaf shade.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ramps {
     /// Root shades.
@@ -310,6 +311,82 @@ pub struct Ramps {
 
 /// Most shades in one ramp.
 pub const MAX_RAMP: usize = 8;
+
+/// How a species' leaves are drawn at two texels per cell side (T6d,
+/// `[look] leaf` in its TOML). The discriminant is what the shader reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum LeafShape {
+    /// A broad blade on a short petiole, rising to a pointed tip
+    /// (hygrophila type).
+    #[default]
+    Lanceolate = 0,
+    /// A fine one-texel blade rising from base to tip (rotala type).
+    Needle = 1,
+    /// A broad blade with a blunt, rounded tip (ludwigia or bacopa type).
+    Round = 2,
+    /// A midrib with a fringe of fine teeth above it (cabomba type).
+    Feather = 3,
+}
+
+impl LeafShape {
+    /// Every shape, in discriminant order.
+    pub const ALL: [Self; 4] = [Self::Lanceolate, Self::Needle, Self::Round, Self::Feather];
+}
+
+/// How a species' stem cells are drawn (`[look] stem`). A mat's cells are
+/// stems, so mats pick a mat shape here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum StemShape {
+    /// A one-texel stalk that widens at nodes and the growing tip.
+    #[default]
+    Stalk = 0,
+    /// A full-width stem, shaded on one side (bacopa type).
+    Thick = 1,
+    /// A soft mat whose exposed edges break into a ragged fringe (java
+    /// moss type).
+    Fuzz = 2,
+    /// A mat of layered, downswept fronds (christmas moss type).
+    Frond = 3,
+}
+
+impl StemShape {
+    /// Every shape, in discriminant order.
+    pub const ALL: [Self; 4] = [Self::Stalk, Self::Thick, Self::Fuzz, Self::Frond];
+}
+
+/// How a species' root cells are drawn (`[look] root`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum RootShape {
+    /// A thin, wandering one-texel strand.
+    #[default]
+    Strand = 0,
+    /// A full-width root (rhizome type).
+    Thick = 1,
+}
+
+impl RootShape {
+    /// Every shape, in discriminant order.
+    pub const ALL: [Self; 2] = [Self::Strand, Self::Thick];
+}
+
+/// A species' drawn shapes per part (SPEC §2.7 *Appearance*, T6d). Every
+/// key is optional in the TOML: leaves default to lanceolate, roots to
+/// strands, and stems to stalks (fuzz for a mat).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Look {
+    /// Leaf shape.
+    pub leaf: LeafShape,
+    /// Stem (or mat) shape.
+    pub stem: StemShape,
+    /// Root shape.
+    pub root: RootShape,
+}
 /// Fastest growth rate, in cells per minute at full response (the plant
 /// update grows at most 8 cells per plant every 5 s).
 pub const MAX_RATE: f32 = 90.0;
@@ -335,6 +412,8 @@ pub struct PlantSpecies {
     pub propagation: Propagation,
     /// Colour ramps.
     pub colours: Ramps,
+    /// Drawn shapes.
+    pub look: Look,
 }
 
 impl PlantSpecies {
@@ -413,6 +492,16 @@ struct SpeciesDef {
     hardiness: HardinessDef,
     propagation: Vec<PropagationName>,
     colours: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    look: LookDef,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LookDef {
+    leaf: Option<LeafShape>,
+    stem: Option<StemShape>,
+    root: Option<RootShape>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -693,6 +782,15 @@ fn validate(
         return Err(invalid("colours need a root, stem and leaf ramp"));
     }
     let [root, stem, leaf] = ramps;
+    let default_stem = match form {
+        Form::Stem(_) => StemShape::Stalk,
+        Form::Mat(_) => StemShape::Fuzz,
+    };
+    let look = Look {
+        leaf: d.look.leaf.unwrap_or_default(),
+        stem: d.look.stem.unwrap_or(default_stem),
+        root: d.look.root.unwrap_or_default(),
+    };
     Ok(PlantSpecies {
         id: PlantSpeciesId(d.id),
         name: d.name.clone(),
@@ -712,6 +810,7 @@ fn validate(
         },
         propagation,
         colours: Ramps { root, stem, leaf },
+        look,
     })
 }
 
@@ -834,6 +933,35 @@ mod tests {
             PlantSpeciesTable::from_toml_sources(&[OK, OK], &m),
             Err(PlantSpeciesError::BadId(9))
         ));
+    }
+
+    #[test]
+    fn looks_are_read_with_defaults_by_form() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let look = |n: &str| t.get(t.id(n).unwrap()).unwrap().look;
+        assert_eq!(look("hygrophila").leaf, LeafShape::Lanceolate);
+        assert_eq!(look("rotala").leaf, LeafShape::Needle);
+        assert_eq!(look("java_moss").stem, StemShape::Fuzz);
+        // Absent keys take the defaults.
+        let s = PlantSpeciesTable::from_toml_sources(&[OK], &m).unwrap();
+        assert_eq!(s.get(PlantSpeciesId(9)).unwrap().look, Look::default());
+        let custom =
+            format!("{OK}\n[look]\nleaf = \"feather\"\nstem = \"thick\"\nroot = \"thick\"\n");
+        let s = PlantSpeciesTable::from_toml_sources(&[&custom], &m).unwrap();
+        let look = s.get(PlantSpeciesId(9)).unwrap().look;
+        assert_eq!(
+            (look.leaf, look.stem, look.root),
+            (LeafShape::Feather, StemShape::Thick, RootShape::Thick)
+        );
+        // Unknown shapes and keys are errors.
+        for bad in ["leaf = \"spiky\"", "flower = \"round\""] {
+            let src = format!("{OK}\n[look]\n{bad}\n");
+            assert!(matches!(
+                PlantSpeciesTable::from_toml_sources(&[&src], &m),
+                Err(PlantSpeciesError::Parse { .. })
+            ));
+        }
     }
 
     #[test]
