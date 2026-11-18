@@ -7,7 +7,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 ## Done
 
 - Repository, licences (MIT OR Apache-2.0), README.
-- DeskTank developer skill (`.agents/skills/desktank-developer/SKILL.md`) and `AGENTS.md`. Codex and Antigravity each provide a named developer and a lower-cost adversarial reviewer. PRs use `.github/pull_request_template.md`.
+- DeskTank developer skill (`.agents/skills/desktank-developer/SKILL.md`) and `AGENTS.md`. Codex, Antigravity and Claude Code (`.claude/agents/`, Opus developer, Haiku reviewer; `CLAUDE.md` imports `AGENTS.md`) each provide a named developer and a lower-cost adversarial reviewer. PRs use `.github/pull_request_template.md`.
 - Plan and spec (`docs/SPEC.md` v0.5): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
 - F1 workspace scaffold + CI: six crate stubs (SPEC §4.1), `clap` CLI skeleton for every §4.3 subcommand, toolchain pinned at 1.100.0, workspace lints, size-tuned release profile, `deny.toml`, Dependabot, CI (fmt, clippy, test, doc on macOS/Windows/Ubuntu; `cargo deny` on Ubuntu).
 - Decided: `Cargo.lock` committed; MSRV = pinned toolchain; `forbid(unsafe_code)` in sim and render (recorded in AGENTS.md).
