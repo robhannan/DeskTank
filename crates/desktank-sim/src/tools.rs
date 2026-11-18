@@ -1,5 +1,5 @@
-//! Interact tools (SPEC §2.5): pour, scoop, glue, net and inspect, driven
-//! by pointer events in cell coordinates.
+//! Interact tools (SPEC §2.5): pour, scoop, glue, net, inspect and
+//! placing devices, driven by pointer events in cell coordinates.
 //!
 //! This is the platform-free half of interaction, shared by every host
 //! (`desktank window`, the web, later the overlay): a host maps its pointer
@@ -14,7 +14,7 @@
 //! Net and inspect need creatures (T7). Until then the net's hit test finds
 //! nothing and inspect reports the cell's material.
 
-use crate::{BodyId, Brush, MaterialId, World};
+use crate::{BodyId, Brush, MaterialId, Placeable, World};
 
 /// Smallest brush radius in cells (a single cell).
 pub const MIN_RADIUS: u32 = 0;
@@ -23,14 +23,28 @@ pub const MAX_RADIUS: u32 = 24;
 /// Brush radius a new [`Tools`] starts with.
 pub const DEFAULT_RADIUS: u32 = 3;
 
-/// Materials offered for pouring, in palette order.
-pub const POUR_MATERIALS: [&str; 6] = [
+/// The first [`POUR_MATERIALS`], which keep keys 1–6 ahead of the tools.
+const T1_MATERIALS: usize = 6;
+
+/// Materials offered for pouring, in palette order: the T1 set (keys 1–6),
+/// then the T5 substrates, food, fertilisers and decay (after the tools).
+pub const POUR_MATERIALS: [&str; 16] = [
     "sand",
     "gravel",
     "rock",
     "water",
     "air_bubble",
     "flake_food",
+    "aquasoil",
+    "driftwood",
+    "sinking_pellet",
+    "bloodworm",
+    "algae_wafer",
+    "root_tab",
+    "liquid_fertiliser",
+    "co2_bubble",
+    "waste",
+    "detritus",
 ];
 
 /// What the primary button does.
@@ -46,6 +60,8 @@ pub enum Tool {
     Net,
     /// Show what is under the pointer.
     Inspect,
+    /// Place a device, once per click.
+    Place(Placeable),
 }
 
 /// One entry in the palette.
@@ -120,6 +136,8 @@ enum Action {
     /// Carrying a creature (or, before T7, nothing: the hit test missed).
     Net(Option<CreatureId>),
     Inspect,
+    /// Placed a device on press; the rest of the drag does nothing.
+    Place,
 }
 
 /// The tool state machine: the selected tool and material, the brush size,
@@ -147,16 +165,26 @@ impl Tools {
     }
 
     /// The palette for `world`'s materials: the [`POUR_MATERIALS`] it has,
-    /// then scoop, net, inspect and glue (appended, so the earlier number
+    /// then scoop, net, inspect and glue, then the later materials and the
+    /// placeables whose material it has (appended, so the earlier number
     /// keys stay put).
     #[must_use]
     pub fn palette(world: &World) -> Vec<PaletteItem> {
+        let table = world.materials();
         let materials = POUR_MATERIALS
             .iter()
-            .filter_map(|n| world.materials().id(n))
+            .filter_map(|n| table.id(n))
             .map(PaletteItem::Material);
+        let (early, late) = (
+            materials.clone().take(T1_MATERIALS),
+            materials.skip(T1_MATERIALS),
+        );
+        let devices = Placeable::ALL
+            .into_iter()
+            .filter(|p| table.id(p.material_name()).is_some())
+            .map(|p| PaletteItem::Tool(Tool::Place(p)));
         let tools = [Tool::Scoop, Tool::Net, Tool::Inspect, Tool::Glue].map(PaletteItem::Tool);
-        materials.chain(tools).collect()
+        early.chain(tools).chain(late).chain(devices).collect()
     }
 
     /// The selected tool.
@@ -240,6 +268,7 @@ impl Tools {
             (Button::Primary, Tool::Glue) => Action::Glue(None),
             (Button::Primary, Tool::Net) => Action::Net(creature_at(world, cell)),
             (Button::Primary, Tool::Inspect) => Action::Inspect,
+            (Button::Primary, Tool::Place(_)) => Action::Place,
         };
         self.stroke = Some(Stroke {
             button,
@@ -251,6 +280,12 @@ impl Tools {
             Action::Pour | Action::Scoop => Outcome::Painted(self.stamp(world, cell)),
             Action::Glue(_) => Outcome::Glued(self.glue(world, cell)),
             Action::Inspect => inspect(world, cell),
+            Action::Place => match self.tool {
+                // The device material is in the table: the palette only
+                // offers placeables it has.
+                Tool::Place(p) => Outcome::Painted(world.place(p, cell.0, cell.1).unwrap_or(0)),
+                _ => Outcome::None,
+            },
             Action::Net(_) => Outcome::None,
         }
     }
@@ -290,7 +325,7 @@ impl Tools {
             }
             Action::Inspect if from != cell => inspect(world, cell),
             // Carrying a creature moves it with the pointer (T7).
-            Action::Net(_) | Action::Inspect => Outcome::None,
+            Action::Net(_) | Action::Inspect | Action::Place => Outcome::None,
         }
     }
 
@@ -712,7 +747,13 @@ mod tests {
     fn palette_selects_tools_and_materials() {
         let w = world();
         let items = Tools::palette(&w);
-        assert_eq!(items.len(), POUR_MATERIALS.len() + 4);
+        assert_eq!(items.len(), POUR_MATERIALS.len() + 2 + 4);
+        assert!(items.len() <= 23, "the palette strip holds 23 slots");
+        assert_eq!(
+            items[9],
+            PaletteItem::Tool(Tool::Glue),
+            "glue stays on key 0"
+        );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
         t.select(PaletteItem::Tool(Tool::Inspect));
@@ -721,6 +762,24 @@ mod tests {
         assert_eq!((t.tool(), t.material()), (Tool::Pour, gravel));
         assert!(t.is_selected(PaletteItem::Material(gravel)));
         assert_eq!(items.iter().filter(|&&i| t.is_selected(i)).count(), 1);
+    }
+
+    #[test]
+    fn place_stamps_one_device_per_click() {
+        let mut w = world();
+        let outlet = id(&w, "filter_outlet");
+        let mut t = Tools::new(id(&w, "sand"));
+        t.select(PaletteItem::Tool(Tool::Place(Placeable::FilterOutlet)));
+        assert_eq!(t.preview(), None);
+        assert_eq!(
+            t.press(&mut w, Button::Primary, (20, 40)),
+            Outcome::Painted(9)
+        );
+        assert_eq!(t.moved(&mut w, (60, 40)), Outcome::None);
+        assert_eq!(t.hold(&mut w), 0);
+        t.release(Button::Primary);
+        assert_eq!(count(&w, outlet), 9);
+        assert_eq!(at(&w, 20, 40), outlet);
     }
 
     #[test]

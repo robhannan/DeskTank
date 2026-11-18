@@ -150,7 +150,7 @@ struct MaterialDef {
     colour: String,
 }
 
-/// The test palette embedded in the binary (SPEC T1). Our own values.
+/// The palette embedded in the binary (SPEC T1, T5). Our own values.
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/water.toml"),
     include_str!("../../../assets/materials/air.toml"),
@@ -159,6 +159,18 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/rock.toml"),
     include_str!("../../../assets/materials/air_bubble.toml"),
     include_str!("../../../assets/materials/flake_food.toml"),
+    include_str!("../../../assets/materials/aquasoil.toml"),
+    include_str!("../../../assets/materials/driftwood.toml"),
+    include_str!("../../../assets/materials/co2_bubble.toml"),
+    include_str!("../../../assets/materials/sinking_pellet.toml"),
+    include_str!("../../../assets/materials/bloodworm.toml"),
+    include_str!("../../../assets/materials/algae_wafer.toml"),
+    include_str!("../../../assets/materials/root_tab.toml"),
+    include_str!("../../../assets/materials/liquid_fertiliser.toml"),
+    include_str!("../../../assets/materials/waste.toml"),
+    include_str!("../../../assets/materials/detritus.toml"),
+    include_str!("../../../assets/materials/bubbler.toml"),
+    include_str!("../../../assets/materials/filter_outlet.toml"),
 ];
 
 /// All materials, ordered by ID.

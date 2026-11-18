@@ -142,6 +142,40 @@ It can run as any combination of four desktop **display modes**, or in a browser
   - A tank with plants and creatures therefore costs the movement pass
     only where something moves, plus the fixed random-tick, field and
     creature budgets.
+  - *T5 (`desktank_sim::World`, `world/life.rs`):* living cells (any
+    material with a reaction, decay, emit or buffer rule) and device cells
+    are kept in per-chunk index lists. After each tick only the chunks'
+    changed rectangles are rescanned, so a settled tank pays nothing to keep
+    them. The "sample" is a window over the lists that rotates by the
+    budget each tick (stratified, not with replacement), so each living cell
+    is visited once every ⌈living / budget⌉ ticks and a visit acts for
+    `living / budget` ticks of world time (rounded at random so the mean is
+    exact). Decay ages and buffer levels live in the cell `state` and are
+    written without waking anything; only a material change wakes a chunk.
+    Rigid cells' state is their body id (D17), so rigid materials may take
+    part in reactions (through the body bookkeeping) but not age or buffer.
+    `World::set_random_tick_budget` changes the budget (default 256).
+- <a id="fields"></a>**Fields** (*T5*, `desktank_sim::field`). Nutrient and
+  CO₂ diffuse with the explicit five-point scheme and closed walls every
+  4th tick (0.2 s), with a per-second decay (CO₂ outgassing) and upwind
+  advection by the filter current; diffusion constants are in cells²/s
+  (≤ 80 for stability), and a field whose largest change falls below 10⁻⁶
+  stops stepping until something adds to it. Light is not diffused: each
+  field cell gets the light left after the field cells above it (water
+  absorbs a fraction per field cell, opaque cells block in proportion to
+  how full the field cell is), recounted only where cells changed.
+  Constants live in `assets/fields.toml`. The state hash includes the
+  nutrient and CO₂ fields.
+- **Devices** (*T5*, placeables). The **bubbler** releases a bubble from
+  each top cell with water above at a configured rate; to keep the water
+  level (a bubble pops into air), each release turns the first air cell
+  above it back into water, which leaves a small mound over a running
+  bubbler. The **filter outlet** makes a jet in a static current field
+  (1/8 resolution) pointing away from the nearer side wall, fading over
+  `reach` cells and widening as it goes; the current swaps floating cells
+  and non-water dense liquids one cell downstream with probability
+  speed / 20 per tick. Water is the medium and never starts a swap, so a
+  jet through clear water changes no cells and wakes no chunks.
 - **Movement rules.**
   - The movement pass runs bottom-up for falling materials and top-down
     for buoyant ones. The horizontal sweep direction alternates every
@@ -272,6 +306,19 @@ Materials also carry these properties:
 A pairwise **reaction table** sets what happens when two materials
 touch: A next to B becomes C with probability p per tick, optionally
 needing a field threshold.
+
+*T5:* the table and the slow processes are `assets/reactions.toml`
+(`desktank_sim::ecology`): `[[reaction]]` (A next to B, one of its 4
+neighbours, becomes C, and B optionally D, with probability p per world
+second, gated by `when = { field, below | above }`, releasing into a field),
+`[[decay]]` (after t seconds becomes C, optionally releasing), `[[emit]]`
+(adds to a field at a rate, up to a level) and `[[buffer]]` (stores up to a
+capacity and trades with a field towards a level). All values are our own.
+Placeables are a bubbler and a filter outlet: a palette slot places one
+fixed footprint per click (the bubbler drops onto what is below it), made of
+solid device cells that scoop removes like any other cell. All powders fall
+one cell per tick, so "sinks fast" bloodworms differ by density and repose,
+not speed.
 
 The v1 palette (D2):
 
@@ -1104,7 +1151,7 @@ Each package depends only on the packages before it.
     criterion bench;
   - a GIF in the PR of a rock sinking as one piece and a glued one
     hanging in place.
-- [ ] **T5 Materials, reactions and fields.** The reaction table; the
+- [x] **T5 Materials, reactions and fields.** The reaction table; the
   nutrient, CO₂ and light fields; water current from a filter-outlet
   placeable and a bubbler placeable (which emits bubbles); food types;
   fertilisers (root tabs, liquid, CO₂ bubbles that dissolve into the

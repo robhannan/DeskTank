@@ -1,0 +1,8 @@
+# Filter outlet: a placeable (`desktank_sim::Placeable::FilterOutlet`). Its
+# jet pushes floating and liquid cells away from the nearer side wall
+# (`assets/fields.toml`, [current]).
+id = 61
+name = "filter_outlet"
+class = "solid"
+density = 2.0
+colour = "#2e3a44"

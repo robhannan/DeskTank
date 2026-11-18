@@ -14,6 +14,7 @@ desktank capture --seed 7 --size 640x360 --frames 60 \
 | `--size WxH` | `640x360` | Output size in pixels. The grid is drawn at the largest integer scale that fits, letterboxed. |
 | `--frames K` | 1 | Frames to write, `frame_every` ticks apart. One frame is `frame.png`; several are `frame_0000.png`, `frame_0001.png`, … |
 | `--script FILE` | none | Input script (below). Without one, an empty 160×90 tank. |
+| `--field F` | none | Debug overlay: tint the tank by the `nutrient`, `co2` or `light` field. |
 | `--out DIR` | required | Output directory, created if missing. |
 
 A GIF from a frame sequence:
@@ -46,6 +47,12 @@ radius = 3         # disc radius in cells (default 2)
 material = "sand"  # a material name from assets/materials
 brush = "pour"     # "pour" fills only fluid cells; "replace" overwrites (default "pour")
 glued = true       # glue the rigid body this pour makes (rock), so it never moves (default false)
+
+[[place]]          # any number of these: one device each
+tick = 0           # tick to place on (default 0)
+x = 20             # footprint centre, in cells from the top left
+y = 60
+device = "bubbler" # "bubbler" (drops onto what is below) or "filter_outlet"
 ```
 
 Pours due on tick `t` are applied just before that tick runs. Each `[[pour]]` entry is one stroke: the rigid cells (rock) of all its repeats form one body, held still until its last repeat and then free to sink. Scripts are parsed by `desktank_sim::Script`, which simulation tests can replay too.

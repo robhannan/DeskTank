@@ -10,6 +10,7 @@ use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 use thiserror::Error;
 
+use crate::ecology::Ecology;
 use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, MovementClass};
@@ -17,6 +18,11 @@ use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, Mov
 use crate::rng::{chunk_stream, splitmix64};
 use bodies::Body;
 pub use bodies::{BodyId, BodyInfo};
+
+mod life;
+
+use life::Life;
+pub use life::{RANDOM_TICK_BUDGET, RandomTickStats};
 
 /// Side of a square chunk, in cells.
 pub const CHUNK_SIZE: usize = 64;
@@ -76,6 +82,9 @@ pub enum WorldError {
     /// The material ID isn't in the table.
     #[error("unknown material id {}", .0.0)]
     UnknownMaterial(MaterialId),
+    /// The built-in reaction table or field settings are invalid.
+    #[error("ecology: {0}")]
+    Ecology(String),
     /// The cell is outside the grid.
     #[error("cell ({x}, {y}) is outside the grid")]
     OutOfBounds {
@@ -165,6 +174,8 @@ pub struct World {
     bodies: BTreeMap<u16, Body>,
     /// Next body id to try (ids are 1..=65535).
     next_body: u16,
+    /// Random ticks, devices and fields (T5).
+    life: Life,
 }
 
 impl World {
@@ -252,8 +263,11 @@ impl World {
         let rngs = (0..chunks.len() as u64)
             .map(|c| chunk_stream(seed, 0, c))
             .collect();
+        let ecology =
+            Ecology::builtin_for(&materials).map_err(|e| WorldError::Ecology(e.to_string()))?;
+        let life = Life::new(&materials, ecology, width, height, chunks.len(), seed);
 
-        Ok(Self {
+        let mut world = Self {
             width,
             height,
             seed,
@@ -272,7 +286,10 @@ impl World {
             last_change_tick: 0,
             bodies: BTreeMap::new(),
             next_body: 1,
-        })
+            life,
+        };
+        world.init_life();
+        Ok(world)
     }
 
     /// Width in cells.
@@ -362,7 +379,8 @@ impl World {
         counts
     }
 
-    /// A stable 64-bit hash of the size, tick and every cell.
+    /// A stable 64-bit hash of the size, tick, every cell and the nutrient
+    /// and CO₂ fields.
     #[must_use]
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::new();
@@ -373,6 +391,7 @@ impl World {
             let [s0, s1] = c.state.to_le_bytes();
             h.write(&[c.material.0, c.variant, s0, s1]);
         }
+        self.hash_life(&mut h);
         h.finish()
     }
 
@@ -548,6 +567,7 @@ impl World {
         if any_change {
             self.last_change_tick = self.tick;
         }
+        self.after_tick();
     }
 
     fn check_material(&self, material: MaterialId) -> Result<(), WorldError> {

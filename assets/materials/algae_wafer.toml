@@ -1,0 +1,7 @@
+# Flat wafers for bottom feeders: they stack steeply and rot slowly.
+id = 33
+name = "algae_wafer"
+class = "powder"
+density = 1.5
+repose = 45.0
+colour = "#55663a"

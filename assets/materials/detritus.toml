@@ -1,0 +1,8 @@
+# Mulm: fluffy, settles in drifts, and disintegrates into nutrients
+# (`assets/reactions.toml`).
+id = 51
+name = "detritus"
+class = "powder"
+density = 1.15
+repose = 25.0
+colour = "#4a3b2a"

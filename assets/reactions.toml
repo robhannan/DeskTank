@@ -1,0 +1,83 @@
+# The reaction table and slow material processes (SPEC §2.2, T5). Our own
+# invented values. Every entry runs on random ticks (SPEC §2.1): a living
+# cell is visited every so often and given a chance to act, scaled by the
+# world time since its last visit. Probabilities are per world second,
+# times are in world seconds and field amounts in field units (1.0 is
+# plenty); see `desktank_sim::ecology`.
+#
+# [[reaction]]  `a` next to `b` (one of its 4 neighbours) becomes `into`,
+#               and that neighbour becomes `b_into` if given, with
+#               probability `p` per second. `when` gates it on the field at
+#               a's cell (`below` or `above` a value); `release` adds to a
+#               field there when it happens.
+# [[decay]]     after `after` seconds the cell becomes `into`, releasing
+#               `release` into a field.
+# [[emit]]      adds `rate` per second to a field while it is below `up_to`.
+# [[buffer]]    stores up to `capacity` (full when poured) and trades with a
+#               field at up to `rate` per second towards `level`: absorbing
+#               above it, releasing below.
+
+# Liquid fertiliser dissolves into the nutrient field.
+[[reaction]]
+a = "liquid_fertiliser"
+b = "water"
+into = "water"
+p = 0.25
+release = { field = "nutrient", amount = 1.2 }
+
+# CO₂ bubbles dissolve on the way up, while the water isn't saturated.
+[[reaction]]
+a = "co2_bubble"
+b = "water"
+into = "water"
+p = 0.3
+when = { field = "co2", below = 2.0 }
+release = { field = "co2", amount = 0.6 }
+
+# Waste breaks down into detritus, which disintegrates into nutrients.
+[[decay]]
+material = "waste"
+after = 60.0
+into = "detritus"
+
+[[decay]]
+material = "detritus"
+after = 180.0
+into = "water"
+release = { field = "nutrient", amount = 0.5 }
+
+# Uneaten food rots.
+[[decay]]
+material = "sinking_pellet"
+after = 600.0
+into = "detritus"
+
+[[decay]]
+material = "bloodworm"
+after = 300.0
+into = "detritus"
+
+[[decay]]
+material = "algae_wafer"
+after = 900.0
+into = "detritus"
+
+# A root tab feeds the water around it, then crumbles into sand.
+[[emit]]
+material = "root_tab"
+field = "nutrient"
+rate = 0.05
+up_to = 3.0
+
+[[decay]]
+material = "root_tab"
+after = 1200.0
+into = "sand"
+
+# Aquasoil holds nutrients and evens the water out towards a modest level.
+[[buffer]]
+material = "aquasoil"
+field = "nutrient"
+level = 0.4
+capacity = 2.0
+rate = 0.01

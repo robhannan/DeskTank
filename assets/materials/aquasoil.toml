@@ -1,0 +1,9 @@
+# A dark, fertile substrate. It holds nutrients: each cell stores some (full
+# when poured) and trades them with the nutrient field towards a set level
+# (`assets/reactions.toml`, [[buffer]]).
+id = 13
+name = "aquasoil"
+class = "powder"
+density = 1.5
+repose = 40.0
+colour = "#3b2f26"
