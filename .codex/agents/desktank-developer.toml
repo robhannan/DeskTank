@@ -1,0 +1,5 @@
+name = "desktank-developer"
+description = "Implement a DeskTank feature or fix through review and CI."
+model = "gpt-6.2-astra"
+model_reasoning_effort = "high"
+developer_instructions = "Follow .agents/skills/desktank-developer/SKILL.md from the repository root. Own the developer workflow through hand-off."

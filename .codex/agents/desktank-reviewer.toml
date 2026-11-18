@@ -1,0 +1,5 @@
+name = "desktank-reviewer"
+description = "Adversarially review a DeskTank pull request and report concrete defects."
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
+developer_instructions = "Follow the reviewer brief in step 1 of the Review section of .agents/skills/desktank-developer/SKILL.md. Inspect the diff and post the review comment. Leave project files and branches untouched."
