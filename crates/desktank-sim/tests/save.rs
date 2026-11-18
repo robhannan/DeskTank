@@ -79,7 +79,7 @@ fn busy(seed: u64, ticks: u32) -> World {
         let (top, bottom) = w.zone_rows(s).unwrap();
         let y = i64::try_from(usize::midpoint(top, bottom)).unwrap();
         // Room for a creature is not guaranteed; a full spot is fine.
-        let _ = w.add_creature(s, 15 + 25 * k as i64, y);
+        let _ = w.add_creature(s, 15 + 17 * k as i64, y);
     }
     for t in 0..ticks {
         w.tick();
