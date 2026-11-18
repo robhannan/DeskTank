@@ -27,7 +27,7 @@ pub use material::{
 };
 pub use placeable::Placeable;
 pub use script::{Player, Script, ScriptError};
-pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable};
+pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL};
 pub use world::{
     BodyId, BodyInfo, Brush, CHUNK_SIZE, Creature, CreatureId, Ecosystem, MAX_CREATURES, MAX_SIDE,
     RANDOM_TICK_BUDGET, RandomTickStats, SLEEP_TICKS, TICKS_PER_SECOND, UnmetNeed, World,

@@ -2,7 +2,7 @@
 // scale, nearest by construction), looks up (material, variant) in the
 // palette, darkens water with depth and tints by the time of day. The interact overlay (palette
 // and brush outline) is drawn on top. Creature sprites are instanced quads
-// drawn after the grid (vs_sprite / fs_sprite), one atlas texel per cell.
+// drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell side.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
 
@@ -125,6 +125,9 @@ fn out(c: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(select(c, linear, view.srgb_target > 0.5), 1.0);
 }
 
+// Sprite texels per cell side (desktank_sim::TEXELS_PER_CELL).
+const TEXELS_PER_CELL: f32 = 2.0;
+
 struct SpriteOut {
     @builtin(position) pos: vec4<f32>,
     // Atlas texel coordinate, interpolated across the quad.
@@ -132,7 +135,7 @@ struct SpriteOut {
 };
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
-// to a target pixel and each texel one cell wide.
+// to a target pixel and each texel half a cell wide.
 @vertex
 fn vs_sprite(
     @builtin(vertex_index) i: u32,
@@ -167,7 +170,8 @@ fn vs_sprite(
     if orient.x > 0.5 {
         q.x = 1.0 - q.x;
     }
-    let frame = select(size, size.yx, turn % 2u == 1u);
+    // The frame's size in texels.
+    let frame = select(size, size.yx, turn % 2u == 1u) * TEXELS_PER_CELL;
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
     o.texel = origin + q * frame;
