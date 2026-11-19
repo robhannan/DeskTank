@@ -395,3 +395,26 @@ fn the_quality_sample_matches_a_full_scan() {
     assert!((sampled - scanned).abs() < 1e-4, "{sampled} {scanned}");
     assert!(sampled > 0.3);
 }
+
+#[test]
+fn growing_and_ageing_ask_for_a_redraw_even_when_held() {
+    let mut w = world(12);
+    let s = species(&w, "guppy");
+    let maturity = w.species().get(s).unwrap().maturity_days * LIFE_DAY_TICKS;
+    // Held still in the net, a fry one tick from maturity grows to full
+    // size: the renderer must hear of it.
+    let fry = w.add_creature_aged(s, 64, 50, maturity - 1).unwrap();
+    w.hold_creature(fry);
+    let before = w.creatures_version();
+    w.tick();
+    assert_eq!(w.life_stage(w.creature(fry).unwrap()), LifeStage::Adult);
+    assert_ne!(w.creatures_version(), before);
+    // And an adult turning elder while held.
+    let span = w.creature_lifespan(w.creature(fry).unwrap());
+    w.set_creature_age(fry, span * 4 / 5 - 1);
+    w.hold_creature(fry);
+    let before = w.creatures_version();
+    w.tick();
+    assert_eq!(w.life_stage(w.creature(fry).unwrap()), LifeStage::Elder);
+    assert_ne!(w.creatures_version(), before);
+}

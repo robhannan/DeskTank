@@ -625,7 +625,13 @@ impl ApplicationHandler for App {
                     world.set_easy_mode(easy);
                 }
                 if let Some(cap) = self.life.cap {
-                    world.set_creature_cap(cap);
+                    let set = world.set_creature_cap(cap);
+                    if set != cap {
+                        eprintln!(
+                            "desktank window: the tank holds {} creatures, so its cap is {set}, not {cap}",
+                            world.creatures().len()
+                        );
+                    }
                 }
                 // A loaded tank keeps the creatures it had.
                 let fish = if fresh { self.fish } else { 0 };

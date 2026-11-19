@@ -263,6 +263,19 @@ fn a_version_2_fixture_loads() {
             .any(|c| w.life_stage(c) == LifeStage::Fry)
     );
     assert!(w.creatures().iter().any(|c| c.energy() < 5000));
+    // Decoding is pure, so the decoded state is the same on every platform:
+    // pin it, and the life state behind it.
+    assert_eq!(w.state_hash(), 0xf7c4_4953_00e1_0fff);
+    let life = |id: u32| {
+        let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
+        (c.age(), c.growth(), c.energy(), c.stress())
+    };
+    assert_eq!(life(1), (2_160_700, 2_160_000, 575_643, 0));
+    assert_eq!(life(12), (400, 400, 575_900, 0), "the fry");
+    assert_eq!(life(13), (2_160_100, 2_160_000, 4900, 0), "the hungry one");
+    let corpse = &w.corpses()[0];
+    assert_eq!((corpse.died(), corpse.decay()), (620, 0.0));
+    assert_eq!(corpse.cause(), desktank_sim::DeathCause::OldAge);
     for _ in 0..200 {
         w.tick();
     }

@@ -774,7 +774,17 @@ impl World {
                 return Err(invalid("unknown species"));
             }
             let cause = DeathCause::from_code(c.cause).ok_or_else(|| invalid("unknown cause"))?;
-            if !inside(c.x, c.y) || c.w == 0 || c.h == 0 || c.released >= c.total {
+            // As `corpse_of` makes them: at most the adult body, and a
+            // third of its cells to release.
+            let (full_w, full_h) = self.kind(species).map_or((0, 0), |k| (k.w, k.h));
+            let fits = |side: u8, full: i32| (1..=full).contains(&i32::from(side));
+            let total = (u16::from(c.w) * u16::from(c.h)).div_ceil(3).max(1);
+            if !inside(c.x, c.y)
+                || !fits(c.w, full_w)
+                || !fits(c.h, full_h)
+                || c.total != total
+                || c.released >= c.total
+            {
                 return Err(invalid("position, size or decay out of range"));
             }
             corpses.push(Corpse {
@@ -837,7 +847,7 @@ impl World {
         let mut list = mem::take(&mut self.creatures.list);
         let mut changed = false;
         let mut dead = Vec::new();
-        list.retain_mut(|c| match self.live(c, quality) {
+        list.retain_mut(|c| match self.live(c, quality, &mut changed) {
             Some(cause) => {
                 dead.push(self.corpse_of(c, cause));
                 false

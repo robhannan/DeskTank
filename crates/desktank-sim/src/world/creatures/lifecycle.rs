@@ -343,10 +343,20 @@ impl World {
 
     /// One tick of `c`'s life, before it moves: it ages, burns energy and
     /// grows, and may die. `quality` is this second's water-quality sample
-    /// (on sample ticks only).
-    pub(super) fn live(&self, c: &mut Creature, quality: Option<f32>) -> Option<DeathCause> {
+    /// (on sample ticks only). Sets `redraw` when its drawn size or look
+    /// changed (it grew a size step or became an elder).
+    pub(super) fn live(
+        &self,
+        c: &mut Creature,
+        quality: Option<f32>,
+        redraw: &mut bool,
+    ) -> Option<DeathCause> {
         let k = self.kind(c.species)?;
+        let lifespan = self.lifespan_of(k, c.id);
+        let elder = |age: u32| u64::from(age) * 100 >= u64::from(lifespan) * ELDER_PERCENT;
+        let was_elder = elder(c.age);
         c.age = c.age.saturating_add(1);
+        *redraw |= elder(c.age) != was_elder;
         c.energy = c.energy.saturating_sub(1);
         if c.growth < k.maturity {
             let step = if c.energy >= ENERGY_RESERVE / 2 {
@@ -357,9 +367,18 @@ impl World {
                         && (self.tick + u64::from(c.id.0)).is_multiple_of(2),
                 )
             };
-            c.growth = (c.growth + step).min(k.maturity);
+            if step > 0 {
+                let size = |growth: u32| {
+                    let percent = HATCH_PERCENT
+                        + (100 - HATCH_PERCENT) * u64::from(growth) / u64::from(k.maturity.max(1));
+                    (grown_side(k.w, percent), grown_side(k.h, percent))
+                };
+                let before = size(c.growth);
+                c.growth = (c.growth + step).min(k.maturity);
+                *redraw |= c.growth == k.maturity || size(c.growth) != before;
+            }
         }
-        if c.age >= self.lifespan_of(k, c.id) {
+        if c.age >= lifespan {
             return Some(DeathCause::OldAge);
         }
         if self.creatures.easy {

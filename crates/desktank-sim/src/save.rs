@@ -299,6 +299,33 @@ mod tests {
         let mut field = good.clone();
         field.life.nutrient.values[0] = f32::NAN;
         assert!(matches!(load(field), Err(SaveError::Invalid(_))));
+        // Corpses are no bigger than the adult and release a third of
+        // their cells, as a death makes them.
+        let mut dead = good.clone();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        dead.creatures.corpses.push(v2::Corpse {
+            species: tetra.0,
+            cause: 0,
+            x: 20 * 256,
+            y: 20 * 256,
+            w: 7,
+            h: 3,
+            facing_left: false,
+            died: 0,
+            released: 0,
+            total: 7,
+        });
+        assert!(load(dead.clone()).is_ok());
+        for bad in [
+            |c: &mut v2::Corpse| c.w = 255,
+            |c: &mut v2::Corpse| c.h = 0,
+            |c: &mut v2::Corpse| c.total = 65_535,
+            |c: &mut v2::Corpse| c.released = 7,
+        ] {
+            let mut s = dead.clone();
+            bad(&mut s.creatures.corpses[0]);
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))));
+        }
         let mut capped = good.clone();
         capped.creatures.cap = 0;
         assert!(matches!(load(capped), Err(SaveError::Invalid(_))));
