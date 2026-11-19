@@ -21,6 +21,14 @@ speed = 5.0
 max_speed = 10.0
 diet = ["flake_food", "bloodworm"]
 
+# Egg scatterer: eggs hatch in about a day (real clutches of 60–130).
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 1
+brood = [6, 12]
+rest_days = 14
+
 [sprite]
 # Facing right; '.' is transparent. Two texels per cell side. Four frames:
 # a tail sweep, with glints drifting along the iridescent stripe.

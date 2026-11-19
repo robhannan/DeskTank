@@ -490,6 +490,29 @@ mod tests {
         assert_eq!(w.creatures().len(), 4);
     }
 
+    /// Spawned creatures are added as from the palette (T9 part 2): sexes
+    /// alternate within the species, so `spawn guppy 2` is a pair, and each
+    /// settles for a day before it breeds.
+    #[test]
+    fn spawn_adds_pairs_that_settle_first() {
+        let mut w = world();
+        run(&mut w, "spawn neon_tetra 3").expect("tetras");
+        run(&mut w, "spawn guppy 4").expect("guppies");
+        let guppy = w.species().id("guppy").expect("guppy");
+        let sexes = |s| {
+            let of: Vec<_> = w.creatures().iter().filter(|c| c.species() == s).collect();
+            (of.iter().filter(|c| c.female()).count(), of.len())
+        };
+        assert_eq!(sexes(guppy), (2, 4));
+        let tetra = w.species().id("neon_tetra").expect("tetra");
+        assert_eq!(sexes(tetra), (1, 3));
+        assert!(
+            w.creatures()
+                .iter()
+                .all(|c| c.rest() == crate::SETTLE_TICKS && c.carrying() == 0)
+        );
+    }
+
     #[test]
     fn spawn_stops_at_the_population_cap() {
         let mut w = world();

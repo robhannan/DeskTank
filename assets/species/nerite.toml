@@ -15,6 +15,9 @@ speed = 2.0
 max_speed = 2.0
 diet = ["algae", "detritus"]
 
+# Doesn't breed here: its eggs (white specks on hardscape) need
+# brackish water to hatch.
+
 [sprite]
 colours = { g = "#d9a548", l = "#f2cc78", b = "#623e27", o = "#b8862f", f = "#ba9772", d = "#9c7b58", k = "#312626", h = "#fbe4a6", n = "#3e2618", c = "#d6b48c", s = "#8a6a4c" }
 frames = [

@@ -1,7 +1,9 @@
 //! The creature sprite atlas and per-frame sprite instances (SPEC §4.2).
 //!
-//! Every species' frames are packed side by side, two shelves per species
-//! (its frames, then its fine frames at twice the size), into one RGBA
+//! Every species' frames are packed side by side, two shelves per look
+//! (each colour morph, and each sex for a species drawn differently by
+//! sex, T9 part 2: its frames, then its fine frames at twice the size),
+//! into one RGBA
 //! texture (sRGB-encoded, read raw with `textureLoad` like
 //! the palette). Each frame, every creature becomes one instance: its
 //! top-left cell, on-screen size, atlas frame, mirror and quarter turns,
@@ -16,9 +18,10 @@
 //! Life stages (T9): a growing fry or juvenile is drawn at its smaller body
 //! size from the full frame, an elder a little greyer. Corpses follow the
 //! creatures, belly up on their first frame, desaturated and losing texels
-//! as they rot.
+//! as they rot. Each creature or corpse is drawn in its look: the morph it
+//! shows, for its sex.
 
-use desktank_sim::{LifeStage, SpeciesTable, TEXELS_PER_CELL, World};
+use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, World};
 
 /// Atlas width in texels; species shelves stack downwards.
 pub const ATLAS_WIDTH: usize = 256;
@@ -39,7 +42,7 @@ pub const LOOK_ELDER: f32 = 1.0;
 /// A corpse.
 pub const LOOK_DEAD: f32 = 2.0;
 
-/// Where one species' frames sit in the atlas.
+/// Where one look's frames sit in the atlas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Entry {
     origin: (usize, usize),
@@ -50,15 +53,15 @@ struct Entry {
     frames: usize,
 }
 
-/// The packed atlas image and where each species is in it.
+/// The packed atlas image and where each species' looks are in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Atlas {
     /// RGBA rows, [`ATLAS_WIDTH`] texels wide.
     pub image: Vec<u8>,
     /// Size in texels.
     pub size: (u32, u32),
-    /// By species id.
-    entries: Vec<Option<Entry>>,
+    /// By species id, then look ([`desktank_sim::Species::look`]).
+    entries: Vec<Vec<Entry>>,
 }
 
 impl Atlas {
@@ -67,33 +70,34 @@ impl Atlas {
     #[must_use]
     #[allow(clippy::many_single_char_names)] // texel maths
     pub fn build(species: &SpeciesTable) -> Self {
-        let mut entries = vec![None; 256];
+        let mut entries = vec![Vec::new(); 256];
         let mut placed = Vec::new();
         let mut y = 0;
         // Rows a shelf of `n` frames of `w × h` texels takes.
         let rows = |n: usize, (w, h): (usize, usize)| h * n.div_ceil((ATLAS_WIDTH / w).max(1));
         for s in species.iter() {
             let size = (s.sprite.width, s.sprite.height);
-            let n = s.sprite.frames.len();
-            let origin = (0, y);
-            y += rows(n, size);
-            let fine = (0, y);
-            y += rows(n, (size.0 * 2, size.1 * 2));
-            entries[usize::from(s.id.0)] = Some(Entry {
-                origin,
-                fine,
-                size,
-                frames: n,
-            });
-            placed.push((s, origin, fine));
+            for look in &s.looks {
+                let n = look.frames.len();
+                let origin = (0, y);
+                y += rows(n, size);
+                let fine = (0, y);
+                y += rows(n, (size.0 * 2, size.1 * 2));
+                entries[usize::from(s.id.0)].push(Entry {
+                    origin,
+                    fine,
+                    size,
+                    frames: n,
+                });
+                placed.push((look, size, origin, fine));
+            }
         }
         let height = y.max(1);
         let mut image = vec![0; ATLAS_WIDTH * height * 4];
-        for (s, origin, fine) in placed {
-            let (w, h) = (s.sprite.width, s.sprite.height);
+        for (look, (w, h), origin, fine) in placed {
             for (frames, origin, size) in [
-                (&s.sprite.frames, origin, (w, h)),
-                (&s.sprite.fine_frames, fine, (w * 2, h * 2)),
+                (&look.frames, origin, (w, h)),
+                (&look.fine_frames, fine, (w * 2, h * 2)),
             ] {
                 for (f, texels) in frames.iter().enumerate() {
                     let (fx, fy) = Self::frame_origin(origin, size, f);
@@ -111,6 +115,12 @@ impl Atlas {
             size: (side(ATLAS_WIDTH), side(height)),
             entries,
         }
+    }
+
+    /// Where `species`' look for `morph` and sex is, if anywhere.
+    fn entry(&self, world: &World, species: SpeciesId, morph: u8, female: bool) -> Option<Entry> {
+        let look = world.species().get(species)?.look(morph, female);
+        self.entries[usize::from(species.0)].get(look).copied()
     }
 
     /// Atlas texel of frame `frame`'s top-left in the shelf at `origin` of
@@ -143,7 +153,8 @@ impl Atlas {
         let tick = world.tick_count();
         let mut n = 0;
         for c in world.creatures() {
-            let Some(e) = self.entries[usize::from(c.species().0)] else {
+            let Some(e) = self.entry(world, c.species(), world.creature_morph(c), c.female())
+            else {
                 continue;
             };
             if n == MAX_SPRITES {
@@ -173,7 +184,7 @@ impl Atlas {
             n += 1;
         }
         for c in world.corpses() {
-            let Some(e) = self.entries[usize::from(c.species().0)] else {
+            let Some(e) = self.entry(world, c.species(), c.morph(), c.female()) else {
                 continue;
             };
             if n == MAX_SPRITES {
@@ -319,6 +330,69 @@ mod tests {
         assert!((out[1] + out[3] / 2.0 - cy).abs() < 1e-6);
     }
 
+    /// T9 part 2: each creature and corpse samples its own look (morph and
+    /// sex), and the atlas stays within WebGL2's smallest texture limit.
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn creatures_are_drawn_in_their_morph_and_sex() {
+        let mut w = world();
+        let atlas = Atlas::build(w.species());
+        assert!(atlas.size.1 <= 2048, "{:?}", atlas.size);
+        let (shrimp, guppy) = (
+            w.species().id("cherry_shrimp").unwrap(),
+            w.species().id("guppy").unwrap(),
+        );
+        let blue = w.species().get(shrimp).unwrap().morph("blue").unwrap();
+        let red = w.species().get(guppy).unwrap().morph("red").unwrap();
+        let add = |w: &mut World, s, x, female, m: u8| {
+            let traits = desktank_sim::Traits {
+                female: Some(female),
+                alleles: Some([m, m]),
+                ..desktank_sim::Traits::default()
+            };
+            w.add_creature_with_traits(s, x, 40, traits).unwrap()
+        };
+        add(&mut w, shrimp, 10, false, blue);
+        add(&mut w, guppy, 30, false, red);
+        add(&mut w, guppy, 50, true, red);
+        let dying = add(&mut w, shrimp, 20, true, blue);
+        let span = w.creature_lifespan(w.creature(dying).unwrap());
+        w.set_creature_age(dying, span);
+        w.tick();
+        let mut out = Vec::new();
+        assert_eq!(atlas.instances(&w, &mut out), 4);
+        let texel = |i: usize| {
+            let (ox, oy) = (
+                out[i * INSTANCE_FLOATS + 4] as usize,
+                out[i * INSTANCE_FLOATS + 5] as usize,
+            );
+            let o = (oy * ATLAS_WIDTH + ox) * 4;
+            (ox, oy, o)
+        };
+        // Each instance's frame is its look's (frame by id and tick).
+        let looks = [
+            (shrimp, w.species().get(shrimp).unwrap().look(blue, false)),
+            (guppy, w.species().get(guppy).unwrap().look(red, false)),
+            (guppy, w.species().get(guppy).unwrap().look(red, true)),
+            (shrimp, w.species().get(shrimp).unwrap().look(blue, true)),
+        ];
+        for (i, (s, look)) in looks.into_iter().enumerate() {
+            let sp = w.species().get(s).unwrap();
+            let (ox, oy, _) = texel(i);
+            let frames = &sp.looks[look].frames;
+            let matches = frames.iter().any(|f| {
+                f.iter().enumerate().all(|(j, t)| {
+                    let (x, y) = (ox + j % sp.sprite.width, oy + j / sp.sprite.width);
+                    let o = (y * ATLAS_WIDTH + x) * 4;
+                    &atlas.image[o..o + 4] == t
+                })
+            });
+            assert!(matches, "instance {i}");
+        }
+        // The male and female guppies sample different shelves.
+        assert_ne!(texel(1).1, texel(2).1);
+    }
+
     #[test]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn every_creature_has_a_second_frame_origin_at_double_density() {
@@ -334,11 +408,12 @@ mod tests {
         assert_eq!(atlas.instances(&world, &mut out) as usize, ids.len());
         assert!(include_str!("tank.wgsl").contains("@location(6) fine_origin: vec2<f32>"));
         for (c, inst) in world.creatures().iter().zip(out.chunks(INSTANCE_FLOATS)) {
-            let art = &world.species().get(c.species()).unwrap().sprite;
-            let frame = c.id().0 as usize % art.fine_frames.len();
+            let s = world.species().get(c.species()).unwrap();
+            let look = &s.looks[s.look(world.creature_morph(c), c.female())];
+            let frame = c.id().0 as usize % look.fine_frames.len();
             let (ox, oy) = (inst[12] as usize, inst[13] as usize);
-            let width = art.width * 2;
-            for (i, texel) in art.fine_frames[frame].iter().enumerate() {
+            let width = s.sprite.width * 2;
+            for (i, texel) in look.fine_frames[frame].iter().enumerate() {
                 let offset = ((oy + i / width) * ATLAS_WIDTH + ox + i % width) * 4;
                 assert_eq!(atlas.image[offset..offset + 4], *texel);
             }
@@ -430,7 +505,7 @@ mod tests {
         assert_eq!(dead_i[7], 2.0);
         assert_eq!(dead_i[10], LOOK_DEAD);
         assert_eq!(dead_i[11], 0.0);
-        let e = atlas.entries[usize::from(tetra.0)].unwrap();
+        let e = atlas.entries[usize::from(tetra.0)][0];
         assert_eq!(dead_i[4..6], [e.origin.0 as f32, e.origin.1 as f32]);
         assert_eq!(dead_i[12..14], [e.fine.0 as f32, e.fine.1 as f32]);
     }
