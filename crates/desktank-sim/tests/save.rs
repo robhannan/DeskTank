@@ -313,7 +313,7 @@ fn a_version_3_fixture_loads() {
     assert_eq!(depths(&w), depths(&fresh));
     assert_eq!(w.state_hash(), fresh.state_hash());
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x3627_4b3b_f83f_f00d);
+    assert_eq!(w.state_hash(), 0x602d_1c74_dbe2_d25a);
     for _ in 0..200 {
         w.tick();
     }

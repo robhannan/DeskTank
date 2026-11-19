@@ -27,7 +27,8 @@
 //!   turns away if that takes over [`DODGE_TICKS`]. A schooler that can't
 //!   reach its school at all strays on a wander target of its own for a
 //!   while, out of whatever pocket holds it. Crawlers keep the band they
-//!   start in, so they climb only the plants in it. A corpse sinks in
+//!   start in (unless buried, when any creature may shift band to get
+//!   free), so they climb only the plants in it. A corpse sinks in
 //!   the band it died in.
 //! - **Walkers** keep to the substrate, stepping up one-row ledges; a
 //!   species with `hop_every` (shrimp) kicks off it now and then and sinks
@@ -86,8 +87,12 @@ const BITE: u16 = 30 * TICKS_PER_SECOND as u16;
 const SEARCH_EVERY: u64 = 10;
 /// How far a creature notices food, in cells.
 const FOOD_SENSE: i64 = 160;
-/// How far a creature hops to get out of a solid, in cells.
-const UNSTUCK_RADIUS: i32 = 8;
+/// How far from where it is asked for a creature is added, in cells.
+const PLACE_RADIUS: i32 = 8;
+/// How far a creature hops to get out of a solid, in cells: twice
+/// [`PLACE_RADIUS`], so a big walker caught by sand raining onto a mound
+/// still finds room (the search runs only while it is buried).
+const UNSTUCK_RADIUS: i32 = 16;
 /// Ticks a netted creature stays held after the last hold.
 const HOLD_TICKS: u64 = 2;
 /// Creature random streams: above every chunk id, below the life stream.
@@ -629,7 +634,7 @@ impl World {
             (fx, fy, b)
         } else {
             let (x, y) = self
-                .nearest_fit(&k, 0, fx, fy, band)
+                .nearest_fit(&k, 0, fx, fy, band, PLACE_RADIUS)
                 .ok_or(WorldError::NoRoom)?;
             (x, y, band)
         };
@@ -821,9 +826,11 @@ impl World {
             if c.growth > k.maturity || c.energy > ENERGY_RESERVE {
                 return Err(invalid("growth or energy out of range"));
             }
-            let deep = |z: i32| (0..=MAX_Z).contains(&z);
+            // Within its species' bands (as every move keeps it).
+            let deep = |z: i32| (z_of(k.bands.0)..=z_of(k.bands.1)).contains(&z);
             if !(deep(c.z)
                 && deep(c.tz)
+                && (k.schooling || c.stray == 0)
                 && c.tz % ONE == 0
                 && c.dodging <= DODGE_TICKS
                 && u32::from(c.stray) < RETARGET_TICKS.1)
@@ -1010,7 +1017,9 @@ impl World {
         if !self.fits(&k, c.turn, c.x, c.y, c.band()) {
             if let Some(b) = self.free_band(&k, c.turn, c.x, c.y, c.band()) {
                 (c.z, c.tz) = (z_of(b), z_of(b));
-            } else if let Some((x, y)) = self.nearest_fit(&k, c.turn, c.x, c.y, c.band()) {
+            } else if let Some((x, y)) =
+                self.nearest_fit(&k, c.turn, c.x, c.y, c.band(), UNSTUCK_RADIUS)
+            {
                 (c.x, c.y, c.vx, c.vy) = (x, y, 0, 0);
                 c.retarget = 0;
             }
@@ -1154,7 +1163,8 @@ impl World {
             // Blocked in this band: if the move is clear in a band it can
             // reach, shift there rather than slide, keeping to a shift
             // under way.
-            if c.dodging > 0 && c.z != c.tz {
+            if c.dodging > 0 && c.z != c.tz && self.only_plants_block(k, c.turn, c.x + dx, c.y + dy)
+            {
                 return Move::Dodging;
             }
             if let Some(b) = self.depth_route(k, c, c.x + dx, c.y + dy) {
@@ -1188,19 +1198,7 @@ impl World {
     #[allow(clippy::many_single_char_names)] // cell maths
     fn depth_route(&self, k: &Kind, c: &Creature, x: i32, y: i32) -> Option<u8> {
         // Only plants have bands: anything else in the way blocks them all.
-        let (wide, tall) = extent(k, c.turn);
-        let to = body_box(wide, tall, x, y, self.width, self.height)?;
-        let mut plant = false;
-        for row in to.y0..to.y1 {
-            for i in row * self.width + to.x0..row * self.width + to.x1 {
-                let m = self.cells[i].material;
-                if !self.creatures.swim[usize::from(m.0)] {
-                    self.plants.part(m)?;
-                    plant = true;
-                }
-            }
-        }
-        if !plant {
+        if !self.only_plants_block(k, c.turn, x, y) {
             return None;
         }
         let here = i32::from(c.band());
@@ -1232,6 +1230,28 @@ impl World {
             }
         }
         None
+    }
+
+    /// Whether a body turned `turn` at `(x, y)` lies inside the grid and
+    /// overlaps plant cells but nothing else it can't swim through.
+    fn only_plants_block(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+        let (wide, tall) = extent(k, turn);
+        let Some(to) = body_box(wide, tall, x, y, self.width, self.height) else {
+            return false;
+        };
+        let mut plant = false;
+        for row in to.y0..to.y1 {
+            for i in row * self.width + to.x0..row * self.width + to.x1 {
+                let m = self.cells[i].material;
+                if !self.creatures.swim[usize::from(m.0)] {
+                    if self.plants.part(m).is_none() {
+                        return false;
+                    }
+                    plant = true;
+                }
+            }
+        }
+        plant
     }
 
     /// The nearest other band in the species' range where a body turned
@@ -1348,10 +1368,18 @@ impl World {
         }
     }
 
-    /// The nearest spot within [`UNSTUCK_RADIUS`] cells where the body
-    /// fits in `band`, searching rings outwards in a fixed order.
-    fn nearest_fit(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> Option<(i32, i32)> {
-        for r in 1..=UNSTUCK_RADIUS {
+    /// The nearest spot within `radius` cells where the body fits in
+    /// `band`, searching rings outwards in a fixed order.
+    fn nearest_fit(
+        &self,
+        k: &Kind,
+        turn: u8,
+        x: i32,
+        y: i32,
+        band: u8,
+        radius: i32,
+    ) -> Option<(i32, i32)> {
+        for r in 1..=radius {
             for dy in -r..=r {
                 for dx in -r..=r {
                     if dx.abs() != r && dy.abs() != r {
@@ -1490,9 +1518,6 @@ fn zone(k: &Kind, surface_row: usize, height: usize) -> (usize, usize) {
     (top, bottom.max(top + 1).min(height))
 }
 
-/// Deepest depth, 1/256 band.
-const MAX_Z: i32 = (DEPTH_BANDS as i32 - 1) * ONE;
-
 /// The band a depth (1/256 band) rounds to.
 fn band_of(z: i32) -> u8 {
     u8::try_from(((z + ONE / 2) / ONE).clamp(0, i32::from(DEPTH_BANDS) - 1)).unwrap_or(0)
@@ -1596,6 +1621,9 @@ mod tests {
         }
         assert!(seen[2] && seen[3], "they wander between their bands");
     }
+
+    /// Deepest depth, 1/256 band.
+    const MAX_Z: i32 = (DEPTH_BANDS as i32 - 1) * ONE;
 
     #[test]
     fn bands_round_and_default_within_range() {

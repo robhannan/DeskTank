@@ -6,8 +6,8 @@
 use desktank_sim::save;
 use desktank_sim::species::Zone;
 use desktank_sim::{
-    Brush, Creature, DEPTH_BANDS, MaterialId, MaterialTable, Propagule, Rect, SpeciesId,
-    TICKS_PER_SECOND, World, WorldConfig,
+    BAND_REACH, Brush, Creature, DEPTH_BANDS, MaterialId, MaterialTable, MovementClass, Propagule,
+    Rect, SpeciesId, TICKS_PER_SECOND, World, WorldConfig,
 };
 
 fn world(width: usize, height: usize, seed: u64) -> World {
@@ -199,6 +199,19 @@ fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
         }
         w.tick();
         for (i, c) in w.creatures().iter().enumerate() {
+            // Never inside anything that blocks it in its band.
+            let b = w.creature_body(c);
+            for y in b.y0..b.y1 {
+                for x in b.x0..b.x1 {
+                    let m = w.materials().get(w.cell(x, y).unwrap().material).unwrap();
+                    let open = m.passable
+                        || matches!(m.class, MovementClass::Buoyant)
+                        || (m.class == MovementClass::Liquid && m.density >= 0.5)
+                        || w.plant_band(x, y)
+                            .is_some_and(|p| p.abs_diff(c.band()) > BAND_REACH);
+                    assert!(open, "tick {t}: {:?} in {} at ({x}, {y})", c.id(), m.name);
+                }
+            }
             if c.centre() == last[i] {
                 still[i] += 1;
                 longest[i] = longest[i].max(still[i]);
