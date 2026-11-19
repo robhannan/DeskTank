@@ -53,6 +53,7 @@ use core::mem;
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 
+use super::plants::PlantDepth;
 use super::{TICKS_PER_SECOND, World, WorldError};
 use crate::grid::Rect;
 use crate::hash::Fnv64;
@@ -1378,21 +1379,29 @@ impl World {
         let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
         };
+        let mut memo = None;
         (b.y0..b.y1).all(|row| {
-            (row * self.width + b.x0..row * self.width + b.x1).all(|i| !self.blocks(i, band))
+            (row * self.width + b.x0..row * self.width + b.x1)
+                .all(|i| !self.blocks_with(i, band, &mut memo))
         })
     }
 
     /// Whether the cell at index `i` blocks a body in `band` (`None`: in
     /// every band).
     pub(super) fn blocks(&self, i: usize, band: Option<u8>) -> bool {
+        self.blocks_with(i, band, &mut None)
+    }
+
+    /// [`World::blocks`], with a plant memo for a run of cells.
+    #[inline]
+    fn blocks_with(&self, i: usize, band: Option<u8>, memo: &mut Option<PlantDepth>) -> bool {
         let m = self.cells[i].material;
         if self.creatures.swim[usize::from(m.0)] {
             return false;
         }
         match (band, self.plants.part(m)) {
             (Some(band), Some(_)) => self
-                .plant_band_at(i)
+                .plant_band_with(i, memo)
                 .is_none_or(|p| p.abs_diff(band) <= BAND_REACH),
             _ => true,
         }

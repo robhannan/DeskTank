@@ -333,32 +333,55 @@ impl World {
     /// across the bands; a mat's cells shift it by up to one each, so it
     /// is fuzzy.
     pub(super) fn plant_band_at(&self, i: usize) -> Option<u8> {
+        self.plant_band_with(i, &mut None)
+    }
+
+    /// [`World::plant_band_at`], reusing the plant's [`PlantDepth`] in
+    /// `memo` when the cell is of the same plant (a creature's box mostly
+    /// meets one or two plants), and leaving its own there.
+    pub(super) fn plant_band_with(&self, i: usize, memo: &mut Option<PlantDepth>) -> Option<u8> {
         let cell = self.cells[i];
         let part = self.plants.part(cell.material)?;
         let id = cell.state;
-        let mix = |key: u64| splitmix64(self.seed ^ splitmix64((u64::from(id) << 40) ^ key));
-        let bands = u64::from(DEPTH_BANDS);
-        // Below DEPTH_BANDS (8): exact.
-        #[allow(clippy::cast_possible_truncation)]
-        let base = (mix(0) % bands) as i32;
-        let p = self.plants.table.get(&id);
-        let form = p
-            .and_then(|p| self.plants.species.get(p.species))
-            .map(|s| &s.form);
+        let depth = match memo {
+            Some(d) if d.id == id => *d,
+            _ => *memo.insert(self.plant_depth(id)),
+        };
         let (x, y) = (i % self.width, i / self.width);
-        let (key, spread) = match (part, form) {
-            (Part::Leaf, Some(Form::Stem(_))) => {
-                let left = p.is_some_and(|p| x < p.base % self.width);
-                ((y as u64) << 1 | u64::from(left), 1)
-            }
-            (Part::Leaf, Some(Form::Rosette(_) | Form::Carpet(_))) => ((x as u64) << 1, 2),
-            (Part::Stem, Some(Form::Mat(_))) => (i as u64, 1),
-            _ => return u8::try_from(base).ok(),
+        let (key, spread) = match (part, depth.shape) {
+            (Part::Leaf, Shape::Stem { base_x }) => (((y as u64) << 1) | u64::from(x < base_x), 1),
+            (Part::Leaf, Shape::Blades) => ((x as u64) << 1, 2),
+            (Part::Stem, Shape::Mat) => (i as u64, 1),
+            _ => return u8::try_from(depth.base).ok(),
         };
         // Within ±2: exact.
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let shift = (mix(key + 1) % (2 * spread + 1)) as i32 - spread as i32;
-        u8::try_from((base + shift).clamp(0, i32::from(DEPTH_BANDS) - 1)).ok()
+        let shift = (self.band_mix(id, key + 1) % (2 * spread + 1)) as i32 - spread as i32;
+        u8::try_from((depth.base + shift).clamp(0, i32::from(DEPTH_BANDS) - 1)).ok()
+    }
+
+    /// What plant `id`'s cell bands follow from: its own band and form.
+    fn plant_depth(&self, id: u16) -> PlantDepth {
+        // Below DEPTH_BANDS (8): exact.
+        #[allow(clippy::cast_possible_truncation)]
+        let base = (self.band_mix(id, 0) % u64::from(DEPTH_BANDS)) as i32;
+        let p = self.plants.table.get(&id);
+        let shape = match p
+            .and_then(|p| self.plants.species.get(p.species))
+            .map(|s| &s.form)
+        {
+            Some(Form::Stem(_)) => Shape::Stem {
+                base_x: p.map_or(0, |p| p.base % self.width),
+            },
+            Some(Form::Rosette(_) | Form::Carpet(_)) => Shape::Blades,
+            Some(Form::Mat(_)) => Shape::Mat,
+            None => Shape::Plain,
+        };
+        PlantDepth { id, base, shape }
+    }
+
+    fn band_mix(&self, id: u16, key: u64) -> u64 {
+        splitmix64(self.seed ^ splitmix64((u64::from(id) << 40) ^ key))
     }
 
     /// Number of plants.
@@ -1540,6 +1563,28 @@ impl World {
         }
         out
     }
+}
+
+/// A plant's own depth band and the form its cells' bands follow (see
+/// [`World::plant_band_at`]).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PlantDepth {
+    id: u16,
+    base: i32,
+    shape: Shape,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Shape {
+    /// A stem plant: leaves left of `base_x` are one leaf, right another.
+    Stem {
+        base_x: usize,
+    },
+    /// A rosette's or carpet's blades.
+    Blades,
+    Mat,
+    /// Not in the table (between an edit and its tidy).
+    Plain,
 }
 
 /// A place a plant can grow a cell.
