@@ -18,6 +18,10 @@
       <canvas id="tank" width="320" height="180" aria-label="Tank: drag to use the selected tool"></canvas>
       <p id="status" class="status" role="status">Loading the simulation…</p>
       <p id="inspect" class="inspect" role="status" aria-live="polite" hidden></p>
+      <form id="cheat" class="cheat" data-owner-only hidden>
+        <label>Cheat <input id="cheat-input" type="text" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="help" aria-describedby="cheat-out"></label>
+        <output id="cheat-out" aria-live="polite">Enter runs · Esc closes</output>
+      </form>
       <div id="elsewhere" class="elsewhere" role="alert" hidden>
         <p id="elsewhere-text">DeskTank is open in another tab. This one shows its last save and won't change it.</p>
         <button id="take-over" type="button">Take over</button>
