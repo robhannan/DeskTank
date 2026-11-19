@@ -40,6 +40,8 @@ pub const MAX_ICON_SIDE: usize = 8;
 pub const MAX_SPEED: f32 = 16.0;
 /// Farthest a species reaches to eat, in cells past its body.
 pub const MAX_REACH: u8 = 4;
+/// Longest lifespan a species may give, in real days (20 years).
+pub const MAX_LIFESPAN_DAYS: u32 = 7300;
 
 /// The part of the tank a species lives in (SPEC §2.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -130,6 +132,13 @@ pub struct Species {
     /// Seconds between a bottom walker's hops off the substrate (shrimp),
     /// or `None` if it never hops.
     pub hop_every: Option<f32>,
+    /// Real-world lifespan in days (1..=[`MAX_LIFESPAN_DAYS`]), on the life
+    /// clock (SPEC §2.4, T9: a day per `LIFE_DAY_SECONDS` of world time).
+    /// Each creature's own lifespan is within ±10% of it.
+    pub lifespan_days: u32,
+    /// Real-world age at maturity in days (below the lifespan): a well-fed
+    /// creature is an adult from this age.
+    pub maturity_days: u32,
     /// Its pixel art; half its size in texels is the body size in cells.
     pub sprite: Sprite,
     /// Its main colour (the commonest in the first frame), for swatches.
@@ -209,6 +218,8 @@ struct SpeciesDef {
     reach: u8,
     #[serde(default)]
     hop_every: Option<f32>,
+    lifespan_days: u32,
+    maturity_days: u32,
     sprite: SpriteDef,
 }
 
@@ -365,6 +376,14 @@ fn validate(
             return Err(invalid("hop_every must be 1..=600 seconds"));
         }
     }
+    if !(1..=MAX_LIFESPAN_DAYS).contains(&d.lifespan_days)
+        || d.maturity_days == 0
+        || d.maturity_days >= d.lifespan_days
+    {
+        return Err(invalid(
+            "lifespan_days must be 1..=7300 and maturity_days 1..lifespan_days",
+        ));
+    }
     let mut diet = Vec::with_capacity(d.diet.len());
     for food in &d.diet {
         match materials.id(food) {
@@ -402,6 +421,8 @@ fn validate(
         length_cm: d.length_cm,
         reach: d.reach,
         hop_every: d.hop_every,
+        lifespan_days: d.lifespan_days,
+        maturity_days: d.maturity_days,
         sprite,
         colour,
     })
@@ -519,6 +540,8 @@ mod tests {
         min_depth = 10
         temperament = "peaceful"
         length_cm = 1.0
+        lifespan_days = 100
+        maturity_days = 10
         speed = 2.0
         max_speed = 4.0
         diet = ["flake_food"]
@@ -743,6 +766,18 @@ mod tests {
                     Err(SpeciesError::Invalid { .. })
                 ),
                 "hop_every = {every}"
+            );
+        }
+        // Maturity comes before the end of a lifespan of at most 20 years.
+        for (from, to) in [
+            ("lifespan_days = 100", "lifespan_days = 0"),
+            ("lifespan_days = 100", "lifespan_days = 7301"),
+            ("maturity_days = 10", "maturity_days = 0"),
+            ("maturity_days = 10", "maturity_days = 100"),
+        ] {
+            assert!(
+                matches!(bad(from, to), Err(SpeciesError::Invalid { .. })),
+                "{to}"
             );
         }
         let ok = walker("hop_every = 6.0\nreach = 4").unwrap();

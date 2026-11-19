@@ -10,6 +10,10 @@ depth = [0.68, 1.0]
 min_depth = 14
 # Real-world body length in cm, nose to tail without the antennae.
 length_cm = 4.0
+# Lifespan and age at maturity in real days (2–3 years; mature at about 5
+# months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
+lifespan_days = 1095
+maturity_days = 150
 temperament = "peaceful"
 speed = 2.5
 max_speed = 8.0
