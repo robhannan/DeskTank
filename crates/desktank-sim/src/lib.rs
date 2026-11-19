@@ -35,8 +35,10 @@ pub use plants::{
 pub use script::{Player, Script, ScriptError};
 pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL};
 pub use world::{
-    BodyId, BodyInfo, Brush, CHUNK_SIZE, Creature, CreatureId, Ecosystem, MAX_CREATURES,
-    MAX_PLANTS, MAX_SIDE, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, RANDOM_TICK_BUDGET,
-    RandomTickStats, SLEEP_TICKS, TICKS_PER_SECOND, UPDATE_SECONDS, UnmetNeed, World, WorldConfig,
-    WorldError,
+    BITE_ENERGY, BodyId, BodyInfo, Brush, CHUNK_SIZE, CORPSE_SINK, Corpse, Creature, CreatureId,
+    DEFAULT_CREATURE_CAP, DeathCause, ENERGY_RESERVE, Ecosystem, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
+    LifeStage, MAX_CORPSES, MAX_CREATURE_CAP, MAX_PLANTS, MAX_SIDE, MAX_UPDATES_PER_TICK,
+    POOR_QUALITY, PlantId, PlantInfo, RANDOM_TICK_BUDGET, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS,
+    RandomTickStats, SLEEP_TICKS, STRESS_LIMIT, TICKS_PER_SECOND, UPDATE_SECONDS, UnmetNeed, World,
+    WorldConfig, WorldError,
 };

@@ -10,6 +10,10 @@ min_depth = 12
 # Real-world body length in cm, nose to tail without the antennae; the
 # sprite is drawn at two cells per cm.
 length_cm = 2.5
+# Lifespan and age at maturity in real days (1–2 years; mature at 2–3
+# months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
+lifespan_days = 550
+maturity_days = 75
 temperament = "peaceful"
 speed = 2.0
 max_speed = 6.0

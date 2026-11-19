@@ -376,6 +376,16 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
 }
 
 #[test]
+fn easy_mode_reaches_the_world() {
+    let mut t = paused();
+    assert!(!t.easy_mode());
+    t.set_easy_mode(true);
+    assert!(t.easy_mode() && t.tank.world().easy_mode());
+    t.set_easy_mode(false);
+    assert!(!t.tank.world().easy_mode());
+}
+
+#[test]
 fn long_press_inspects_and_keeps_the_selection() {
     let mut t = paused();
     let gravel = slot(&t, "material gravel");
@@ -567,7 +577,7 @@ mod saves {
     /// ticks) and its state hash; `tests/web/saves.spec.mjs` imports the
     /// same file on the web and checks the same hash.
     const NATIVE_FIXTURE: &str = "../desktank-sim/tests/fixtures/v1.dtank";
-    const NATIVE_HASH: &str = "00359e05e22eea40";
+    const NATIVE_HASH: &str = "3990d5de69a7fe76";
     /// The native fixture as this build re-saves it natively. A save carries
     /// the build's material and species name tables, so it is not the v1
     /// file's bytes once ids are added; the web test compares its export of

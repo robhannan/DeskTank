@@ -46,6 +46,8 @@ const DEVICE: u8 = 2;
 const FOOD: u8 = 4;
 /// A dense liquid such as water (not air).
 const WATERY: u8 = 8;
+/// A pollutant for the water-quality score.
+const POLLUTANT: u8 = 16;
 /// Liquids at least this dense count as water for light and current.
 const WATERY_DENSITY: f32 = 0.5;
 
@@ -168,6 +170,12 @@ pub(super) struct Life {
     /// Field cells whose opacity needs recounting.
     opacity_dirty: Vec<bool>,
     any_opacity_dirty: bool,
+    /// Per field cell: its water and pollutant cells, for the water quality
+    /// creatures sample once a second (T9). Recounted only where cells
+    /// changed, so a settled tank pays nothing.
+    census: Vec<(u16, u16)>,
+    /// Field cells whose census needs recounting.
+    census_dirty: Vec<bool>,
     /// Sideways current per field cell, cells per second (+ = rightwards).
     current: Vec<f32>,
     /// Field cells with a current strong enough to move cells.
@@ -213,6 +221,9 @@ impl Life {
             if foods.contains(&m.id) {
                 *f |= FOOD;
             }
+            if eco.quality.pollutants.contains(m.id) {
+                *f |= POLLUTANT;
+            }
         }
         let field = Field::new(width, height);
         let blocks = field.width() * field.height();
@@ -235,6 +246,8 @@ impl Life {
             columns: Vec::new(),
             opacity_dirty: vec![true; blocks],
             any_opacity_dirty: true,
+            census: vec![(0, 0); blocks],
+            census_dirty: vec![true; blocks],
             current: vec![0.0; blocks],
             current_blocks: Vec::new(),
             devices_dirty: false,
@@ -427,17 +440,15 @@ impl World {
             } else {
                 covered as f32 / surface as f32
             };
-            let water = e.water_cells.max(1) as f32;
             e.mean_nutrient = (nutrient_sum / e.water_cells.max(1) as f64) as f32;
-            let per_mille = |n: usize| n as f32 * 1000.0 / water;
-            let excess = ((e.mean_nutrient - q.nutrient_ok) / (q.nutrient_bad - q.nutrient_ok))
-                .clamp(0.0, 1.0);
-            let pollution = (per_mille(e.pollutant_cells) / q.pollution_bad).min(1.0);
-            let plants = (per_mille(e.plant_cells) / q.plant_full).min(1.0);
-            e.quality = (1.0 - q.nutrient_weight * excess - q.pollution_weight * pollution
-                + q.plant_bonus * plants)
-                .clamp(0.0, 1.0);
         }
+        e.quality = quality_score(
+            &self.life.eco,
+            e.mean_nutrient,
+            e.water_cells,
+            e.pollutant_cells,
+            e.plant_cells,
+        );
         e
     }
 
@@ -584,9 +595,61 @@ impl World {
         for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
             for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {
                 life.opacity_dirty[fy * fw + fx] = true;
+                life.census_dirty[fy * fw + fx] = true;
             }
         }
         life.any_opacity_dirty = true;
+    }
+
+    /// The water-quality score as [`World::ecosystem`] computes it, from
+    /// per-field-cell counts that are recounted only where cells changed
+    /// since the last call (including edits not yet seen by a tick), so it
+    /// costs about a pass over the field cells and the plant table, not a
+    /// scan of the grid. Creatures sample it once a second (T9).
+    pub fn water_quality(&mut self) -> f32 {
+        let fw = self.life.light.width();
+        for ci in 0..self.chunks.len() {
+            let r = self.chunks[ci].changed_next;
+            if r.is_empty() {
+                continue;
+            }
+            for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
+                for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {
+                    self.life.census_dirty[fy * fw + fx] = true;
+                }
+            }
+        }
+        let life = &mut self.life;
+        let mut water = 0usize;
+        let mut pollutants = 0usize;
+        let mut nutrient_sum = 0.0_f64;
+        for (f, dirty) in life.census_dirty.iter_mut().enumerate() {
+            if mem::take(dirty) {
+                let (fx, fy) = (f % fw, f / fw);
+                let (x0, y0) = (fx * FIELD_SCALE, fy * FIELD_SCALE);
+                let (x1, y1) = (
+                    (x0 + FIELD_SCALE).min(self.width),
+                    (y0 + FIELD_SCALE).min(self.height),
+                );
+                let (mut w, mut p) = (0u16, 0u16);
+                for y in y0..y1 {
+                    for c in &self.cells[y * self.width + x0..y * self.width + x1] {
+                        let flags = life.flags[usize::from(c.material.0)];
+                        w += u16::from(flags & WATERY != 0);
+                        p += u16::from(flags & POLLUTANT != 0);
+                    }
+                }
+                life.census[f] = (w, p);
+            }
+            let (w, p) = life.census[f];
+            water += usize::from(w);
+            pollutants += usize::from(p);
+            nutrient_sum += f64::from(w) * f64::from(life.nutrient.values()[f]);
+        }
+        let plants = self.plant_cells();
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // counts ≪ 2^24
+        let mean = (nutrient_sum / water.max(1) as f64) as f32;
+        quality_score(&self.life.eco, mean, water, pollutants, plants)
     }
 
     /// Visits up to the budget of living cells (see the module docs).
@@ -1092,6 +1155,27 @@ impl World {
             life.version += 1;
         }
     }
+}
+
+/// The water-quality score (SPEC §2.3) from a mean nutrient level over
+/// `water` water cells holding `pollutants` pollutant cells, with `plants`
+/// plant cells in the tank.
+fn quality_score(
+    eco: &Ecology,
+    mean_nutrient: f32,
+    water: usize,
+    pollutants: usize,
+    plants: usize,
+) -> f32 {
+    let q = eco.quality;
+    #[allow(clippy::cast_precision_loss)] // counts ≪ 2^24
+    let per_mille = |n: usize| n as f32 * 1000.0 / water.max(1) as f32;
+    let excess =
+        ((mean_nutrient - q.nutrient_ok) / (q.nutrient_bad - q.nutrient_ok)).clamp(0.0, 1.0);
+    let pollution = (per_mille(pollutants) / q.pollution_bad).min(1.0);
+    let plants = (per_mille(plants) / q.plant_full).min(1.0);
+    (1.0 - q.nutrient_weight * excess - q.pollution_weight * pollution + q.plant_bonus * plants)
+        .clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
