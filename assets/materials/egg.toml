@@ -1,11 +1,12 @@
-# Fish eggs (T9 part 2): a clutch an egg-laying female sticks to the glass,
-# rock, plants or substrate beside her. Each egg cell holds its clutch's id
-# in its state; when the clutch is due the eggs hatch into fry, or rot
-# into detritus if the tank is at its population cap. Not poured from the
-# palette.
+# Fish eggs (T9 part 2), amber so they show on sand and soil: a clutch an
+# egg-laying female sticks to the glass, rock, plants or substrate beside
+# her, or that sinks to the bed below her. Each egg cell holds its
+# clutch's id in its state; when the clutch is due the eggs hatch into
+# fry, or rot into detritus if the tank is at its population cap. Not
+# poured from the palette.
 id = 78
 name = "egg"
 class = "solid"
 density = 1.05
 opacity = 0.2
-colour = "#e8dcb4"
+colour = "#f0a848"

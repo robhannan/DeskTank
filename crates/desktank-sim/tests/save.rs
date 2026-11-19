@@ -361,7 +361,7 @@ fn a_version_3_fixture_loads() {
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0xb5be_3d99_5bea_0f88);
+    assert_eq!(hash, 0x1288_339e_9e44_0e2a);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);

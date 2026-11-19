@@ -17,9 +17,9 @@
 //!     her young for the species' `days` and gives birth to a brood of fry
 //!     around her, as many as the cap leaves room for.
 //!   - An **egg layer** lays a clutch at once: egg cells (the `egg`
-//!     material, each holding the clutch's id in its state) on water cells
-//!     around her, those touching glass, rock, plants or the bed first. A
-//!     clutch hatches into fry after the species' `days`, egg by egg where
+//!     material, each holding the clutch's id in its state) stuck to the
+//!     glass, rock, plants or bed around her or, where there aren't enough
+//!     such spots, sunk to whatever lies below her. A clutch hatches into fry after the species' `days`, egg by egg where
 //!     the egg is still there; an egg that can't hatch because the tank is
 //!     at its cap rots into detritus. At most [`MAX_CLUTCHES`] clutches.
 //!
@@ -76,7 +76,7 @@ pub const PREY_ENERGY: u32 = 3 * BITE_ENERGY;
 /// Most egg clutches a tank holds at once.
 pub const MAX_CLUTCHES: usize = 64;
 /// Cells around her body a female lays her eggs in.
-const EGG_REACH: usize = 3;
+const EGG_REACH: usize = 6;
 /// Ticks between breeding checks.
 const BREED_CHECK_TICKS: u64 = BREED_CHECK_SECONDS as u64 * TICKS_PER_SECOND as u64;
 /// Random streams for breeding, clutches and predation: above every
@@ -411,9 +411,9 @@ impl World {
         changed
     }
 
-    /// Lays a clutch on water cells around the mother's body (not under
-    /// any creature), those touching something solid first. Returns whether any egg was
-    /// laid.
+    /// Lays a clutch on water cells around the mother's body that touch
+    /// something solid, then on the bed (or whatever lies) below her, never
+    /// under a creature. Returns whether any egg was laid.
     fn lay(&mut self, lay: &Lay) -> bool {
         let Some(egg) = self.creatures.egg else {
             return false;
@@ -437,29 +437,45 @@ impl World {
             .map(|c| self.creature_body(c).intersect(area))
             .filter(|b| !b.is_empty())
             .collect();
-        let (mut sticky, mut open) = (Vec::new(), Vec::new());
+        let mut sticky = Vec::new();
         for y in area.y0..area.y1 {
             for x in area.x0..area.x1 {
                 let i = y * self.width + x;
-                if self.cells[i].material != water
-                    || lay.body.contains(x, y)
-                    || bodies.iter().any(|b| b.contains(x, y))
+                if self.cells[i].material == water
+                    && !lay.body.contains(x, y)
+                    && !bodies.iter().any(|b| b.contains(x, y))
+                    && self.touches_solid(x, y)
                 {
-                    continue;
-                }
-                if self.touches_solid(x, y) {
                     sticky.push(i);
-                } else {
-                    open.push(i);
                 }
+            }
+        }
+        // Eggs with nothing to stick to sink: in each column, to the first
+        // cell resting on something below her.
+        let mut sunk = Vec::new();
+        for x in area.x0..area.x1 {
+            let mut y = area.y1 - 1;
+            if self.cells[y * self.width + x].material != water {
+                continue;
+            }
+            while y + 1 < self.height && self.cells[(y + 1) * self.width + x].material == water {
+                y += 1;
+            }
+            let i = y * self.width + x;
+            let covered = self
+                .creatures
+                .list
+                .iter()
+                .any(|c| self.creature_body(c).contains(x, y));
+            if !covered && !sticky.contains(&i) {
+                sunk.push(i);
             }
         }
         let id = self.next_clutch_id();
         let mut rng = chunk_stream(self.seed, self.tick, CLUTCH_STREAM + u64::from(id));
         let mut eggs = Vec::with_capacity(usize::from(lay.count));
-        for spots in [&mut sticky, &mut open] {
-            // A partial shuffle: random spots, those touching something
-            // solid first.
+        for spots in [&mut sticky, &mut sunk] {
+            // A partial shuffle: random spots, those beside her first.
             while eggs.len() < usize::from(lay.count) && !spots.is_empty() {
                 let at = rng.next_u32() as usize % spots.len();
                 eggs.push(spots.swap_remove(at));

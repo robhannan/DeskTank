@@ -274,15 +274,19 @@ fn an_egg_layer_lays_a_clutch_that_hatches_into_fry() {
     assert_eq!(mum.rest(), 14 * LIFE_DAY_TICKS);
     let clutch = w.clutches()[0].clone();
     assert_eq!(clutch.species(), s);
-    assert!((4..=10).contains(&clutch.eggs().len()));
+    // Up to her brood of 4–10, as many as there are spots for.
+    assert!((1..=10).contains(&clutch.eggs().len()));
     let width = w.width();
     for &e in clutch.eggs() {
         let (x, y) = (e as usize % width, e as usize / width);
         let cell = w.cell(x, y).unwrap();
         assert_eq!((cell.material, cell.state), (egg, clutch.id()));
-        // Near her and on no creature.
+        // Near her (on the bed below her at most) and on no creature.
         let b = w.creature_body(mum);
-        assert!(x + 4 > b.x0 && x < b.x1 + 4 && y + 4 > b.y0 && y < b.y1 + 4);
+        assert!(
+            x + 7 > b.x0 && x < b.x1 + 7 && y + 7 > b.y0,
+            "{x} {y} {b:?}"
+        );
         assert!(w.creature_at(x as i64, y as i64).is_none());
     }
     // Most stick to something: here the sand bed below them.
