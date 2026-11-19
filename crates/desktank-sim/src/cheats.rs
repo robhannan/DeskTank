@@ -14,7 +14,7 @@
 //! stock, change the water); an unknown or malformed line returns a
 //! [`CheatError`] for the host to show, and never panics.
 
-use crate::{Brush, MAX_CREATURES, MaterialId, World, WorldError};
+use crate::{Brush, MaterialId, World, WorldError};
 
 /// A key the Konami detector cares about; hosts map every other key to
 /// [`CheatKey::Other`].
@@ -313,7 +313,7 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
     let width = i64::try_from(world.width()).unwrap_or(i64::MAX);
     let mut added = 0;
     for i in 0..count {
-        if world.creatures().len() >= MAX_CREATURES {
+        if world.creatures().len() >= world.creature_cap() {
             break;
         }
         // Spread across the tank, offset by the tick so repeats don't stack.
@@ -329,8 +329,9 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
         }
     }
     if added == 0 {
-        return Err(if world.creatures().len() >= MAX_CREATURES {
-            WorldError::PopulationCap(MAX_CREATURES)
+        let cap = world.creature_cap();
+        return Err(if world.creatures().len() >= cap {
+            WorldError::PopulationCap(cap)
         } else {
             WorldError::NoRoom
         }
@@ -496,13 +497,14 @@ mod tests {
         while let Ok(out) = run(&mut w, "spawn neon_tetra 10") {
             assert!(out.message.starts_with("spawned"));
             added += 1;
-            assert!(added <= MAX_CREATURES, "never refused");
+            assert!(added <= w.creature_cap(), "never refused");
         }
-        assert!(w.creatures().len() <= MAX_CREATURES);
-        if w.creatures().len() == MAX_CREATURES {
+        let cap = w.creature_cap();
+        assert!(w.creatures().len() <= cap);
+        if w.creatures().len() == cap {
             assert_eq!(
                 run(&mut w, "spawn neon_tetra"),
-                Err(CheatError::World(WorldError::PopulationCap(MAX_CREATURES)))
+                Err(CheatError::World(WorldError::PopulationCap(cap)))
             );
         }
     }
