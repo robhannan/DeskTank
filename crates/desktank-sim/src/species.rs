@@ -78,8 +78,6 @@ pub struct Sprite {
     pub height: usize,
     /// Animation frames.
     pub frames: Vec<Vec<[u8; 4]>>,
-    /// Optional second set of frames with twice the width and height.
-    pub fine_frames: Vec<Vec<[u8; 4]>>,
     /// The palette icon: hand-drawn at one pixel per cell, at most
     /// [`MAX_ICON_SIDE`] a side, in the same colours.
     pub icon: Icon,
@@ -223,8 +221,6 @@ fn default_reach() -> u8 {
 struct SpriteDef {
     colours: BTreeMap<String, String>,
     frames: Vec<Vec<String>>,
-    #[serde(default)]
-    fine_frames: Vec<Vec<String>>,
     icon: Vec<String>,
 }
 
@@ -437,22 +433,13 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
     if width % TEXELS_PER_CELL != 0 || height % TEXELS_PER_CELL != 0 {
         return Err("sprite sides must be even (two texels per cell)");
     }
-    let decode = |frames: &[Vec<String>], width, height| {
-        frames
-            .iter()
-            .map(|rows| {
-                if rows.len() != height {
-                    return Err("every sprite frame must be the expected height");
-                }
-                texels(rows, width, &key)
-            })
-            .collect::<Result<Vec<_>, _>>()
-    };
-    if !def.fine_frames.is_empty() && def.fine_frames.len() != def.frames.len() {
-        return Err("fine frames must match the base animation's frame count");
+    let mut frames = Vec::with_capacity(def.frames.len());
+    for rows in &def.frames {
+        if rows.len() != height {
+            return Err("every sprite frame must be the same size");
+        }
+        frames.push(texels(rows, width, &key)?);
     }
-    let frames = decode(&def.frames, width, height)?;
-    let fine_frames = decode(&def.fine_frames, width * 2, height * 2)?;
     let icon_height = def.icon.len();
     let icon_width = def.icon.first().map_or(0, |r| r.chars().count());
     if !(1..=MAX_ICON_SIDE).contains(&icon_width) || !(1..=MAX_ICON_SIDE).contains(&icon_height) {
@@ -467,7 +454,6 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
         width,
         height,
         frames,
-        fine_frames,
         icon,
     })
 }
@@ -711,24 +697,6 @@ mod tests {
         assert_eq!((s.sprite.icon.width, s.sprite.icon.height), (3, 2));
         assert_eq!(s.sprite.icon.pixels[2], [0x40, 0x50, 0x60, 255]);
         assert_eq!(s.sprite.icon.pixels[4], [0; 4]);
-    }
-
-    #[test]
-    fn fine_art_must_match_the_base_poses_at_double_size() {
-        let betta = include_str!("../../../assets/species/betta.toml");
-        let materials = materials();
-        let parse = |src: &str| SpeciesTable::from_toml_sources(&[src], &materials);
-        let table = parse(betta).unwrap();
-        let art = &table.get(table.id("betta").unwrap()).unwrap().sprite;
-        assert_eq!(art.fine_frames.len(), art.frames.len());
-        assert!(art.fine_frames.iter().all(|f| f.len() == 32 * 24));
-        // Two base poses in the 6×4 test frame need two 12×8 fine poses.
-        for invalid in [r#"[["aa"]]"#, r#"[["aa"], ["aa"]]"#] {
-            assert!(matches!(
-                parse(&format!("{OK}\nfine_frames = {invalid}")),
-                Err(SpeciesError::Invalid { .. })
-            ));
-        }
     }
 
     #[test]

@@ -6,7 +6,7 @@
 // texel in the plant texture holds the health tint and the species id; the
 // species texture holds the colour ramps and part shapes. The interact overlay (palette
 // and brush outline) is drawn on top. Creature sprites are instanced quads
-// drawn after the grid (vs_sprite / fs_sprite) from the fitting atlas frame.
+// drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell side.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
 
@@ -628,7 +628,7 @@ struct SpriteOut {
 };
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
-// to a target pixel.
+// to a target pixel and each texel half a cell wide.
 @vertex
 fn vs_sprite(
     @builtin(vertex_index) i: u32,
@@ -640,7 +640,6 @@ fn vs_sprite(
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
     @location(3) orient: vec2<f32>,
-    @location(4) fine_origin: vec2<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -665,12 +664,10 @@ fn vs_sprite(
         q.x = 1.0 - q.x;
     }
     // The frame's size in texels.
-    let fine = fine_origin.x >= 0.0 && fine_scale();
-    let density = TEXELS_PER_CELL * select(1.0, 2.0, fine);
-    let frame = select(size, size.yx, turn % 2u == 1u) * density;
+    let frame = select(size, size.yx, turn % 2u == 1u) * TEXELS_PER_CELL;
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    o.texel = select(origin, fine_origin, fine) + q * frame;
+    o.texel = origin + q * frame;
     return o;
 }
 
