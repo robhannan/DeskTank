@@ -2,10 +2,11 @@
 // scale, nearest by construction), looks up (material, variant) in the
 // palette, darkens water with depth and tints by the time of day. Plant
 // cells (T6b, T6d) are drawn from their species instead, at two texels per
-// cell side like the sprites: the cell's state bytes are its plant id, whose
-// texel in the plant texture holds the health tint and the species id; the
-// species texture holds the colour ramps and part shapes. The interact overlay (palette
-// and brush outline) is drawn on top. Creature sprites are instanced quads
+// cell side like the sprites, or four at scales divisible by four: the
+// cell's state bytes are its plant id, whose texel in the plant texture
+// holds the health tint and the species id; the species texture holds the
+// colour ramps and part shapes. The interact overlay (palette and brush
+// outline) is drawn on top. Creature sprites are instanced quads
 // drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell side.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
@@ -229,7 +230,7 @@ fn is_water(at: vec2<i32>) -> bool {
     return inside(at) && round(textureLoad(cells, at, 0).r * 255.0) == view.plant_parts.w;
 }
 
-// A static per-texel hash (texel coordinates in the grid's 2x texel space).
+// A static per-texel hash (texel coordinates in the grid's 2x or 4x texel space).
 fn hash(p: vec2<i32>) -> u32 {
     var h = (u32(p.x) * 0x8da6b343u) ^ (u32(p.y) * 0xd8163841u);
     h = (h ^ (h >> 13u)) * 0x5bd1e995u;
@@ -343,7 +344,7 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> 
             }
             if fine {
                 if pos <= 2 && !tip {
-                    // A slender petiole with a pale upper edge.
+                    // A slender petiole, paler on its left.
                     covered = quarter.x == 1 || quarter.x == 2;
                     step += select(0, 1, quarter.x == 1);
                 } else {
