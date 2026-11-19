@@ -1,12 +1,12 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and the version 1 and 2 fixtures
-//! load (version 1 migrated to 2, T9).
+//! rigid bodies the hash leaves out), and the version 1, 2 and 3 fixtures
+//! load (version 1 migrated to 2, T9; version 2 to 3, D21).
 //!
-//! The version 1 fixture is frozen: this build no longer writes version 1.
-//! `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites the
-//! version 2 fixture; only do that while version 2 is unreleased or its
+//! The version 1 and 2 fixtures are frozen: this build no longer writes
+//! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
+//! the version 3 fixture; only do that while version 3 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -212,21 +212,23 @@ fn a_version_1_fixture_loads() {
     assert!(w.bodies().any(|b| b.anchored));
     let soil = id(&w, "aquasoil");
     assert!(w.material_counts()[usize::from(soil.0)] > 3000);
-    // It runs on, and saves as version 2 that loads to the same state.
+    // It runs on, and saves as the current version that loads to the same
+    // state.
     for _ in 0..200 {
         w.tick();
     }
     assert_eq!(w.tick_count(), 1400);
     let again = save::encode(&w);
-    assert_eq!(save::check(&again), Ok(2));
+    assert_eq!(save::check(&again), Ok(FORMAT_VERSION));
     assert_eq!(
         save::decode(&again, table()).unwrap().state_hash(),
         w.state_hash()
     );
 }
 
-/// What the version 2 fixture holds: `busy` with life state (a fry, a
-/// hungry creature, a corpse, easy mode on and a cap of 40).
+/// What the version 2 and 3 fixtures hold: `busy` with life state (a fry,
+/// a hungry creature, a corpse, easy mode on and a cap of 40). Version 2
+/// was written before depth bands, so its creatures moved differently.
 fn lively() -> World {
     let mut w = busy(3, 600);
     w.set_easy_mode(true);
@@ -246,11 +248,7 @@ fn lively() -> World {
 
 #[test]
 fn a_version_2_fixture_loads() {
-    let path = fixture(2);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&lively())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(2)).unwrap();
     assert_eq!(save::check(&bytes), Ok(2));
     let mut w = save::decode(&bytes, table()).unwrap();
     assert_eq!(w.tick_count(), 700);
@@ -263,9 +261,20 @@ fn a_version_2_fixture_loads() {
             .any(|c| w.life_stage(c) == LifeStage::Fry)
     );
     assert!(w.creatures().iter().any(|c| c.energy() < 5000));
+    // Version 3 (D21) puts each creature at rest in its starting band: a
+    // hash of the seed and its id, so they spread over the bands.
+    let bands: std::collections::BTreeSet<u8> = w
+        .creatures()
+        .iter()
+        .map(desktank_sim::Creature::band)
+        .collect();
+    for c in w.creatures() {
+        assert_eq!(c.depth(), f32::from(c.band()));
+    }
+    assert!(bands.len() >= 4, "bands {bands:?}");
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0xf7c4_4953_00e1_0fff);
+    assert_eq!(w.state_hash(), 0x3cc1_2feb_b949_01ff);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -276,6 +285,35 @@ fn a_version_2_fixture_loads() {
     let corpse = &w.corpses()[0];
     assert_eq!((corpse.died(), corpse.decay()), (620, 0.0));
     assert_eq!(corpse.cause(), desktank_sim::DeathCause::OldAge);
+    for _ in 0..200 {
+        w.tick();
+    }
+    assert_eq!(w.tick_count(), 900);
+}
+
+#[test]
+fn a_version_3_fixture_loads() {
+    let path = fixture(3);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&lively())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(3));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    assert_eq!(w.tick_count(), 700);
+    assert!(w.easy_mode() && w.creature_cap() == 40 && w.corpses().len() == 1);
+    // Depth is saved: decoded, it matches the tank that wrote it.
+    let fresh = lively();
+    let depths = |w: &World| -> Vec<(u32, f32)> {
+        w.creatures()
+            .iter()
+            .map(|c| (c.id().0, c.depth()))
+            .collect()
+    };
+    assert_eq!(depths(&w), depths(&fresh));
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Pinned, so every platform decodes the same state.
+    assert_eq!(w.state_hash(), 0x83f7_097c_a14e_52b1);
     for _ in 0..200 {
         w.tick();
     }
