@@ -11,8 +11,11 @@
 //! hosts with keyboard focus (the window, the web) use [`Konami::new`].
 //!
 //! Cheats are harmless shortcuts to things the tools can already do (feed,
-//! stock, change the water); an unknown or malformed line returns a
-//! [`CheatError`] for the host to show, and never panics.
+//! stock, change the water), plus two easter eggs: the phrases `why not?`
+//! and `home owner!` each add one of the cheat-only crabs
+//! ([`MEDICAL_CRAB`], [`HOME_OWNING_CRAB`]), which the palette and `spawn`
+//! don't offer. An unknown or malformed line returns a [`CheatError`] for
+//! the host to show, and never panics.
 
 use crate::{Brush, MaterialId, World, WorldError};
 
@@ -136,6 +139,13 @@ pub const FEED_FOOD: &str = "flake_food";
 /// How many pinches of food a feed sprinkles across the tank.
 pub const FEED_PINCHES: i64 = 12;
 
+/// The species `why not?` adds: a crab-dancing medical crab.
+pub const MEDICAL_CRAB: &str = "medical_crab";
+
+/// The species `home owner!` adds: the medical crab in gardening clothes,
+/// which plants a carpet patch at a home it picks.
+pub const HOME_OWNING_CRAB: &str = "home_owning_crab";
+
 /// Why a cheat line didn't run.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum CheatError {
@@ -168,7 +178,8 @@ pub struct CheatOutcome {
 /// One entry in the cheat registry.
 #[derive(Clone, Copy, Debug)]
 pub struct Cheat {
-    /// The word that runs it (lower case).
+    /// The word that runs it (lower case), or a phrase of words separated
+    /// by single spaces, which must make up the whole line.
     pub name: &'static str,
     /// Its arguments, for `help`.
     pub usage: &'static str,
@@ -223,10 +234,23 @@ pub const CHEATS: &[Cheat] = &[
             })
         },
     },
+    Cheat {
+        name: "why not?",
+        usage: "",
+        help: "add a medical crab",
+        run: |world, _| spawn_one(world, MEDICAL_CRAB),
+    },
+    Cheat {
+        name: "home owner!",
+        usage: "",
+        help: "add a home owning crab, which plants a lawn at its home",
+        run: |world, _| spawn_one(world, HOME_OWNING_CRAB),
+    },
 ];
 
-/// Runs one cheat line, such as `spawn neon_tetra 3`. Words are separated
-/// by spaces; the cheat's name ignores case.
+/// Runs one cheat line, such as `spawn neon_tetra 3` or `why not?`. Words
+/// are separated by spaces (any run of whitespace, leading and trailing
+/// ignored); names and phrases ignore case.
 ///
 /// # Errors
 ///
@@ -234,6 +258,17 @@ pub const CHEATS: &[Cheat] = &[
 /// that don't fit, or a world that turns the cheat down; the world is left
 /// as it was in each case.
 pub fn run(world: &mut World, line: &str) -> Result<CheatOutcome, CheatError> {
+    let phrase = line
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if let Some(cheat) = CHEATS
+        .iter()
+        .find(|c| c.name.contains(' ') && c.name == phrase)
+    {
+        return (cheat.run)(world, &[]);
+    }
     let mut words = line.split_whitespace();
     let name = words.next().ok_or(CheatError::Empty)?.to_ascii_lowercase();
     let args: Vec<&str> = words.collect();
@@ -297,14 +332,45 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
         return Err(usage());
     }
     let name = name.to_ascii_lowercase();
-    let Some(species) = world.species().id(&name) else {
-        let names: Vec<&str> = world.species().iter().map(|s| s.name.as_str()).collect();
+    // Cheat-only species come from their own cheats.
+    let Some(species) = world
+        .species()
+        .iter()
+        .find(|s| s.name == name && !s.cheat_only)
+        .map(|s| s.id)
+    else {
+        let names: Vec<&str> = world
+            .species()
+            .iter()
+            .filter(|s| !s.cheat_only)
+            .map(|s| s.name.as_str())
+            .collect();
         return Err(CheatError::Usage(format!(
             "unknown species {:?}; one of {}",
             truncate(&name, 24),
             names.join(", ")
         )));
     };
+    add(world, species, count, &name)
+}
+
+/// Adds one creature of the species named `name` (a cheat-only crab).
+fn spawn_one(world: &mut World, name: &str) -> Result<CheatOutcome, CheatError> {
+    let species = world
+        .species()
+        .id(name)
+        .ok_or_else(|| CheatError::Usage(format!("this tank has no {name}")))?;
+    add(world, species, 1, name)
+}
+
+/// Adds `count` creatures of `species` (named `name` in the message),
+/// spread across the tank in its depth zone, up to the population cap.
+fn add(
+    world: &mut World,
+    species: crate::SpeciesId,
+    count: usize,
+    name: &str,
+) -> Result<CheatOutcome, CheatError> {
     // Its depth zone, or (a glass climber) the whole water column.
     let (top, bottom) = world
         .zone_rows(species)

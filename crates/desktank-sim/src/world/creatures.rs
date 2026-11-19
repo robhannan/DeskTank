@@ -28,7 +28,10 @@
 //!   registry of food cells kept like the living lists, not by scanning.
 //! - **Life cycle** (T9): age, stages, growth with feeding, deaths and
 //!   corpses are in [`lifecycle`].
+//! - **Habits** of a few species (waste, eating corpses, a home with a
+//!   carpet patch) are in [`habits`].
 
+mod habits;
 mod lifecycle;
 mod steering;
 
@@ -42,8 +45,9 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v2};
+use crate::save::{SaveError, v3};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
+use habits::{home_span, near_home};
 pub use lifecycle::{
     BITE_ENERGY, CORPSE_SINK, Corpse, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
     LifeStage, MAX_CORPSES, POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, STRESS_LIMIT,
@@ -156,6 +160,9 @@ pub struct Creature {
     energy: u32,
     /// Stress from poor water, see [`STRESS_LIMIT`].
     stress: u32,
+    /// The substrate cell `(x, y)` a home owning species picked as its
+    /// home and planted its carpet patch on (see [`habits`]).
+    home: Option<(u32, u32)>,
 }
 
 impl Creature {
@@ -237,6 +244,13 @@ impl Creature {
         self.stress
     }
 
+    /// The substrate cell `(x, y)` it picked as its home, if it keeps one
+    /// (a species with a `home_carpet`) and has picked it.
+    #[must_use]
+    pub fn home(&self) -> Option<(usize, usize)> {
+        self.home.map(|(x, y)| (x as usize, y as usize))
+    }
+
     /// Health from 0 to 1 for the inspect card: the lower of how full its
     /// energy reserve is (counting a quarter full as healthy) and how far
     /// it is from dying of poor water.
@@ -263,6 +277,7 @@ impl Creature {
 
 /// A species' movement numbers in fixed point.
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::struct_excessive_bools)] // independent species traits
 struct Kind {
     /// Body size in cells.
     w: i32,
@@ -285,6 +300,12 @@ struct Kind {
     maturity: u32,
     lifespan: u32,
     edible: [bool; 256],
+    /// Ticks between droppings of waste (0: it leaves none).
+    waste_every: u64,
+    /// It bites corpses within reach too.
+    eats_corpses: bool,
+    /// It picks a home and plants a carpet there.
+    homebody: bool,
 }
 
 /// The creatures in a world and the per-species and per-material lookups
@@ -304,6 +325,7 @@ pub(super) struct Creatures {
     water: MaterialId,
     air: MaterialId,
     detritus: Option<MaterialId>,
+    waste: Option<MaterialId>,
     /// Bumped whenever a creature or corpse is added, removed, moves or
     /// turns, or a corpse fades.
     version: u64,
@@ -376,6 +398,13 @@ impl Creatures {
                 maturity: s.maturity_days.saturating_mul(LIFE_DAY_TICKS),
                 lifespan: s.lifespan_days.saturating_mul(LIFE_DAY_TICKS),
                 edible,
+                // Validated to 1..=600 s.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                waste_every: s.waste_every.map_or(0, |every| {
+                    (f64::from(every) * f64::from(TICKS_PER_SECOND)).round() as u64
+                }),
+                eats_corpses: s.eats_corpses,
+                homebody: s.home_carpet.is_some(),
             });
         }
         Self {
@@ -389,6 +418,7 @@ impl Creatures {
             water,
             air,
             detritus: materials.id("detritus"),
+            waste: materials.id("waste"),
             version: 0,
             cap: DEFAULT_CREATURE_CAP,
             easy: false,
@@ -543,6 +573,7 @@ impl World {
             growth,
             energy: ENERGY_RESERVE,
             stress: 0,
+            home: None,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -652,16 +683,16 @@ impl World {
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
     /// host's cursor isn't saved.
-    pub(super) fn save_creatures(&self) -> v2::Creatures {
+    pub(super) fn save_creatures(&self) -> v3::Creatures {
         let cr = &self.creatures;
-        v2::Creatures {
+        v3::Creatures {
             next_id: cr.next_id,
             cap: u32::try_from(cr.cap).unwrap_or(u32::MAX),
             easy: cr.easy,
             list: cr
                 .list
                 .iter()
-                .map(|c| v2::Creature {
+                .map(|c| v3::Creature {
                     id: c.id.0,
                     species: c.species.0,
                     x: c.x,
@@ -683,12 +714,13 @@ impl World {
                     growth: c.growth,
                     energy: c.energy,
                     stress: c.stress,
+                    home: c.home,
                 })
                 .collect(),
             corpses: cr
                 .corpses
                 .iter()
-                .map(|c| v2::Corpse {
+                .map(|c| v3::Corpse {
                     species: c.species.0,
                     cause: c.cause.code(),
                     x: c.x,
@@ -705,7 +737,7 @@ impl World {
     }
 
     /// Restores the creatures, corpses and life settings from a save.
-    pub(super) fn load_creatures(&mut self, saved: v2::Creatures) -> Result<(), SaveError> {
+    pub(super) fn load_creatures(&mut self, saved: v3::Creatures) -> Result<(), SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -736,6 +768,11 @@ impl World {
             for i in [c.food, c.ignore].into_iter().flatten() {
                 self.cell_index(i, "a creature's food")?;
             }
+            if !self.home_fits(k, c.home) {
+                return Err(invalid(
+                    "home outside the grid or for a species without one",
+                ));
+            }
             list.push(Creature {
                 id: CreatureId(c.id),
                 species,
@@ -758,16 +795,32 @@ impl World {
                 growth: c.growth,
                 energy: c.energy,
                 stress: c.stress,
+                home: c.home,
             });
         }
-        if saved.corpses.len() > MAX_CORPSES {
-            return Err(SaveError::Invalid(format!(
-                "{} corpses",
-                saved.corpses.len()
-            )));
+        let corpses = self.load_corpses(saved.corpses)?;
+        self.creatures.list = list;
+        self.creatures.corpses = corpses;
+        self.creatures.cap = cap;
+        self.creatures.easy = saved.easy;
+        self.creatures.next_id = saved.next_id.max(1);
+        self.creatures.version += 1;
+        Ok(())
+    }
+
+    /// The corpses from a save, checked against the species.
+    fn load_corpses(&self, saved: Vec<v3::Corpse>) -> Result<Vec<Corpse>, SaveError> {
+        let (w, h) = (
+            to_i64(self.width) * i64::from(ONE),
+            to_i64(self.height) * i64::from(ONE),
+        );
+        let inside =
+            |x: i32, y: i32| (0..=w).contains(&i64::from(x)) && (0..=h).contains(&i64::from(y));
+        if saved.len() > MAX_CORPSES {
+            return Err(SaveError::Invalid(format!("{} corpses", saved.len())));
         }
-        let mut corpses = Vec::with_capacity(saved.corpses.len());
-        for c in saved.corpses {
+        let mut corpses = Vec::with_capacity(saved.len());
+        for c in saved {
             let invalid = |what: &str| SaveError::Invalid(format!("corpse: {what}"));
             let species = SpeciesId(c.species);
             if self.kind(species).is_none() {
@@ -800,13 +853,7 @@ impl World {
                 total: c.total,
             });
         }
-        self.creatures.list = list;
-        self.creatures.corpses = corpses;
-        self.creatures.cap = cap;
-        self.creatures.easy = saved.easy;
-        self.creatures.next_id = saved.next_id.max(1);
-        self.creatures.version += 1;
-        Ok(())
+        Ok(corpses)
     }
 
     pub(super) fn hash_creatures(&self, h: &mut Fnv64) {
@@ -827,6 +874,11 @@ impl World {
             h.write(&c.eaten.to_le_bytes());
             for v in [c.age, c.growth, c.energy, c.stress] {
                 h.write(&v.to_le_bytes());
+            }
+            // Only home owners have one, so other tanks hash as before.
+            if let Some((x, y)) = c.home {
+                h.write(&x.to_le_bytes());
+                h.write(&y.to_le_bytes());
             }
         }
         self.hash_corpses(h);
@@ -903,9 +955,10 @@ impl World {
         let mut rng = chunk_stream(self.seed, self.tick, CREATURE_STREAM + u64::from(c.id.0));
         c.satiety = c.satiety.saturating_sub(1);
         let hungry = c.hungry();
+        self.habits(&k, c, &mut rng);
         if k.zone == Zone::Surfaces {
             self.crawl(&k, c);
-            if hungry && self.life.food_cells() > 0 {
+            if hungry && self.anything_to_eat(&k) {
                 self.eat(&k, c);
             }
             return (c.x, c.y, c.facing_left, c.turn) != before;
@@ -927,7 +980,7 @@ impl World {
 
         // Move, sliding along whatever blocks one axis.
         let blocked = !self.try_move(&k, c);
-        if hungry && self.life.food_cells() > 0 && self.eat(&k, c) {
+        if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
             c.food = None;
         } else if blocked {
             (c.vx, c.vy) = (0, 0);
@@ -1045,7 +1098,7 @@ impl World {
                 }
             }
         }
-        false
+        k.eats_corpses && self.bite_corpse(reach, c)
     }
 
     /// The nearest food cell `c` eats within [`FOOD_SENSE`], skipping the
@@ -1082,6 +1135,9 @@ impl World {
                     to_i64(i as usize % self.width),
                     to_i64(i as usize / self.width),
                 );
+                if !near_home(c, fx) {
+                    continue;
+                }
                 let d = (fx - cx).pow(2) + (fy - cy).pow(2);
                 if d <= sense2 && best.is_none_or(|(bd, bi)| d < bd || (d == bd && i < bi)) {
                     best = Some((d, i));
@@ -1105,7 +1161,9 @@ impl World {
         };
         // Body centres that keep the whole body inside the zone and walls.
         let (hw, hh) = (i64::from(k.w / 2 + 1), i64::from(k.h / 2));
-        let x = span(hw, w - hw, rng);
+        // A home owner wanders only near its home.
+        let (x0, x1) = home_span(c).map_or((hw, w - hw), |(lo, hi)| (lo.max(hw), hi.min(w - hw)));
+        let x = span(x0, x1, rng);
         let y = span(to_i64(top) + hh, to_i64(bottom) - hh, rng);
         (c.tx, c.ty) = (centre_of(x), centre_of(y));
         let (lo, hi) = RETARGET_TICKS;

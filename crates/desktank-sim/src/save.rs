@@ -17,7 +17,8 @@
 //!
 //! **Payload**: an LZ4 block (its uncompressed size prepended as a
 //! little-endian `u32`) holding the `postcard` encoding of the version's
-//! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2). The grid inside it is stored
+//! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2,
+//! `save::v3::Save` for 3). The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
 //! the LZ4 pass).
@@ -30,7 +31,8 @@
 //! random-tick lists and cursor, and the nutrient, CO₂ and light fields
 //! (T5); the plant table with its update bookkeeping (T6b); the creatures
 //! (T7) with their age, growth, energy and stress, the corpses, easy mode
-//! and the population cap (T9, version 2). Random streams are derived from `(seed, tick, stream)` (SPEC
+//! and the population cap (T9, version 2), and each creature's home (a
+//! home owning species', version 3). Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
 //! the build, and the save records the name behind every material and
@@ -41,7 +43,8 @@
 //! keeps its snapshot types (`v1`, …) and a migration to the next, and
 //! [`decode`] runs them in turn. A version newer than the build is
 //! rejected. Version 2 (T9) migrates a version 1 tank's creatures to
-//! well-fed adults just mature, with the default cap and easy mode off.
+//! well-fed adults just mature, with the default cap and easy mode off;
+//! version 3 migrates a version 2 tank's creatures with no home.
 
 use thiserror::Error;
 
@@ -51,11 +54,12 @@ use crate::world::{LIFE_DAY_TICKS, World, WorldError};
 
 pub(crate) mod v1;
 pub(crate) mod v2;
+pub(crate) mod v3;
 
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 3;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -102,7 +106,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v2();
+    let snapshot = world.to_v3();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     let payload = lz4_flex::block::compress_prepend_size(&raw);
@@ -134,16 +138,17 @@ pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError
             let v1: v1::Save = postcard::from_bytes(&raw).map_err(payload)?;
             let species = SpeciesTable::builtin_for(&materials)
                 .map_err(|e| WorldError::Species(e.to_string()))?;
-            v2::Save::from_v1(v1, |id| {
+            v3::Save::from_v2(v2::Save::from_v1(v1, |id| {
                 species
                     .get(SpeciesId(id))
                     .map_or(0, |s| s.maturity_days.saturating_mul(LIFE_DAY_TICKS))
-            })
+            }))
         }
-        2 => postcard::from_bytes(&raw).map_err(payload)?,
+        2 => v3::Save::from_v2(postcard::from_bytes(&raw).map_err(payload)?),
+        3 => postcard::from_bytes(&raw).map_err(payload)?,
         v => return Err(SaveError::UnsupportedVersion(v)),
     };
-    World::from_v2(snapshot, materials)
+    World::from_v3(snapshot, materials)
 }
 
 /// Checks the envelope (magic, version, length, checksum) without decoding
@@ -266,8 +271,8 @@ mod tests {
         let rock = world.materials().id("rock").unwrap();
         world.paint(20, 10, 3, rock, crate::Brush::Pour).unwrap();
         world.tick();
-        let good = world.to_v2();
-        let load = |s: v2::Save| World::from_v2(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v3();
+        let load = |s: v3::Save| World::from_v3(s, MaterialTable::builtin().unwrap());
         assert!(load(good.clone()).is_ok());
 
         let mut renamed = good.clone();
@@ -303,7 +308,7 @@ mod tests {
         // their cells, as a death makes them.
         let mut dead = good.clone();
         let tetra = world.species().id("neon_tetra").unwrap();
-        dead.creatures.corpses.push(v2::Corpse {
+        dead.creatures.corpses.push(v3::Corpse {
             species: tetra.0,
             cause: 0,
             x: 20 * 256,
@@ -317,10 +322,10 @@ mod tests {
         });
         assert!(load(dead.clone()).is_ok());
         for bad in [
-            |c: &mut v2::Corpse| c.w = 255,
-            |c: &mut v2::Corpse| c.h = 0,
-            |c: &mut v2::Corpse| c.total = 65_535,
-            |c: &mut v2::Corpse| c.released = 7,
+            |c: &mut v3::Corpse| c.w = 255,
+            |c: &mut v3::Corpse| c.h = 0,
+            |c: &mut v3::Corpse| c.total = 65_535,
+            |c: &mut v3::Corpse| c.released = 7,
         ] {
             let mut s = dead.clone();
             bad(&mut s.creatures.corpses[0]);
@@ -332,6 +337,35 @@ mod tests {
         let mut big = good;
         big.width = 9000;
         assert!(matches!(load(big), Err(SaveError::World(_))));
+    }
+
+    #[test]
+    fn rejects_homes_outside_the_grid_or_for_species_without_one() {
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 64,
+                height: 48,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        for name in ["neon_tetra", "home_owning_crab"] {
+            let s = world.species().id(name).unwrap();
+            world.add_creature(s, 32, 30).unwrap();
+        }
+        let good = world.to_v3();
+        let load = |s: v3::Save| World::from_v3(s, MaterialTable::builtin().unwrap());
+        let with = |i: usize, home| {
+            let mut s = good.clone();
+            s.creatures.list[i].home = Some(home);
+            load(s)
+        };
+        let owner = with(1, (10, 40)).unwrap();
+        assert_eq!(owner.creatures()[1].home(), Some((10, 40)));
+        assert!(matches!(with(1, (64, 40)), Err(SaveError::Invalid(_))));
+        assert!(matches!(with(1, (10, 48)), Err(SaveError::Invalid(_))));
+        assert!(matches!(with(0, (10, 40)), Err(SaveError::Invalid(_))));
     }
 
     #[test]

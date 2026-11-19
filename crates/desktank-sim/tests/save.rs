@@ -1,12 +1,12 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and the version 1 and 2 fixtures
-//! load (version 1 migrated to 2, T9).
+//! rigid bodies the hash leaves out), and the version 1, 2 and 3 fixtures
+//! load (version 1 migrated to 2, T9; version 2 to 3, the crabs' homes).
 //!
-//! The version 1 fixture is frozen: this build no longer writes version 1.
-//! `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites the
-//! version 2 fixture; only do that while version 2 is unreleased or its
+//! The version 1 and 2 fixtures are frozen: this build no longer writes
+//! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
+//! the version 3 fixture; only do that while version 3 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -81,11 +81,12 @@ fn busy(seed: u64, ticks: u32) -> World {
         w.paint(100, 20, 2, m, Brush::Pour).unwrap();
     }
     let species: Vec<_> = w.species().iter().map(|s| s.id).collect();
+    let n = species.len() as i64;
     for (k, s) in species.into_iter().enumerate() {
         let (top, bottom) = w.zone_rows(s).unwrap();
         let y = i64::try_from(usize::midpoint(top, bottom)).unwrap();
         // Room for a creature is not guaranteed; a full spot is fine.
-        let _ = w.add_creature(s, 15 + 17 * k as i64, y);
+        let _ = w.add_creature(s, 15 + 175 * k as i64 / n, y);
     }
     for t in 0..ticks {
         w.tick();
@@ -212,21 +213,23 @@ fn a_version_1_fixture_loads() {
     assert!(w.bodies().any(|b| b.anchored));
     let soil = id(&w, "aquasoil");
     assert!(w.material_counts()[usize::from(soil.0)] > 3000);
-    // It runs on, and saves as version 2 that loads to the same state.
+    // It runs on, and saves as the current version that loads to the same
+    // state.
     for _ in 0..200 {
         w.tick();
     }
     assert_eq!(w.tick_count(), 1400);
     let again = save::encode(&w);
-    assert_eq!(save::check(&again), Ok(2));
+    assert_eq!(save::check(&again), Ok(FORMAT_VERSION));
     assert_eq!(
         save::decode(&again, table()).unwrap().state_hash(),
         w.state_hash()
     );
 }
 
-/// What the version 2 fixture holds: `busy` with life state (a fry, a
-/// hungry creature, a corpse, easy mode on and a cap of 40).
+/// What the version 2 fixture holds: `busy` (as it was then, without the
+/// crabs) with life state (a fry, a hungry creature, a corpse, easy mode
+/// on and a cap of 40). The version 3 fixture is this as `busy` is now.
 fn lively() -> World {
     let mut w = busy(3, 600);
     w.set_easy_mode(true);
@@ -244,15 +247,51 @@ fn lively() -> World {
     w
 }
 
+/// What the version 3 fixture holds: [`lively`] with every species, and a
+/// home owning crab on the sand that has had time to pick its home.
+fn homely() -> World {
+    let mut w = lively();
+    let owner = w.species().id("home_owning_crab").unwrap();
+    w.add_creature(owner, 170, 94).unwrap();
+    for _ in 0..600 {
+        w.tick();
+    }
+    w
+}
+
 #[test]
-fn a_version_2_fixture_loads() {
-    let path = fixture(2);
+fn a_version_3_fixture_loads() {
+    let path = fixture(3);
     if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&lively())).unwrap();
+        std::fs::write(&path, save::encode(&homely())).unwrap();
     }
     let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(3));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    assert_eq!(w.tick_count(), 1300);
+    assert!(w.easy_mode());
+    assert_eq!(w.creature_cap(), 40);
+    // The home owning crab picked its home (and only it has one).
+    let owner = w.species().id("home_owning_crab").unwrap();
+    for c in w.creatures() {
+        assert_eq!(c.home().is_some(), c.species() == owner, "{:?}", c.id());
+    }
+    assert!(w.creatures().iter().any(|c| c.species() == owner));
+    // Decoding is pure, so the decoded state is the same on every platform.
+    assert_eq!(w.state_hash(), 0xf6ab_2cf7_ed34_a000);
+    for _ in 0..200 {
+        w.tick();
+    }
+    assert_eq!(w.tick_count(), 1500);
+}
+
+#[test]
+fn a_version_2_fixture_loads() {
+    let bytes = std::fs::read(fixture(2)).unwrap();
     assert_eq!(save::check(&bytes), Ok(2));
     let mut w = save::decode(&bytes, table()).unwrap();
+    // Version 2 had no homes.
+    assert!(w.creatures().iter().all(|c| c.home().is_none()));
     assert_eq!(w.tick_count(), 700);
     assert!(w.easy_mode());
     assert_eq!(w.creature_cap(), 40);
