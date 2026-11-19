@@ -16,7 +16,7 @@ use crate::{Gpu, timer::GpuTimer};
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 144;
+const VIEW_BYTES: u64 = 160;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -53,9 +53,9 @@ pub struct Renderer {
     /// Health tint per plant id (T6b), and its CPU copy.
     plants: wgpu::Texture,
     plant_tints: PlantTints,
-    /// Material ids of the root, stem and leaf parts and of water, for the
-    /// shader's plant shapes (-1 if missing).
-    plant_parts: [f32; 4],
+    /// Material ids of the root, stem and leaf parts and of water, then of
+    /// the runner part, for the shader's plant shapes (-1 if missing).
+    plant_parts: [f32; 8],
     /// Uniform bytes last written.
     view: Vec<u8>,
     scratch: Vec<u8>,
@@ -86,8 +86,8 @@ impl Renderer {
         let plants = create_plants(gpu, &plant_tints);
         let species = create_species(gpu, world);
         let material = |name: &str| world.materials().id(name).map_or(-1.0, |m| f32::from(m.0));
-        let [root, stem, leaf] = Part::ALL.map(|p| material(p.material_name()));
-        let plant_parts = [root, stem, leaf, material("water")];
+        let [root, stem, leaf, runner] = Part::ALL.map(|p| material(p.material_name()));
+        let plant_parts = [root, stem, leaf, material("water"), runner, 0.0, 0.0, 0.0];
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
         let atlas = Atlas::build(world.species());

@@ -11,6 +11,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 // Written by the native app (desktank-sim's T8 fixture: 200×120 cells, tick
 // 1200). crates/desktank-web/src/tests.rs checks the same hash natively.
 const NATIVE_SAVE = path.join(root, "crates/desktank-sim/tests/fixtures/v1.dtank");
+// The same tank as native re-saves it with this build's name tables
+// (`desktank-web`'s `a_native_save_opens` keeps it current).
+const NATIVE_RESAVED = path.join(root, "crates/desktank-web/tests/fixtures/v1-resaved.dtank");
 const NATIVE_HASH = "00359e05e22eea40";
 // The `layers` render scene at seed 1, saved natively by desktank-web's
 // tests (re-bless there with DESKTANK_BLESS=1).
@@ -169,12 +172,12 @@ test("Take over steals the lock from an owner that doesn't answer", async ({ con
   expect(errors).toEqual([]);
 });
 
-test("a native save imports, letterboxed, and exports the same bytes", async ({ page }) => {
+test("a native save imports, letterboxed, and exports what native writes", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   // Paused, so nothing ticks between import and export.
   await page.getByRole("button", { name: "Pause" }).click();
-  const native = await readFile(NATIVE_SAVE);
+  const native = await readFile(NATIVE_RESAVED);
   await page.locator("#import-file").setInputFiles(NATIVE_SAVE);
   await expect(page.locator("#notice")).toContainText("Imported v1.dtank: 200×120 cells");
   expect(await page.evaluate(() => [window.desktank.tank.width(), window.desktank.tank.height()])).toEqual([200, 120]);
@@ -195,7 +198,7 @@ test("a native save imports, letterboxed, and exports the same bytes", async ({ 
   expect(fit.w < fit.cw || fit.h < fit.ch, "letterboxed").toBe(true);
   expect(fit.nw > fit.cw || fit.nh > fit.ch, "the largest even scale").toBe(true);
 
-  expect(Buffer.compare(await download(page, "Export"), native), "the export is the native file").toBe(0);
+  expect(Buffer.compare(await download(page, "Export"), native), "the export is what native re-saves").toBe(0);
 
   // The import was saved: a reload opens it.
   await page.reload();

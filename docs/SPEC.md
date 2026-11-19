@@ -426,17 +426,23 @@ target computes the same bits.
   livebearer such as a guppy, a betta, a corydoras, cherry and amano-type
   shrimp, a nerite-type and a ramshorn-type snail, and a dwarf frog that
   surfaces to breathe. Fictional species are a stretch goal.
-  *Shipped so far (7):* neon tetra, betta, corydoras, nerite, cherry
-  shrimp (*Neocaridina davidi*), amano shrimp (*Caridina multidentata*)
-  and Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
-  the examples above). Two species keys extend the list above: `reach`
+  *Shipped so far (11):* neon tetra, betta, corydoras, nerite, cherry
+  shrimp (*Neocaridina davidi*), amano shrimp (*Caridina multidentata*),
+  Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
+  the examples above), honey gourami (*Trichogaster chuna*, an
+  air-breather like the betta), guppy (*Poecilia reticulata*, the
+  livebearer, drawn as a male until T9), harlequin rasbora
+  (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
+  sucker-mouth catfish that crawls surfaces like the nerite). Two species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2) and `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp). Every species also gives its
-  real-world body length, `length_cm` (nose to tail without antennae, a
-  crab's carapace), and is drawn at a shared 2 cells per cm, so species
+  real-world body length, `length_cm` (nose to tail without antennae or
+  an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
-  1.5 cm), cherry shrimp 2.5 cm, neon tetra 3.5 cm, amano shrimp 4 cm.
+  1.5 cm), cherry shrimp 2.5 cm, guppy 3 cm (4.5 cm with its tail), neon
+  tetra and otocinclus 3.5 cm, amano shrimp 4 cm, harlequin rasbora and
+  honey gourami 4.5 cm.
 - **Behaviour** is steering-based:
   - wander;
   - schooling for schoolers;
@@ -629,6 +635,11 @@ stays a material film, not individuals.
     cutting's `state` holds the species id it grows into (0 for the
     default, the lowest id). The generic parts so far are root, stem and
     leaf (a mat's cells are stems); T6c adds the rest.
+    *T6c (part 1):* a rosette's or carpet's blades are leaf cells (the
+    species' `[look] leaf` picks a blade shape), so blades cost no
+    material id; `runner` is a new part material, counted with roots in a
+    plant's part counts (so the table and saves keep three count slots).
+    Rhizomes and floating leaves come with T6c's later parts.
   - The table holds age and health, which the grid can't rebuild, so
     saves store it (§2.6). Ids, part counts and bounds are checked
     against the grid in tests.
@@ -670,8 +681,23 @@ stays a material film, not individuals.
     loosely or floats (hornwort type).
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
+    *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from
+    where it rooted), `blades` (at most `crown + 2`: above each crown cell
+    and beside its ends), `blade_length`, `lean`, `root_depth`, `spacing`
+    and `substrates`. Blades are one cell wide; those off the crown's
+    centre step a cell outwards at their second cell and every `lean`
+    cells after, more often further out (down to every third cell), so
+    outer blades arch away. Once every blade has started, a runner leaves
+    the root under the crown on each side, creeps through the top two
+    substrate layers (following the bed up and down) and, `spacing` or
+    more cells out where water is above, roots a child (crown above, root
+    at the tip; parent id set, generation + 1); it gives up at twice
+    `spacing`. A plant at its mature size still grows its runners.
+    `[growth] root_feeder` makes only roots and runners sample nutrients.
   - **Carpet:** low tufts; runners creep through the top substrate layer
-    and sprout a new tuft every `spacing` cells.
+    and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a
+    rosette with a one-cell crown and blades of at most 3 cells; each tuft
+    is its own plant.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.
@@ -685,7 +711,9 @@ stays a material film, not individuals.
     mature plants of seeding species drop seeds now and then; the palette
     pours a species' seeds, cuttings or fragments (one it lists; a
     poured fragment is the `cutting` material); fragments also come from
-    cuts.
+    cuts. *T6c:* a species listing `runners` (rosettes and carpets) spreads
+    by them, and the palette's runners pour a plantlet (the `cutting`
+    material).
 - <a id="plant-appearance"></a>**Appearance.** Effects are computed at
   render time where possible, so a change in a plant's look costs no
   chunk wakes and no cell rewrites.
@@ -1481,6 +1509,16 @@ Each package depends only on the packages before it.
     it is gone;
   - a GIF per form in the PR;
   - the settled bench budget holds with every v1 species growing.
+
+  Split into three PRs: (1) rosettes with runners, and carpets; (2)
+  floaters and budding; (3) epiphytes, mat fall-off and layered mats,
+  stem branching and surface trailing.
+  *Part 1 done:* the rosette and carpet forms with runners (§2.7
+  [Growth forms](#growth-forms)), the `runner` part, root feeders, and
+  amazon sword, vallisneria, cryptocoryne, dwarf hairgrass and Monte
+  Carlo; reference images `plant_rosettes` and `plant_carpets`; runners
+  root children with the parent id set; `settled_500_plants` grows every
+  form so far in 11.5 µs.
 - [ ] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night
@@ -1532,6 +1570,10 @@ Each package depends only on the packages before it.
   10 s and graze algae and detritus; Thai micro crabs are surface
   crawlers that cling to plants, rock and glass, walk the bed and
   filter-feed flakes and detritus from two cells away.
+  *More fish:* honey gouramis (upper half, air visits like the betta),
+  male guppies (roaming the middle and upper water), harlequin rasboras
+  (schooling with their own kind only) and otocinclus (surface crawlers
+  grazing algae) use the existing behaviours with no new species key.
 
 - [x] **T8 Persistence.** The save envelope and format, ownership lock,
   atomic writes keeping the last 3, autosave and save on exit (§2.6).

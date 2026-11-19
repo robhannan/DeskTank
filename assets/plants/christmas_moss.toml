@@ -1,0 +1,36 @@
+# Christmas moss (Vesicularia montagnei): a mat like java moss, but its
+# shoots branch in regular, layered fronds and it is a brighter green. It
+# grows a little slower and likes a little more light.
+id = 7
+name = "christmas_moss"
+description = "A bright, layered moss that creeps over rock and wood."
+form = "mat"
+propagation = ["fragments"]
+
+[mat]
+on = ["rock", "driftwood"]
+
+[prefer]
+light = { min = 0.03, optimum = 0.4, max = 1.5 }
+nutrient = { min = -0.2, optimum = 0.35, max = 3.0 }
+co2 = { min = -1.0, optimum = 1.0, max = 4.0 }
+
+[growth]
+rate = 6.0
+size = 500
+cost = 0.005
+
+[hardiness]
+tolerance = 25.0
+decline = 0.01
+recovery = 0.02
+
+# Brighter and yellower than java moss, with pale growing tips.
+[colours]
+root = ["#3a5a2a"]
+stem = ["#22561c", "#2c6e24", "#3a882e", "#4ca03a", "#62b84a", "#7ecc60"]
+leaf = ["#3a882e", "#4ca03a", "#62b84a"]
+
+# Layered, downswept fronds.
+[look]
+stem = "frond"

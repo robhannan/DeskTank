@@ -25,7 +25,7 @@
 //! glued = true       # a rigid material's body is glued in place (default false)
 //! # plant = "rotala" # instead of a material: pour this plant species
 //!                    # (assets/plants), as the palette's plants slot does
-//! # propagule = "seeds" # with `plant`: "seeds", "cuttings" or "fragments", one the
+//! # propagule = "seeds" # with `plant`: "seeds", "cuttings", "fragments" or "runners", one the
 //!                    # species lists (default: cuttings if it lists them, else its first)
 //!
 //! [[place]]
@@ -189,7 +189,7 @@ pub struct Pour {
     /// Material name (unused when `plant` is set).
     #[serde(default)]
     pub material: String,
-    /// Plant species name: pour its seeds, cuttings or fragments instead.
+    /// Plant species name: pour its seeds, cuttings, fragments or runners instead.
     #[serde(default)]
     pub plant: Option<String>,
     /// With `plant`: the propagule to pour (default: the species').

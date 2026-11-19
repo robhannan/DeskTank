@@ -1,6 +1,7 @@
-# Plant species side by side (T6d): rotala, hygrophila and java moss on a
-# glued rock, grown for 8 minutes in an aquasoil bed, so each species'
-# shapes and colour ramp are checked.
+# Plant species side by side (T6d): the five stem plants (rotala,
+# hygrophila, ludwigia, cabomba and bacopa) in an aquasoil bed, and java
+# moss and christmas moss on two glued rocks, grown for 8 minutes, so each
+# species' shapes and colour ramp are checked against the others.
 ticks = 9600
 
 [world]
@@ -16,39 +17,59 @@ material = "aquasoil"
 brush = "replace"
 
 [[pour]]
-x = 22
+x = 12
 y = 20
 radius = 0
 plant = "rotala"
 
 [[pour]]
-x = 44
-y = 20
-radius = 0
-plant = "rotala"
-
-[[pour]]
-x = 74
+x = 33
 y = 20
 radius = 0
 plant = "hygrophila"
+
+[[pour]]
+x = 54
+y = 20
+radius = 0
+plant = "ludwigia"
+
+[[pour]]
+x = 76
+y = 20
+radius = 0
+plant = "cabomba"
 
 [[pour]]
 x = 98
 y = 20
 radius = 0
-plant = "hygrophila"
+plant = "bacopa"
 
 [[pour]]
-x = 134
+x = 122
 y = 72
-radius = 9
+radius = 8
 material = "rock"
 brush = "replace"
 glued = true
 
 [[pour]]
-x = 134
+x = 122
 y = 72
-radius = 11
+radius = 10
 plant = "java_moss"
+
+[[pour]]
+x = 147
+y = 72
+radius = 8
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 147
+y = 72
+radius = 10
+plant = "christmas_moss"

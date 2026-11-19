@@ -390,7 +390,7 @@ impl WebTank {
     }
 
     /// The propagules the picked species grows from, as names (`seeds`,
-    /// `cuttings`, `fragments`): the plants slot's second picker.
+    /// `cuttings`, `fragments`, `runners`): the plants slot's second picker.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagules))]
     #[must_use]
     pub fn plant_propagules(&self) -> Vec<String> {

@@ -133,11 +133,25 @@ fn planted_scene_matches_reference_at_four_times_of_day() {
     }
 }
 
-/// Plant species (T6d): rotala, hygrophila and java moss side by side,
-/// each drawn with its own shapes and colour ramp.
+/// Plant species (T6d): all seven (rotala, hygrophila, ludwigia, cabomba,
+/// bacopa, java moss and christmas moss) side by side, each drawn with its
+/// own shapes and colour ramp.
 #[test]
 fn plant_species_scene_matches_reference() {
     check("plant_species");
+}
+
+/// T6c: amazon sword (on a root tab), vallisneria and cryptocoryne grown
+/// for 15 minutes, with runners and runner-rooted plants.
+#[test]
+fn plant_rosettes_scene_matches_reference() {
+    check("plant_rosettes");
+}
+
+/// T6c: dwarf hairgrass and Monte Carlo carpets grown for 15 minutes.
+#[test]
+fn plant_carpets_scene_matches_reference() {
+    check("plant_carpets");
 }
 
 /// Creatures (T7a): sprites of every species over the starter bed, after
@@ -159,4 +173,12 @@ fn climbing_scene_matches_reference() {
 #[test]
 fn invertebrates_scene_matches_reference() {
     check("invertebrates");
+}
+
+/// More fish: a harlequin rasbora school, male guppies and honey gouramis
+/// come up for flakes over the starter bed, and otocinclus on a rock, the
+/// glass and the bed.
+#[test]
+fn fish_scene_matches_reference() {
+    check("fish");
 }
