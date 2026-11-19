@@ -18,12 +18,15 @@
 //!     around her, as many as the cap leaves room for.
 //!   - An **egg layer** lays a clutch at once: egg cells (the `egg`
 //!     material, each holding the clutch's id in its state) stuck to the
-//!     glass, rock, plants or bed around her or, where there aren't enough
-//!     such spots, sunk to whatever lies below her. A clutch hatches into fry after the species' `days`, egg by egg where
+//!     glass, rock, plants or bed around her (not the waterline) or, where
+//!     there aren't enough such spots, sunk to whatever lies below her. A
+//!     clutch hatches into fry after the species' `days`, egg by egg where
 //!     the egg is still there; an egg that can't hatch because the tank is
 //!     at its cap rots into detritus. At most [`MAX_CLUTCHES`] clutches.
 //!
-//!   Either way she then rests for the species' `rest_days`.
+//!   Either way she then rests for the species' `rest_days`: after the
+//!   birth, or once a clutch is down (at the clutch limit, or with nowhere
+//!   to lay, none goes down and she stays ready).
 //! - **Colour genetics** (D13) is a per-species allele table, not real
 //!   genetics: every creature carries two morph alleles (indices into its
 //!   species' morphs) and shows a morph only when both match; any mix

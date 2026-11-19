@@ -546,12 +546,14 @@ target computes the same bits.
     day of its life first. A livebearer then carries her young for `days`
     and gives birth to a brood of fry around her, cut to the room left
     under the cap; an egg layer lays a clutch at once. Either then rests
-    `rest_days`.
+    `rest_days`: after the birth, or once a clutch is down (none goes
+    down at the clutch limit or with nowhere to lay, and she stays
+    ready).
   - **Eggs** are cells of the `egg` material (solid, amber), each holding
     its clutch's id in its state; the clutch (species, both parents'
     alleles, hatch tick, egg cells) is in `World::clutches` (at most 64).
     Eggs go on water cells around the mother that touch glass, rock,
-    plants or the bed, then on whatever lies below her, never under a
+    plants or the bed (not the surface air: no eggs on the waterline), then on whatever lies below her, never under a
     creature. When due, each egg still in place hatches into a fry there,
     or rots into detritus if the tank is at its cap.
   - **Colour genetics** (D13): two morph alleles per creature; it shows a
@@ -568,7 +570,8 @@ target computes the same bits.
     chance of 1 in 4. The prey leaves no corpse (and no death cause); the
     predator is fed (an hour of energy). Neither may be in the net.
   - **Drawing.** Each creature and corpse is drawn in its look (morph and
-    sex), one atlas shelf per look.
+    sex), two atlas shelves per look: its frames, then its recoloured
+    fine frames at four texels per cell.
   - **Save format v3** adds each creature's sex, alleles, pregnancy and
     rest, each corpse's morph and sex, the clutches and every species'
     morph names (checked on load: a species' morphs may only be appended
