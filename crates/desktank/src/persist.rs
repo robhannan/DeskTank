@@ -6,8 +6,11 @@
 //! finds the tank owned shows the newest save read-only and never writes.
 //! Saves are checked from the event loop's existing wake-ups, so saving
 //! adds no timers: a hidden tank is paused and doesn't change.
+//!
+//! [`import`] and [`export`] move saves between machines and the web
+//! version (WB3), which uses the same format.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -36,19 +39,12 @@ impl Persistence {
     /// Returns an error if there is no data directory or it can't be
     /// created.
     pub fn open(dir: Option<PathBuf>) -> anyhow::Result<Self> {
-        let dir = match dir {
-            Some(dir) => dir,
-            None => data_dir()
-                .context("no data directory (HOME / APPDATA unset)")?
-                .join("tanks"),
-        };
-        let mut store = SaveStore::open(&dir, TANK)
-            .with_context(|| format!("opening the save directory {}", dir.display()))?;
+        let mut store = store(dir)?;
         if !store.try_lock().context("locking the tank")? {
             eprintln!(
                 "desktank: another DeskTank owns the tank in {}; showing its last save \
                  read-only, changes won't be saved",
-                dir.display()
+                store.dir().display()
             );
         }
         Ok(Self {
@@ -61,10 +57,7 @@ impl Persistence {
     /// The newest save that loads, if any. Saves that don't load are
     /// logged, and moved aside if this process owns the tank.
     pub fn load(&mut self) -> Option<World> {
-        let loaded = match self.store.load(|bytes| {
-            let materials = MaterialTable::builtin().map_err(|e| e.to_string())?;
-            save::decode(bytes, materials).map_err(|e| e.to_string())
-        }) {
+        let loaded = match self.store.load(decode) {
             Ok(loaded) => loaded,
             Err(e) => {
                 eprintln!(
@@ -126,6 +119,75 @@ impl Persistence {
             Err(e) => eprintln!("desktank: error: {why} failed: {e}"),
         }
     }
+}
+
+/// The tank's save store in `dir` (default: the data directory's `tanks`).
+fn store(dir: Option<PathBuf>) -> anyhow::Result<SaveStore> {
+    let dir = match dir {
+        Some(dir) => dir,
+        None => data_dir()
+            .context("no data directory (HOME / APPDATA unset)")?
+            .join("tanks"),
+    };
+    SaveStore::open(&dir, TANK)
+        .with_context(|| format!("opening the save directory {}", dir.display()))
+}
+
+fn decode(bytes: &[u8]) -> Result<World, String> {
+    let materials = MaterialTable::builtin().map_err(|e| e.to_string())?;
+    save::decode(bytes, materials).map_err(|e| e.to_string())
+}
+
+/// `desktank import`: checks that `file` is a save this build loads and
+/// writes it as the tank's newest save, so the next start opens it. The
+/// older saves stay (the newest 3 are kept, as always).
+///
+/// # Errors
+///
+/// Returns an error if the file can't be read or isn't a loadable save, or
+/// a running DeskTank owns the tank.
+pub fn import(dir: Option<PathBuf>, file: &Path) -> anyhow::Result<()> {
+    let bytes = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+    let world = decode(&bytes)
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("{} doesn't load", file.display()))?;
+    let mut store = store(dir)?;
+    if !store.try_lock().context("locking the tank")? {
+        anyhow::bail!("DeskTank is running and owns the tank; quit it, then import again");
+    }
+    let path = store.write(&bytes).context("writing the save")?;
+    eprintln!(
+        "desktank: imported {} ({}×{} cells, tick {}) as {}",
+        file.display(),
+        world.width(),
+        world.height(),
+        world.tick_count(),
+        path.display()
+    );
+    Ok(())
+}
+
+/// `desktank export`: copies the tank's newest save that loads to `file`.
+/// It only reads, so it works while the app runs (the copy is then as of
+/// the app's last save).
+///
+/// # Errors
+///
+/// Returns an error if there is no loadable save or `file` can't be
+/// written.
+pub fn export(dir: Option<PathBuf>, file: &Path) -> anyhow::Result<()> {
+    let store = store(dir)?;
+    let loaded = store
+        .load(|bytes| decode(bytes).map(|_| bytes.to_vec()))
+        .context("listing saves")?;
+    let (bytes, from) = loaded.value.context("there is no save to export yet")?;
+    std::fs::write(file, &bytes).with_context(|| format!("writing {}", file.display()))?;
+    eprintln!(
+        "desktank: exported {} to {}",
+        from.display(),
+        file.display()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -215,5 +277,36 @@ mod tests {
         // Still only the owner's save.
         assert_eq!(viewer.load().unwrap().tick_count(), 1);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn export_then_import_moves_a_tank() {
+        let from = temp("export");
+        let to = temp("import");
+        let mut p = Persistence::open(Some(from.clone())).unwrap();
+        let mut w = world(4);
+        for _ in 0..30 {
+            w.tick();
+        }
+        p.save(&w, "test");
+        let file = from.join("out.dtank");
+        // Export only reads, so it works beside the owner.
+        export(Some(from.clone()), &file).unwrap();
+        import(Some(to.clone()), &file).unwrap();
+        let mut q = Persistence::open(Some(to.clone())).unwrap();
+        assert_eq!(q.load().unwrap().state_hash(), w.state_hash());
+        // Not a save: rejected, nothing written.
+        std::fs::write(&file, b"not a save").unwrap();
+        drop(q);
+        assert!(import(Some(to.clone()), &file).is_err());
+        // The owner blocks an import.
+        let _owner = Persistence::open(Some(to.clone())).unwrap();
+        export(Some(from.clone()), &file).unwrap();
+        assert!(import(Some(to.clone()), &file).is_err());
+        let empty = temp("empty");
+        assert!(export(Some(empty.clone()), &file).is_err());
+        std::fs::remove_dir_all(empty).unwrap();
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
     }
 }

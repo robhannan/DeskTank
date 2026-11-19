@@ -1,4 +1,4 @@
-//! DeskTank web host (SPEC §3.5, WB1, WB2).
+//! DeskTank web host (SPEC §3.5, WB1, WB2, WB3).
 //!
 //! A [`wasm-bindgen`](https://docs.rs/wasm-bindgen) wrapper that drives the
 //! loop-agnostic [`desktank_render::Tank`] on a page's canvas. The page
@@ -26,6 +26,11 @@
 //! gives each one's group for the page's group tabs. The brush outline is the shader's
 //! ([`Tank::set_cursor`]).
 //!
+//! Saves (WB3) are [`desktank_sim::save`]'s format, the same bytes as the
+//! native app's `.dtank` files: [`WebTank::save`] encodes, and
+//! [`WebTank::from_save`] opens one at its own grid size. The page keeps
+//! them in `IndexedDB` and owns the tab ownership (Web Locks).
+//!
 //! `unsafe_code`: the workspace denies it, and this crate needs no
 //! exception. The `unsafe` that `#[wasm_bindgen]` generates comes from an
 //! external proc macro, which rustc's `unsafe_code` lint doesn't report (CI
@@ -38,7 +43,7 @@ use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
 use desktank_sim::tools::{
     self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
-use desktank_sim::{Brush, FieldKind, MaterialTable, Propagule, Script, World, WorldConfig};
+use desktank_sim::{Brush, FieldKind, MaterialTable, Propagule, Script, World, WorldConfig, save};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -127,6 +132,8 @@ pub struct WebTank {
     /// Canvas size in device pixels.
     size: (u32, u32),
     frames: u32,
+    /// The world changed since the last [`WebTank::save`] (or load).
+    dirty: bool,
     #[cfg(target_arch = "wasm32")]
     graphics: Option<Graphics>,
 }
@@ -188,6 +195,59 @@ impl WebTank {
         let mut tank = Self::with_world(world, (canvas_width, canvas_height))?;
         tank.running = false;
         Ok(tank)
+    }
+
+    /// Opens a save file (the native app's `.dtank` format, SPEC §2.6) at
+    /// its own grid size, drawn into a `canvas_width`×`canvas_height` pixel
+    /// canvas at the largest scale that fits, letterboxed. It continues
+    /// exactly where the saved tank stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if the bytes aren't a save this build loads, or
+    /// its grid is larger than the web allows ([`MAX_GRID_SIDE`]).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromSave))]
+    pub fn from_save(
+        bytes: &[u8],
+        canvas_width: u32,
+        canvas_height: u32,
+    ) -> Result<WebTank, String> {
+        // The envelope check is cheap; a save too large for the web is
+        // rejected after decoding, which is bounded by the format.
+        let world = save::decode(bytes, builtin()?).map_err(|e| e.to_string())?;
+        check_side(side(world.width()), side(world.height()))?;
+        Self::with_world(world, (canvas_width, canvas_height))
+    }
+
+    /// Encodes the tank as a save file (SPEC §2.6; the native app's
+    /// `.dtank` format) and marks it saved.
+    #[must_use]
+    pub fn save(&mut self) -> Vec<u8> {
+        self.dirty = false;
+        save::encode(self.tank.world())
+    }
+
+    /// Encodes the tank as a save file like [`WebTank::save`], for a file
+    /// the user exports, without marking it saved.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = exportSave))]
+    #[must_use]
+    pub fn export_save(&self) -> Vec<u8> {
+        save::encode(self.tank.world())
+    }
+
+    /// Whether the world changed (ticks, edits, creatures) since the last
+    /// [`WebTank::save`] or since it was loaded.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = saveNeeded))]
+    #[must_use]
+    pub fn save_needed(&self) -> bool {
+        self.dirty
+    }
+
+    /// Screen pixels per cell side in the current canvas.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = cellScale))]
+    #[must_use]
+    pub fn cell_scale(&self) -> u32 {
+        self.layout().scale
     }
 
     /// Width in cells.
@@ -462,6 +522,7 @@ impl WebTank {
             return 0;
         };
         let out = self.tools.release(self.tank.world_mut(), button);
+        self.dirty |= !matches!(out, Outcome::None);
         self.sync_cursor();
         u32::from(matches!(out, Outcome::Removed(_)))
     }
@@ -470,6 +531,8 @@ impl WebTank {
     /// the brush outline.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerLeave))]
     pub fn pointer_leave(&mut self) {
+        // May let go of a netted creature; conservatively a change.
+        self.dirty |= self.tools.pointer().is_some();
         self.tools.leave(self.tank.world_mut());
         self.sync_cursor();
     }
@@ -555,6 +618,7 @@ impl WebTank {
             let x = (2 * i + 1) * width / (2 * i64::from(FEED_PINCHES)) + shift - 3;
             changed += world.paint(x, row, 0, food, Brush::Pour).unwrap_or(0);
         }
+        self.dirty |= changed > 0;
         self.edited(changed);
         count(changed)
     }
@@ -609,6 +673,7 @@ impl WebTank {
     /// Runs one simulation tick now (single-stepping while paused).
     pub fn step(&mut self) {
         self.tank.step();
+        self.dirty = true;
     }
 
     /// Changes the frame-rate cap (30 on AC power, 15 on battery).
@@ -668,6 +733,7 @@ impl WebTank {
             self.tools.hold(self.tank.world_mut());
         }
         self.wake_at = request.wake_at;
+        self.dirty |= request.sim_ticks > 0;
         let mut flags = request.sim_ticks.min(0xff_ffff) << FRAME_TICKS_SHIFT;
         if request.redraw && self.draw() {
             self.frames = self.frames.wrapping_add(1);
@@ -752,6 +818,7 @@ impl WebTank {
             wake_at: Duration::ZERO,
             size: (size.0.max(1), size.1.max(1)),
             frames: 0,
+            dirty: false,
             #[cfg(target_arch = "wasm32")]
             graphics: None,
         })
@@ -865,12 +932,13 @@ impl WebTank {
                 0
             }
             // Creatures aren't cells: their frames follow the sprites.
-            Outcome::Caught(_)
-            | Outcome::Dropped(_)
-            | Outcome::Removed(_)
-            | Outcome::Added(_)
-            | Outcome::None => 0,
+            Outcome::Caught(_) | Outcome::Dropped(_) | Outcome::Removed(_) | Outcome::Added(_) => {
+                self.dirty = true;
+                0
+            }
+            Outcome::None => 0,
         };
+        self.dirty |= changed > 0;
         self.edited(changed);
         self.sync_cursor();
         count(changed)
