@@ -626,7 +626,8 @@ impl WebTank {
     /// Takes one key press (a `KeyboardEvent.key`, without auto-repeats)
     /// and returns `true` when it completes the Konami code, so the page
     /// should open its cheat field. The page has keyboard focus, so no
-    /// chord is needed.
+    /// chord is needed. A modifier on its own (Shift for a capital B) is
+    /// ignored.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = cheatKey))]
     pub fn cheat_key(&mut self, key: &str) -> bool {
         let key = match key {
@@ -636,6 +637,9 @@ impl WebTank {
             "ArrowRight" => cheats::CheatKey::Right,
             "b" | "B" => cheats::CheatKey::B,
             "a" | "A" => cheats::CheatKey::A,
+            "Shift" | "Control" | "Alt" | "Meta" | "AltGraph" | "CapsLock" | "Fn" => {
+                return false;
+            }
             _ => cheats::CheatKey::Other,
         };
         self.konami.key(key, false)

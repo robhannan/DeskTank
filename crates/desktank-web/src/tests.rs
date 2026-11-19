@@ -470,8 +470,15 @@ fn the_konami_code_opens_the_cheat_field_and_cheats_run() {
     for k in &keys[..9] {
         t.cheat_key(k);
     }
-    assert!(!t.cheat_key("Shift"));
+    assert!(!t.cheat_key("x"));
     assert!(!t.cheat_key("a"));
+    // Shift for a capital B doesn't break the code.
+    for k in &keys[..8] {
+        t.cheat_key(k);
+    }
+    assert!(!t.cheat_key("Shift"));
+    assert!(!t.cheat_key("B"));
+    assert!(t.cheat_key("a"));
 
     let before = t.creatures();
     assert_eq!(t.cheat("spawn guppy 2").unwrap(), "spawned 2 guppy");

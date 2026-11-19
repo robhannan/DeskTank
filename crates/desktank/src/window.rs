@@ -66,7 +66,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::persist::Persistence;
@@ -248,8 +248,10 @@ struct Running {
     groups: Vec<(PaletteGroup, Vec<PaletteItem>)>,
     /// Index of the group the palette shows.
     open: usize,
-    /// Whether Shift is held.
-    shift: bool,
+    /// Modifier keys held (Shift steps groups backwards; with Ctrl or
+    /// Command a key is a shortcut, which neither types into the cheat
+    /// field nor counts towards the code).
+    modifiers: ModifiersState,
     /// Trackpad scroll (pixels) not yet turned into a brush-size step.
     scroll: f64,
     /// Wheel scroll (lines) not yet turned into a step; Windows precision
@@ -327,7 +329,7 @@ impl Running {
             tools,
             groups,
             open: 0,
-            shift: false,
+            modifiers: ModifiersState::empty(),
             scroll: 0.0,
             scroll_lines: 0.0,
             shown: None,
@@ -519,7 +521,11 @@ impl Running {
             self.cheat_key(event);
             return true;
         }
-        if !event.repeat && self.konami.key(konami_key(&event.logical_key), false) {
+        if let Some(key) = konami_key(&event.logical_key)
+            && !event.repeat
+            && !self.command()
+            && self.konami.key(key, false)
+        {
             self.cheat = Some(String::new());
             self.show_cheat(None);
             return true;
@@ -527,10 +533,16 @@ impl Running {
         false
     }
 
+    /// Whether Ctrl or Command is held.
+    fn command(&self) -> bool {
+        self.modifiers.control_key() || self.modifiers.super_key()
+    }
+
     /// Takes a key press while the cheat field is open: Enter runs the
     /// line (closing the field if it ran), Escape closes the field,
     /// Backspace deletes, and text is typed in.
     fn cheat_key(&mut self, event: &KeyEvent) {
+        let command = self.command();
         let Some(line) = self.cheat.as_mut() else {
             return;
         };
@@ -540,7 +552,8 @@ impl Running {
                 self.window.set_title("DeskTank");
             }
             Key::Named(NamedKey::Enter) => {
-                let line = std::mem::take(line);
+                // Kept on failure, to fix a typo.
+                let line = line.clone();
                 match cheats::run(self.tank.world_mut(), &line) {
                     Ok(out) => {
                         if out.cells_changed > 0 {
@@ -557,6 +570,7 @@ impl Running {
                 line.pop();
                 self.show_cheat(None);
             }
+            _ if command => {}
             _ => {
                 let typed = event.text.as_ref().map_or("", |t| t.as_str());
                 for c in typed.chars().filter(|c| !c.is_control()) {
@@ -773,7 +787,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
-            WindowEvent::ModifiersChanged(m) => s.shift = m.state().shift_key(),
+            WindowEvent::ModifiersChanged(m) => s.modifiers = m.state(),
             WindowEvent::Focused(false) => s.konami.reset(),
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && s.cheat_input(&event) => {}
@@ -820,7 +834,7 @@ impl ApplicationHandler for App {
                     // G opens the next group, Shift+G the previous one
                     // (Shift, not the letter's case: Caps Lock doesn't flip it).
                     Key::Character(c) if c.eq_ignore_ascii_case("g") => {
-                        s.step_group(if s.shift { -1 } else { 1 });
+                        s.step_group(if s.modifiers.shift_key() { -1 } else { 1 });
                     }
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the
@@ -900,15 +914,27 @@ impl ApplicationHandler for App {
     }
 }
 
-/// The Konami detector's view of a key.
-fn konami_key(key: &Key) -> CheatKey {
-    match key {
+/// The Konami detector's view of a key; `None` for a modifier on its own
+/// (Shift for a capital B doesn't break the code).
+fn konami_key(key: &Key) -> Option<CheatKey> {
+    Some(match key {
         Key::Named(NamedKey::ArrowUp) => CheatKey::Up,
         Key::Named(NamedKey::ArrowDown) => CheatKey::Down,
         Key::Named(NamedKey::ArrowLeft) => CheatKey::Left,
         Key::Named(NamedKey::ArrowRight) => CheatKey::Right,
         Key::Character(c) if c.eq_ignore_ascii_case("b") => CheatKey::B,
         Key::Character(c) if c.eq_ignore_ascii_case("a") => CheatKey::A,
+        Key::Named(
+            NamedKey::Shift
+            | NamedKey::Control
+            | NamedKey::Alt
+            | NamedKey::Super
+            | NamedKey::Meta
+            | NamedKey::Hyper
+            | NamedKey::Fn
+            | NamedKey::CapsLock
+            | NamedKey::AltGraph,
+        ) => return None,
         _ => CheatKey::Other,
-    }
+    })
 }

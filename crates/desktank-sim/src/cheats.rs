@@ -71,8 +71,9 @@ impl Konami {
     }
 
     /// A detector for a host that sees keys only through the interact
-    /// chord: keys count only while the chord is held, and letting go of
-    /// it starts over.
+    /// chord: keys count only while the chord is held. Letting go of it
+    /// should start over: the host calls [`Konami::reset`] when it sees the
+    /// chord released (a key arriving without the chord resets too).
     #[must_use]
     pub fn with_chord() -> Self {
         Self {
@@ -328,7 +329,12 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
         }
     }
     if added == 0 {
-        return Err(WorldError::NoRoom.into());
+        return Err(if world.creatures().len() >= MAX_CREATURES {
+            WorldError::PopulationCap(MAX_CREATURES)
+        } else {
+            WorldError::NoRoom
+        }
+        .into());
     }
     Ok(CheatOutcome {
         message: format!("spawned {added} {name}"),
@@ -493,12 +499,12 @@ mod tests {
             assert!(added <= MAX_CREATURES, "never refused");
         }
         assert!(w.creatures().len() <= MAX_CREATURES);
-        assert!(matches!(
-            run(&mut w, "spawn neon_tetra"),
-            Err(CheatError::World(
-                WorldError::PopulationCap(_) | WorldError::NoRoom
-            ))
-        ));
+        if w.creatures().len() == MAX_CREATURES {
+            assert_eq!(
+                run(&mut w, "spawn neon_tetra"),
+                Err(CheatError::World(WorldError::PopulationCap(MAX_CREATURES)))
+            );
+        }
     }
 
     #[test]
