@@ -155,8 +155,8 @@ fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
     assert_eq!(t.plant_propagules(), ["cuttings"]);
     assert_eq!(t.plant_propagule(), "cuttings");
     assert!(!t.set_plant_propagule("seeds"));
-    // Carpets spread by runners and fragments; runners come first, and a
-    // click pours a plantlet (the cutting material).
+    // Carpets spread by fragments and runners (fragments listed first);
+    // picked, runners pour a plantlet (the cutting material).
     let grass = t
         .plant_species()
         .iter()

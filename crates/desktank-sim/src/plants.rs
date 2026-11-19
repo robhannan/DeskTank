@@ -69,8 +69,8 @@ pub enum Part {
     /// Grows sideways from stem nodes; a rosette's or carpet's blades grow
     /// up from the crown.
     Leaf,
-    /// Creeps through the top layer of the substrate from a crown and roots
-    /// a new plant at its tip (T6c).
+    /// Creeps through the top two layers of the substrate from a crown and
+    /// roots a new plant at its tip (T6c).
     Runner,
 }
 

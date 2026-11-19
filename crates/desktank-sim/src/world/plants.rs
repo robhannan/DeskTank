@@ -1175,8 +1175,8 @@ impl World {
     /// Where a rosette or carpet can grow (see [`RosetteForm`]): the crown
     /// out along the substrate, a new blade above each crown cell (and beside
     /// the full crown's ends), each blade's tip up (or a cell outwards every
-    /// `lean` cells), roots down from the first root and on from each root
-    /// tip, and, once every blade has started, a runner each side of the
+    /// `lean` cells), roots down from the first root and on from the
+    /// others, and, once every blade has started, a runner each side of the
     /// root under the crown and on from each runner's tip.
     #[allow(clippy::many_single_char_names, clippy::too_many_lines)] // one arm per part
     fn rosette_sites(
@@ -1263,7 +1263,12 @@ impl World {
                         }
                     }
                 }
-                Some(Part::Runner) if pos < f.spacing.saturating_mul(2) => {
+                // Only a runner's tip creeps on: a cell further back can
+                // find substrate ahead again once its runner has climbed
+                // over it.
+                Some(Part::Runner)
+                    if pos < f.spacing.saturating_mul(2) && self.runner_tip(x, y, id, pos) =>
+                {
                     let dir = if x < bx { -1 } else { 1 };
                     if let Some(j) = self.runner_step(x, y, dir, &f.substrates) {
                         sites.push(Site::new(j, Part::Runner, pos + 1, RUNNER_WEIGHT));
@@ -1304,6 +1309,18 @@ impl World {
         sites.sort_unstable_by_key(|s| s.at);
         sites.dedup_by_key(|s| s.at);
         sites
+    }
+
+    /// Whether plant `id`'s runner cell at `(x, y)`, at `pos`, is its
+    /// runner's tip: no runner cell of the plant one further on beside it.
+    fn runner_tip(&self, x: usize, y: usize, id: u16, pos: u8) -> bool {
+        let runner = self.plants.material(Part::Runner);
+        DIRS.iter().all(|&(dx, dy)| {
+            self.at(x, y, dx, dy).is_none_or(|j| {
+                let c = self.cells[j];
+                Some(c.material) != runner || c.state != id || plant_position(c.variant) != pos + 1
+            })
+        })
     }
 
     /// Where a runner at `(x, y)` heading `dir` creeps next, keeping to the
@@ -1403,7 +1420,7 @@ impl World {
 
     /// Drops plant `id`'s `n` oldest leaf cells as dead plant matter: the
     /// lowest first (outermost first along a leaf, so the plant stays in
-    /// one piece).
+    /// one piece); a rosette's or carpet's blades die back from their tips.
     fn drop_leaves(&mut self, id: u16, n: usize) {
         let Some(p) = self.plants.table.get(&id) else {
             return;
