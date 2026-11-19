@@ -476,7 +476,7 @@ target computes the same bits.
     configurable) protects the budget.
 - **Death** (D4) can come from old age, starvation, poor water quality,
   wrong temperature (full mode), predation (larger fish eat fry and
-  shrimp) or chaos materials.
+  shrimp whole: no corpse and no recorded cause) or chaos materials.
   - **Easy mode** limits deaths to old age.
   - A dead creature becomes a sinking corpse sprite, which turns into
     detritus cells and disintegrates.
@@ -1719,7 +1719,8 @@ Each package depends only on the packages before it.
 - [ ] **T9 Life cycle.** Eggs and livebearing, growth stages, breeding
   rules, colour genetics (inheritance, reversion to wildtype, mutation),
   predation, the death causes available in simple mode (old age,
-  starvation, poor water quality, predation), easy mode, corpses that
+  starvation, poor water quality; predation eats the prey whole, with no
+  corpse or recorded cause), easy mode, corpses that
   turn into detritus, the population cap, and names on the inspect card.
   Temperature deaths come with E1 and chaos deaths with E2. *Accept:*
   - a test for each cause of death;

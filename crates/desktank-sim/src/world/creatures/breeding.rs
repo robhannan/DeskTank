@@ -47,7 +47,9 @@
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 
-use super::{BITE_ENERGY, Creature, ENERGY_RESERVE, FULL, LIFE_DAY_TICKS, LifeStage, World};
+use super::{
+    BITE_ENERGY, Creature, CreatureId, ENERGY_RESERVE, FULL, LIFE_DAY_TICKS, LifeStage, World,
+};
 use crate::TICKS_PER_SECOND;
 use crate::grid::Rect;
 use crate::hash::Fnv64;
@@ -169,6 +171,8 @@ pub(super) struct Birth {
 
 /// A clutch about to be laid.
 pub(super) struct Lay {
+    /// The mother, who rests once the clutch is laid.
+    mother_id: CreatureId,
     species: SpeciesId,
     /// The mother's body.
     body: Rect,
@@ -177,6 +181,8 @@ pub(super) struct Lay {
     count: u8,
     /// Ticks until it hatches.
     days: u32,
+    /// Ticks she rests after laying.
+    rest: u32,
 }
 
 /// What this tick's breeding needs and makes.
@@ -373,14 +379,15 @@ impl World {
         };
         if b.eggs {
             t.lays.push(Lay {
+                mother_id: c.id,
                 species: c.species,
                 body: self.creature_body(c),
                 mother: c.alleles,
                 sire,
                 count: brood_size(b.brood, &mut rng),
                 days: b.days,
+                rest: b.rest,
             });
-            c.rest = b.rest;
         } else {
             c.carrying = b.days.max(1);
             c.sire = sire;
@@ -402,7 +409,14 @@ impl World {
                 .is_ok();
         }
         for lay in &t.lays {
-            changed |= self.lay(lay);
+            // She rests only if a clutch went down: none does at the
+            // clutch limit or with nowhere to put it.
+            if self.lay(lay) {
+                changed = true;
+                if let Some(c) = self.creature_mut(lay.mother_id) {
+                    c.rest = lay.rest;
+                }
+            }
         }
         if self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND))
             && !self.creatures.clutches.is_empty()
@@ -506,7 +520,8 @@ impl World {
     }
 
     /// Whether cell `(x, y)` touches the grid's edge or a cell no creature
-    /// swims through (glass, rock, plants, substrate, eggs).
+    /// swims through (glass, rock, plants, substrate, eggs), but not the
+    /// air above the water: eggs don't float on the waterline.
     fn touches_solid(&self, x: usize, y: usize) -> bool {
         if x == 0 || y == 0 || x + 1 == self.width || y + 1 == self.height {
             return true;
@@ -514,7 +529,8 @@ impl World {
         [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
             .into_iter()
             .any(|(nx, ny)| {
-                !self.creatures.swim[usize::from(self.cells[ny * self.width + nx].material.0)]
+                let m = self.cells[ny * self.width + nx].material;
+                m != self.creatures.air && !self.creatures.swim[usize::from(m.0)]
             })
     }
 
@@ -713,6 +729,73 @@ mod tests {
         chunk_stream(7, n, 3)
     }
 
+    fn tank() -> World {
+        let config = crate::WorldConfig {
+            width: 64,
+            height: 48,
+            seed: 5,
+            water_level: 0.75,
+        };
+        World::new(config, crate::MaterialTable::builtin().unwrap()).unwrap()
+    }
+
+    /// Eggs stick to glass, rock, plants or the bed, not to the waterline.
+    #[test]
+    fn the_surface_air_is_not_somewhere_to_lay() {
+        let w = tank();
+        let top = w.surface_row;
+        assert!(top > 1);
+        assert_eq!(w.cells[(top - 1) * w.width + 30].material, w.creatures.air);
+        assert!(!w.touches_solid(30, top), "the top water row");
+        assert!(!w.touches_solid(30, top + 5));
+        assert!(w.touches_solid(30, w.height - 1), "the floor");
+    }
+
+    /// A female rests only once a clutch is down: at the clutch limit she
+    /// lays none and stays ready.
+    #[test]
+    fn no_rest_without_a_clutch() {
+        for full in [true, false] {
+            let mut w = tank();
+            let s = w.species().id("corydoras").unwrap();
+            let mum = w.add_creature(s, 30, 30).unwrap();
+            if full {
+                w.creatures.clutches = (1..=MAX_CLUTCHES as u16)
+                    .map(|id| Clutch {
+                        id,
+                        species: s,
+                        mother: [0; 2],
+                        sire: [0; 2],
+                        hatch: u64::MAX,
+                        eggs: Vec::new(),
+                    })
+                    .collect();
+            }
+            let c = w.creature(mum).unwrap();
+            // A new arrival's day of settling.
+            let settling = c.rest;
+            let t = BreedTick {
+                lays: vec![Lay {
+                    mother_id: mum,
+                    species: s,
+                    body: w.creature_body(c),
+                    mother: [0; 2],
+                    sire: [0; 2],
+                    count: 6,
+                    days: LIFE_DAY_TICKS,
+                    rest: 14 * LIFE_DAY_TICKS,
+                }],
+                ..BreedTick::default()
+            };
+            w.finish_breeding(t);
+            let rest = w.creature(mum).unwrap().rest;
+            let want = if full { settling } else { 14 * LIFE_DAY_TICKS };
+            assert_eq!(rest, want, "{full}");
+            let clutches = if full { MAX_CLUTCHES } else { 1 };
+            assert_eq!(w.creatures.clutches.len(), clutches, "{full}");
+        }
+    }
+
     #[test]
     fn a_morph_shows_only_when_both_alleles_match() {
         assert_eq!(phenotype([2, 2], 1), 2);
@@ -744,11 +827,18 @@ mod tests {
             }
         }
         let share = |k: u32, of: u64| f64::from(k) / of as f64;
-        assert!((share(first, n) - 0.4925).abs() < 0.01, "{first}");
-        // A mutation lands on the allele's own morph a third of the time
-        // here (three non-wild morphs), so a third go unseen.
-        let seen = MUTATION_PER_MILLE as f64 / 1000.0 * 2.0 / 3.0;
-        assert!((share(mutated, 2 * n) - seen).abs() < 0.001, "{mutated}");
+        // A mutation picks one of the three non-wild morphs (0, 2, 3).
+        // The mother passes red (0) half the time, kept unless reverted or
+        // mutated away, and a mutation of either of hers lands on red a
+        // third of the time: 0.5 × (0.985 + 0.005 / 3) + 0.5 × 0.005 / 3,
+        // that is 0.4925 + 0.005 / 3.
+        let mutation = MUTATION_PER_MILLE as f64 / 1000.0;
+        let red = 0.4925 + mutation / 3.0;
+        assert!((share(first, n) - red).abs() < 0.005, "{first}");
+        // Seen as mutated: the mother's into yellow (a third of hers), the
+        // father's into red or blue (two thirds of his), so half of all.
+        let seen = mutation / 2.0;
+        assert!((share(mutated, 2 * n) - seen).abs() < 0.0005, "{mutated}");
         let back = REVERSION_PER_MILLE as f64 / 1000.0;
         assert!((share(reverted, 2 * n) - back).abs() < 0.001, "{reverted}");
         // A species with one morph never mutates.
