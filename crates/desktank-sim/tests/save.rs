@@ -274,7 +274,7 @@ fn a_version_2_fixture_loads() {
     assert!(bands.len() >= 4, "bands {bands:?}");
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0x3cc1_2feb_b949_01ff);
+    assert_eq!(w.state_hash(), 0x63ab_b147_8668_3585);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -313,7 +313,7 @@ fn a_version_3_fixture_loads() {
     assert_eq!(depths(&w), depths(&fresh));
     assert_eq!(w.state_hash(), fresh.state_hash());
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x83f7_097c_a14e_52b1);
+    assert_eq!(w.state_hash(), 0x3627_4b3b_f83f_f00d);
     for _ in 0..200 {
         w.tick();
     }

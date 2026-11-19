@@ -1,5 +1,6 @@
 //! Format version 3 snapshot types (2.5D depth, part 1, D21): version 2
-//! with each creature's depth and target depth. Frozen like [`super::v1`]:
+//! with each creature's depth, target depth and dodge and stray counters,
+//! and each corpse's band. Frozen like [`super::v1`]:
 //! once version 3 has shipped these types never change, and the parts
 //! version 2 already had keep its types.
 //!
@@ -10,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use super::v1::{Body, Chunk, Grid, Life, Named, Plants};
 use super::v2;
-pub(crate) use super::v2::Corpse;
 
 /// A whole tank.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,6 +84,24 @@ pub(crate) struct Creature {
     pub stress: u32,
 }
 
+/// A dead creature, sinking and rotting.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Corpse {
+    pub species: u8,
+    /// 0 old age, 1 starvation, 2 poor water.
+    pub cause: u8,
+    pub x: i32,
+    pub y: i32,
+    pub w: u8,
+    pub h: u8,
+    pub facing_left: bool,
+    /// The depth band it sinks in.
+    pub band: u8,
+    pub died: u64,
+    pub released: u16,
+    pub total: u16,
+}
+
 impl Save {
     /// Migrates a version 2 snapshot. Every creature settles in the band
     /// `band` gives it (from its id and species), as a creature just added
@@ -129,7 +147,26 @@ impl Save {
                     }
                 })
                 .collect(),
-            corpses: s.creatures.corpses,
+            // A version 2 corpse collided in every band, so it fits in
+            // the front one.
+            corpses: s
+                .creatures
+                .corpses
+                .into_iter()
+                .map(|c| Corpse {
+                    species: c.species,
+                    cause: c.cause,
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    facing_left: c.facing_left,
+                    band: 0,
+                    died: c.died,
+                    released: c.released,
+                    total: c.total,
+                })
+                .collect(),
         };
         Self {
             width: s.width,

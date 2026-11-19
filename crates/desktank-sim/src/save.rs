@@ -32,7 +32,7 @@
 //! (T5); the plant table with its update bookkeeping (T6b); the creatures
 //! (T7) with their age, growth, energy and stress, the corpses, easy mode
 //! and the population cap (T9, version 2); each creature's depth and target
-//! depth (D21, version 3). Random streams are derived from `(seed, tick, stream)` (SPEC
+//! depth and each corpse's band (D21, version 3). Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
 //! the build, and the save records the name behind every material and
@@ -328,6 +328,7 @@ mod tests {
             w: 7,
             h: 3,
             facing_left: false,
+            band: 3,
             died: 0,
             released: 0,
             total: 7,
@@ -338,6 +339,7 @@ mod tests {
             |c: &mut v3::Corpse| c.h = 0,
             |c: &mut v3::Corpse| c.total = 65_535,
             |c: &mut v3::Corpse| c.released = 7,
+            |c: &mut v3::Corpse| c.band = DEPTH_BANDS,
         ] {
             let mut s = dead.clone();
             bad(&mut s.creatures.corpses[0]);

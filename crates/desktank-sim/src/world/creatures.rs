@@ -27,8 +27,8 @@
 //!   turns away if that takes over [`DODGE_TICKS`]. A schooler that can't
 //!   reach its school at all strays on a wander target of its own for a
 //!   while, out of whatever pocket holds it. Crawlers keep the band they
-//!   start in, so they climb only the plants in it. Corpses collide in
-//!   every band.
+//!   start in, so they climb only the plants in it. A corpse sinks in
+//!   the band it died in.
 //! - **Walkers** keep to the substrate, stepping up one-row ledges; a
 //!   species with `hop_every` (shrimp) kicks off it now and then and sinks
 //!   back a few cells on.
@@ -783,6 +783,7 @@ impl World {
                     w: c.w,
                     h: c.h,
                     facing_left: c.facing_left,
+                    band: c.band,
                     died: c.died,
                     released: c.released,
                     total: c.total,
@@ -898,6 +899,7 @@ impl World {
                 || !fits(c.h, full_h)
                 || c.total != total
                 || c.released >= c.total
+                || c.band >= DEPTH_BANDS
             {
                 return Err(invalid("position, size or decay out of range"));
             }
@@ -909,6 +911,7 @@ impl World {
                 w: c.w,
                 h: c.h,
                 facing_left: c.facing_left,
+                band: c.band,
                 died: c.died,
                 released: c.released,
                 total: c.total,
@@ -1373,8 +1376,7 @@ impl World {
 
     /// Whether a `w × h`-cell box centred at `(x, y)` (fixed point) lies
     /// inside the grid on cells it may overlap: swimmable ones, and plant
-    /// cells further than [`BAND_REACH`] from `band` (`None`: none, as for
-    /// a corpse).
+    /// cells further than [`BAND_REACH`] from `band` (`None`: none).
     fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>) -> bool {
         let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
