@@ -352,3 +352,31 @@ fn a_tank_saved_mid_shift_carries_on_exactly() {
     assert_eq!(a.state_hash(), b.state_hash());
     assert!(bands.len() >= 3, "they swim at several depths: {bands:?}");
 }
+
+/// A creature shifting band while it holds still is still drawn anew
+/// (D21 part 2: depth decides drawing order, occlusion and the depth cue),
+/// so a tick that changes only a depth bumps the creatures version.
+#[test]
+#[allow(clippy::float_cmp)] // exact: positions and depths in 1/256 cell or band
+fn a_change_of_depth_alone_asks_for_a_frame() {
+    let mut still_shifts = 0;
+    for x in (40..=80).step_by(8) {
+        let mut w = thicket(3, "hygrophila");
+        let tetra = species(&w, "neon_tetra");
+        w.add_creature(tetra, x, 50).unwrap();
+        for _ in 0..2000 {
+            let before = w.creatures().first().map(|c| (c.centre(), c.depth()));
+            let version = w.creatures_version();
+            w.tick();
+            let after = w.creatures().first().map(|c| (c.centre(), c.depth()));
+            if let (Some(b), Some(a)) = (before, after)
+                && b.0 == a.0
+                && b.1 != a.1
+            {
+                still_shifts += 1;
+                assert_ne!(w.creatures_version(), version, "tick {}", w.tick_count());
+            }
+        }
+    }
+    assert!(still_shifts > 0);
+}

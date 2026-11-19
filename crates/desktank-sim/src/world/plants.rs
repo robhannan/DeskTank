@@ -420,8 +420,9 @@ impl World {
             .sum()
     }
 
-    /// Bumped whenever a plant is added or removed or its health tint
-    /// changes (renderers re-upload the plant texture on a change).
+    /// Bumped whenever a plant is added or removed, its health tint
+    /// changes or its base moves (renderers re-upload the plant texture,
+    /// and the bands of a plant whose base moved, on a change).
     #[must_use]
     pub fn plants_version(&self) -> u64 {
         self.plants.version
@@ -771,6 +772,11 @@ impl World {
             self.piece_base(piece)
         };
         self.recount_plant(id, piece);
+        if new_base != base {
+            // A stem plant's leaf bands follow its base column (D21), so
+            // renderers re-read its bands.
+            self.plants.version += 1;
+        }
         if let Some(p) = self.plants.table.get_mut(&id) {
             p.base = new_base;
             p.pending = false;
