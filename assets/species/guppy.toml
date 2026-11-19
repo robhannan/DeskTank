@@ -28,7 +28,7 @@ diet = ["flake_food", "bloodworm"]
 # Facing right; two texels per cell side. The body is 10 texels (5 cells)
 # from the tail's base to the snout, the fan tail 8 more: a 9x4-cell
 # sprite, 4.5 cm with the tail. Four frames: the tail fans and flexes.
-colours = { s = "#b8c4c8", g = "#7e8e98", o = "#ff7a2c", b = "#2f74e0", n = "#151a22", w = "#e8eef0", t = "#ff6430", y = "#ffb347", c = "#3d6ee8", d = "#4aa0c0", k = "#0c1016", e = "#ffffff" }
+colours = { s = "#b8c4c8", g = "#7e8e98", o = "#ff7a2c", b = "#2f74e0", n = "#151a22", w = "#e8eef0", t = "#ff6430", y = "#ffb347", c = "#3d6ee8", d = "#4aa0c0", k = "#0c1016", e = "#ffffff", r = "#e2531f", m = "#9ccaf0", a = "#d7e0e3", h = "#ffc070" }
 frames = [
     [
         "ytty..............",
@@ -77,4 +77,81 @@ icon = [
     "tct.gdd.",
     "ttcsobek",
     "tct.www.",
+]
+
+# The same four poses at four texels per cell side (36x16), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "yhhhhhht............................",
+        "yttttttttt..........................",
+        "ytrrttcctttt...........mddd.........",
+        "yttccrtttttttt........ddmdmd........",
+        "ytttttrrccttttt...gggssssssssgggs...",
+        "ytttttttrrttttt..gggggssssssggggss..",
+        "ytrrrrrrttrrcctsssoyooasbmbbssswwss.",
+        "ytttccttrrrrrrtssaoooossbbmbsgwekws.",
+        "ytttttttrccrrrtsssoooyoonnsasgwkkwsw",
+        "ytrrrrrrttrrtttsasssoooonnassgswwsgs",
+        "ytttttttrrtcctt.wwwwwwwwwwwwwwgwass.",
+        "yttcctrrttttttt.swwwwwwwwwwwwwwwas..",
+        "ytttrrtccttttt......wwaw............",
+        "ytrrttttttttt.......ww..............",
+        "yttttcctttt.........................",
+        "yhhhhhhhht..........................",
+    ],
+    [
+        "...hhhhht...........................",
+        "..ytttttttt.........................",
+        "..ytrttccttt...........mddd.........",
+        "..yttrrttttttt........ddmdmd........",
+        "..ytcctrrtttttt...gggssssssssgggs...",
+        "..yttttttcctttt..gggggssssssggggss..",
+        "..yccrrrrttrrttsssoyooasbmbbssswwss.",
+        "..yttttttrrrcctssaoooossbbmbsgwekws.",
+        "..yttccttrrrrrtsssoooyoonnsasgwkkwsw",
+        "..ytrrrrrtccrttsasssoooonnassgswwsgs",
+        "..yttttttrrtttt.wwwwwwwwwwwwwwgwass.",
+        "..yttttrccttttt.swwwwwwwwwwwwwwwas..",
+        "..ytccrttttttt......wwaw............",
+        "..ytrtccttttt.......ww..............",
+        "..yttttttttt........................",
+        "...hhhhhhht.........................",
+    ],
+    [
+        "yhhhhhht............................",
+        "yttttttttt..........................",
+        "ytrrtccttttt...........mddd.........",
+        "ytttrrttcctttt........ddmdmd........",
+        "yttcctrrttttttt...gggssssssssgggs...",
+        "ytttttttrrtcctt..gggggssssssggggss..",
+        "ytrrrrrrttrrtttsssoyooasbmbbssswwss.",
+        "ytttttttrccrrrtssaoooossbbmbsgwekws.",
+        "ytttccttrrrrrrtsssoooyoonnsasgwkkwsw",
+        "ytrrrrrrttrrcctsasssoooonnassgswwsgs",
+        "ytttttttrrttttt.wwwwwwwwwwwwwwgwass.",
+        "ytttttrcctttttt.swwwwwwwwwwwwwwwas..",
+        "yttccrtttttttt......wwaw............",
+        "ytrrttccttttt.......ww..............",
+        "ytttttttttt.........................",
+        "yhhhhhhhht..........................",
+    ],
+    [
+        "yhhhhhhhht..........................",
+        "yttttcctttt.........................",
+        "ytrrttttttttt..........mddd.........",
+        "ytccrrtttttttt........ddmdmd........",
+        "ytttttrcctttttt...gggssssssssgggs...",
+        "ytttttttrrttttt..gggggssssssggggss..",
+        "ytrrrrrrttrrcctsssoyooasbmbbssswwss.",
+        "yttcctttrrrrrrtssaoooossbbmbsgwekws.",
+        ".yttttttccrrrrtsssoooyoonnsasgwkkwsw",
+        ".ytrrrrrrttrrttsasssoooonnassgswwsgs",
+        ".ytttttttrrcctt.wwwwwwwwwwwwwwgwass.",
+        ".yttcctrrtttttt.swwwwwwwwwwwwwwwas..",
+        ".ytttrrtcctttt......wwaw............",
+        ".ytrrttttttt........ww..............",
+        ".yttttccttt.........................",
+        ".yhhhhhht...........................",
+    ],
 ]

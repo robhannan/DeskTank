@@ -24,7 +24,7 @@ diet = ["flake_food", "bloodworm"]
 [sprite]
 # Facing right; '.' is transparent. Two texels per cell side. Four frames:
 # a tail sweep, with glints drifting along the iridescent stripe.
-colours = { b = "#2f8cff", c = "#9fe6ff", r = "#e0373f", w = "#dfe8f0", k = "#0c1016", e = "#ffffff", s = "#8fa3b5" }
+colours = { b = "#2f8cff", c = "#9fe6ff", r = "#e0373f", w = "#dfe8f0", k = "#0c1016", e = "#ffffff", s = "#8fa3b5", u = "#62b8ff", d = "#4c6470", f = "#bccad6", g = "#7d8fa0", p = "#f05a60" }
 frames = [
     [
         ".....sss......",
@@ -65,4 +65,65 @@ icon = [
     "s.bbcbbk",
     "ssrrrrww",
     "s...ss..",
+]
+
+# The same four poses at four texels per cell side (28x12), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "...........sfs..............",
+        "..........sfssss............",
+        "sss.....dddbbbbbbbbbbbccd...",
+        "sffs..bbbbccbbbbbbccbwekwd..",
+        ".ssffuuuuuuuuuuuuuuuuwkkwuw.",
+        "..ssbbccbbbbbbccbbbbbbwwbkww",
+        "..ssrpprrrrrrrrrrrwwgwwwwww.",
+        ".ssfrrrrrrrrrrrrrrwwgwwwww..",
+        "sffs..rrrrrrrrrrwwwwwgwww...",
+        "sss....ppppppppwwwwwwww.....",
+        "........sfsss...ss..........",
+        "........fss.....s...........",
+    ],
+    [
+        "sss........sfs..............",
+        "sfss......sfssss............",
+        ".sfss...dddbbbbbbbbbbbccd...",
+        ".ssfssbbbbbbccbbbbbbcwekwd..",
+        "ssssfuuuuuuuuuuuuuuuuwkkwuw.",
+        "ssssbbbbccbbbbbbccbbbbwwbkww",
+        ".fffrpprrrrrrrrrrrwwgwwwwww.",
+        "...srrrrrrrrrrrrrrwwgwwwww..",
+        "......rrrrrrrrrrwwwwwgwww...",
+        ".......ppppppppwwwwwwww.....",
+        "........sfsss...ss..........",
+        "........fss.....s...........",
+    ],
+    [
+        "...........sfs..............",
+        "..........sfssss............",
+        "sss.....dddbbbbbbbbbbbccd...",
+        "sffs..ccbbbbbbccbbbbbwekwd..",
+        ".ssffuuuuuuuuuuuuuuuuwkkwuw.",
+        "..ssbbbbbbccbbbbbbccbbwwbkww",
+        "..ssrpprrrrrrrrrrrwwgwwwwww.",
+        ".ssfrrrrrrrrrrrrrrwwgwwwww..",
+        "sffs..rrrrrrrrrrwwwwwgwww...",
+        "sss....ppppppppwwwwwwww.....",
+        "........sfsss...ss..........",
+        "........fss.....s...........",
+    ],
+    [
+        "...........sfs..............",
+        "..........sfssss............",
+        "........dddbbbbbbbbbbbccd...",
+        "......bbccbbbbbbccbbbwekwd..",
+        "...ssuuuuuuuuuuuuuuuuwkkwuw.",
+        ".fffbbbbbbbbccbbbbbbccwwbkww",
+        "ssssrpprrrrrrrrrrrwwgwwwwww.",
+        "ssssrrrrrrrrrrrrrrwwgwwwww..",
+        ".ssfssrrrrrrrrrrwwwwwgwww...",
+        ".sfss..ppppppppwwwwwwww.....",
+        "sfss....sfsss...ss..........",
+        "sss.....fss.....s...........",
+    ],
 ]
