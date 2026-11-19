@@ -561,7 +561,18 @@ target computes the same bits.
   closes the field; an unknown or malformed cheat shows a short message
   and leaves the field open; Esc closes it. Cheats are harmless shortcuts
   to what the tools already do: `help`, `feed`, `spawn SPECIES [N]` (N up
-  to 10, within the population cap) and `clean` (a water change). The
+  to 10, within the population cap) and `clean` (a water change), plus
+  two easter-egg phrases (the whole line, any case): `why not?` adds a
+  medical crab and `home owner!` a home owning crab, each within the
+  cap. These two crabs are cheat-only: not in the palette, `spawn` or
+  stocking, and they never breed. Peaceful bottom walkers, they eat
+  everything edible that isn't alive (every food, algae, detritus, dead
+  plant matter and corpses, but not live plants, propagules or waste),
+  leave a dropping of waste every 4 s (species key `waste_every`; no
+  stocked species has one), and the home owner picks a home on the
+  substrate soon after it arrives, plants three dwarf hairgrass
+  plantlets there once (species key `home_carpet`) and keeps within 12
+  cells of it. The home is saved (format version 3). The
   detector and the registry are platform-free
   (`desktank_sim::cheats`); hosts feed key presses (no auto-repeats) and
   draw the field. Where it works:
@@ -612,7 +623,8 @@ target computes the same bits.
     - the creatures (genetics, age and names included; T9 part 1 adds
       age, growth, energy and stress, the corpses, easy mode and the
       population cap in format version 2, migrating version 1 creatures
-      to well-fed adults just mature);
+      to well-fed adults just mature; format version 3 adds a home
+      owning crab's home, migrating version 2 creatures without one);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
