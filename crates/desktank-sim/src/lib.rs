@@ -5,6 +5,7 @@
 //! given seed and time step (SPEC §2.1, §4.1).
 #![forbid(unsafe_code)]
 
+pub mod cheats;
 pub mod daylight;
 pub mod ecology;
 pub mod field;
