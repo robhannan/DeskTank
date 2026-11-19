@@ -98,7 +98,7 @@ pub(crate) struct Creature {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Corpse {
     pub species: u8,
-    /// 0 old age, 1 starvation, 2 poor water, 3 predation.
+    /// 0 old age, 1 starvation, 2 poor water.
     pub cause: u8,
     pub x: i32,
     pub y: i32,

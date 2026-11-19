@@ -556,15 +556,16 @@ target computes the same bits.
     or rots into detritus if the tank is at its cap.
   - **Colour genetics** (D13): two morph alleles per creature; it shows a
     morph when both match and the wildtype otherwise. A young takes one
-    allele from each parent at random; each mutates into a random other
-    morph 5 times in 1000 and reverts to the wildtype 10 times in 1000.
+    allele from each parent at random; each mutates into a random
+    non-wildtype morph (possibly its own) 5 times in 1000 and reverts to
+    the wildtype 10 times in 1000.
     Same-morph lines breed true, two morphs crossed give wildtype young
     (red × blue cherry shrimp give brown), and mixed lines stay mostly
     wildtype, drifting further towards it.
   - **Predation**, once a second, not in easy mode: a hungry adult
     predator whose reach touches a creature no longer than its `prey_cm`
     (its species' length at its size, own young included) eats it with a
-    chance of 1 in 4. The prey leaves no corpse (cause `predation`); the
+    chance of 1 in 4. The prey leaves no corpse (and no death cause); the
     predator is fed (an hour of energy). Neither may be in the net.
   - **Drawing.** Each creature and corpse is drawn in its look (morph and
     sex), one atlas shelf per look.

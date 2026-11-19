@@ -28,9 +28,10 @@
 //!   genetics: every creature carries two morph alleles (indices into its
 //!   species' morphs) and shows a morph only when both match; any mix
 //!   shows the wildtype. Each young takes one of its mother's alleles and
-//!   one of its father's at random; an allele mutates into a random other
-//!   morph [`MUTATION_PER_MILLE`] times in 1000 and reverts to the
-//!   wildtype [`REVERSION_PER_MILLE`] times in 1000. So same-morph lines
+//!   one of its father's at random; an allele mutates into a random
+//!   non-wildtype morph (which may be the one it was) [`MUTATION_PER_MILLE`]
+//!   times in 1000 and reverts to the wildtype [`REVERSION_PER_MILLE`]
+//!   times in 1000. So same-morph lines
 //!   breed true, crossing two morphs gives wildtype young, and mixed lines
 //!   drift back towards wildtype, as mixed neocaridina revert to brown.
 //! - **Predation.** Once a second a hungry adult of a species with
@@ -62,8 +63,8 @@ pub const CONCEIVE_ODDS: u32 = 4;
 /// Ticks a creature added from the palette (or by a script or a host)
 /// settles in before it breeds: a day of its life.
 pub const SETTLE_TICKS: u32 = LIFE_DAY_TICKS;
-/// Chance in 1000 that an allele passed to a young mutates into another
-/// morph.
+/// Chance in 1000 that an allele passed to a young mutates into a random
+/// non-wildtype morph (possibly its own, so it shows no change).
 pub const MUTATION_PER_MILLE: u32 = 5;
 /// Chance in 1000 that an allele passed to a young reverts to the
 /// wildtype.
@@ -640,9 +641,11 @@ impl World {
         })
     }
 
-    /// The clutches from a save: ids unique and not 0, alleles among the
-    /// species' morphs, eggs inside the grid in ascending order, at most
-    /// [`MAX_CLUTCHES`] of them.
+    /// The clutches from a save: of a species that lays eggs, ids unique
+    /// and not 0, alleles among the species' morphs, eggs inside the grid
+    /// in ascending order, at most [`MAX_CLUTCHES`] of them. An egg cell
+    /// need not still hold the egg (one wiped or dug up is skipped at
+    /// hatch), so the cells are not checked.
     pub(super) fn load_clutches(&self, saved: Vec<v3::Clutch>) -> Result<Vec<Clutch>, SaveError> {
         if saved.len() > MAX_CLUTCHES {
             return Err(SaveError::Invalid(format!("{} clutches", saved.len())));
@@ -654,6 +657,9 @@ impl World {
             let k = self
                 .kind(species)
                 .ok_or_else(|| invalid("unknown species"))?;
+            if !k.breeding.is_some_and(|b| b.eggs) {
+                return Err(invalid("species lays no eggs"));
+            }
             if c.id == 0 || clutches.iter().any(|o| o.id == c.id) {
                 return Err(invalid("duplicate id"));
             }

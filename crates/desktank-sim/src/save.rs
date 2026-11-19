@@ -357,6 +357,101 @@ mod tests {
         assert!(matches!(load(big), Err(SaveError::World(_))));
     }
 
+    /// Crafted version 3 saves with breeding state no tank makes: a
+    /// carrying male, a pregnancy longer than the species', alleles outside
+    /// its morphs, and clutches that are malformed or of a species that lays
+    /// no eggs.
+    #[test]
+    fn rejects_bad_breeding_state() {
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 128,
+                height: 48,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let guppy = world.species().id("guppy").unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let nerite = world.species().id("nerite").unwrap();
+        for (x, female) in [(40, false), (60, true)] {
+            let traits = crate::Traits {
+                female: Some(female),
+                ..crate::Traits::default()
+            };
+            world
+                .add_creature_with_traits(guppy, x, 20, traits)
+                .unwrap();
+        }
+        let mut good = world.to_v3();
+        let gestation =
+            world.species().get(guppy).unwrap().breeding.unwrap().days * crate::LIFE_DAY_TICKS;
+        let female = good.creatures.list.iter().position(|c| c.female).unwrap();
+        let male = 1 - female;
+        good.creatures.list[female].carrying = gestation;
+        good.creatures.clutches.push(v3::Clutch {
+            id: 1,
+            species: tetra.0,
+            mother: [0, 0],
+            sire: [0, 0],
+            hatch: 100,
+            eggs: vec![130, 140],
+        });
+        good.creatures.next_clutch = 2;
+        let load = |s: v3::Save| World::from_v3(s, MaterialTable::builtin().unwrap());
+        assert!(load(good.clone()).is_ok());
+        // The next clutch id is only where the search starts: 0 becomes 1.
+        let mut zero = good.clone();
+        zero.creatures.next_clutch = 0;
+        assert!(load(zero).is_ok());
+
+        let creature_bad: [fn(&mut v3::Creature); 3] = [
+            |c| c.carrying += 1,
+            |c| c.alleles = [0, 9],
+            |c| c.sire = [9, 0],
+        ];
+        for (n, bad) in creature_bad.iter().enumerate() {
+            let mut s = good.clone();
+            bad(&mut s.creatures.list[female]);
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))), "female {n}");
+        }
+        let mut carrying_male = good.clone();
+        carrying_male.creatures.list[male].carrying = 1;
+        assert!(matches!(load(carrying_male), Err(SaveError::Invalid(_))));
+
+        let clutch_bad: [fn(&mut v3::Clutch); 7] = [
+            |c| c.id = 0,
+            |c| c.species = 250,
+            |c| c.mother = [0, 9],
+            |c| c.sire = [9, 9],
+            |c| c.eggs = vec![140, 130],
+            |c| c.eggs = vec![130, 130],
+            |c| c.eggs = vec![128 * 48],
+        ];
+        for (n, bad) in clutch_bad.iter().enumerate() {
+            let mut s = good.clone();
+            bad(&mut s.creatures.clutches[0]);
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))), "clutch {n}");
+        }
+        let mut snail = good.clone();
+        snail.creatures.clutches[0].species = nerite.0;
+        assert!(matches!(load(snail), Err(SaveError::Invalid(_))));
+        let mut live = good.clone();
+        live.creatures.clutches[0].species = guppy.0;
+        assert!(matches!(load(live), Err(SaveError::Invalid(_))));
+        let mut twice = good.clone();
+        let again = twice.creatures.clutches[0].clone();
+        twice.creatures.clutches.push(again);
+        assert!(matches!(load(twice), Err(SaveError::Invalid(_))));
+        let mut many = good;
+        let one = many.creatures.clutches[0].clone();
+        many.creatures.clutches = (1..=65)
+            .map(|id| v3::Clutch { id, ..one.clone() })
+            .collect();
+        assert!(matches!(load(many), Err(SaveError::Invalid(_))));
+    }
+
     #[test]
     fn rejects_bad_envelopes() {
         let world = World::new(

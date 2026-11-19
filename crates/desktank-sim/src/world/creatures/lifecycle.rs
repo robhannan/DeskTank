@@ -104,7 +104,8 @@ impl LifeStage {
 }
 
 /// Why a creature died (SPEC §2.4). Temperature comes with E1 and chaos
-/// materials with E2.
+/// materials with E2. Prey a predator eats (T9 part 2) leaves no corpse,
+/// so predation is not a cause here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DeathCause {
     /// It reached its lifespan (the only cause in easy mode).
@@ -113,18 +114,11 @@ pub enum DeathCause {
     Starvation,
     /// It lived too long in foul water.
     PoorWater,
-    /// A larger creature ate it (T9 part 2); it leaves no corpse.
-    Predation,
 }
 
 impl DeathCause {
     /// Every cause, in save order.
-    pub const ALL: [Self; 4] = [
-        Self::OldAge,
-        Self::Starvation,
-        Self::PoorWater,
-        Self::Predation,
-    ];
+    pub const ALL: [Self; 3] = [Self::OldAge, Self::Starvation, Self::PoorWater];
 
     /// The cause's name.
     #[must_use]
@@ -133,7 +127,6 @@ impl DeathCause {
             Self::OldAge => "old age",
             Self::Starvation => "starvation",
             Self::PoorWater => "poor water",
-            Self::Predation => "predation",
         }
     }
 
@@ -142,7 +135,6 @@ impl DeathCause {
             Self::OldAge => 0,
             Self::Starvation => 1,
             Self::PoorWater => 2,
-            Self::Predation => 3,
         }
     }
 
