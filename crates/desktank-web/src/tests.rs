@@ -443,8 +443,45 @@ fn a_drag_far_off_the_canvas_is_clamped() {
 #[test]
 fn feed_sprinkles_food_below_the_surface() {
     let mut t = paused();
-    assert_eq!(t.feed(), FEED_PINCHES);
-    assert_eq!(t.material_count(FEED_FOOD), FEED_PINCHES);
+    let pinches = u32::try_from(cheats::FEED_PINCHES).unwrap();
+    assert_eq!(t.feed(), pinches);
+    assert_eq!(t.material_count(cheats::FEED_FOOD), pinches);
+}
+
+#[test]
+fn the_konami_code_opens_the_cheat_field_and_cheats_run() {
+    let mut t = paused();
+    let keys = [
+        "ArrowUp",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "ArrowLeft",
+        "ArrowRight",
+        "b",
+        "A",
+    ];
+    let fired: Vec<bool> = keys.iter().map(|k| t.cheat_key(k)).collect();
+    assert_eq!(fired.iter().filter(|&&f| f).count(), 1);
+    assert!(fired[9]);
+    // Any other key starts over.
+    for k in &keys[..9] {
+        t.cheat_key(k);
+    }
+    assert!(!t.cheat_key("Shift"));
+    assert!(!t.cheat_key("a"));
+
+    let before = t.creatures();
+    assert_eq!(t.cheat("spawn guppy 2").unwrap(), "spawned 2 guppy");
+    assert_eq!(t.creatures(), before + 2);
+    assert!(t.cheat("feed").unwrap().starts_with("fed"));
+    assert!(t.save_needed());
+    assert_eq!(
+        t.cheat("xyzzy").unwrap_err(),
+        "unknown cheat \"xyzzy\"; try help"
+    );
 }
 
 #[test]

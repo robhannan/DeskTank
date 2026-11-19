@@ -43,7 +43,7 @@ use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
 use desktank_sim::tools::{
     self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
-use desktank_sim::{Brush, FieldKind, MaterialTable, Propagule, Script, World, WorldConfig, save};
+use desktank_sim::{FieldKind, MaterialTable, Propagule, Script, World, WorldConfig, cheats, save};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -64,11 +64,6 @@ pub const MAX_SCALE: u32 = 8;
 
 /// Water level of a new tank, as a fraction of the height.
 const WATER_LEVEL: f32 = 0.9;
-
-/// The food Feed sprinkles (SPEC §2.5 tray actions: Feed with the default
-/// food), and how many pinches.
-const FEED_FOOD: &str = "flake_food";
-const FEED_PINCHES: u32 = 12;
 
 /// [`WebTank::frame`] drew and presented a frame.
 pub const FRAME_DREW: u32 = 1;
@@ -134,6 +129,9 @@ pub struct WebTank {
     frames: u32,
     /// The world changed since the last [`WebTank::save`] (or load).
     dirty: bool,
+    /// Watches the page's key presses for the code that opens the cheat
+    /// field.
+    konami: cheats::Konami,
     #[cfg(target_arch = "wasm32")]
     graphics: Option<Graphics>,
 }
@@ -619,22 +617,42 @@ impl WebTank {
     /// in a dozen pinches across the tank (the tray's Feed, SPEC §2.5).
     /// Returns how many cells changed.
     pub fn feed(&mut self) -> u32 {
-        let world = self.tank.world_mut();
-        let Some(food) = world.materials().id(FEED_FOOD) else {
-            return 0;
-        };
-        let width = i64::try_from(world.width()).unwrap_or(i64::MAX);
-        let row = i64::try_from(world.surface_row()).unwrap_or(0) + 1;
-        // Spread evenly, shifted by the tick so feeds don't stack exactly.
-        let shift = i64::try_from(world.tick_count() % 7).unwrap_or(0);
-        let mut changed = 0;
-        for i in 0..i64::from(FEED_PINCHES) {
-            let x = (2 * i + 1) * width / (2 * i64::from(FEED_PINCHES)) + shift - 3;
-            changed += world.paint(x, row, 0, food, Brush::Pour).unwrap_or(0);
-        }
+        let changed = cheats::feed(self.tank.world_mut());
         self.dirty |= changed > 0;
         self.edited(changed);
         count(changed)
+    }
+
+    /// Takes one key press (a `KeyboardEvent.key`, without auto-repeats)
+    /// and returns `true` when it completes the Konami code, so the page
+    /// should open its cheat field. The page has keyboard focus, so no
+    /// chord is needed.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = cheatKey))]
+    pub fn cheat_key(&mut self, key: &str) -> bool {
+        let key = match key {
+            "ArrowUp" => cheats::CheatKey::Up,
+            "ArrowDown" => cheats::CheatKey::Down,
+            "ArrowLeft" => cheats::CheatKey::Left,
+            "ArrowRight" => cheats::CheatKey::Right,
+            "b" | "B" => cheats::CheatKey::B,
+            "a" | "A" => cheats::CheatKey::A,
+            _ => cheats::CheatKey::Other,
+        };
+        self.konami.key(key, false)
+    }
+
+    /// Runs a line typed in the cheat field ([`cheats::run`]) and returns
+    /// what it did.
+    ///
+    /// # Errors
+    ///
+    /// Returns a short message for an empty line, an unknown cheat or one
+    /// that can't run; the tank is unchanged.
+    pub fn cheat(&mut self, line: &str) -> Result<String, String> {
+        let out = cheats::run(self.tank.world_mut(), line).map_err(|e| e.to_string())?;
+        self.dirty |= out.world_changed;
+        self.edited(out.cells_changed);
+        Ok(out.message)
     }
 
     /// Tints the tank by a field (`"nutrient"`, `"co2"`, `"light"`), or
@@ -833,6 +851,7 @@ impl WebTank {
             size: (size.0.max(1), size.1.max(1)),
             frames: 0,
             dirty: false,
+            konami: cheats::Konami::new(),
             #[cfg(target_arch = "wasm32")]
             graphics: None,
         })
