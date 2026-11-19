@@ -635,6 +635,11 @@ stays a material film, not individuals.
     cutting's `state` holds the species id it grows into (0 for the
     default, the lowest id). The generic parts so far are root, stem and
     leaf (a mat's cells are stems); T6c adds the rest.
+    *T6c (part 1):* a rosette's or carpet's blades are leaf cells (the
+    species' `[look] leaf` picks a blade shape), so blades cost no
+    material id; `runner` is a new part material, counted with roots in a
+    plant's part counts (so the table and saves keep three count slots).
+    Rhizomes and floating leaves come with T6c's later parts.
   - The table holds age and health, which the grid can't rebuild, so
     saves store it (§2.6). Ids, part counts and bounds are checked
     against the grid in tests.
@@ -676,8 +681,23 @@ stays a material film, not individuals.
     loosely or floats (hornwort type).
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
+    *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from
+    where it rooted), `blades` (at most `crown + 2`: above each crown cell
+    and beside its ends), `blade_length`, `lean`, `root_depth`, `spacing`
+    and `substrates`. Blades are one cell wide; those off the crown's
+    centre step a cell outwards at their second cell and every `lean`
+    cells after, more often further out (down to every third cell), so
+    outer blades arch away. Once every blade has started, a runner leaves
+    the root under the crown on each side, creeps through the top two
+    substrate layers (following the bed up and down) and, `spacing` or
+    more cells out where water is above, roots a child (crown above, root
+    at the tip; parent id set, generation + 1); it gives up at twice
+    `spacing`. A plant at its mature size still grows its runners.
+    `[growth] root_feeder` makes only roots and runners sample nutrients.
   - **Carpet:** low tufts; runners creep through the top substrate layer
-    and sprout a new tuft every `spacing` cells.
+    and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a
+    rosette with a one-cell crown and blades of at most 3 cells; each tuft
+    is its own plant.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.
@@ -691,7 +711,9 @@ stays a material film, not individuals.
     mature plants of seeding species drop seeds now and then; the palette
     pours a species' seeds, cuttings or fragments (one it lists; a
     poured fragment is the `cutting` material); fragments also come from
-    cuts.
+    cuts. *T6c:* a species listing `runners` (rosettes and carpets) spreads
+    by them, and the palette's runners pour a plantlet (the `cutting`
+    material).
 - <a id="plant-appearance"></a>**Appearance.** Effects are computed at
   render time where possible, so a change in a plant's look costs no
   chunk wakes and no cell rewrites.
@@ -1485,6 +1507,16 @@ Each package depends only on the packages before it.
     it is gone;
   - a GIF per form in the PR;
   - the settled bench budget holds with every v1 species growing.
+
+  Split into three PRs: (1) rosettes with runners, and carpets; (2)
+  floaters and budding; (3) epiphytes, mat fall-off and layered mats,
+  stem branching and surface trailing.
+  *Part 1 done:* the rosette and carpet forms with runners (§2.7
+  [Growth forms](#growth-forms)), the `runner` part, root feeders, and
+  amazon sword, vallisneria, cryptocoryne, dwarf hairgrass and Monte
+  Carlo; reference images `plant_rosettes` and `plant_carpets`; runners
+  root children with the parent id set; `settled_500_plants` grows every
+  form so far in 11.5 µs.
 - [ ] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night

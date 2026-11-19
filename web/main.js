@@ -42,6 +42,7 @@ const LABELS = {
   algae_wafer: "Algae wafers",
   root_tab: "Root tabs",
   co2_bubble: "CO₂",
+  monte_carlo: "Monte Carlo",
 };
 // What holds a plant back, by `Limit::key` (the inspect card).
 const LIMITS = {

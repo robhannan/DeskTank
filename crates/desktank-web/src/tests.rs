@@ -155,15 +155,39 @@ fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
     assert_eq!(t.plant_propagules(), ["cuttings"]);
     assert_eq!(t.plant_propagule(), "cuttings");
     assert!(!t.set_plant_propagule("seeds"));
+    // Carpets spread by fragments and runners (fragments listed first);
+    // picked, runners pour a plantlet (the cutting material).
+    let grass = t
+        .plant_species()
+        .iter()
+        .position(|s| s.starts_with("dwarf_hairgrass "))
+        .unwrap();
+    t.set_plant_species(u32::try_from(grass).unwrap());
+    assert_eq!(t.plant_propagules(), ["fragments", "runners"]);
+    assert!(t.set_plant_propagule("runners"));
+    assert_eq!(t.plant_propagule(), "runners");
+    down(&mut t, PRIMARY, 90, 30);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.material_count("cutting"), 1);
 }
 
 #[test]
 fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
     let mut t = tank();
     let species = t.plant_species();
-    assert_eq!(species.len(), 7);
+    assert_eq!(species.len(), 12);
     assert!(species[0].starts_with("hygrophila "));
-    for name in ["ludwigia", "cabomba", "bacopa", "christmas_moss"] {
+    for name in [
+        "ludwigia",
+        "cabomba",
+        "bacopa",
+        "christmas_moss",
+        "amazon_sword",
+        "vallisneria",
+        "dwarf_hairgrass",
+        "monte_carlo",
+        "cryptocoryne",
+    ] {
         let entry = format!("{name} ");
         assert!(species.iter().any(|s| s.starts_with(&entry)), "{name}");
     }

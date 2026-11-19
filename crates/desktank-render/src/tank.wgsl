@@ -41,6 +41,8 @@ struct View {
     // Material ids of the plant parts root (x), stem (y) and leaf (z), and
     // of water (w); -1 if missing.
     plant_parts: vec4<f32>,
+    // Material id of the runner part (x; -1 if missing).
+    plant_parts2: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -56,13 +58,15 @@ struct View {
 @group(0) @binding(6) var plant_tints: texture_2d<f32>;
 // Per species id (down): RAMP shades each for root, stem and leaf, then the
 // shapes texel (leaf, stem, root) and the sizes texel (stem height, root
-// depth, leaf length), as bytes (plants.rs).
+// depth, leaf length; blade length, root depth, blade length for rosettes
+// and carpets), as bytes (plants.rs).
 @group(0) @binding(7) var plant_species: texture_2d<f32>;
 
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
 const PART_STEM: i32 = 1;
 const PART_LEAF: i32 = 2;
+const PART_RUNNER: i32 = 3;
 // Species texture layout (plants.rs).
 const RAMP: i32 = 8;
 const SHAPES_COLUMN: i32 = 24;
@@ -72,6 +76,10 @@ const LEAF_LANCEOLATE: i32 = 0;
 const LEAF_NEEDLE: i32 = 1;
 const LEAF_ROUND: i32 = 2;
 const LEAF_FEATHER: i32 = 3;
+const LEAF_RIBBON: i32 = 4;
+const LEAF_SWORD: i32 = 5;
+const LEAF_GRASS: i32 = 6;
+const LEAF_PAD: i32 = 7;
 const STEM_STALK: i32 = 0;
 const STEM_THICK: i32 = 1;
 const STEM_FUZZ: i32 = 2;
@@ -185,6 +193,9 @@ fn part_of(t: vec4<f32>) -> i32 {
     if m == view.plant_parts.z {
         return PART_LEAF;
     }
+    if m == view.plant_parts2.x {
+        return PART_RUNNER;
+    }
     return -1;
 }
 
@@ -270,7 +281,57 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
     let top = sub.y == 0;
     var covered = true;
     var step = noise_step(me);
-    if part == PART_LEAF {
+    if part == PART_LEAF && shapes.x >= LEAF_RIBBON {
+        // A rosette's or carpet's blade (T6c), growing up from the crown and
+        // stepping sideways where it leans: lighter towards its tip.
+        let up = kin(at, vec2<i32>(0, -1), me);
+        let left = kin(at, vec2<i32>(-1, 0), me);
+        let right = kin(at, vec2<i32>(1, 0), me);
+        let next = pos + 1;
+        let tip = !((up.x == PART_LEAF && up.y == next) || (left.x == PART_LEAF && left.y == next)
+            || (right.x == PART_LEAF && right.y == next));
+        step += 1 + i32(round(f32(pos) / max(sizes.z, 1.0) * 4.0)) + select(0, 1, top);
+        let shape = shapes.x;
+        if shape == LEAF_GRASS {
+            // One texel wide, the tip a texel lighter.
+            covered = sub.x == 0;
+            step += select(0, 1, tip);
+        } else if shape == LEAF_PAD {
+            // A short stalk to a round pad, its lower rim darker.
+            if tip {
+                covered = true;
+                step += select(-1, 1, top);
+            } else {
+                covered = sub.x == 0;
+                step -= 1;
+            }
+        } else if shape == LEAF_SWORD {
+            // A narrow stalk, then a broad blade with a pale midrib (the
+            // left texel), tapering to a point.
+            if pos <= 2 && !tip {
+                covered = sub.x == 0;
+                step -= 1;
+            } else if tip {
+                covered = !top || sub.x == 0;
+            } else {
+                step += select(-1, 1, sub.x == 0);
+            }
+        } else {
+            // Ribbon: a strap one texel wide that twists every four cells,
+            // crossing to the other side where it shows its full face.
+            let side = (pos / 4) % 2;
+            let face = pos % 4 == 0 && !top && !tip;
+            covered = sub.x == side || face;
+            step += select(0, 1, face) - select(0, 1, sub.x == 1);
+        }
+    } else if part == PART_RUNNER {
+        // A stolon along the top of its cell, joining runner cells above or
+        // below where it climbs or drops, lighter where it pokes out.
+        let up = kin(at, vec2<i32>(0, -1), me).x == PART_RUNNER;
+        let down = kin(at, vec2<i32>(0, 1), me).x == PART_RUNNER;
+        covered = top || (sub.x == 0 && (up || down));
+        step += 2 + select(0, 1, is_water(at + vec2<i32>(0, -1)));
+    } else if part == PART_LEAF {
         let left = kin(at, vec2<i32>(-1, 0), me);
         let right = kin(at, vec2<i32>(1, 0), me);
         // Leaves grow sideways from a stem node; the side it grows from
@@ -362,11 +423,13 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
         }
     }
     let tint = plant.rgb;
+    // Runners are drawn from the stem's ramp.
+    let ramp = select(part, PART_STEM, part == PART_RUNNER);
     if covered || full {
         let shade = clamp(step, 0, RAMP - 1);
-        return textureLoad(plant_species, vec2<i32>(part * RAMP + shade, species), 0).rgb * tint;
+        return textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
     }
-    let shadow = textureLoad(plant_species, vec2<i32>(part * RAMP, species), 0).rgb * tint * 0.6;
+    let shadow = textureLoad(plant_species, vec2<i32>(ramp * RAMP, species), 0).rgb * tint * 0.6;
     return behind(at, sub, shadow);
 }
 

@@ -1,0 +1,44 @@
+# Cryptocoryne (Cryptocoryne wendtii): a small, slow rosette of crinkled
+# olive-to-bronze leaves that gets by in very little light. A root feeder,
+# hardy once settled; it spreads slowly by short runners.
+id = 12
+name = "cryptocoryne"
+description = "A slow, low-light rosette of bronze-green leaves."
+form = "rosette"
+propagation = ["runners"]
+
+[rosette]
+crown = 1
+blades = 3
+blade_length = 12
+lean = 4
+root_depth = 10
+spacing = 7
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.01, optimum = 0.2, max = 1.5 }
+nutrient = { min = 0.05, optimum = 0.5, max = 3.0 }
+co2 = { min = -1.0, optimum = 0.6, max = 4.0 }
+
+[growth]
+rate = 12.0
+size = 70
+cost = 0.008
+root_feeder = true
+
+[hardiness]
+tolerance = 40.0
+decline = 0.006
+recovery = 0.015
+
+# Olive-green leaves warming to bronze at the tips.
+[colours]
+root = ["#9c8a62", "#b9a77c"]
+stem = ["#3e3a20", "#4c4828"]
+leaf = ["#3d4a24", "#4b5a2a", "#5c6a30", "#706e36", "#86743e", "#9c7c4a"]
+
+[look]
+leaf = "sword"
+stem = "thick"
+root = "strand"

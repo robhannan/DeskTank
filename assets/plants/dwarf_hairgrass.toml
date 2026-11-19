@@ -1,0 +1,44 @@
+# Dwarf hairgrass (Eleocharis acicularis): a carpet of tufts of fine,
+# upright, grass-like blades joined by short runners in the top of the
+# substrate. Wants good light and grows faster with CO₂.
+id = 10
+name = "dwarf_hairgrass"
+description = "A lawn of fine grassy tufts spreading by short runners."
+form = "carpet"
+propagation = ["runners", "fragments"]
+
+# A carpet's crown is one cell; its blades stay within 3 cells of the
+# substrate.
+[carpet]
+blades = 3
+blade_length = 3
+lean = 0
+root_depth = 4
+spacing = 3
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.08, optimum = 0.6, max = 2.0 }
+nutrient = { min = 0.05, optimum = 0.4, max = 3.0 }
+co2 = { min = -1.0, optimum = 1.2, max = 4.0 }
+
+[growth]
+rate = 20.0
+size = 24
+cost = 0.006
+
+[hardiness]
+tolerance = 20.0
+decline = 0.01
+recovery = 0.02
+
+# Fresh grass green blades, a pale base.
+[colours]
+root = ["#b0a27e", "#cbbf98"]
+stem = ["#4f7a2c", "#5f8f34"]
+leaf = ["#367026", "#43862d", "#529c35", "#63b141", "#7bc553", "#97d86c"]
+
+[look]
+leaf = "grass"
+stem = "thick"
+root = "strand"
