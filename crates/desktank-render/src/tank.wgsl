@@ -429,9 +429,9 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> 
                 // A slim needle rising a quarter-cell at a time from the
                 // node to its tip, lit above, with a darker underside short of the tip.
                 let along = (pos - 1) * 4 + select(3 - quarter.x, quarter.x, from_left);
-                let length = 4 * max(i32(sizes.z), 1);
-                let line = 3 - along * 4 / length;
-                let under = quarter.y == line + 1 && along > 0 && along < length - 2;
+                let span = 4 * max(i32(sizes.z), 1);
+                let line = 3 - along * 4 / span;
+                let under = quarter.y == line + 1 && along > 0 && along < span - 2;
                 covered = quarter.y == line || under;
                 step += select(0, 1, quarter.y == line) - select(0, 2, under);
             }
@@ -536,14 +536,16 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> 
             let tip = kin(at, vec2<i32>(0, -1), me).x != PART_STEM;
             step += 1 + i32(round(f32(pos) / max(sizes.x, 1.0) * 5.0)) - select(0, 1, node) + select(0, 2, tip);
             if shape == STEM_THICK {
-                step -= select(0, 1, sub.x == 1);
                 if fine {
-                    // A round stem lit from the left, a dark joint line at
-                    // each node and a rounded growing tip.
+                    // A round stem, brightest left of centre and darkest on
+                    // the right, a dark joint line at each node and a
+                    // rounded growing tip.
                     let shoulder = tip && quarter.y == 0 && (quarter.x == 0 || quarter.x == 3);
                     covered = !shoulder;
-                    step += select(0, 1, sub.x == 1) + select(0, 1, quarter.x == 1)
-                        - select(0, 1, quarter.x == 3) - select(0, 1, node && quarter.y == 3);
+                    step += select(0, 1, quarter.x == 1) - select(0, 1, quarter.x == 3)
+                        - select(0, 1, node && quarter.y == 3);
+                } else {
+                    step -= select(0, 1, sub.x == 1);
                 }
             } else {
                 // Stalk: one texel wide, full at nodes and the growing tip.
