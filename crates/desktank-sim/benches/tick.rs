@@ -2,7 +2,7 @@
 //! must tick in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference
 //! machine, also with living cells (random ticks) and fields active, with
 //! grown plants (and 500 of them, of every species), and with the reference
-//! tank's 30 creatures swimming.
+//! tank's 30 creatures swimming (in open water, and among the 500 plants).
 //!
 //! `cargo bench -p desktank-sim`
 
@@ -212,6 +212,44 @@ fn grazing() -> World {
     w
 }
 
+/// Adds 30 creatures of `names` in turn, mid-zone, spread along the tank
+/// and skipping spots where there is no room.
+fn add_thirty(w: &mut World, names: &[&str]) {
+    let species: Vec<_> = names
+        .iter()
+        .map(|n| w.species().id(n).expect("species"))
+        .collect();
+    let mut column = 10;
+    while w.creatures().len() < 30 {
+        let kind = species[w.creatures().len() % species.len()];
+        let (top, bottom) = w.zone_rows(kind).expect("zone");
+        let row = i64::try_from(usize::midpoint(top, bottom)).expect("row");
+        let _ = w.add_creature(kind, column, row);
+        column = (column + 23) % 630;
+    }
+}
+
+/// Ticks `w`. T9: unfed creatures starve after 8 hours of world time
+/// (576 000 ticks), sooner than criterion's run ends, so this tops their
+/// energy up once per 100 000 ticks (a negligible share of the measured
+/// time) to keep measuring living, ageing fish with the water sampled once
+/// a second.
+fn tick_fed(w: &mut World, since_fed: &mut u32) {
+    *since_fed += 1;
+    if *since_fed == 100_000 {
+        *since_fed = 0;
+        let ids: Vec<_> = w
+            .creatures()
+            .iter()
+            .map(desktank_sim::Creature::id)
+            .collect();
+        for id in ids {
+            w.set_creature_energy(id, desktank_sim::ENERGY_RESERVE);
+        }
+    }
+    black_box(w).tick();
+}
+
 fn bench_tick(c: &mut Criterion) {
     let mut g = c.benchmark_group("tick");
     // Early in the pour (the whole column falling through water) and
@@ -233,39 +271,11 @@ fn bench_tick(c: &mut Criterion) {
     // tank), ten of each species, swimming; with no food they edit no
     // cells, so every chunk stays asleep.
     let mut fish = settled.clone();
-    let species = ["neon_tetra", "corydoras", "betta"].map(|n| fish.species().id(n).expect("fish"));
-    // Spread along the tank, skipping spots the sand pile fills.
-    let mut column = 10;
-    while fish.creatures().len() < 30 {
-        let kind = species[fish.creatures().len() % species.len()];
-        let (top, bottom) = fish.zone_rows(kind).expect("zone");
-        let row = i64::try_from(usize::midpoint(top, bottom)).expect("row");
-        let _ = fish.add_creature(kind, column, row);
-        column = (column + 23) % 630;
-    }
+    add_thirty(&mut fish, &["neon_tetra", "corydoras", "betta"]);
     let mut fish = advance(fish, 200);
-    // T9: unfed creatures starve after 8 hours of world time (576 000
-    // ticks), sooner than criterion's run ends, so top their energy up
-    // once per 100 000 ticks (a negligible share of the measured time) to
-    // keep measuring living, ageing fish with the water sampled once a
-    // second.
-    let ids: Vec<_> = fish
-        .creatures()
-        .iter()
-        .map(desktank_sim::Creature::id)
-        .collect();
     let mut since_fed = 0_u32;
     g.bench_function("settled_with_fish", |b| {
-        b.iter(|| {
-            since_fed += 1;
-            if since_fed == 100_000 {
-                since_fed = 0;
-                for &id in &ids {
-                    fish.set_creature_energy(id, desktank_sim::ENERGY_RESERVE);
-                }
-            }
-            black_box(&mut fish).tick();
-        });
+        b.iter(|| tick_fed(&mut fish, &mut since_fed));
     });
     assert_eq!(fish.creatures().len(), 30, "every fish lived");
     assert_eq!(fish.awake_chunks(), 0, "swimming wakes no chunk");
@@ -323,6 +333,24 @@ fn bench_tick(c: &mut Criterion) {
     );
     g.bench_function("settled_500_plants", |b| {
         b.iter(|| black_box(&mut plants).tick());
+    });
+    // D21: the 500 plants with 30 swimmers of every swimming species among
+    // them, so collision checks meet plant cells (and their depth bands)
+    // on most ticks.
+    let mut among = plants.clone();
+    add_thirty(
+        &mut among,
+        &[
+            "neon_tetra",
+            "harlequin_rasbora",
+            "guppy",
+            "betta",
+            "honey_gourami",
+        ],
+    );
+    let mut since_fed = 0_u32;
+    g.bench_function("plants_with_fish", |b| {
+        b.iter(|| tick_fed(&mut among, &mut since_fed));
     });
     g.finish();
 }
