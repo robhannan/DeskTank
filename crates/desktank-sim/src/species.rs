@@ -197,6 +197,17 @@ pub struct Species {
     /// Real-world age at maturity in days (below the lifespan): a well-fed
     /// creature is an adult from this age.
     pub maturity_days: u32,
+    /// Seconds between droppings of waste (its bioload), or `None` for a
+    /// species that leaves none (every stocked species so far).
+    pub waste_every: Option<f32>,
+    /// Whether it also eats corpses within reach, a bite at a time.
+    pub eats_corpses: bool,
+    /// The carpet plant species (by name) a bottom walker plants at a home
+    /// it picks on the substrate, then keeps near; `None` for no home.
+    pub home_carpet: Option<String>,
+    /// Added only by its own cheat (SPEC §2.5): left out of the palette,
+    /// the `spawn` cheat and stocking, and it never breeds.
+    pub cheat_only: bool,
     /// Longest prey it eats, in cm (`None`: it eats no creatures). A
     /// hungry adult takes any smaller creature it touches: fry, shrimp
     /// (SPEC §2.4, T9 part 2).
@@ -235,6 +246,13 @@ impl Species {
     #[must_use]
     pub fn eats(&self, material: MaterialId) -> bool {
         self.diet.contains(&material)
+    }
+
+    /// Droppings per minute of world time (its bioload): 0 for a species
+    /// that leaves no waste.
+    #[must_use]
+    pub fn bioload(&self) -> f32 {
+        self.waste_every.map_or(0.0, |every| 60.0 / every)
     }
 
     /// Whether females are drawn differently from males.
@@ -330,6 +348,13 @@ struct SpeciesDef {
     lifespan_days: u32,
     maturity_days: u32,
     #[serde(default)]
+    waste_every: Option<f32>,
+    #[serde(default)]
+    eats_corpses: bool,
+    #[serde(default)]
+    home_carpet: Option<String>,
+    #[serde(default)]
+    cheat_only: bool,
     prey_cm: Option<f32>,
     #[serde(default)]
     breeding: Option<BreedingDef>,
@@ -408,6 +433,8 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/guppy.toml"),
     include_str!("../../../assets/species/harlequin_rasbora.toml"),
     include_str!("../../../assets/species/otocinclus.toml"),
+    include_str!("../../../assets/species/medical_crab.toml"),
+    include_str!("../../../assets/species/home_owning_crab.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -504,6 +531,7 @@ impl SpeciesTable {
     }
 }
 
+#[allow(clippy::too_many_lines)] // one check per property
 fn validate(
     d: &SpeciesDef,
     materials: &MaterialTable,
@@ -548,6 +576,14 @@ fn validate(
         return Err(invalid(
             "lifespan_days must be 1..=7300 and maturity_days 1..lifespan_days",
         ));
+    }
+    if let Some(every) = d.waste_every
+        && !(every.is_finite() && (1.0..=600.0).contains(&every))
+    {
+        return Err(invalid("waste_every must be 1..=600 seconds"));
+    }
+    if d.home_carpet.is_some() && d.zone != Zone::Bottom {
+        return Err(invalid("only bottom walkers keep a home"));
     }
     let mut diet = Vec::with_capacity(d.diet.len());
     for food in &d.diet {
@@ -601,6 +637,10 @@ fn validate(
         hop_every: d.hop_every,
         lifespan_days: d.lifespan_days,
         maturity_days: d.maturity_days,
+        waste_every: d.waste_every,
+        eats_corpses: d.eats_corpses,
+        home_carpet: d.home_carpet.clone(),
+        cheat_only: d.cheat_only,
         prey_cm: d.prey_cm,
         breeding,
         morphs,
@@ -884,7 +924,8 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 11);
+        // Eleven stocked species and the two cheat-only crabs.
+        assert_eq!(t.len(), 13);
         for name in [
             "neon_tetra",
             "corydoras",
@@ -950,6 +991,51 @@ mod tests {
         let oto = t.get(t.id("otocinclus").unwrap()).unwrap();
         assert_eq!((oto.zone, oto.size()), (Zone::Surfaces, (7, 3)));
         assert!(oto.eats(algae));
+    }
+
+    /// The cheat-only crabs (SPEC §2.5): peaceful bottom walkers that never
+    /// breed, eat everything edible that isn't alive and leave far more
+    /// waste than any stocked species; the home owner plants a carpet.
+    #[test]
+    fn the_cheat_only_crabs() {
+        let m = materials();
+        let t = SpeciesTable::builtin_for(&m).unwrap();
+        let get = |name| t.get(t.id(name).unwrap()).unwrap();
+        let crabs = [get("medical_crab"), get("home_owning_crab")];
+        // Everything edible that isn't alive (and not waste, which would
+        // cancel their bioload).
+        let foods = [
+            "flake_food",
+            "sinking_pellet",
+            "bloodworm",
+            "algae_wafer",
+            "algae",
+            "detritus",
+            "dead_plant",
+        ];
+        let never = ["leaf", "stem", "root", "runner", "seed", "cutting", "waste"];
+        let stocked_bioload = t
+            .iter()
+            .filter(|s| !s.cheat_only)
+            .map(Species::bioload)
+            .fold(0.0, f32::max);
+        for crab in crabs {
+            assert!(crab.cheat_only && crab.breeding.is_none(), "{}", crab.name);
+            assert_eq!(
+                (crab.zone, crab.temperament, crab.size()),
+                (Zone::Bottom, Temperament::Peaceful, (6, 7))
+            );
+            for food in foods {
+                assert!(crab.eats(m.id(food).unwrap()), "{} eats {food}", crab.name);
+            }
+            for food in never {
+                assert!(!crab.eats(m.id(food).unwrap()), "{} eats {food}", crab.name);
+            }
+            assert!(crab.eats_corpses);
+            assert!(crab.bioload() >= 10.0 * stocked_bioload.max(1.0));
+        }
+        assert_eq!(crabs[0].home_carpet, None);
+        assert_eq!(crabs[1].home_carpet.as_deref(), Some("dwarf_hairgrass"));
     }
 
     /// The fish at [`CELLS_PER_CM`]: a male guppy's body is the shortest
@@ -1382,6 +1468,27 @@ mod tests {
                 "{to}"
             );
         }
+        // Waste every 1..=600 s; only walkers keep a home.
+        for every in ["0.5", "601.0", "nan"] {
+            assert!(
+                matches!(
+                    bad(
+                        "min_depth = 10",
+                        &format!("min_depth = 10\nwaste_every = {every}")
+                    ),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "waste_every = {every}"
+            );
+        }
+        assert!(matches!(
+            bad(
+                "min_depth = 10",
+                "min_depth = 10\nhome_carpet = \"monte_carlo\""
+            ),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(walker("home_carpet = \"monte_carlo\"\nwaste_every = 2.0").is_ok());
         let ok = walker("hop_every = 6.0\nreach = 4").unwrap();
         let s = ok.get(SpeciesId(9)).unwrap();
         assert_eq!((s.hop_every, s.reach), (Some(6.0), 4));

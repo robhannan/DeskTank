@@ -49,7 +49,7 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
 
 /// Adds `count` creatures (stopping at the tank's population cap), cycling through the
 /// swimming and bottom-walking species (fish and shrimp; not the surface
-/// crawlers), each placed at a seeded spot in the middle of its zone (or the
+/// crawlers or the cheat-only crabs), each placed at a seeded spot in the middle of its zone (or the
 /// nearest free water). Returns how many were added.
 ///
 /// # Errors
@@ -60,7 +60,7 @@ pub fn stock(world: &mut World, count: usize, seed: u64) -> anyhow::Result<usize
     let species: Vec<_> = world
         .species()
         .iter()
-        .filter(|s| s.zone != Zone::Surfaces)
+        .filter(|s| s.zone != Zone::Surfaces && !s.cheat_only)
         .map(|s| s.id)
         .collect();
     if species.is_empty() {
@@ -136,14 +136,14 @@ mod tests {
         let stocked = world
             .species()
             .iter()
-            .filter(|s| s.zone != Zone::Surfaces)
+            .filter(|s| s.zone != Zone::Surfaces && !s.cheat_only)
             .count();
         // Round robin: every swimmer and walker gets 30 / n, the first
         // 30 % n one more; crawlers none.
         for (i, s) in world
             .species()
             .iter()
-            .filter(|s| s.zone != Zone::Surfaces)
+            .filter(|s| s.zone != Zone::Surfaces && !s.cheat_only)
             .enumerate()
         {
             let n = world

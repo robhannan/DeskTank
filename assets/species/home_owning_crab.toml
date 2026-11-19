@@ -1,0 +1,245 @@
+# The home owning crab (placeholder art, D11): the medical crab in
+# gardening clothes (sun hat, head scarf, a gloved claw), spawned by the
+# cheat `home owner!`. Soon after it arrives it picks a home on the
+# substrate, plants a small patch of dwarf hairgrass there and keeps near
+# it. Peaceful, eats anything that isn't alive, and very stinky.
+id = 13
+name = "home_owning_crab"
+zone = "bottom"
+depth = [0.7, 1.0]
+min_depth = 18
+# Real-world body length in cm (the carapace; the claws and legs are drawn
+# past it), at two cells per cm.
+length_cm = 3.0
+# Lifespan and age at maturity in real days (about 10 years; mature at a
+# year), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
+lifespan_days = 3650
+maturity_days = 365
+temperament = "peaceful"
+speed = 2.0
+max_speed = 5.0
+# The claws pick food from two cells away.
+reach = 2
+# Diet: everything edible in `assets/materials` that isn't alive: every
+# food (flake_food, sinking_pellet, bloodworm, algae_wafer), algae, mulm
+# (detritus) and dead plant matter, plus corpses (`eats_corpses`). Left
+# out: live plant parts, seeds and cuttings (it would eat its own carpet),
+# root tabs and liquid fertiliser (not food), and waste, which it would
+# otherwise eat straight back and so cancel its own bioload.
+diet = ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer", "algae", "detritus", "dead_plant"]
+eats_corpses = true
+# Very stinky: a dropping of waste every 4 seconds (15 a minute), where
+# every stocked species leaves none.
+waste_every = 4.0
+# The carpet it plants at its home: a few plantlets, once.
+home_carpet = "dwarf_hairgrass"
+# Added only by its cheat (SPEC §2.5): not in the palette, `spawn` or
+# stocking, and it never breeds.
+cheat_only = true
+
+[sprite]
+# Facing right; two texels per cell side. A 12x14-texel (6x7-cell) crab in
+# a sun hat and scarf, standing and waving a gloved claw over four frames.
+colours = { r = "#ef5b52", p = "#f88a80", R = "#b8352f", t = "#dc4a42", b = "#a7e3ee", B = "#6fb7c6", k = "#16160f", w = "#9adbbd", c = "#6db694", g = "#5aa98a", G = "#3d8468", h = "#9fd35a", H = "#6e9e34", v = "#9b8fe0", V = "#6b60b8", n = "#d4efc4", N = "#a9cf98" }
+frames = [
+    [
+        "...hhhh..nn.",
+        "..vvvvvh.nnn",
+        "hhhhhhhhhnnn",
+        "H.Vrbkrbk.wc",
+        "..Vrbbrbb.wc",
+        "..VvRrrrr.wc",
+        "..vVvtttt.wc",
+        ".wwwwtwtwwwc",
+        "Rcwwcwwwwwc.",
+        "Rcwwwcwwwc..",
+        "R.cccccccc..",
+        "...ggG.ggG..",
+        "...rB..rrB..",
+        "...BB..BBB..",
+    ],
+    [
+        "...hhhh.nn..",
+        "..vvvvvh.nnn",
+        "hhhhhhhhhnnn",
+        "H.Vrbkrbk.wc",
+        "..Vrbbrbb.wc",
+        "..VvRrrrr.wc",
+        "..vVvtttt.wc",
+        ".wwwwwtwtwwc",
+        "Rcwwcwwwwwc.",
+        "Rcwwwcwwwc..",
+        "R.cccccccc..",
+        "...ggG.ggG..",
+        "...rB..rrB..",
+        "...BB..BBB..",
+    ],
+    [
+        "...hhhh..nn.",
+        "..vvvvvh.nnn",
+        "hhhhhhhhhnnn",
+        "H.Vrbkrbk.wc",
+        "..Vrbbrbb.wc",
+        "..VvRrrrr.wc",
+        "..vVvtttt.wc",
+        ".wwwwtwtwwwc",
+        "Rcwwcwwwwwc.",
+        "Rcwwwcwwwc..",
+        "..cccccccc..",
+        "...ggG.ggG..",
+        "...rB..rrB..",
+        "...BB..BBB..",
+    ],
+    [
+        "...hhhh.nn..",
+        "..vvvvvh.nnn",
+        "hhhhhhhhhnnn",
+        "H.Vrbkrbk.wc",
+        "..Vrbbrbb.wc",
+        "..VvRrrrr.wc",
+        "..vVvtttt.wc",
+        ".wwwwwtwtwwc",
+        "Rcwwcwwwwwc.",
+        "Rcwwwcwwwc..",
+        "..cccccccc..",
+        "...ggG.ggG..",
+        "...rB..rrB..",
+        "...BB..BBB..",
+    ],
+]
+# The palette icon, at one pixel per cell (required, though cheat-only
+# species aren't in the palette).
+icon = [
+    ".hh..n",
+    "hhhhhn",
+    "Vbkbkw",
+    "Vtttrw",
+    ".wtww.",
+    ".cwwc.",
+    ".BB.BB",
+]
+
+# The same four poses at four texels per cell side (24x28), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "........hhhhh......nn...",
+        ".......hhhhhhh....nnnn.n",
+        "......pvvvvvvvh...nnnn.n",
+        "...hhhhhhhhhhhhhhhnnnnnn",
+        "..HHHhhhhhhhhhhhhhHnnnn.",
+        "..H....Vvrrbbrrrbb..nN..",
+        ".......Vvrbbbbrbbbb.wwc.",
+        ".......Vvrbbkbrbbkb.wwc.",
+        "........VvrBBrrrBB..wwc.",
+        "........Vvrrrrrr....wwc.",
+        "........VvrrRrRrRr..wwc.",
+        "......vvvvvtgtwt.t..wwc.",
+        "......vVVVvtgtwtwt..wwc.",
+        ".....wwvwvwtwtwtwt..wwc.",
+        ".....wwwwwwctwwtwtw.wwc.",
+        ".....wwwwwcwwwwwwwwwwwc.",
+        "....Rcwwwwcwwwwwwwwwwwc.",
+        "...RRcwwwwcwwwwwwww.....",
+        "...RRcwwwwcwwwwwwwc.....",
+        "...RRcwwwwwcwwwwwwc.....",
+        "...RRccwwwwcwwwwwcc.....",
+        "...R..cccccccccccc......",
+        ".......ggggG.gggG.......",
+        ".......ggggG.gggG.......",
+        ".......GGGG..GGGG.......",
+        ".......rR....rR.........",
+        ".......rrB...rrrB.......",
+        ".......BBB...BBBB.......",
+    ],
+    [
+        "........hhhhh......nn...",
+        ".......hhhhhhh....nnn.n.",
+        "......pvvvvvvvh..nnnn.n.",
+        "...hhhhhhhhhhhhhhnnnnnn.",
+        "..HHHhhhhhhhhhhhhhnnnn..",
+        "..H....Vvrrbbrrrbb.nN...",
+        ".......Vvrbbbbrbbbbwwc..",
+        ".......Vvrbbkbrbbkbwwc..",
+        "........VvrBBrrrBB.wwc..",
+        "........Vvrrrrrr...wwc..",
+        "........VvrrRrRrRr.wwc..",
+        "......vvvvvtgtwt.t.wwc..",
+        "......vVVVvtgtwtwt.wwc..",
+        ".....wwvwvwgtwtwtw.wwc..",
+        ".....wwwwwwctwtwwtwwwc..",
+        ".....wwwwwcwwwwwwwwwwc..",
+        "....Rcwwwwcwwwwwwwwwwc..",
+        "...RRcwwwwcwwwwwwww.....",
+        "...RRcwwwwcwwwwwwwc.....",
+        "...RRcwwwwwcwwwwwwc.....",
+        "...RRccwwwwcwwwwwcc.....",
+        "...R..cccccccccccc......",
+        ".......ggggG.gggG.......",
+        ".......ggggG.gggG.......",
+        ".......GGGG..GGGG.......",
+        ".......rR....rR.........",
+        ".......rrB...rrrB.......",
+        ".......BBB...BBBB.......",
+    ],
+    [
+        "........hhhhh......nn...",
+        ".......hhhhhhh....nnnn.n",
+        "......pvvvvvvvh...nnnn.n",
+        "...hhhhhhhhhhhhhhhnnnnnn",
+        "..HHHhhhhhhhhhhhhhHnnnn.",
+        "..H....Vvrrbbrrrbb..nN..",
+        ".......Vvrbbbbrbbbb.wwc.",
+        ".......Vvrbbkbrbbkb.wwc.",
+        "........VvrBBrrrBB..wwc.",
+        "........Vvrrrrrr....wwc.",
+        "........VvrrRrRrRr..wwc.",
+        "......vvvvvtgtwt.t..wwc.",
+        "......vVVVvtgtwtwt..wwc.",
+        ".....wwvwvwtwtwtwt..wwc.",
+        ".....wwwwwwctwwtwtw.wwc.",
+        ".....wwwwwcwwwwwwwwwwwc.",
+        "....Rcwwwwcwwwwwwwwwwwc.",
+        "...RRcwwwwcwwwwwwww.....",
+        "...RRcwwwwcwwwwwwwc.....",
+        "...RRcwwwwwcwwwwwwc.....",
+        "...RRccwwwwcwwwwwcc.....",
+        "....RRcccccccccccc......",
+        ".......ggggG.gggG.......",
+        ".......ggggG.gggG.......",
+        ".......GGGG..GGGG.......",
+        ".......rR....rR.........",
+        ".......rrB...rrrB.......",
+        ".......BBB...BBBB.......",
+    ],
+    [
+        "........hhhhh......nn...",
+        ".......hhhhhhh....nnn.n.",
+        "......pvvvvvvvh..nnnn.n.",
+        "...hhhhhhhhhhhhhhnnnnnn.",
+        "..HHHhhhhhhhhhhhhhnnnn..",
+        "..H....Vvrrbbrrrbb.nN...",
+        ".......Vvrbbbbrbbbbwwc..",
+        ".......Vvrbbkbrbbkbwwc..",
+        "........VvrBBrrrBB.wwc..",
+        "........Vvrrrrrr...wwc..",
+        "........VvrrRrRrRr.wwc..",
+        "......vvvvvtgtwt.t.wwc..",
+        "......vVVVvtgtwtwt.wwc..",
+        ".....wwvwvwgtwtwtw.wwc..",
+        ".....wwwwwwctwtwwtwwwc..",
+        ".....wwwwwcwwwwwwwwwwc..",
+        "....Rcwwwwcwwwwwwwwwwc..",
+        "...RRcwwwwcwwwwwwww.....",
+        "...RRcwwwwcwwwwwwwc.....",
+        "...RRcwwwwwcwwwwwwc.....",
+        "...RRccwwwwcwwwwwcc.....",
+        "....RRcccccccccccc......",
+        ".......ggggG.gggG.......",
+        ".......ggggG.gggG.......",
+        ".......GGGG..GGGG.......",
+        ".......rR....rR.........",
+        ".......rrB...rrrB.......",
+        ".......BBB...BBBB.......",
+    ],
+]

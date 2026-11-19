@@ -332,13 +332,15 @@ impl WebTank {
             .collect()
     }
 
-    /// Species names, ordered by ID.
+    /// The names of the species the palette offers (all but the cheat-only
+    /// ones), ordered by ID.
     #[must_use]
     pub fn species(&self) -> Vec<String> {
         self.tank
             .world()
             .species()
             .iter()
+            .filter(|s| !s.cheat_only)
             .map(|s| s.name.clone())
             .collect()
     }

@@ -279,7 +279,7 @@ impl Tools {
     /// inspect and glue; each material group lists the materials naming it,
     /// by ID (the plants group starts with the plants slot); then the
     /// placeables whose material `world` has, and its
-    /// species by ID.
+    /// species by ID (but the cheat-only ones).
     #[must_use]
     pub fn palette_groups(world: &World) -> Vec<(PaletteGroup, Vec<PaletteItem>)> {
         let table = world.materials();
@@ -295,9 +295,11 @@ impl Tools {
                         .filter(|p| table.id(p.material_name()).is_some())
                         .map(|p| PaletteItem::Tool(Tool::Place(p)))
                         .collect(),
+                    // Cheat-only species come from their cheats.
                     PaletteGroup::Creatures => world
                         .species()
                         .iter()
+                        .filter(|s| !s.cheat_only)
                         .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
                         .collect(),
                     // The plants slot (if `world` has plant species and
@@ -1047,7 +1049,7 @@ mod tests {
         let pourable = w.materials().iter().filter(|m| m.palette.is_some());
         assert_eq!(
             items.len(),
-            pourable.count() + 1 + 2 + 4 + w.species().len()
+            pourable.count() + 1 + 2 + 4 + w.species().iter().filter(|s| !s.cheat_only).count()
         );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
@@ -1093,13 +1095,16 @@ mod tests {
             names(PaletteGroup::Devices),
             ["Place(Bubbler)", "Place(FilterOutlet)"]
         );
-        // Every species, nerites included, has a slot in Creatures.
+        // Every species, nerites included, has a slot in Creatures, but
+        // the cheat-only crabs, which come from their cheats.
         let creatures: Vec<_> = w
             .species()
             .iter()
+            .filter(|s| !s.cheat_only)
             .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
             .collect();
         assert!(w.species().iter().any(|s| s.name == "nerite"));
+        assert_eq!(w.species().iter().filter(|s| s.cheat_only).count(), 2);
         assert_eq!(
             groups
                 .iter()
