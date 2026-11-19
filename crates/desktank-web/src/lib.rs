@@ -483,6 +483,20 @@ impl WebTank {
         self.tools.radius()
     }
 
+    /// Turns easy mode on or off (SPEC §2.4: only old age kills). Off by
+    /// default.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setEasyMode))]
+    pub fn set_easy_mode(&mut self, easy: bool) {
+        self.tank.world_mut().set_easy_mode(easy);
+    }
+
+    /// Whether easy mode is on.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = easyMode))]
+    #[must_use]
+    pub fn easy_mode(&self) -> bool {
+        self.tank.world().easy_mode()
+    }
+
     /// Enables fish fleeing the pointer. Off by default.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setCursorAvoidance))]
     pub fn set_cursor_avoidance(&mut self, enabled: bool) {

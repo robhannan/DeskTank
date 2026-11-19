@@ -376,6 +376,16 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
 }
 
 #[test]
+fn easy_mode_reaches_the_world() {
+    let mut t = paused();
+    assert!(!t.easy_mode());
+    t.set_easy_mode(true);
+    assert!(t.easy_mode() && t.tank.world().easy_mode());
+    t.set_easy_mode(false);
+    assert!(!t.tank.world().easy_mode());
+}
+
+#[test]
 fn long_press_inspects_and_keeps_the_selection() {
     let mut t = paused();
     let gravel = slot(&t, "material gravel");
