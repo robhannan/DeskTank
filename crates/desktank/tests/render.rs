@@ -189,3 +189,11 @@ fn fish_scene_matches_reference() {
 fn lifecycle_scene_matches_reference() {
     check("lifecycle");
 }
+
+/// Breeding (T9 part 2): cherry shrimp in each morph, guppy pairs in three
+/// strains (males and the plainer, short-tailed females), and a corydoras
+/// clutch of eggs on the bed.
+#[test]
+fn breeding_scene_matches_reference() {
+    check("breeding");
+}
