@@ -535,7 +535,9 @@ fn the_palette_adds_creatures_of_each_species() {
             _ => None,
         })
         .collect();
-    assert_eq!(adders.len(), w.species().len());
+    // Every species but the cheat-only crabs.
+    let stocked = w.species().iter().filter(|s| !s.cheat_only).count();
+    assert_eq!((adders.len(), w.species().len()), (stocked, stocked + 2));
     let mut t = Tools::new(id(&w, "sand"));
     for (k, &s) in adders.iter().enumerate() {
         t.select(PaletteItem::Tool(Tool::AddCreature(s)));
