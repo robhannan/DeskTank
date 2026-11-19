@@ -183,6 +183,12 @@ test("the propagule picker offers the species' own methods and pours seeds", asy
   await expect(way).toBeDisabled();
   await species.selectOption({ label: "Java moss" });
   await expect(way.locator("option")).toHaveText(["Fragments"]);
+  // Carpets and rosettes spread by runners (T6c).
+  await species.selectOption({ label: "Dwarf hairgrass" });
+  await expect(way.locator("option")).toHaveText(["Fragments", "Runners"]);
+  await species.selectOption({ label: "Vallisneria" });
+  await expect(way.locator("option")).toHaveText(["Runners"]);
+  await species.selectOption({ label: "Monte Carlo" });
   // Back on hygrophila the seeds pick still holds; it survives a reset,
   // even one made while on a species without seeds.
   await species.selectOption({ label: "Hygrophila" });

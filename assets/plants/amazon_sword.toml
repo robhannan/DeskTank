@@ -1,0 +1,49 @@
+# Amazon sword (Echinodorus grisebachii 'Bleheri'): a large rosette of
+# broad, long, sword-shaped leaves on short stalks. A heavy root feeder that
+# takes its nutrients from the substrate (root tabs help), happy in modest
+# light without CO₂; it spreads slowly by plantlets on long runners.
+id = 8
+name = "amazon_sword"
+description = "A big rosette of broad sword leaves that feeds through its roots."
+form = "rosette"
+propagation = ["runners"]
+
+# Crown cells along the substrate; most blades (≤ crown + 2); blade length;
+# cells between outward steps (0: upright); root depth; runner cells out to
+# a new plant; substrates it roots in.
+[rosette]
+crown = 3
+blades = 5
+blade_length = 34
+lean = 9
+root_depth = 16
+spacing = 14
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.03, optimum = 0.4, max = 1.5 }
+nutrient = { min = 0.1, optimum = 0.8, max = 3.5 }
+co2 = { min = -1.0, optimum = 0.8, max = 4.0 }
+
+# A root feeder: only its roots and runners sample nutrients.
+[growth]
+rate = 40.0
+size = 220
+cost = 0.012
+root_feeder = true
+
+[hardiness]
+tolerance = 30.0
+decline = 0.008
+recovery = 0.02
+
+# Rich mid-green leaves, a dark crown and thick pale roots.
+[colours]
+root = ["#9c8a62", "#b9a77c", "#d6c79c"]
+stem = ["#34481f", "#425a28", "#526e31"]
+leaf = ["#2b6424", "#36782b", "#438d33", "#53a03d", "#69b44c", "#86c763"]
+
+[look]
+leaf = "sword"
+stem = "thick"
+root = "thick"

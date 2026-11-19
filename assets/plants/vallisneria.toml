@@ -1,0 +1,43 @@
+# Vallisneria (Vallisneria spiralis): a rosette of tall, ribbon-like
+# blades that reach for the surface. Undemanding in light and nutrients,
+# it spreads quickly by runners that root a new plant every few cells.
+id = 9
+name = "vallisneria"
+description = "Tall ribbon blades that reach for the surface; spreads fast by runners."
+form = "rosette"
+propagation = ["runners"]
+
+[rosette]
+crown = 2
+blades = 4
+blade_length = 56
+lean = 14
+root_depth = 8
+spacing = 9
+substrates = ["sand", "gravel", "aquasoil"]
+
+[prefer]
+light = { min = 0.02, optimum = 0.35, max = 1.5 }
+nutrient = { min = 0.02, optimum = 0.35, max = 3.0 }
+co2 = { min = -1.0, optimum = 0.8, max = 4.0 }
+
+[growth]
+rate = 45.0
+size = 200
+cost = 0.008
+
+[hardiness]
+tolerance = 25.0
+decline = 0.01
+recovery = 0.02
+
+# Pale, translucent green ribbons on a pale crown.
+[colours]
+root = ["#b4a684", "#cdc09c", "#e3d9b8"]
+stem = ["#4c6a34", "#5d7f3e", "#6f9449"]
+leaf = ["#3d7838", "#4a8a40", "#599c4a", "#6aad56", "#7fbf68", "#9ad282"]
+
+[look]
+leaf = "ribbon"
+stem = "thick"
+root = "strand"

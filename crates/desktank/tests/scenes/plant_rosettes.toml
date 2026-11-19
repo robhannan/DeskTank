@@ -1,0 +1,42 @@
+# Rosettes (T6c): amazon sword (fed by a buried root tab), vallisneria and
+# cryptocoryne in an aquasoil bed, grown for 15 minutes: crowns on the
+# substrate with blades fanning up, roots below, and runners creeping
+# through the top of the bed to root new plants.
+ticks = 18000
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 32
+y = 88
+radius = 1
+material = "root_tab"
+brush = "replace"
+
+[[pour]]
+x = 30
+y = 20
+radius = 0
+plant = "amazon_sword"
+
+[[pour]]
+x = 80
+y = 20
+radius = 0
+plant = "vallisneria"
+
+[[pour]]
+x = 130
+y = 20
+radius = 0
+plant = "cryptocoryne"

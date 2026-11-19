@@ -1,0 +1,40 @@
+# Carpets (T6c): dwarf hairgrass on the left and Monte Carlo on the right
+# of an aquasoil bed, two plantings each, grown for 15 minutes: low tufts
+# joined by short runners spreading sideways across the substrate.
+ticks = 18000
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 25
+y = 40
+radius = 0
+plant = "dwarf_hairgrass"
+
+[[pour]]
+x = 55
+y = 40
+radius = 0
+plant = "dwarf_hairgrass"
+
+[[pour]]
+x = 105
+y = 40
+radius = 0
+plant = "monte_carlo"
+
+[[pour]]
+x = 135
+y = 40
+radius = 0
+plant = "monte_carlo"

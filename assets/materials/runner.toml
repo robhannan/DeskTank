@@ -1,0 +1,8 @@
+# A runner (stolon) creeps through the top layer of the substrate from a
+# rosette's or carpet's crown and roots a new plant at its tip (T6c).
+id = 77
+name = "runner"
+class = "solid"
+density = 1.1
+opacity = 0.3
+colour = "#8fae5a"

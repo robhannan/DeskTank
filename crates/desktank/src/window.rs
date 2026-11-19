@@ -21,7 +21,7 @@
 //! when the brush outline changes. Escape closes.
 //!
 //! Plants (T6b): the palette's plants slot pours the species named in the
-//! title bar as the propagule named there (seeds, cuttings or fragments);
+//! title bar as the propagule named there (seeds, cuttings, fragments or runners);
 //! clicking it again (or `P`) picks the next species, `O` the next
 //! propagule that species grows from. Inspect shows a plant's species, age, health, size and
 //! what limits its growth in the title bar.
@@ -529,7 +529,7 @@ impl Running {
     }
 
     /// Picks the next propagule the plant species grows from (seeds,
-    /// cuttings, fragments) and selects the plants slot, opening its group.
+    /// cuttings, fragments, runners) and selects the plants slot, opening its group.
     fn next_plant_propagule(&mut self) {
         self.tools.next_plant_propagule(self.tank.world());
         self.select_plants_slot();
@@ -713,7 +713,7 @@ impl ApplicationHandler for App {
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the
                         // tenth; P picks the next plant species, O the
-                        // next way to start it (seeds, cuttings, fragments).
+                        // next way to start it (seeds, cuttings, fragments, runners).
                         if let Ok(n) = c.parse::<usize>() {
                             s.select_slot((n + 9) % 10);
                         } else if c.eq_ignore_ascii_case("p") {

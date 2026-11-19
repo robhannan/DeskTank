@@ -43,8 +43,8 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable, Propagule,
-    plant_position, plant_variant,
+    COUNTED_PARTS, Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable,
+    Propagule, RosetteForm, plant_position, plant_variant,
 };
 use crate::save::{SaveError, v1};
 
@@ -81,6 +81,13 @@ const MAT_FALLING: f32 = 0.05;
 const STEM_WEIGHT: u32 = 8;
 const LEAF_WEIGHT: u32 = 3;
 const ROOT_WEIGHT: u32 = 2;
+/// Rosette and carpet growth weights per site (T6c): a blade's tip grows
+/// like a stem's, a new blade or crown cell like a leaf, and a runner
+/// creeps more slowly.
+const BLADE_WEIGHT: u32 = 8;
+const NEW_BLADE_WEIGHT: u32 = 3;
+const CROWN_WEIGHT: u32 = 3;
+const RUNNER_WEIGHT: u32 = 2;
 
 /// A plant's id, as stored in its cells' `state` (never 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,16 +106,17 @@ pub struct PlantInfo {
     pub health: f32,
     /// Stored energy, in cells' worth of growth.
     pub energy: f32,
-    /// Cells per part, in [`Part::ALL`] order.
-    pub parts: [u32; 3],
+    /// Cells per part: roots (with runners), stems and leaves
+    /// ([`Part::count_slot`]).
+    pub parts: [u32; COUNTED_PARTS],
     /// The cell it grows from: where it rooted (or its lowest stem cell).
     pub base: (usize, usize),
     /// The rectangle covering its cells.
     pub bounds: Rect,
-    /// The plant it was cut from, if it is a fragment.
+    /// The plant it was cut from (a fragment) or whose runner rooted it.
     pub parent: Option<PlantId>,
     /// 0 for a plant grown from a seed or cutting, one more than its
-    /// parent's for a fragment.
+    /// parent's for a fragment or a plant rooted by its runner.
     pub generation: u16,
     /// What held it back most at its last update.
     pub limit: Limit,
@@ -130,7 +138,7 @@ pub(super) struct Plant {
     born: u64,
     health: f32,
     energy: f32,
-    parts: [u32; 3],
+    parts: [u32; COUNTED_PARTS],
     /// Cell index of its base.
     base: usize,
     bounds: Rect,
@@ -175,7 +183,8 @@ pub(super) struct Plants {
     table: BTreeMap<u16, Plant>,
     /// Per material id: 1 + the part index, or 0.
     part_of: Vec<u8>,
-    parts: [Option<MaterialId>; 3],
+    /// Material per part, in [`Part::ALL`] order (runners are optional).
+    parts: [Option<MaterialId>; 4],
     seed: Option<MaterialId>,
     cutting: Option<MaterialId>,
     dead: Option<MaterialId>,
@@ -200,14 +209,16 @@ impl Plants {
         let parts = Part::ALL.map(|p| materials.id(p.material_name()));
         let dead = materials.id("dead_plant");
         let water = materials.id("water");
-        // Without every part, dead plant matter and water there are no
-        // plants (a test's own material set).
-        let enabled = parts.iter().all(Option::is_some) && dead.is_some() && water.is_some();
+        // Without root, stem and leaf, dead plant matter and water there
+        // are no plants (a test's own material set); without runners no
+        // runners grow.
+        let enabled =
+            parts[..COUNTED_PARTS].iter().all(Option::is_some) && dead.is_some() && water.is_some();
         let mut part_of = vec![0u8; 256];
         if enabled {
             for (k, m) in parts.iter().enumerate() {
                 if let Some(m) = m {
-                    #[allow(clippy::cast_possible_truncation)] // 3 parts
+                    #[allow(clippy::cast_possible_truncation)] // 4 parts
                     let tag = k as u8 + 1;
                     part_of[usize::from(m.0)] = tag;
                 }
@@ -531,7 +542,7 @@ impl World {
         };
         let (x, y) = (i % self.width, i / self.width);
         if let Some(p) = self.plants.table.get_mut(&id) {
-            p.parts[part.index()] += 1;
+            p.parts[part.count_slot()] += 1;
             p.bounds = p.bounds.union(point(x, y));
             p.pending = true;
             self.plants.any_pending = true;
@@ -539,8 +550,9 @@ impl World {
         id
     }
 
-    /// A new plant of `species` based at cell `base`, or a fragment of
-    /// `parent`. Returns its id, or 0 if the tank is at its cap.
+    /// A new plant of `species` based at cell `base`, or a fragment (or
+    /// runner-rooted child) of `parent`. Returns its id, or 0 if the tank is
+    /// at its cap.
     fn new_plant(&mut self, species: PlantSpeciesId, base: usize, parent: Option<u16>) -> u16 {
         let plants = &mut self.plants;
         if plants.table.len() >= plants.cap.min(usize::from(u16::MAX)) {
@@ -560,7 +572,7 @@ impl World {
                     born: self.tick,
                     health,
                     energy: 0.0,
-                    parts: [0; 3],
+                    parts: [0; COUNTED_PARTS],
                     base,
                     bounds: point(base % self.width, base / self.width),
                     parent: parent.unwrap_or(0),
@@ -676,11 +688,11 @@ impl World {
 
     /// Sets plant `id`'s part counts and bounds from its cells.
     fn recount_plant(&mut self, id: u16, cells: &[usize]) {
-        let mut parts = [0u32; 3];
+        let mut parts = [0u32; COUNTED_PARTS];
         let mut bounds = Rect::EMPTY;
         for &i in cells {
             if let Some(part) = self.plants.part(self.cells[i].material) {
-                parts[part.index()] += 1;
+                parts[part.count_slot()] += 1;
             }
             bounds = bounds.union(point(i % self.width, i / self.width));
         }
@@ -781,7 +793,8 @@ impl World {
         };
         let (x, y) = (i % self.width, i / self.width);
         let species = Arc::clone(&self.plants.species);
-        if let Some(Form::Mat(mat)) = species.get(p.species).map(|s| &s.form)
+        let s = species.get(p.species);
+        if let Some(Form::Mat(mat)) = s.map(|s| &s.form)
             && !self.touches_any(i, &mat.on)
         {
             if self.life.chance(1.0 - powu(self.plants.keep_falling, k))
@@ -791,11 +804,16 @@ impl World {
             }
             return;
         }
-        let light = (part != Part::Root).then(|| self.field(FieldKind::Light).at_cell(x, y));
-        let nutrient = self.field(FieldKind::Nutrient).at_cell(x, y);
+        let light = part
+            .sees_light()
+            .then(|| self.field(FieldKind::Light).at_cell(x, y));
+        // A root feeder takes its nutrients through its roots and runners.
+        let root_feeder = s.is_some_and(|s| s.growth.root_feeder);
+        let nutrient = (!root_feeder || !part.sees_light())
+            .then(|| self.field(FieldKind::Nutrient).at_cell(x, y));
         let co2 = self.field(FieldKind::Co2).at_cell(x, y);
         if let Some(p) = self.plants.table.get_mut(&cell.state) {
-            for (k, v) in [light, Some(nutrient), Some(co2)].into_iter().enumerate() {
+            for (k, v) in [light, nutrient, Some(co2)].into_iter().enumerate() {
                 if let Some(v) = v {
                     p.sums[k] += v;
                     p.counts[k] += 1;
@@ -817,9 +835,10 @@ impl World {
         };
         let (x, y) = (i % self.width, i / self.width);
         let below = self.at(x, y, 0, 1);
-        let ready = match &s.form {
-            Form::Stem(f) => below.is_some_and(|j| f.substrates.contains(&self.cells[j].material)),
-            Form::Mat(m) => self.touches_any(i, &m.on),
+        let ready = match (&s.form, s.form.substrates()) {
+            (Form::Mat(m), _) => self.touches_any(i, &m.on),
+            (_, Some(subs)) => below.is_some_and(|j| subs.contains(&self.cells[j].material)),
+            (_, None) => false,
         };
         if !ready || self.response_at(s, x, y).0 <= 0.0 {
             return true;
@@ -839,6 +858,14 @@ impl World {
         match &s.form {
             Form::Stem(_) => {
                 self.put_part(i, Part::Stem, id, 1);
+                if let Some(j) = below {
+                    self.put_part(j, Part::Root, id, 1);
+                }
+            }
+            // A rosette's or carpet's crown sits on the substrate (position
+            // 0), its first root below.
+            Form::Rosette(_) | Form::Carpet(_) => {
+                self.put_part(i, Part::Stem, id, 0);
                 if let Some(j) = below {
                     self.put_part(j, Part::Root, id, 1);
                 }
@@ -883,7 +910,7 @@ impl World {
         };
         self.mark_changed(x, y);
         if let Some(p) = self.plants.table.get_mut(&id) {
-            p.parts[part.index()] += 1;
+            p.parts[part.count_slot()] += 1;
             p.bounds = p.bounds.union(point(x, y));
         }
     }
@@ -991,7 +1018,11 @@ impl World {
             return;
         }
         let size = p.parts.iter().sum::<u32>();
-        if size >= s.growth.size {
+        // At its mature size a plant stops growing, except a rosette's or
+        // carpet's runners, which carry on to root the next plant (each is
+        // at most twice its spacing long).
+        let mature = size >= s.growth.size;
+        if mature && !(s.propagation.runners && s.form.rosette().is_some()) {
             return;
         }
         p.energy = (p.energy + s.growth.rate / 60.0 * response * dt).min(MAX_ENERGY);
@@ -1005,8 +1036,8 @@ impl World {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ≤ MAX_ENERGY
         let want = (p.energy as usize)
             .min(MAX_GROWTH_PER_UPDATE)
-            .min((s.growth.size - size) as usize);
-        let grown = self.grow_plant(id, s, want);
+            .min(s.growth.size.saturating_sub(size).max(u32::from(mature)) as usize);
+        let grown = self.grow_plant(id, s, want, mature);
         if let Some(p) = self.plants.table.get_mut(&id) {
             #[allow(clippy::cast_precision_loss)] // ≤ 8
             let spent = grown as f32;
@@ -1017,10 +1048,10 @@ impl World {
         }
     }
 
-    /// Grows up to `want` cells of plant `id` where its form allows, taking
-    /// the species' nutrient cost from the field at each. Returns how many
-    /// it grew.
-    fn grow_plant(&mut self, id: u16, s: &PlantSpecies, want: usize) -> usize {
+    /// Grows up to `want` cells of plant `id` where its form allows (only
+    /// runners if `runners_only`), taking the species' nutrient cost from
+    /// the field at each. Returns how many it grew.
+    fn grow_plant(&mut self, id: u16, s: &PlantSpecies, want: usize, runners_only: bool) -> usize {
         let Some(p) = self.plants.table.get(&id) else {
             return 0;
         };
@@ -1028,7 +1059,13 @@ impl World {
         let mut sites = match &s.form {
             Form::Stem(_) => self.stem_sites(id, p.base, s, &members),
             Form::Mat(_) => self.mat_sites(s, &members),
+            Form::Rosette(f) | Form::Carpet(f) => {
+                self.rosette_sites(id, p.base, f, s.propagation.runners, &members)
+            }
         };
+        if runners_only {
+            sites.retain(|s| s.part == Part::Runner);
+        }
         let mut grown = 0;
         while grown < want && !sites.is_empty() {
             let total: u32 = sites.iter().map(|s| s.weight).sum();
@@ -1042,7 +1079,12 @@ impl World {
                 pick -= site.weight;
             }
             let site = sites[chosen];
-            self.put_part(site.at, site.part, id, site.position);
+            let sprouted = site.part == Part::Runner
+                && s.form.rosette().is_some_and(|f| site.position >= f.spacing)
+                && self.sprout(id, s.id, site.at);
+            if !sprouted {
+                self.put_part(site.at, site.part, id, site.position);
+            }
             let (x, y) = (site.at % self.width, site.at / self.width);
             self.life
                 .field_mut(FieldKind::Nutrient)
@@ -1130,6 +1172,228 @@ impl World {
         })
     }
 
+    /// Where a rosette or carpet can grow (see [`RosetteForm`]): the crown
+    /// out along the substrate, a new blade above each crown cell (and beside
+    /// the full crown's ends), each blade's tip up (or a cell outwards every
+    /// `lean` cells), roots down from the first root and on from the
+    /// others, and, once every blade has started, a runner each side of the
+    /// root under the crown and on from each runner's tip.
+    #[allow(clippy::many_single_char_names, clippy::too_many_lines)] // one arm per part
+    fn rosette_sites(
+        &self,
+        id: u16,
+        base: usize,
+        f: &RosetteForm,
+        runners: bool,
+        members: &[usize],
+    ) -> Vec<Site> {
+        let is_water = |j: usize| Some(self.cells[j].material) == self.plants.water;
+        let substrate = |j: usize| f.substrates.contains(&self.cells[j].material);
+        let (bx, by) = (base % self.width, base / self.width);
+        // The crown grows rightwards from the base, so its centre is fixed:
+        // twice it, to keep a two-cell crown's centre whole.
+        #[allow(clippy::cast_possible_wrap)] // MAX_SIDE is small
+        let centre2 = 2 * bx as isize + isize::from(f.crown) - 1;
+        // Which side of the crown a cell is on (-1, 0, 1) and how many cells
+        // out from its centre.
+        #[allow(clippy::cast_possible_wrap)]
+        let side = |x: usize| -> (isize, usize) {
+            let off = 2 * x as isize - centre2;
+            (off.signum(), off.unsigned_abs() / 2)
+        };
+        // The crown's extent along the base row and how many blades started.
+        let (mut x1, mut crown, mut blades) = (bx, 0u8, 0u8);
+        for &i in members {
+            let c = self.cells[i];
+            let (x, y) = (i % self.width, i / self.width);
+            match self.plants.part(c.material) {
+                Some(Part::Stem) if y == by && x >= bx => {
+                    x1 = x1.max(x);
+                    crown = crown.saturating_add(1);
+                }
+                Some(Part::Leaf) if plant_position(c.variant) == 1 => {
+                    blades = blades.saturating_add(1);
+                }
+                _ => {}
+            }
+        }
+        let new_blades = blades < f.blades;
+        let mut sites = Vec::new();
+        for &i in members {
+            let c = self.cells[i];
+            let (x, y) = (i % self.width, i / self.width);
+            let pos = plant_position(c.variant);
+            match self.plants.part(c.material) {
+                Some(Part::Stem) if new_blades && y == by => {
+                    if let Some(j) = self.at(x, y, 0, -1).filter(|&j| is_water(j)) {
+                        sites.push(Site::new(j, Part::Leaf, 1, NEW_BLADE_WEIGHT));
+                    }
+                }
+                Some(Part::Leaf) if pos < f.blade_length => {
+                    // A blade's next cell follows from its position and
+                    // column alone, so only its tip finds water there. It
+                    // steps outwards at its second cell and every `lean`
+                    // cells after, more often the further out it is (down
+                    // to every third cell), so outer blades arch away.
+                    let (dir, out) = side(x);
+                    let lean = usize::from(f.lean).saturating_sub(out).max(3);
+                    let out = f.lean > 0
+                        && dir != 0
+                        && pos >= 2
+                        && usize::from(pos - 2).is_multiple_of(lean);
+                    let (dx, dy) = if out { (dir, 0) } else { (0, -1) };
+                    if let Some(j) = self.at(x, y, dx, dy).filter(|&j| is_water(j)) {
+                        sites.push(Site::new(j, Part::Leaf, pos + 1, BLADE_WEIGHT));
+                    }
+                }
+                Some(Part::Root) if pos < f.root_depth => {
+                    // The first root goes straight down, leaving the top
+                    // layer beside it to the runners.
+                    let dirs: &[(isize, isize)] = if pos < 2 {
+                        &[(0, 1)]
+                    } else {
+                        &[(0, 1), (-1, 0), (1, 0)]
+                    };
+                    for &(dx, dy) in dirs {
+                        if let Some(j) = self.at(x, y, dx, dy)
+                            && substrate(j)
+                            && self.lone_root(j, i, id)
+                        {
+                            sites.push(Site::new(j, Part::Root, pos + 1, ROOT_WEIGHT));
+                        }
+                    }
+                }
+                // Only a runner's tip creeps on: a cell further back can
+                // find substrate ahead again once its runner has climbed
+                // over it.
+                Some(Part::Runner)
+                    if pos < f.spacing.saturating_mul(2) && self.runner_tip(x, y, id, pos) =>
+                {
+                    let dir = if x < bx { -1 } else { 1 };
+                    if let Some(j) = self.runner_step(x, y, dir, &f.substrates) {
+                        sites.push(Site::new(j, Part::Runner, pos + 1, RUNNER_WEIGHT));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (x, dx) in [(bx, -1), (x1, 1)] {
+            let Some(j) = self.at(x, by, dx, 0).filter(|&j| is_water(j)) else {
+                continue;
+            };
+            if dx > 0 && crown < f.crown {
+                let (jx, jy) = (j % self.width, j / self.width);
+                if self.at(jx, jy, 0, 1).is_some_and(substrate) {
+                    sites.push(Site::new(j, Part::Stem, 0, CROWN_WEIGHT));
+                }
+            } else if new_blades {
+                sites.push(Site::new(j, Part::Leaf, 1, NEW_BLADE_WEIGHT));
+            }
+        }
+        // Runners leave the root under the crown once every blade started.
+        if runners
+            && !new_blades
+            && self.plants.material(Part::Runner).is_some()
+            && let Some(r) = self.at(bx, by, 0, 1)
+            && self.is_plant_member(r, id)
+        {
+            for dx in [-1, 1] {
+                if let Some(j) = self.at(bx, by + 1, dx, 0)
+                    && substrate(j)
+                    && self.top_layer(j) <= 2
+                {
+                    sites.push(Site::new(j, Part::Runner, 1, RUNNER_WEIGHT));
+                }
+            }
+        }
+        sites.sort_unstable_by_key(|s| s.at);
+        sites.dedup_by_key(|s| s.at);
+        sites
+    }
+
+    /// Whether plant `id`'s runner cell at `(x, y)`, at `pos`, is its
+    /// runner's tip: no runner cell of the plant one further on beside it.
+    fn runner_tip(&self, x: usize, y: usize, id: u16, pos: u8) -> bool {
+        let runner = self.plants.material(Part::Runner);
+        DIRS.iter().all(|&(dx, dy)| {
+            self.at(x, y, dx, dy).is_none_or(|j| {
+                let c = self.cells[j];
+                Some(c.material) != runner || c.state != id || plant_position(c.variant) != pos + 1
+            })
+        })
+    }
+
+    /// Where a runner at `(x, y)` heading `dir` creeps next, keeping to the
+    /// top two layers of `substrates`: on along its row; up a cell where the
+    /// substrate ahead lies deeper than that; down a cell where it ends
+    /// (water ahead). `None` where something else blocks it (rock, another
+    /// plant, its own next cell).
+    fn runner_step(
+        &self,
+        x: usize,
+        y: usize,
+        dir: isize,
+        substrates: &[MaterialId],
+    ) -> Option<usize> {
+        if dir == 0 {
+            return None;
+        }
+        let substrate = |j: usize| substrates.contains(&self.cells[j].material);
+        let ahead = self.at(x, y, dir, 0)?;
+        if substrate(ahead) {
+            if self.top_layer(ahead) <= 2 {
+                return Some(ahead);
+            }
+            return self.at(x, y, 0, -1).filter(|&j| substrate(j));
+        }
+        if self.is_fluid(self.cells[ahead].material) {
+            return self
+                .at(x, y, 0, 1)
+                .filter(|&j| substrate(j) && self.top_layer(j) <= 2);
+        }
+        None
+    }
+
+    /// How deep the cell at `j` lies in the ground: 1 if the cell above is
+    /// open (fluid or a plant), 2 if the one above that is, else 3.
+    fn top_layer(&self, j: usize) -> u8 {
+        let (x, y) = (j % self.width, j / self.width);
+        let open = |k: Option<usize>| {
+            k.is_none_or(|k| {
+                self.is_fluid(self.cells[k].material)
+                    || self.plants.part(self.cells[k].material).is_some()
+            })
+        };
+        if open(self.at(x, y, 0, -1)) {
+            1
+        } else if open(self.at(x, y, 0, -2)) {
+            2
+        } else {
+            3
+        }
+    }
+
+    /// Plant `parent`'s runner reaching the substrate cell at `at` roots a
+    /// child plant there if the cell above is water: the child's first root
+    /// at `at` and its crown above (parent id set, generation + 1). Returns
+    /// whether it did (not at the plant cap, nor under something else).
+    fn sprout(&mut self, parent: u16, species: PlantSpeciesId, at: usize) -> bool {
+        let (x, y) = (at % self.width, at / self.width);
+        let Some(above) = self
+            .at(x, y, 0, -1)
+            .filter(|&j| Some(self.cells[j].material) == self.plants.water)
+        else {
+            return false;
+        };
+        let child = self.new_plant(species, above, Some(parent));
+        if child == 0 {
+            return false;
+        }
+        self.put_part(above, Part::Stem, child, 0);
+        self.put_part(at, Part::Root, child, 1);
+        true
+    }
+
     /// Where a mat can grow: water next to its cells that touches what it
     /// clings to.
     fn mat_sites(&self, s: &PlantSpecies, members: &[usize]) -> Vec<Site> {
@@ -1156,7 +1420,7 @@ impl World {
 
     /// Drops plant `id`'s `n` oldest leaf cells as dead plant matter: the
     /// lowest first (outermost first along a leaf, so the plant stays in
-    /// one piece).
+    /// one piece); a rosette's or carpet's blades die back from their tips.
     fn drop_leaves(&mut self, id: u16, n: usize) {
         let Some(p) = self.plants.table.get(&id) else {
             return;
@@ -1168,14 +1432,26 @@ impl World {
             .into_iter()
             .filter(|&i| Some(self.cells[i].material) == leaf)
             .collect();
-        leaves.sort_unstable_by_key(|&i| {
-            let (x, y) = (i % self.width, i / self.width);
-            (
-                core::cmp::Reverse(y),
-                core::cmp::Reverse(x.abs_diff(base_x)),
-                i,
-            )
-        });
+        let blades = self
+            .plants
+            .species
+            .get(p.species)
+            .is_some_and(|s| s.form.rosette().is_some());
+        if blades {
+            // Blades die back from their tips, so no blade is cut off.
+            leaves.sort_unstable_by_key(|&i| {
+                (core::cmp::Reverse(plant_position(self.cells[i].variant)), i)
+            });
+        } else {
+            leaves.sort_unstable_by_key(|&i| {
+                let (x, y) = (i % self.width, i / self.width);
+                (
+                    core::cmp::Reverse(y),
+                    core::cmp::Reverse(x.abs_diff(base_x)),
+                    i,
+                )
+            });
+        }
         leaves.truncate(n);
         self.make_dead(&leaves);
         if let Some(p) = self.plants.table.get_mut(&id) {
