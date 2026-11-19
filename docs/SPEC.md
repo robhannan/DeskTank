@@ -66,7 +66,7 @@ It can run as any combination of four desktop **display modes**, or in a browser
 - Native mobile apps. Mobile browsers are covered by the web version
   (D15).
 - 3D rendering. The tank is drawn as a 2D picture; discrete depth bands
-  for movement, collision and (later) occlusion are in scope (D21).
+  for movement, collision and occlusion are in scope (D21).
 - Online features, accounts or telemetry.
 - Progression, unlocks or currency: it is a sandbox (D9).
 - Plugin or scripting support.
@@ -468,8 +468,13 @@ target computes the same bits.
   and air span every band, and so do food and other loose particles, so a
   creature eats from any band. Blocked by a plant, a swimmer shifts band
   to slip past before it turns away. Species may keep to a range of
-  bands (`bands`, every band by default). Rendering stays 2D until the
-  occlusion part draws plant cells in front of creatures behind them.
+  bands (`bands`, every band by default). Creatures and corpses are drawn
+  back to front by depth; a plant cell in a band nearer the glass than a
+  creature hides it where the plant's shape covers the cell (the
+  creature shows through the gaps between leaves), and a plant cell
+  level with or behind it is drawn under it. Creatures and plant cells
+  fade slightly towards the water's blue and darken with depth, up to
+  about a fifth at the back band.
 - **Life cycle.** Egg, then fry, juvenile, adult and elder. Growth
   depends on feeding.
   - **Breeding** needs mature, well-fed creatures and suitable
@@ -1227,7 +1232,11 @@ directory for custom materials and species is a stretch goal.
   are instanced sprites from an atlas. Their position is interpolated
   between ticks at screen-pixel precision, and sprites have two texels
   per cell side (D19), drawn at half the cell scale, so motion is smooth
-  while the art stays crisp. Water
+  while the art stays crisp. Sprites are sorted back to front by depth
+  and carry it; an `R8` texture beside the cell texture holds each plant
+  cell's depth band, and a sprite fragment over a covered texel of a
+  nearer plant cell is discarded, so the plant the grid drew stays in
+  front (D21). Water
   is opaque in wallpaper mode and transparent or tinted in overlay mode.
 - **Frame pacing**: no continuous redraw. The loop sleeps until the next
   frame deadline at the target fps (`ControlFlow::WaitUntil`, or a
@@ -2043,7 +2052,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
-| D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. |
+| D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. Occlusion (part 2, 2026-11-20) needs no second grid pass or depth buffer: the grid is drawn once, sprites follow back to front, and each sprite fragment checks the cell under it in a per-cell band texture, dropping itself where a plant cell in a nearer band covers that texel (its shape is evaluated as the grid shader does). One grid pass and one sprite draw per frame, whatever the number of creatures or bands; per-band plant layers would cost up to eight grid passes, and splitting the grid in two works for one depth only. A subtle depth cue fades creatures and plant cells towards the water colour with depth. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
