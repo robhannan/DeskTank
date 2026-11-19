@@ -302,6 +302,29 @@ fn plant_cells_have_bands_by_part() {
             assert_eq!(stems.plant_band(x, y), again.plant_band(x, y));
         }
     }
+    // The renderer's rectangle read gives the same bands, 0 elsewhere,
+    // and clips to the grid.
+    let r = Rect {
+        x0: 30,
+        y0: 40,
+        x1: 130,
+        y1: 90,
+    };
+    let mut bands = Vec::new();
+    assert!(stems.plant_bands(r, &mut bands));
+    assert_eq!(bands.len(), 90 * 40);
+    for (i, &b) in bands.iter().enumerate() {
+        let (x, y) = (30 + i % 90, 40 + i / 90);
+        assert_eq!(b, stems.plant_band(x, y).unwrap_or(0), "({x}, {y})");
+    }
+    let water = Rect {
+        x0: 0,
+        y0: 0,
+        x1: 8,
+        y1: 8,
+    };
+    assert!(!stems.plant_bands(water, &mut bands));
+    assert_eq!(bands, [0; 64]);
 }
 
 #[test]
