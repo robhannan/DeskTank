@@ -42,6 +42,18 @@ enum Command {
     Capture(CaptureArgs),
     /// Run a scripted scenario and print performance numbers.
     Bench(BenchArgs),
+    /// Make a save file (from another machine, or exported from the web
+    /// version) the tank's newest save. The app must not be running.
+    Import {
+        /// The `.dtank` file to import.
+        file: PathBuf,
+    },
+    /// Copy the tank's newest save to a file (to import on the web version
+    /// or another machine).
+    Export {
+        /// Where to write the `.dtank` file.
+        file: PathBuf,
+    },
     /// Install or uninstall the screensaver.
     Saver {
         #[command(subcommand)]
@@ -148,6 +160,8 @@ impl Command {
             Self::Pause => "pause",
             Self::Capture(_) => "capture",
             Self::Bench(_) => "bench",
+            Self::Import { .. } => "import",
+            Self::Export { .. } => "export",
             Self::Saver {
                 action: SaverAction::Install,
             } => "saver install",
@@ -174,6 +188,8 @@ fn main() -> ExitCode {
             },
         ),
         Command::Bench(args) => bench::run(args.seconds, usize::from(args.fish)),
+        Command::Import { file } => persist::import(None, file),
+        Command::Export { file } => persist::export(None, file),
         Command::Capture(args) => capture::run(&capture::Options {
             seed: args.seed,
             time: args.time,
@@ -242,6 +258,8 @@ mod tests {
             ),
             (&["bench"], "bench"),
             (&["bench", "--seconds", "5"], "bench"),
+            (&["import", "tank.dtank"], "import"),
+            (&["export", "tank.dtank"], "export"),
             (&["saver", "install"], "saver install"),
             (&["saver", "uninstall"], "saver uninstall"),
         ];

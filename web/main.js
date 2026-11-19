@@ -9,10 +9,20 @@
 // menu, the settings panel (localStorage), visibility, battery and
 // device/context loss.
 //
+// Saves (WB3): the tank is saved to IndexedDB (store.js) in the native
+// app's format when the page is hidden, on pagehide, every 5 minutes and
+// after a reset or import; a reload opens the newest save at its own grid
+// size, letterboxed. Only the tab holding the tank's Web Lock
+// (ownership.js) simulates and writes; another tab shows "open in another
+// tab" with Take over. Export and Import move save files to and from the
+// desktop app (`desktank export` / `desktank import`).
+//
 // URL parameters: ?backend=webgpu|webgl2 forces a backend; ?bench records
 // rAF callback times in window.desktank.rafTimes and drawn-frame times in
 // window.desktank.frameTimes (scripts/bench-web.mjs).
 import init, { Graphics, WebTank, brushRange, gridFor } from "./pkg/desktank_web.js";
+import { Ownership } from "./ownership.js";
+import { claim, openStore, readSaves, writeSave } from "./store.js";
 
 const FPS_AC = 30;
 const FPS_BATTERY = 15;
@@ -57,6 +67,11 @@ const LIMITS = {
 const FIELDS = ["", "nutrient", "co2", "light"];
 
 const SETTINGS_KEY = "desktank.settings.v1";
+// The one web tank: its saves in IndexedDB and its Web Lock / channel.
+const TANK = "main";
+const LOCK = "desktank.tank.main";
+const AUTOSAVE_MS = 5 * 60 * 1000;
+const NOTICE_MS = 6000;
 const DEFAULTS = Object.freeze({ scale: 0, fps: "auto", field: "", avoidCursor: false, stats: true, seed: 1, radius: 3 });
 
 const params = new URLSearchParams(location.search);
@@ -80,7 +95,6 @@ const propagulePickEl = $("plant-propagule");
 let settings = loadSettings();
 let tank;
 let openGroup; // name of the palette group shown
-let grid; // [scale, columns, rows] of the current tank
 let backend = "";
 let adapter = "";
 let rafId = 0;
@@ -96,6 +110,17 @@ let fps = 0;
 let fpsSince = 0;
 let inspectTimer = 0;
 let wheelRest = 0;
+let db = null; // IndexedDB, or null where there is none
+let ownership = null;
+let owner = false; // this tab simulates and saves the tank
+let epoch = null; // this owner's claim (store.js); writes need it
+let handingOver = false;
+let started = false; // the first tank is open
+let nextAutosave = Infinity;
+let saveFailed = false; // the last write failed: write again even if unchanged
+let lastSaved = 0; // Date.now() of the last save written or loaded
+let persistAsked = false;
+let noticeTimer = 0;
 
 // Test and benchmark hooks (tests/web/).
 const hooks = {
@@ -107,9 +132,32 @@ const hooks = {
   get backend() {
     return backend;
   },
+  // [scale, columns, rows] of the current tank in the current canvas.
   get grid() {
-    return grid;
+    return tank && [tank.cellScale(), tank.width(), tank.height()];
   },
+  get owner() {
+    return owner;
+  },
+  get ownership() {
+    return ownership;
+  },
+  lastEpoch: null, // the epoch this tab last claimed
+  // A write with that epoch, bypassing the owner check (a stale owner).
+  async lateWrite() {
+    try {
+      await writeSave(db, TANK, tank.exportSave(), tank.tickCount(), hooks.lastEpoch);
+      return "written";
+    } catch (err) {
+      return err.message;
+    }
+  },
+  writes: 0, // saves this tab wrote
+  saving: Promise.resolve(false), // the latest write
+  loaded: null, // { hash, tick, width, height } of the save opened, if any
+  released: null, // { hash, tick } when this tab handed the tank over
+  ownedAt: 0, // performance.now() when this tab last became the owner
+  takeOverAt: 0, // performance.now() of the last Take over click
   get settings() {
     return { ...settings };
   },
@@ -234,21 +282,227 @@ async function attachGraphics() {
 
 // A new tank for the current canvas, cell scale setting and seed.
 function newTank() {
+  const [w, h] = sizeCanvas();
+  const [, cols, rows] = gridFor(w, h, settings.scale);
+  return new WebTank(cols, rows, settings.seed, w, h);
+}
+
+function sizeCanvas() {
   const [w, h] = canvasPixels();
   canvas.width = w;
   canvas.height = h;
-  grid = Array.from(gridFor(w, h, settings.scale));
-  return new WebTank(grid[1], grid[2], settings.seed, w, h);
+  return [w, h];
 }
 
-async function reset() {
+// Swaps in `next` as the shown tank and reopens the graphics for it.
+async function showTank(next) {
   endGestures();
   // Graphics belong to the old tank; reopen them for the new one.
-  replaceTank(newTank());
+  replaceTank(next);
+  if (!owner) setRunning(false);
   // During a loss or recovery, the recovery attaches to the new tank.
   if (!restoring) await recover(false);
   updateStats();
   kick();
+}
+
+async function reset() {
+  if (!owner) return;
+  await showTank(newTank());
+  persist("reset", true);
+}
+
+// --- Saves and ownership -----------------------------------------------------
+
+// Shows a short message under the menu.
+function notice(message) {
+  const el = $("notice");
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    el.hidden = true;
+  }, NOTICE_MS);
+}
+
+function showSaved() {
+  const el = $("saved");
+  if (!db) el.textContent = "Not saved: this browser has no storage here";
+  else if (!lastSaved) el.textContent = "Not saved yet";
+  else el.textContent = `Saved ${new Date(lastSaved).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+// Saves the tank to IndexedDB if this tab owns it and it changed (or
+// `force`). Returns the write's promise (true once written).
+function persist(why, force = false) {
+  if (!owner || epoch === null || !db || !tank) return Promise.resolve(false);
+  nextAutosave = performance.now() + AUTOSAVE_MS;
+  if (!force && !saveFailed && !tank.saveNeeded()) return hooks.saving;
+  const bytes = tank.save();
+  const tick = tank.tickCount();
+  hooks.writes++;
+  let write;
+  try {
+    write = writeSave(db, TANK, bytes, tick, epoch);
+  } catch (err) {
+    write = Promise.reject(err);
+  }
+  hooks.saving = write.then(
+    () => {
+      saveFailed = false;
+      lastSaved = Date.now();
+      showSaved();
+      askPersist();
+      return true;
+    },
+    (err) => {
+      saveFailed = true;
+      console.warn(`desktank: ${why} save failed: ${err}`);
+      showSaved();
+      return false;
+    },
+  );
+  return hooks.saving;
+}
+
+// Asks the browser not to evict the saves (once, after the first save).
+function askPersist() {
+  if (persistAsked) return;
+  persistAsked = true;
+  navigator.storage?.persist?.().then(
+    (granted) => {
+      hooks.persisted = granted;
+    },
+    () => {},
+  );
+}
+
+// The newest save that opens, as a tank for the current canvas, or null.
+// Saves that don't open are logged and skipped, never deleted (one may be
+// from a newer build); pruning drops them once newer saves replace them.
+async function loadNewest() {
+  if (!db) return null;
+  let saves = [];
+  try {
+    saves = await readSaves(db, TANK);
+  } catch (err) {
+    console.warn(`desktank: couldn't read the saves: ${err}`);
+    return null;
+  }
+  const [w, h] = sizeCanvas();
+  for (const save of saves) {
+    try {
+      const next = WebTank.fromSave(save.bytes, w, h);
+      lastSaved = save.savedAt ?? 0;
+      hooks.loaded = { hash: next.stateHash(), tick: next.tickCount(), width: next.width(), height: next.height() };
+      return next;
+    } catch (err) {
+      console.warn(`desktank: a save doesn't open (${err}); skipped`);
+    }
+  }
+  return null;
+}
+
+// This tab now owns the tank: open the newest save (the previous owner
+// saved it when it handed over) and run.
+async function becomeOwner() {
+  owner = true;
+  epoch = null;
+  if (db) {
+    try {
+      epoch = await claim(db, TANK);
+      hooks.lastEpoch = epoch;
+    } catch (err) {
+      console.warn(`desktank: couldn't claim the tank: ${err}`);
+    }
+  }
+  hooks.ownedAt = performance.now();
+  showOwnership();
+  if (!started) return;
+  const next = await loadNewest();
+  if (next) await showTank(next);
+  if (owner) {
+    setRunning(true);
+    nextAutosave = performance.now() + AUTOSAVE_MS;
+  }
+}
+
+// Another tab owns the tank: this one shows it paused and never writes.
+function becomeViewer() {
+  owner = false;
+  epoch = null;
+  handingOver = false;
+  showOwnership();
+  if (tank) setRunning(false);
+}
+
+// The owner was asked to hand over: save first (and let a write in flight
+// finish), so the next owner opens exactly this state.
+async function handOver() {
+  // Stop simulating and editing first, so the save is the final state.
+  handingOver = true;
+  showOwnership();
+  endGestures();
+  if (tank) setRunning(false);
+  const forced = saveFailed;
+  await persist("hand-over");
+  if (!(await hooks.saving) && (forced || tank?.saveNeeded())) {
+    notice("Couldn't save before handing over: the other tab opened the last save.");
+  }
+  if (tank) hooks.released = { hash: tank.stateHash(), tick: tank.tickCount() };
+}
+
+function showOwnership() {
+  const active = owner && !handingOver;
+  $("elsewhere").hidden = active || !started;
+  $("elsewhere-text").textContent = handingOver
+    ? "Handing the tank over to another tab…"
+    : "DeskTank is open in another tab. This one shows its last save and won't change it.";
+  $("take-over").disabled = handingOver;
+  document.body.dataset.owner = String(owner);
+  // A viewer's controls are inert: nothing it does would be saved.
+  for (const el of document.querySelectorAll("[data-owner-only]")) el.inert = !active;
+}
+
+function takeOver() {
+  hooks.takeOverAt = performance.now();
+  $("take-over").disabled = true;
+  $("elsewhere-text").textContent = "Taking over…";
+  ownership.takeOver();
+}
+
+function exportSave() {
+  const bytes = tank.exportSave();
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+  a.download = `desktank-${stamp}.dtank`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
+// Opens a save file (from Export, or a desktop `.dtank`) at its own grid
+// size, keeping play/pause, and saves it as this browser's tank.
+async function importSave(file) {
+  if (!owner || !file) return;
+  let next;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // The tab may have handed the tank over while the file was read.
+    if (!owner) return;
+    const [w, h] = sizeCanvas();
+    next = WebTank.fromSave(bytes, w, h);
+  } catch (err) {
+    notice(`Couldn't import ${file.name}: ${err}`);
+    return;
+  }
+  const running = tank.running();
+  await showTank(next);
+  setRunning(running);
+  notice(`Imported ${file.name}: ${next.width()}×${next.height()} cells`);
+  await persist("import", true);
 }
 
 // Loads a `desktank capture` script (TOML) at a fixed canvas size, paused,
@@ -280,10 +534,11 @@ async function loadScene(toml, sceneSeed, width, height) {
 
 function updateStats() {
   if (!settings.stats || !tank) return;
+  const [scale, w, h] = hooks.grid;
   statsEl.textContent =
     `${backend || "no GPU"} · fps ${fps} · tick ${tank.tickCount()} · awake chunks ` +
     `${tank.awakeChunks()}/${tank.chunkCount()} · tick time ${tickMs.toFixed(2)} ms` +
-    ` · ${grid[1]}×${grid[2]} cells at ${grid[0]}×`;
+    ` · ${w}×${h} cells at ${scale}×`;
 }
 
 // --- Loop --------------------------------------------------------------------
@@ -293,6 +548,7 @@ function updateStats() {
 function loop(now) {
   rafId = 0;
   if (hidden || !tank) return;
+  if (now >= nextAutosave) persist("autosave");
   if (bench) hooks.rafTimes.push(now);
   const t0 = performance.now();
   const flags = tank.frame(now);
@@ -364,6 +620,8 @@ async function recover(lost = true) {
 }
 
 function setRunning(on) {
+  // Only the owner simulates.
+  on &&= owner;
   tank.setRunning(on);
   playBtn.textContent = on ? "Pause" : "Play";
   stepBtn.disabled = on;
@@ -371,6 +629,7 @@ function setRunning(on) {
 }
 
 function step() {
+  if (!owner) return;
   tank.step();
   updateStats();
   kick();
@@ -776,7 +1035,17 @@ function wireInput() {
   $("reset").addEventListener("click", resetOrShow);
   brushInput.addEventListener("input", () => update({ radius: Number(brushInput.value) }));
   wireSettings(resetOrShow);
+  $("export").addEventListener("click", exportSave);
+  const importFile = $("import-file");
+  $("import").addEventListener("click", () => importFile.click());
+  importFile.addEventListener("change", () => {
+    const [file] = importFile.files;
+    importFile.value = "";
+    importSave(file).catch((err) => showError(String(err)));
+  });
+  $("take-over").addEventListener("click", takeOver);
   document.addEventListener("keydown", (e) => {
+    if (!owner) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === " " && !(e.target instanceof HTMLButtonElement)) {
@@ -834,15 +1103,19 @@ function wireSettings(resetTank) {
 
 function wireLifecycle() {
   // Hidden tabs pause: no ticks, no frames, and world time stops.
+  // A hidden page is also the last reliable moment to save (SPEC §3.5).
   document.addEventListener("visibilitychange", () => {
     hidden = document.hidden;
     if (hidden) {
       tank?.pause();
       stopLoop();
+      persist("hidden");
     } else {
       kick();
     }
   });
+  // Best effort: usually already saved by visibilitychange.
+  window.addEventListener("pagehide", () => persist("pagehide"));
 
   // WebGL2 context loss: stop drawing until the browser restores it.
   canvas.addEventListener("webglcontextlost", (e) => {
@@ -885,13 +1158,29 @@ async function main() {
   const [rMin, rMax] = brushRange();
   brushInput.min = rMin;
   brushInput.max = rMax;
+  db = await openStore();
+  // Without Web Locks (very old browsers) the tab owns the tank alone.
+  if (navigator.locks && typeof BroadcastChannel !== "undefined") {
+    ownership = new Ownership(LOCK, { own: becomeOwner, view: becomeViewer, handOver });
+    await ownership.start();
+  } else {
+    await becomeOwner();
+  }
+  const ownedAtStart = owner;
   try {
-    replaceTank(newTank());
+    replaceTank((await loadNewest()) ?? newTank());
+    if (!owner) setRunning(false);
     await attachGraphics();
   } catch (err) {
     showError(`Couldn't start the GPU renderer: ${err}`);
     return;
   }
+  started = true;
+  // Granted the lock while starting (the owner closed): open its last save.
+  if (owner && !ownedAtStart) await becomeOwner();
+  nextAutosave = owner ? performance.now() + AUTOSAVE_MS : Infinity;
+  showOwnership();
+  showSaved();
   wireInput();
   wireLifecycle();
   statusEl.hidden = true;

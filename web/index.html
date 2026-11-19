@@ -18,17 +18,26 @@
       <canvas id="tank" width="320" height="180" aria-label="Tank: drag to use the selected tool"></canvas>
       <p id="status" class="status" role="status">Loading the simulation…</p>
       <p id="inspect" class="inspect" role="status" aria-live="polite" hidden></p>
+      <div id="elsewhere" class="elsewhere" role="alert" hidden>
+        <p id="elsewhere-text">DeskTank is open in another tab. This one shows its last save and won't change it.</p>
+        <button id="take-over" type="button">Take over</button>
+      </div>
     </div>
 
-    <nav class="controls menu" aria-label="Tank">
+    <nav class="controls menu" aria-label="Tank" data-owner-only>
       <button id="play" type="button">Pause</button>
       <button id="step" type="button" disabled>Step</button>
       <button id="feed" type="button">Feed</button>
       <button id="reset" type="button">Reset</button>
       <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
+      <button id="export" type="button" title="Download the tank as a save file (opens in the desktop app with desktank import)">Export</button>
+      <button id="import" type="button" title="Open a save file from Export or the desktop app (desktank export)">Import</button>
+      <input id="import-file" type="file" accept=".dtank,application/octet-stream" hidden>
+      <span id="saved" class="saved" aria-live="polite">Not saved yet</span>
     </nav>
+    <p id="notice" class="notice" role="status" hidden></p>
 
-    <section id="settings" class="settings" aria-label="Settings" hidden>
+    <section id="settings" class="settings" aria-label="Settings" data-owner-only hidden>
       <label>Cell scale
         <select id="set-scale">
           <option value="0">Auto</option>
@@ -58,10 +67,10 @@
       <label class="check"><input id="set-avoid-cursor" type="checkbox"> Fish avoid the pointer</label>
       <label class="check"><input id="set-stats" type="checkbox" checked> Show stats</label>
       <button id="set-defaults" type="button">Defaults</button>
-      <p class="note">Saved in this browser. A new cell scale or seed starts a new tank.</p>
+      <p class="note">Saved in this browser. A new cell scale or seed starts a new tank. The tank itself is saved in this browser too (when you leave the page, and every 5 minutes while it runs); Export keeps a copy.</p>
     </section>
 
-    <section class="controls tools" aria-label="Tools">
+    <section class="controls tools" aria-label="Tools" data-owner-only>
       <div class="palette-box">
         <div id="groups" class="groups" role="tablist" aria-label="Tool groups"></div>
         <div id="palette-panel" role="tabpanel"><div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div></div>
