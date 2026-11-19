@@ -1,10 +1,9 @@
-# A guppy, Poecilia reticulata (placeholder art, D11), drawn as a male: a
-# slim silver-grey body about 3 cm long with orange and blue patches and a
-# black spot, and a large orange delta tail spotted with blue. An active
-# swimmer of the middle and upper water that roams on its own rather than
-# schooling. Eats flakes and bloodworms. Every guppy is a male for now:
-# females (larger, plainer, short-tailed) and colour strains come with
-# T9's per-individual size and colour genetics.
+# A guppy, Poecilia reticulata (placeholder art, D11). The male has a slim
+# silver-grey body about 3 cm long with orange and blue patches and a black
+# spot, and a large orange delta tail spotted with blue; the female is
+# plainer and deeper with a small tail. An active swimmer of the middle and
+# upper water that roams on its own rather than schooling. Eats flakes and
+# bloodworms, and fry.
 id = 9
 name = "guppy"
 zone = "mid"
@@ -18,11 +17,42 @@ length_cm = 3.0
 # (LIFE_DAY_SECONDS).
 lifespan_days = 730
 maturity_days = 90
+# Longest prey in cm: guppies eat fry, their own included, and
+# shrimplets (T9 part 2).
+prey_cm = 1.2
 breathes_air = false
 temperament = "peaceful"
 speed = 4.5
 max_speed = 9.0
 diet = ["flake_food", "bloodworm"]
+
+# A livebearer: about 4 weeks' gestation (real broods of 20–50 fry).
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "livebearer"
+days = 28
+brood = [3, 8]
+rest_days = 7
+
+# Colour strains (SPEC §2.4, D13), in allele order (append only: saves
+# keep the index). The sprite is the wild type: orange and blue patches and
+# an orange tail; the fancy strains recolour the tail and patches, and
+# crossing them reverts to wild. A morph's colours replace the sprite's by
+# key.
+[genetics]
+wildtype = "wild"
+sprite = "wild"
+
+[[genetics.morph]]
+name = "wild"
+
+[[genetics.morph]]
+name = "red"
+colours = { o = "#ff4a2c", t = "#d81e2a", y = "#ff5a3a", c = "#a81020" }
+
+[[genetics.morph]]
+name = "blue"
+colours = { o = "#4a8af0", t = "#2f6ee0", y = "#7fb0ff", c = "#1a3a9a" }
 
 [sprite]
 # Facing right; two texels per cell side. The body is 10 texels (5 cells)
@@ -69,6 +99,51 @@ frames = [
         "ttcttcttwwwwwwwws.",
         "ttcttty...ww......",
         "ytty..............",
+    ],
+]
+# A female (dimorphic, T9 part 2): plain silver-olive with no patches, a
+# deeper body 6.5 cells (3.25 cm) long, a small rounded tail in her
+# strain's colour and the dark gravid spot; the same size and frame count.
+female_frames = [
+    [
+        "..................",
+        "...........gg.....",
+        ".yy.....ggggggg...",
+        "yttt..ggsssssssek.",
+        "ytttsgssssssssskks",
+        "yttt.gswwwwnwwwws.",
+        ".yy....wwwwww.....",
+        "..................",
+    ],
+    [
+        "..................",
+        "...........gg.....",
+        "..yy....ggggggg...",
+        ".yttt.ggsssssssek.",
+        ".tttsgssssssssskks",
+        ".yttt.gswwwwnwwws.",
+        "..yy...wwwwww.....",
+        "..................",
+    ],
+    [
+        "..................",
+        "...........gg.....",
+        ".yy.....ggggggg...",
+        "yttt..ggsssssssek.",
+        "ytttsgssssssssskks",
+        "yttt.gswwwwnwwwws.",
+        ".yy....wwwwww.....",
+        "..................",
+    ],
+    [
+        "..................",
+        "...........gg.....",
+        "..yy....ggggggg...",
+        ".yttt.ggsssssssek.",
+        ".tttsgssssssssskks",
+        ".yttt.gswwwwnwwws.",
+        "..yy...wwwwww.....",
+        "..................",
     ],
 ]
 # The palette icon, at one pixel per cell.

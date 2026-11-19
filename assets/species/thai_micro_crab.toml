@@ -21,6 +21,8 @@ max_speed = 1.5
 reach = 2
 diet = ["flake_food", "detritus"]
 
+# Doesn't breed here: its larvae are rarely raised in a tank.
+
 [sprite]
 # Left-right symmetric, so it reads as walking sideways whichever way it
 # goes; two texels per cell side. A carapace 2 texels across (0.5 cm at

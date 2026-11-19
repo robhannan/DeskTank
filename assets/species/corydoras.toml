@@ -18,6 +18,14 @@ speed = 3.5
 max_speed = 7.0
 diet = ["sinking_pellet", "algae_wafer", "bloodworm", "flake_food", "algae", "detritus"]
 
+# Sticks its eggs to glass and leaves; they hatch in 3–5 days.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 4
+brood = [4, 10]
+rest_days = 14
+
 [sprite]
 colours = { t = "#c9b48a", l = "#e3d3ac", d = "#6b5a3e", s = "#a08c68", k = "#0c1016", e = "#ffffff", w = "#efe6d2" }
 frames = [

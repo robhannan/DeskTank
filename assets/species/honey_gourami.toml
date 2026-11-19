@@ -14,11 +14,22 @@ length_cm = 4.5
 # months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
 lifespan_days = 1825
 maturity_days = 150
+# Longest prey in cm: a hungry adult takes fry and shrimplets it
+# touches (T9 part 2).
+prey_cm = 1.2
 breathes_air = true
 temperament = "peaceful"
 speed = 2.5
 max_speed = 6.0
 diet = ["flake_food", "bloodworm", "sinking_pellet"]
+
+# A bubble nester; eggs hatch in about a day.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 1
+brood = [6, 12]
+rest_days = 14
 
 [sprite]
 # Facing right; two texels per cell side. 18 texels (9 cells, 4.5 cm)

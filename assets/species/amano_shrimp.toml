@@ -20,6 +20,8 @@ max_speed = 8.0
 hop_every = 10.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "bloodworm", "flake_food"]
 
+# Doesn't breed here: its larvae need brackish water.
+
 [sprite]
 # Facing right; two texels per cell side. The body is 16 texels (8 cells,
 # 4 cm at two cells per cm) from tail fan to eye, with a pale dorsal
