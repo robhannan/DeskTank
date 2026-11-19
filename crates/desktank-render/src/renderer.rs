@@ -680,10 +680,11 @@ fn create_pipelines(
         multiview_mask: None,
         cache: None,
     });
-    // Per instance: top-left cell, size, atlas origin, mirror and turn
-    // (vec2 each).
+    // Per instance: top-left cell, size, atlas origin, mirror and turn,
+    // frame size and look (vec2 each).
     let attributes = wgpu::vertex_attr_array![
-        0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2
+        0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2,
+        4 => Float32x2, 5 => Float32x2
     ];
     let sprites = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sprites"),

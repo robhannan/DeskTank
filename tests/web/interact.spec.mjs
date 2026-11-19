@@ -371,6 +371,8 @@ test("settings persist across reloads", async ({ page }) => {
   await page.locator("#set-fps").selectOption("15");
   await page.locator("#set-field").selectOption("co2");
   await page.getByLabel("Fish avoid the pointer").check();
+  await page.getByLabel("Easy mode (only old age kills)").check();
+  expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(true);
   await page.locator("#set-stats").uncheck();
   await page.locator("#seed").fill("42");
   await page.locator("#seed").dispatchEvent("change");
@@ -386,12 +388,14 @@ test("settings persist across reloads", async ({ page }) => {
     field: "co2",
     stats: false,
     avoidCursor: true,
+    easyMode: true,
     seed: 42,
     radius: 7,
   });
   expect(await page.evaluate(() => window.desktank.grid[0]), "the tank uses the saved scale").toBe(scale);
   expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("co2");
   expect(await page.evaluate(() => window.desktank.tank.radius())).toBe(7);
+  expect(await page.evaluate(() => window.desktank.tank.easyMode()), "easy mode applies to the new tank").toBe(true);
   await expect(page.locator("#stats")).toBeHidden();
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.locator("#set-scale")).toHaveValue(String(scale));
@@ -401,6 +405,7 @@ test("settings persist across reloads", async ({ page }) => {
   await page.getByRole("button", { name: "Defaults" }).click();
   await expect.poll(() => page.evaluate(() => window.desktank.grid[0])).toBe(autoScale);
   expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("");
+  expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(false);
   // Garbage in storage falls back to the defaults.
   await page.evaluate(() => localStorage.setItem("desktank.settings.v1", "{not json"));
   await page.reload();

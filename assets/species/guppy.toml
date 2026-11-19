@@ -13,6 +13,11 @@ min_depth = 20
 # Real-world body length in cm without the tail (real males 1.5–3.5 cm),
 # at two cells per cm.
 length_cm = 3.0
+# Lifespan and age at maturity in real days (about 2 years; mature at about
+# 3 months), on the life clock: a day per 10 world minutes
+# (LIFE_DAY_SECONDS).
+lifespan_days = 730
+maturity_days = 90
 breathes_air = false
 temperament = "peaceful"
 speed = 4.5

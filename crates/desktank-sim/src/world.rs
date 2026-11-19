@@ -27,7 +27,11 @@ mod persist;
 mod plants;
 
 use creatures::Creatures;
-pub use creatures::{Creature, CreatureId, MAX_CREATURES, UnmetNeed};
+pub use creatures::{
+    BITE_ENERGY, CORPSE_SINK, Corpse, Creature, CreatureId, DEFAULT_CREATURE_CAP, DeathCause,
+    ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS, LifeStage, MAX_CORPSES, MAX_CREATURE_CAP,
+    POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, STRESS_LIMIT, UnmetNeed,
+};
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
 use plants::Plants;

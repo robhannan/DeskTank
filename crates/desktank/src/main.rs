@@ -93,6 +93,14 @@ struct WindowArgs {
     /// Start a new tank and don't save it.
     #[arg(long)]
     no_save: bool,
+    /// Easy mode: creatures die only of old age (`--easy-mode=false` turns
+    /// it off). Saved with the tank.
+    #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
+    easy_mode: Option<bool>,
+    /// The population cap (default 60, at most 128; never below the
+    /// creatures already in the tank). Saved with the tank.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=128))]
+    creature_cap: Option<u16>,
 }
 
 #[derive(Debug, Args)]
@@ -186,6 +194,10 @@ fn main() -> ExitCode {
             } else {
                 window::Saves::Load
             },
+            window::LifeSettings {
+                easy: args.easy_mode,
+                cap: args.creature_cap.map(usize::from),
+            },
         ),
         Command::Bench(args) => bench::run(args.seconds, usize::from(args.fish)),
         Command::Import { file } => persist::import(None, file),
@@ -232,6 +244,11 @@ mod tests {
             (&["window", "--time", "21:00"], "window"),
             (&["window", "--fresh"], "window"),
             (&["window", "--no-save"], "window"),
+            (&["window", "--easy-mode"], "window"),
+            (
+                &["window", "--easy-mode=false", "--creature-cap", "30"],
+                "window",
+            ),
             (&["interact", "toggle"], "interact"),
             (&["feed"], "feed"),
             (&["feed", "pellets"], "feed"),
@@ -268,6 +285,25 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{args:?}: {e}"));
             assert_eq!(cli.command.name(), *name);
         }
+    }
+
+    #[test]
+    fn parses_the_life_cycle_settings() {
+        let window = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("not a window command");
+            };
+            (w.easy_mode, w.creature_cap)
+        };
+        assert_eq!(window(&[]), (None, None));
+        assert_eq!(window(&["--easy-mode"]), (Some(true), None));
+        assert_eq!(
+            window(&["--easy-mode=false", "--creature-cap", "30"]),
+            (Some(false), Some(30))
+        );
+        assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "129"]).is_err());
+        assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "0"]).is_err());
     }
 
     #[test]
