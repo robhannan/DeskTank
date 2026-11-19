@@ -39,7 +39,8 @@
 //!   drift back towards wildtype, as mixed neocaridina revert to brown.
 //! - **Predation.** Once a second a hungry adult of a species with
 //!   `prey_cm` that touches (within its reach) a creature no longer than
-//!   that, of any species including its own young, eats it with a chance
+//!   that, of any species including its own young, within [`BAND_REACH`]
+//!   of its depth band (D21), eats it with a chance
 //!   of 1 in [`STRIKE_ODDS`]: the prey is gone (no corpse) and the
 //!   predator is fed. Not in easy mode, and not while either is in the
 //!   net.
@@ -51,13 +52,14 @@ use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 
 use super::{
-    BITE_ENERGY, Creature, CreatureId, ENERGY_RESERVE, FULL, LIFE_DAY_TICKS, LifeStage, World,
+    BAND_REACH, BITE_ENERGY, Creature, CreatureId, ENERGY_RESERVE, FULL, LIFE_DAY_TICKS, LifeStage,
+    World,
 };
 use crate::TICKS_PER_SECOND;
 use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v3};
+use crate::save::{SaveError, v4};
 use crate::species::{BreedingMode, SpeciesId};
 
 /// World seconds between breeding checks.
@@ -624,6 +626,7 @@ impl World {
                     && !eaten.contains(&j)
                     && q.held_until < self.tick
                     && self.length_mm(q) <= k.prey_mm
+                    && q.band().abs_diff(p.band()) <= BAND_REACH
                     && !reach.intersect(self.creature_body(q)).is_empty()
             });
             let Some(j) = prey else {
@@ -665,7 +668,7 @@ impl World {
     /// in ascending order, at most [`MAX_CLUTCHES`] of them. An egg cell
     /// need not still hold the egg (one wiped or dug up is skipped at
     /// hatch), so the cells are not checked.
-    pub(super) fn load_clutches(&self, saved: Vec<v3::Clutch>) -> Result<Vec<Clutch>, SaveError> {
+    pub(super) fn load_clutches(&self, saved: Vec<v4::Clutch>) -> Result<Vec<Clutch>, SaveError> {
         if saved.len() > MAX_CLUTCHES {
             return Err(SaveError::Invalid(format!("{} clutches", saved.len())));
         }

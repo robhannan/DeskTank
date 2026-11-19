@@ -2,11 +2,12 @@
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
 //! rigid bodies the hash leaves out), and the version 1, 2 and 3 fixtures
-//! load (version 1 migrated to 2, T9; version 2 to 3, T9 part 2).
+//! load (version 1 migrated to 2, T9; version 2 to 3, T9 part 2; version
+//! 3 to 4, D21).
 //!
-//! The version 1 and 2 fixtures are frozen: this build no longer writes
+//! The version 1, 2 and 3 fixtures are frozen: this build no longer writes
 //! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
-//! the version 3 fixture; only do that while version 3 is unreleased or its
+//! the version 4 fixture; only do that while version 4 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -260,9 +261,12 @@ fn a_version_2_fixture_loads() {
     }
     assert_eq!(w.clutches().len(), 0);
     assert!(!w.corpses()[0].female());
+    // Version 4 (D21) puts each creature at rest in its starting band: a
+    // hash of the seed and its id, so they spread over the bands.
+    assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0x42fa_7962_54b8_2a1f);
+    assert_eq!(w.state_hash(), 0xf6de_4336_106b_62f3);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -279,7 +283,7 @@ fn a_version_2_fixture_loads() {
     assert_eq!(w.tick_count(), 900);
 }
 
-/// What the version 3 fixture holds: `busy` with breeding state (T9 part
+/// What the version 3 and 4 fixtures hold: `busy` with breeding state (T9 part
 /// 2): a blue cherry shrimp pair and a red one, a female guppy carrying a
 /// red male's young, a corydoras clutch and a corpse of a blue shrimp.
 fn bred() -> World {
@@ -332,11 +336,7 @@ fn bred() -> World {
 
 #[test]
 fn a_version_3_fixture_loads() {
-    let path = fixture(3);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&bred())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(3)).unwrap();
     assert_eq!(save::check(&bytes), Ok(3));
     let mut w = save::decode(&bytes, table()).unwrap();
     let guppy = w.species().id("guppy").unwrap();
@@ -358,10 +358,12 @@ fn a_version_3_fixture_loads() {
     let shrimp = w.species().id("cherry_shrimp").unwrap();
     let blue = w.species().get(shrimp).unwrap().morph("blue").unwrap();
     assert!(w.corpses().iter().any(|c| c.morph() == blue));
+    assert_at_rest_in_bands(&w);
+    assert!(w.corpses().iter().all(|c| c.band() == 0));
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0x1288_339e_9e44_0e2a);
+    assert_eq!(hash, 0xa27c_ed7f_1831_9970);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -371,6 +373,50 @@ fn a_version_3_fixture_loads() {
         again.tick();
     }
     assert_eq!(w.state_hash(), again.state_hash());
+}
+
+#[test]
+fn a_version_4_fixture_loads() {
+    let path = fixture(4);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&bred())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(4));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    assert!(!w.clutches().is_empty() && !w.corpses().is_empty());
+    // Depth is saved: decoded, it matches the tank that wrote it.
+    let fresh = bred();
+    let depths = |w: &World| -> Vec<(u32, f32)> {
+        w.creatures()
+            .iter()
+            .map(|c| (c.id().0, c.depth()))
+            .collect()
+    };
+    assert_eq!(depths(&w), depths(&fresh));
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Pinned, so every platform decodes the same state.
+    assert_eq!(w.state_hash(), 0x07c8_5bc4_801d_be6e);
+    let again = save::decode(&save::encode(&w), table()).unwrap();
+    let mut again = again;
+    for _ in 0..200 {
+        w.tick();
+        again.tick();
+    }
+    assert_eq!(w.state_hash(), again.state_hash());
+}
+
+/// A migrated tank's creatures rest whole bands deep, spread over them.
+fn assert_at_rest_in_bands(w: &World) {
+    let bands: std::collections::BTreeSet<u8> = w
+        .creatures()
+        .iter()
+        .map(desktank_sim::Creature::band)
+        .collect();
+    for c in w.creatures() {
+        assert_eq!(c.depth(), f32::from(c.band()));
+    }
+    assert!(bands.len() >= 4, "bands {bands:?}");
 }
 
 #[test]

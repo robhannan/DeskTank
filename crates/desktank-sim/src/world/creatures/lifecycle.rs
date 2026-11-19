@@ -155,6 +155,8 @@ pub struct Corpse {
     pub(super) w: u8,
     pub(super) h: u8,
     pub(super) facing_left: bool,
+    /// The depth band it died in, which it sinks in (D21).
+    pub(super) band: u8,
     /// Tick it died on.
     pub(super) died: u64,
     /// Detritus cells released so far, of `total`.
@@ -170,6 +172,12 @@ impl Corpse {
     #[must_use]
     pub fn species(&self) -> SpeciesId {
         self.species
+    }
+
+    /// The depth band it died and sinks in (D21).
+    #[must_use]
+    pub fn band(&self) -> u8 {
+        self.band
     }
 
     /// What it died of.
@@ -440,6 +448,7 @@ impl World {
             w: u8::try_from(w).unwrap_or(1),
             h: u8::try_from(h).unwrap_or(1),
             facing_left: c.facing_left,
+            band: c.band(),
             died: self.tick,
             released: 0,
             total: cells.div_ceil(3).max(1),
@@ -469,14 +478,14 @@ impl World {
         );
         corpses.retain_mut(|c| {
             let (w, h) = (i32::from(c.w), i32::from(c.h));
-            if self.fits_box(w, h, c.x, c.y + SINK) {
+            if self.fits_box(w, h, c.x, c.y + SINK, Some(c.band)) {
                 c.y += SINK;
                 changed = true;
             } else {
                 // Settle the rest of the way onto whatever stopped it.
                 let top = c.y - h * ONE / 2;
                 let settled = (top + ONE - 1).div_euclid(ONE) * ONE + h * ONE / 2;
-                if settled > c.y && self.fits_box(w, h, c.x, settled) {
+                if settled > c.y && self.fits_box(w, h, c.x, settled, Some(c.band)) {
                     c.y = settled;
                     changed = true;
                 }
@@ -543,6 +552,7 @@ impl World {
                 u8::from(c.facing_left),
                 c.morph,
                 u8::from(c.female),
+                c.band,
             ]);
             h.write(&c.x.to_le_bytes());
             h.write(&c.y.to_le_bytes());
