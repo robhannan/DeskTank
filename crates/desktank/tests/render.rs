@@ -16,6 +16,8 @@ use std::process::Command;
 
 /// Scenes are 160×90 cells drawn at scale 2.
 const SIZE: &str = "320x180";
+/// The same scenes at scale 4, where plants show their four-texel detail.
+const SIZE_X4: &str = "640x360";
 const SEED: &str = "7";
 const MAX_DELTA_E: f64 = 2.0;
 const MAX_FRACTION: f64 = 0.005;
@@ -36,9 +38,10 @@ fn read_png(path: &Path) -> (u32, u32, Vec<u8>) {
     (info.width, info.height, buf)
 }
 
-/// Captures `scene` (lit for `time`, `HH:MM`, if given) into `name` and
-/// returns the PNG path, or `None` if there is no GPU adapter outside CI.
-fn capture(scene: &str, name: &str, time: Option<&str>) -> Option<PathBuf> {
+/// Captures `scene` at `size` (lit for `time`, `HH:MM`, if given) into
+/// `name` and returns the PNG path, or `None` if there is no GPU adapter
+/// outside CI.
+fn capture(scene: &str, name: &str, time: Option<&str>, size: &str) -> Option<PathBuf> {
     let out = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("render")
         .join(name);
@@ -47,7 +50,7 @@ fn capture(scene: &str, name: &str, time: Option<&str>) -> Option<PathBuf> {
         .join("tests/scenes")
         .join(format!("{scene}.toml"));
     let mut command = Command::new(env!("CARGO_BIN_EXE_desktank"));
-    command.args(["capture", "--seed", SEED, "--size", SIZE, "--script"]);
+    command.args(["capture", "--seed", SEED, "--size", size, "--script"]);
     command.arg(&script);
     if let Some(t) = time {
         command.args(["--time", t]);
@@ -68,17 +71,17 @@ fn capture(scene: &str, name: &str, time: Option<&str>) -> Option<PathBuf> {
 }
 
 fn check(scene: &str) {
-    check_named(scene, scene, None);
+    check_named(scene, scene, None, SIZE);
 }
 
 /// Checks `scene` lit for `time` (`HH:MM`) against `<scene>_HHMM.png`.
 fn check_at(scene: &str, time: &str) {
     let name = format!("{scene}_{}", time.replace(':', ""));
-    check_named(scene, &name, Some(time));
+    check_named(scene, &name, Some(time), SIZE);
 }
 
-fn check_named(scene: &str, name: &str, time: Option<&str>) {
-    let Some(got_path) = capture(scene, name, time) else {
+fn check_named(scene: &str, name: &str, time: Option<&str>, size: &str) {
+    let Some(got_path) = capture(scene, name, time, size) else {
         return;
     };
     let reference = manifest()
@@ -152,6 +155,16 @@ fn plant_rosettes_scene_matches_reference() {
 #[test]
 fn plant_carpets_scene_matches_reference() {
     check("plant_carpets");
+}
+
+/// Four-texel plant detail: the plant scenes at scale 4, where every leaf,
+/// stem and root shape is drawn with quarter-cell structure, against
+/// `<scene>_x4.png`.
+#[test]
+fn plant_scenes_match_reference_at_scale_4() {
+    for scene in ["plant_species", "plant_rosettes", "plant_carpets"] {
+        check_named(scene, &format!("{scene}_x4"), None, SIZE_X4);
+    }
 }
 
 /// Creatures (T7a): sprites of every species over the starter bed, after
