@@ -5,7 +5,7 @@
 
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
-    Brush, Creature, MAX_CREATURES, MaterialId, MaterialTable, MovementClass, Rect, Script,
+    Brush, Creature, DEFAULT_CREATURE_CAP, MaterialId, MaterialTable, MovementClass, Rect, Script,
     SpeciesId, TICKS_PER_SECOND, World, WorldConfig, WorldError,
 };
 
@@ -536,12 +536,12 @@ fn the_palette_adds_creatures_of_each_species() {
     t.release(&mut w, Button::Primary);
     assert_eq!(w.creatures().len(), adders.len());
     // The population cap holds.
-    while w.creatures().len() < MAX_CREATURES {
+    while w.creatures().len() < DEFAULT_CREATURE_CAP {
         w.add_creature(adders[0], 80, 40).unwrap();
     }
     assert_eq!(
         w.add_creature(adders[0], 80, 40),
-        Err(WorldError::PopulationCap(MAX_CREATURES))
+        Err(WorldError::PopulationCap(DEFAULT_CREATURE_CAP))
     );
 }
 
