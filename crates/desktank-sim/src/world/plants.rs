@@ -36,6 +36,7 @@ use std::sync::Arc;
 
 use rand_core::Rng as _;
 
+use super::creatures::DEPTH_BANDS;
 use super::{World, WorldError, variant};
 use crate::ecology::{DIRS, keep_per_tick, powu};
 use crate::field::FieldKind;
@@ -46,6 +47,7 @@ use crate::plants::{
     COUNTED_PARTS, Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable,
     Propagule, RosetteForm, plant_position, plant_variant,
 };
+use crate::rng::splitmix64;
 use crate::save::{SaveError, v1};
 
 /// Most plants a tank holds by default (SPEC §2.7 *Cap*), set from
@@ -310,6 +312,53 @@ impl World {
         let c = self.cell(x, y)?;
         let part = self.plants.part(c.material).is_some();
         (part && self.plants.table.contains_key(&c.state)).then_some(PlantId(c.state))
+    }
+
+    /// The depth band (0 at the front glass to [`DEPTH_BANDS`] − 1 at the
+    /// back) of the plant part cell at `(x, y)`, or `None` for any other
+    /// cell (D21). Creatures collide with it only from a band within
+    /// [`BAND_REACH`](crate::BAND_REACH) of it.
+    #[must_use]
+    pub fn plant_band(&self, x: usize, y: usize) -> Option<u8> {
+        (x < self.width && y < self.height).then(|| self.plant_band_at(y * self.width + x))?
+    }
+
+    /// [`World::plant_band`] by cell index. Bands aren't stored: they
+    /// follow from the world seed, the plant id and the cell's place in
+    /// the plant, so they cost no cell bits and need no save field. A
+    /// plant's stem (a rosette's or carpet's crown, its roots and runners)
+    /// keeps the plant's band; a stem plant's leaf (one per node and side)
+    /// shifts it by up to one band, so the plant has depth; a rosette's or
+    /// carpet's blades shift it by up to two, by column, so they fan
+    /// across the bands; a mat's cells shift it by up to one each, so it
+    /// is fuzzy.
+    pub(super) fn plant_band_at(&self, i: usize) -> Option<u8> {
+        let cell = self.cells[i];
+        let part = self.plants.part(cell.material)?;
+        let id = cell.state;
+        let mix = |key: u64| splitmix64(self.seed ^ splitmix64((u64::from(id) << 40) ^ key));
+        let bands = u64::from(DEPTH_BANDS);
+        // Below DEPTH_BANDS (8): exact.
+        #[allow(clippy::cast_possible_truncation)]
+        let base = (mix(0) % bands) as i32;
+        let p = self.plants.table.get(&id);
+        let form = p
+            .and_then(|p| self.plants.species.get(p.species))
+            .map(|s| &s.form);
+        let (x, y) = (i % self.width, i / self.width);
+        let (key, spread) = match (part, form) {
+            (Part::Leaf, Some(Form::Stem(_))) => {
+                let left = p.is_some_and(|p| x < p.base % self.width);
+                ((y as u64) << 1 | u64::from(left), 1)
+            }
+            (Part::Leaf, Some(Form::Rosette(_) | Form::Carpet(_))) => ((x as u64) << 1, 2),
+            (Part::Stem, Some(Form::Mat(_))) => (i as u64, 1),
+            _ => return u8::try_from(base).ok(),
+        };
+        // Within ±2: exact.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let shift = (mix(key + 1) % (2 * spread + 1)) as i32 - spread as i32;
+        u8::try_from((base + shift).clamp(0, i32::from(DEPTH_BANDS) - 1)).ok()
     }
 
     /// Number of plants.

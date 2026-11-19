@@ -17,25 +17,28 @@ impl World {
         if !(self.tick + u64::from(c.id.0)).is_multiple_of(interval) {
             return;
         }
-        let turn = c.turn;
-        let free = |dx, dy| self.fits(k, turn, c.x + dx * ONE, c.y + dy * ONE);
-        let face = self.support_face(k, turn, c.x, c.y);
-        let heading =
-            if (c.vx, c.vy) != (0, 0) && (face.is_some() || self.at_corner(k, turn, c.x, c.y)) {
-                (c.vx.signum(), c.vy.signum())
-            } else if let Some((x, y)) = face {
-                (y, -x)
-            } else {
-                if free(0, 1) {
-                    c.y += ONE;
-                }
-                (c.vx, c.vy) = (0, 0);
-                return;
-            };
+        let (turn, band) = (c.turn, c.band());
+        let free = |dx, dy| self.fits(k, turn, c.x + dx * ONE, c.y + dy * ONE, band);
+        let face = self.support_face(k, turn, c.x, c.y, band);
+        let heading = if (c.vx, c.vy) != (0, 0)
+            && (face.is_some() || self.at_corner(k, turn, c.x, c.y, band))
+        {
+            (c.vx.signum(), c.vy.signum())
+        } else if let Some((x, y)) = face {
+            (y, -x)
+        } else {
+            if free(0, 1) {
+                c.y += ONE;
+            }
+            (c.vx, c.vy) = (0, 0);
+            return;
+        };
         let (dx, dy) = heading;
         if let Some((x, y)) = [(-dy, dx), heading, (dy, -dx), (-dx, -dy)]
             .into_iter()
-            .find(|&(x, y)| free(x, y) && self.on_surface(k, turn, c.x + x * ONE, c.y + y * ONE))
+            .find(|&(x, y)| {
+                free(x, y) && self.on_surface(k, turn, c.x + x * ONE, c.y + y * ONE, band)
+            })
         {
             c.x += x * ONE;
             c.y += y * ONE;
@@ -43,7 +46,7 @@ impl World {
         }
         // Only diagonal support (an outside corner): keep the turn until a
         // face is found, so it doesn't flicker.
-        if let Some(face) = self.support_face(k, c.turn, c.x, c.y) {
+        if let Some(face) = self.support_face(k, c.turn, c.x, c.y, band) {
             self.attach(k, c, face);
         }
         c.face_along(c.vx, c.vy);
@@ -73,44 +76,46 @@ impl World {
         let slide = (k.w - k.h).abs();
         for s in std::iter::once(0).chain((1..=slide).flat_map(|s| [s, -s])) {
             let (nx, ny) = (x + ax * ahead * s * ONE, y + ay * ahead * s * ONE);
-            if self.fits(k, turn, nx, ny) && self.supported(k, turn, nx + fx * ONE, ny + fy * ONE) {
+            let band = c.band();
+            if self.fits(k, turn, nx, ny, band)
+                && self.supported(k, turn, nx + fx * ONE, ny + fy * ONE, band)
+            {
                 (c.x, c.y, c.turn) = (nx, ny, turn);
                 return;
             }
         }
     }
 
-    fn supported(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+    /// Whether a body in `band` at `(x, y)` overlaps something it can hold:
+    /// the tank glass, or a cell that blocks it other than air (a plant
+    /// only in reach of its band).
+    fn supported(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
         let Some(b) = body(k, turn, x, y, self.width, self.height) else {
             return true; // tank glass
         };
         (b.y0..b.y1).any(|y| {
-            self.cells[y * self.width + b.x0..y * self.width + b.x1]
-                .iter()
-                .any(|cell| {
-                    cell.material != self.creatures.air
-                        && !self.creatures.swim[usize::from(cell.material.0)]
-                })
+            (y * self.width + b.x0..y * self.width + b.x1)
+                .any(|i| self.cells[i].material != self.creatures.air && self.blocks(i, Some(band)))
         })
     }
 
     /// The side a body turned `turn` at `(x, y)` holds on to: the face under
     /// its foot if there is one, so a crawler in an inside corner keeps its
     /// turn, then down, right, left and up.
-    fn support_face(&self, k: &Kind, turn: u8, x: i32, y: i32) -> Option<(i32, i32)> {
+    fn support_face(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> Option<(i32, i32)> {
         std::iter::once(FEET[usize::from(turn)])
             .chain([(0, 1), (1, 0), (-1, 0), (0, -1)])
-            .find(|&(dx, dy)| self.supported(k, turn, x + dx * ONE, y + dy * ONE))
+            .find(|&(dx, dy)| self.supported(k, turn, x + dx * ONE, y + dy * ONE, band))
     }
 
-    fn at_corner(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+    fn at_corner(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
         [(1, 1), (-1, 1), (1, -1), (-1, -1)]
             .into_iter()
-            .any(|(dx, dy)| self.supported(k, turn, x + dx * ONE, y + dy * ONE))
+            .any(|(dx, dy)| self.supported(k, turn, x + dx * ONE, y + dy * ONE, band))
     }
 
-    pub(super) fn on_surface(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
-        self.support_face(k, turn, x, y).is_some() || self.at_corner(k, turn, x, y)
+    pub(super) fn on_surface(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
+        self.support_face(k, turn, x, y, band).is_some() || self.at_corner(k, turn, x, y, band)
     }
 
     pub(super) fn steering_target(
@@ -149,10 +154,12 @@ impl World {
                 k.top,
             );
         }
-        if k.schooling
-            && let Some(target) = self.school_target(k, c)
-        {
-            return target;
+        if k.schooling {
+            if c.stray > 0 {
+                c.stray -= 1;
+            } else if let Some(target) = self.school_target(k, c) {
+                return target;
+            }
         }
         (
             c.tx,
@@ -174,7 +181,7 @@ impl World {
             } else {
                 // Rise vertically, moving sideways under ledges until
                 // there is open water overhead.
-                let tx = if self.fits(k, c.turn, c.x, c.y - ONE) {
+                let tx = if self.fits(k, c.turn, c.x, c.y - ONE, c.band()) {
                     c.x
                 } else {
                     c.tx

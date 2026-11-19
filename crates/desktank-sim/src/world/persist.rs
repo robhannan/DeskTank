@@ -6,15 +6,15 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v2};
+use crate::save::{SaveError, runs, unrun, v1, v3};
 use crate::species::SpeciesId;
 
 impl World {
-    /// The world as a version 2 snapshot.
-    pub(crate) fn to_v2(&self) -> v2::Save {
+    /// The world as a version 3 snapshot.
+    pub(crate) fn to_v3(&self) -> v3::Save {
         let base = |i: usize| variant(self.seed, 0, i);
         #[allow(clippy::cast_possible_truncation)] // sides ≤ MAX_SIDE
-        v2::Save {
+        v3::Save {
             width: self.width as u32,
             height: self.height as u32,
             seed: self.seed,
@@ -64,8 +64,8 @@ impl World {
         }
     }
 
-    /// A world restored from a version 2 snapshot, on `materials`.
-    pub(crate) fn from_v2(s: v2::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+    /// A world restored from a version 3 snapshot, on `materials`.
+    pub(crate) fn from_v3(s: v3::Save, materials: MaterialTable) -> Result<Self, SaveError> {
         let config = WorldConfig {
             width: s.width as usize,
             height: s.height as usize,
@@ -149,7 +149,7 @@ impl World {
 
     /// Every material and species id the save names must still name the
     /// same thing.
-    fn check_names(&self, s: &v2::Save) -> Result<(), SaveError> {
+    fn check_names(&self, s: &v3::Save) -> Result<(), SaveError> {
         let check = |what: &str, saved: &[v1::Named], now: &dyn Fn(u8) -> Option<String>| {
             for e in saved {
                 let current = now(e.id);
