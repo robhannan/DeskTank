@@ -85,6 +85,9 @@ const canvas = $("tank");
 const statusEl = $("status");
 const statsEl = $("stats");
 const inspectEl = $("inspect");
+const cheatForm = $("cheat");
+const cheatInput = $("cheat-input");
+const cheatOut = $("cheat-out");
 const playBtn = $("play");
 const stepBtn = $("step");
 const seedInput = $("seed");
@@ -467,6 +470,7 @@ function showOwnership() {
   document.body.dataset.owner = String(owner);
   // A viewer's controls are inert: nothing it does would be saved.
   for (const el of document.querySelectorAll("[data-owner-only]")) el.inert = !active;
+  if (!active) closeCheat();
 }
 
 function takeOver() {
@@ -838,6 +842,45 @@ function canvasPoint(e) {
   return [((e.clientX - rect.left) / rect.width) * canvas.width, ((e.clientY - rect.top) / rect.height) * canvas.height];
 }
 
+// Shows a line in the inspect readout for a few seconds.
+function flash(text) {
+  inspectEl.textContent = text;
+  inspectEl.hidden = false;
+  clearTimeout(inspectTimer);
+  inspectTimer = setTimeout(() => {
+    inspectEl.hidden = true;
+  }, INSPECT_SHOW_MS);
+}
+
+// The cheat field: the Konami code opens it, Enter runs the line (closing
+// it if the cheat ran), Escape closes it. Only listeners run while it is
+// shut; nothing polls.
+function openCheat() {
+  cheatInput.value = "";
+  cheatOut.textContent = "Enter runs · Esc closes · try help";
+  cheatForm.hidden = false;
+  cheatInput.focus();
+}
+
+function closeCheat() {
+  cheatForm.hidden = true;
+  if (document.activeElement === cheatInput) cheatInput.blur();
+}
+
+function runCheat(e) {
+  e.preventDefault();
+  if (!owner || handingOver) return closeCheat();
+  try {
+    const done = tank.cheat(cheatInput.value);
+    closeCheat();
+    flash(`Cheat: ${done}`);
+    kick();
+  } catch (err) {
+    cheatOut.textContent = String(err);
+    cheatInput.select();
+  }
+}
+
 // Shows what inspect last found under the tank for a few seconds.
 function showInspection() {
   const found = tank.takeInspection();
@@ -857,11 +900,7 @@ function showInspection() {
   } else {
     return;
   }
-  inspectEl.hidden = false;
-  clearTimeout(inspectTimer);
-  inspectTimer = setTimeout(() => {
-    inspectEl.hidden = true;
-  }, INSPECT_SHOW_MS);
+  flash(inspectEl.textContent);
 }
 
 function after() {
@@ -1049,10 +1088,23 @@ function wireInput() {
     importSave(file).catch((err) => showError(String(err)));
   });
   $("take-over").addEventListener("click", takeOver);
+  cheatForm.addEventListener("submit", runCheat);
+  cheatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeCheat();
+    }
+  });
   document.addEventListener("keydown", (e) => {
     if (!owner) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // The page has keyboard focus, so the Konami code needs no chord.
+    if (!e.repeat && !handingOver && tank.cheatKey(e.key)) {
+      e.preventDefault();
+      openCheat();
+      return;
+    }
     if (e.key === " " && !(e.target instanceof HTMLButtonElement)) {
       e.preventDefault();
       setRunning(!tank.running());
