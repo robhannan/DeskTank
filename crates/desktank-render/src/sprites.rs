@@ -5,7 +5,7 @@
 //! the palette). Each frame, every creature becomes one instance: its
 //! top-left cell, on-screen size, atlas frame, mirror and quarter turns,
 //! drawn as a quad by the sprite pipeline at the grid's cell scale, with
-//! [`TEXELS_PER_CELL`] texels per cell side (half a cell per texel). A
+//! [`TEXELS_PER_CELL`] texels per cell side or its optional finer frames. A
 //! crawler on a wall is turned a quarter, so its quad swaps width and
 //! height and the shader turns the texel lookup; quarter turns keep the
 //! pixel art crisp. WebGL2-safe: a per-instance vertex
@@ -20,16 +20,18 @@ pub const MAX_SPRITES: usize = 256;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
-/// mirror and quarter turns clockwise (2).
-pub const INSTANCE_FLOATS: usize = 8;
+/// mirror and quarter turns clockwise (2), optional fine atlas origin (2).
+pub const INSTANCE_FLOATS: usize = 10;
 
 /// Where one species' frames sit in the atlas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Entry {
-    origin: (usize, usize),
+    row: usize,
     /// Frame size in texels.
     size: (usize, usize),
     frames: usize,
+    /// First row of the double-size frames, when supplied.
+    fine_row: Option<usize>,
 }
 
 /// The packed atlas image and where each species is in it.
@@ -50,25 +52,14 @@ impl Atlas {
     #[allow(clippy::many_single_char_names)] // texel maths
     pub fn build(species: &SpeciesTable) -> Self {
         let mut entries = vec![None; 256];
-        let mut placed = Vec::new();
-        let mut y = 0;
-        for s in species.iter() {
-            let (w, h) = (s.sprite.width, s.sprite.height);
-            let per_row = (ATLAS_WIDTH / w).max(1);
-            let n = s.sprite.frames.len();
-            entries[usize::from(s.id.0)] = Some(Entry {
-                origin: (0, y),
-                size: (w, h),
-                frames: n,
-            });
-            placed.push((s, y, per_row));
-            y += h * n.div_ceil(per_row);
-        }
-        let height = y.max(1);
-        let mut image = vec![0; ATLAS_WIDTH * height * 4];
-        for (s, y0, per_row) in placed {
-            let (w, h) = (s.sprite.width, s.sprite.height);
-            for (f, texels) in s.sprite.frames.iter().enumerate() {
+        let mut image = Vec::new();
+        // Append a shelf and return its first row. Wide animations wrap.
+        let mut pack = |frames: &[Vec<[u8; 4]>], w: usize, h: usize| {
+            let y0 = image.len() / (ATLAS_WIDTH * 4);
+            let per_row = ATLAS_WIDTH / w;
+            let height = y0 + h * frames.len().div_ceil(per_row);
+            image.resize(height * ATLAS_WIDTH * 4, 0);
+            for (f, texels) in frames.iter().enumerate() {
                 let (fx, fy) = ((f % per_row) * w, y0 + (f / per_row) * h);
                 for (i, t) in texels.iter().enumerate() {
                     let (x, y) = (fx + i % w, fy + i / w);
@@ -76,7 +67,24 @@ impl Atlas {
                     image[o..o + 4].copy_from_slice(t);
                 }
             }
+            y0
+        };
+        for s in species.iter() {
+            let (w, h) = (s.sprite.width, s.sprite.height);
+            let y = pack(&s.sprite.frames, w, h);
+            let fine_row = (!s.sprite.fine_frames.is_empty())
+                .then(|| pack(&s.sprite.fine_frames, w * 2, h * 2));
+            entries[usize::from(s.id.0)] = Some(Entry {
+                row: y,
+                size: (w, h),
+                frames: s.sprite.frames.len(),
+                fine_row,
+            });
         }
+        if image.is_empty() {
+            image.resize(ATLAS_WIDTH * 4, 0);
+        }
+        let height = image.len() / (ATLAS_WIDTH * 4);
         let side = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         Self {
             image,
@@ -86,12 +94,9 @@ impl Atlas {
     }
 
     /// Atlas texel of frame `frame`'s top-left for species `id`.
-    fn frame_origin(e: &Entry, frame: usize) -> (usize, usize) {
-        let per_row = (ATLAS_WIDTH / e.size.0).max(1);
-        (
-            e.origin.0 + (frame % per_row) * e.size.0,
-            e.origin.1 + (frame / per_row) * e.size.1,
-        )
+    fn frame_origin(row: usize, (w, h): (usize, usize), frame: usize) -> (usize, usize) {
+        let per_row = ATLAS_WIDTH / w;
+        ((frame % per_row) * w, row + (frame / per_row) * h)
     }
 
     /// One instance per creature (up to [`MAX_SPRITES`]), as
@@ -106,7 +111,12 @@ impl Atlas {
             };
             let phase = tick / TICKS_PER_FRAME + u64::from(c.id().0);
             let frame = usize::try_from(phase % e.frames as u64).unwrap_or(0);
-            let (ox, oy) = Self::frame_origin(&e, frame);
+            let (ox, oy) = Self::frame_origin(e.row, e.size, frame);
+            #[allow(clippy::cast_precision_loss)] // small atlas coordinates
+            let fine = e.fine_row.map_or([-1.0; 2], |row| {
+                let (x, y) = Self::frame_origin(row, (e.size.0 * 2, e.size.1 * 2), frame);
+                [x as f32, y as f32]
+            });
             let (cx, cy) = c.centre();
             // On-screen size in cells: the body, half the frame's texels.
             let (w, h) = (e.size.0 / TEXELS_PER_CELL, e.size.1 / TEXELS_PER_CELL);
@@ -124,6 +134,8 @@ impl Atlas {
                 oy,
                 flip,
                 f32::from(turn),
+                fine[0],
+                fine[1],
             ]);
             n += 1;
         }
@@ -196,6 +208,29 @@ mod tests {
         let (cx, cy) = w.creatures()[0].centre();
         assert!((out[0] + out[2] / 2.0 - cx).abs() < 1e-6);
         assert!((out[1] + out[3] / 2.0 - cy).abs() < 1e-6);
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn betta_has_a_second_frame_origin_at_double_density() {
+        let mut world = world();
+        let betta = world.species().id("betta").unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        world.add_creature(betta, 20, 24).unwrap();
+        world.add_creature(tetra, 40, 30).unwrap();
+        let atlas = Atlas::build(world.species());
+        let mut out = Vec::new();
+        atlas.instances(&world, &mut out);
+        assert_eq!(out[2..4], [8.0, 6.0]);
+        let art = &world.species().get(betta).unwrap().sprite;
+        let frame = world.creatures()[0].id().0 as usize % art.fine_frames.len();
+        let (ox, oy) = (out[8] as usize, out[9] as usize);
+        for (i, texel) in art.fine_frames[frame].iter().enumerate() {
+            let width = art.width * 2;
+            let offset = ((oy + i / width) * ATLAS_WIDTH + ox + i % width) * 4;
+            assert_eq!(atlas.image[offset..offset + 4], *texel);
+        }
+        assert_eq!(out[INSTANCE_FLOATS + 8..], [-1.0; 2]);
     }
 
     #[test]

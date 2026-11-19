@@ -6,7 +6,7 @@
 // texel in the plant texture holds the health tint and the species id; the
 // species texture holds the colour ramps and part shapes. The interact overlay (palette
 // and brush outline) is drawn on top. Creature sprites are instanced quads
-// drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell side.
+// drawn after the grid (vs_sprite / fs_sprite) from the fitting atlas frame.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
 
@@ -136,10 +136,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var rgb: vec3<f32>;
     let part = part_of(texel);
     if part >= 0 {
-        // Which of the cell's 2x2 texels this pixel shows. Below scale 2 a
-        // pixel is a whole cell, so the shape is dropped (filled).
-        let sub = vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 2.0));
-        rgb = plant_colour(at, texel, part, sub, view.scale < 2.0);
+        let quarter = vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 4.0));
+        rgb = plant_colour(at, texel, part, quarter);
     } else {
         rgb = ground(at, texel);
     }
@@ -267,17 +265,23 @@ fn behind(at: vec2<i32>, sub: vec2<i32>, shadow: vec3<f32>) -> vec3<f32> {
     return shadow;
 }
 
-// A plant cell's colour at texel `sub` (0 or 1 across and down) of its 2x2
-// block (T6d): its species' shape for the part decides whether the texel is
+// Quarter-cell art is shown only when each texel covers whole screen pixels.
+fn fine_scale() -> bool {
+    return u32(view.scale) % 4u == 0u;
+}
+
+// A plant cell's colour (T6d): its species' shape decides whether the texel is
 // covered, and a shade from the part's ramp by position along the plant and
 // within the shape; the plant's health tint multiplies it. Uncovered texels
-// show what is behind. `full` fills every texel (scale 1).
-fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: bool) -> vec3<f32> {
+// show what is behind. Scale 1 fills every texel.
+fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> vec3<f32> {
+    let sub = quarter / 2;
     let plant = textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
     let species = i32(round(plant.a * 255.0));
     let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
     let sizes = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0) * 255.0);
     let pos = position_of(me);
+    let fine = shapes.w != 0 && fine_scale();
     let top = sub.y == 0;
     var covered = true;
     var step = noise_step(me);
@@ -369,6 +373,18 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
         } else {
             // Lanceolate: a petiole, a broad blade and a tip that rises.
             covered = !(base && u == 0 && top) && !(tip && u == 1 && !top);
+            if fine {
+                // From petiole to tip, the pale midrib rises through a broad
+                // blade. The darker underside ends one texel before the rib.
+                let x = select(3 - quarter.x, quarter.x, from_left);
+                let rib = select(select(2, 1, x >= 2), 2, base);
+                let upper = select(select(0, 2, base && x < 2), 1, tip && x >= 2);
+                let lower = select(select(3, 2, tip && x >= 1), 1, tip && x == 3);
+                covered = quarter.y >= upper && quarter.y <= lower;
+                step += select(-2, 2, quarter.y <= rib)
+                    + select(0, 1, quarter.y == rib)
+                    - select(0, 2, base && x < 2);
+            }
         }
     } else if part == PART_STEM {
         let shape = shapes.y;
@@ -403,6 +419,13 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             } else {
                 // Stalk: one texel wide, full at nodes and the growing tip.
                 covered = node || tip || sub.x == 0;
+                if fine {
+                    // A lit stalk with a flared collar joining each leaf pair.
+                    let collar = node && quarter.y == 2;
+                    covered = quarter.x == 1 || quarter.x == 2 || collar
+                        || (tip && quarter.y >= 2 && quarter.x == 0);
+                    step += select(-1, 2, quarter.x == 1) + select(0, 1, collar);
+                }
             }
         }
     } else {
@@ -420,12 +443,26 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             let vertical = sub.x == col && select(down, up, top);
             let across = sub.y == row && select(right, left, sub.x == 0);
             covered = vertical || across || (sub.x == col && sub.y == row);
+            if fine {
+                // Each root meets its neighbours at their shared edge centre.
+                // The junction wanders a quarter-cell, leaving fine root hairs.
+                let joint = vec2<i32>(1 + col, 1 + row);
+                let dx = abs(quarter.x - joint.x);
+                let dy = abs(quarter.y - joint.y);
+                let edge_x = select(joint.x, 1, quarter.y == 0 || quarter.y == 3);
+                let edge_y = select(joint.y, 2, quarter.x == 0 || quarter.x == 3);
+                covered = all(quarter == joint)
+                    || (quarter.x == edge_x && select(down, up, quarter.y < joint.y))
+                    || (quarter.y == edge_y && select(right, left, quarter.x < joint.x))
+                    || (dx == 1 && dy == 1 && quarter.x == 0 && row == 1);
+                step += select(-1, 1, dx == 0);
+            }
         }
     }
     let tint = plant.rgb;
     // Runners are drawn from the stem's ramp.
     let ramp = select(part, PART_STEM, part == PART_RUNNER);
-    if covered || full {
+    if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
         return textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
     }
@@ -450,7 +487,7 @@ struct SpriteOut {
 };
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
-// to a target pixel and each texel half a cell wide.
+// to a target pixel.
 @vertex
 fn vs_sprite(
     @builtin(vertex_index) i: u32,
@@ -462,6 +499,7 @@ fn vs_sprite(
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
     @location(3) orient: vec2<f32>,
+    @location(4) fine_origin: vec2<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -486,10 +524,12 @@ fn vs_sprite(
         q.x = 1.0 - q.x;
     }
     // The frame's size in texels.
-    let frame = select(size, size.yx, turn % 2u == 1u) * TEXELS_PER_CELL;
+    let fine = fine_origin.x >= 0.0 && fine_scale();
+    let density = TEXELS_PER_CELL * select(1.0, 2.0, fine);
+    let frame = select(size, size.yx, turn % 2u == 1u) * density;
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    o.texel = origin + q * frame;
+    o.texel = select(origin, fine_origin, fine) + q * frame;
     return o;
 }
 

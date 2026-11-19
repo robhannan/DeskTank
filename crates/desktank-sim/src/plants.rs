@@ -513,6 +513,8 @@ pub struct Look {
     pub stem: StemShape,
     /// Root shape.
     pub root: RootShape,
+    /// Draw the fine lanceolate, stalk and strand details at compatible scales.
+    pub fine_detail: bool,
 }
 /// Fastest growth rate, in cells per minute at full response (the plant
 /// update grows at most 8 cells per plant every 5 s).
@@ -697,6 +699,8 @@ struct LookDef {
     leaf: Option<LeafShape>,
     stem: Option<StemShape>,
     root: Option<RootShape>,
+    #[serde(default)]
+    fine_detail: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -1070,6 +1074,7 @@ fn validate(
         leaf: d.look.leaf.unwrap_or(default_leaf),
         stem: d.look.stem.unwrap_or(default_stem),
         root: d.look.root.unwrap_or_default(),
+        fine_detail: d.look.fine_detail,
     };
     let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
     if mat_shape != matches!(form, Form::Mat(_)) {

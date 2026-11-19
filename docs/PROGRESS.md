@@ -6,6 +6,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 ## Done
 
+- Four-texel artwork spike on betta and hygrophila. At a display scale divisible by four, the betta uses four new 32×24 frames for its 8×6-cell body. Hygrophila draws pointed leaves with a midrib, stalk collars and fine root strands. Lower and intervening scales use the original two-texel art.
+
 - Repository, licences (MIT OR Apache-2.0), README.
 - DeskTank developer skill (`.agents/skills/desktank-developer/SKILL.md`) and `AGENTS.md`. Codex, Antigravity and Claude Code (`.claude/agents/`, Opus developer, Haiku reviewer; `CLAUDE.md` imports `AGENTS.md`) each provide a named developer and a lower-cost adversarial reviewer. PRs use `.github/pull_request_template.md`.
 - Plan and spec (`docs/SPEC.md` v0.5): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
@@ -39,6 +41,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Hotfix: the WebGPU web build rendered a black canvas in Chrome because Tint rejected `tank.wgsl` (`mixing '*' and '^' requires parenthesis` in `fn hash`); the operands are now parenthesised, and `crates/desktank-render/tests/wgsl_precedence.rs` scans every `.wgsl` in the crate for the operator mixes WGSL requires parentheses for: a bitwise operator (`&`, `|`, `^`) with any other binary operator, a shift with another shift or arithmetic, chained comparisons, and `&&` with `||` (single `<`/`>` are skipped, as they can be template brackets).
 
 ## Learnings
+
+- The trial keeps crisp texels at the existing even display scales by choosing the two-texel artwork at scales such as 6, where a four-texel pattern would alternate between one and two screen pixels per texel. The extra betta shelf costs 24 KiB of atlas space and a second frame origin costs eight bytes per creature instance. Plant detail uses the existing species texture.
 
 - naga is laxer than Tint, Chrome's WGSL compiler: it accepts `a * b ^ c`, which WGSL forbids (bitwise operands must be unary expressions). Native tests and the Playwright tests (WebGL2 on SwiftShader, translated to GLSL by naga) never parse WGSL in the browser, so a Tint-only error shows up only as a black canvas on WebGPU. Parenthesise every operand of `&`, `|`, `^`, `<<` and `>>` that is not a single term, and never chain comparisons or mix `&&` with `||`; the `wgsl_precedence` test enforces this without a GPU.
 - Lock screens are restricted: macOS allows no custom lock screen and Windows only a picture, slideshow or Spotlight (no live rendering), so "lock screen" mode may mean the screensaver shown while locked.
@@ -124,6 +128,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Plant species (ludwigia, cabomba, bacopa, christmas moss): a leaf is two texels tall and leaf rows are a cell apart, so "round" and "oval" are carried by leaf length, stem width and colour rather than outline; a mat is one cell thick (it grows only into water touching what it clings to), so moss texture lives in its 2-texel edge, which is why christmas moss differs from java moss by a regular edge pattern rather than by depth. Measured (seeds 0–1, 10 minutes alone, open / under a 5-row lid): ludwigia 135 / 110 cells, cabomba 218–225 / 66–67 (light-limited), bacopa 104 / 99–100.
 
 ## Next increments
+
+- Review betta and hygrophila at normal tank scale and in motion before commissioning any additional four-texel art.
 
 - Web CI: also compile the shaders with a real WGSL front end (Tint, e.g. Chrome with WebGPU enabled, or a Tint/Dawn binary), since the `wgsl_precedence` scan covers only one class of naga-accepted, Tint-rejected WGSL.
 - Shrimp and crabs: `reach` scans a box around the body and ignores what lies between, so a crab can take food through a one-cell rock or leaf (PR #24 review).

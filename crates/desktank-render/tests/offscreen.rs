@@ -146,7 +146,6 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let Some(gpu) = gpu() else { return };
     let materials = MaterialTable::builtin().unwrap();
     let leaf = materials.id("leaf").unwrap();
-    let leaf_colour = materials.get(leaf).unwrap().colour;
     let config = WorldConfig {
         width: 16,
         height: 8,
@@ -173,10 +172,13 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let healthy = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
     // The cell at (4, 5) covers pixels 24..28 × 20..24.
     let before = px(&healthy, 25, 21);
-    for (got, base) in before.iter().zip(leaf_colour) {
+    let table = tank.world().plant_species();
+    let plant = table.get(table.id("hygrophila").unwrap()).unwrap();
+    let ramp = &plant.colours.leaf;
+    for (channel, &value) in before.iter().enumerate() {
         assert!(
-            got.abs_diff(base) <= 24,
-            "leaf {before:?} vs {leaf_colour:?}"
+            (ramp[0][channel]..=ramp[ramp.len() - 1][channel]).contains(&value),
+            "healthy leaf colour {before:?} outside its species ramp",
         );
     }
     // A minute later its health has fallen (not yet to the 0.5 at which
