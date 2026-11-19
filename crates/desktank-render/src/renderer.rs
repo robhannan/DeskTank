@@ -30,7 +30,12 @@ const BACKDROP: [u8; 3] = [0x05, 0x0a, 0x12];
 pub struct Renderer {
     format: wgpu::TextureFormat,
     grid: (u32, u32),
+    /// The grid pipeline with four-texel plant art, for scales divisible
+    /// by four, and the one compiled without it (`FINE_PLANTS` false), so
+    /// other scales don't pay for the fine code on GPUs that run every
+    /// branch, such as software renderers.
     pipeline: wgpu::RenderPipeline,
+    coarse_pipeline: wgpu::RenderPipeline,
     sprite_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     /// Where each species' frames are in the atlas texture.
@@ -119,11 +124,13 @@ impl Renderer {
                 &species,
             ],
         );
-        let (pipeline, sprite_pipeline) = create_pipelines(d, &bind_layout, format);
+        let (pipeline, coarse_pipeline, sprite_pipeline) =
+            create_pipelines(d, &bind_layout, format);
         Self {
             format,
             grid,
             pipeline,
+            coarse_pipeline,
             sprite_pipeline,
             bind_group,
             atlas,
@@ -393,7 +400,11 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(if fine_scale(layout.scale) {
+            &self.pipeline
+        } else {
+            &self.coarse_pipeline
+        });
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
         if self.sprite_count > 0 {
@@ -638,13 +649,23 @@ fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
     })
 }
 
-/// The full-screen-triangle grid pipeline and the instanced sprite
-/// pipeline, drawing into `format`.
+/// Whether plants are drawn at four texels per cell side at `scale` (the
+/// shader's `fine_scale`): only where each texel covers whole pixels.
+fn fine_scale(scale: u32) -> bool {
+    scale.is_multiple_of(4)
+}
+
+/// The full-screen-triangle grid pipelines (with and without four-texel
+/// plant art) and the instanced sprite pipeline, drawing into `format`.
 fn create_pipelines(
     d: &wgpu::Device,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+) -> (
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+) {
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
         source: wgpu::ShaderSource::Wgsl(include_str!("tank.wgsl").into()),
@@ -659,27 +680,34 @@ fn create_pipelines(
         blend: None,
         write_mask: wgpu::ColorWrites::ALL,
     })];
-    let grid = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("tank"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &targets,
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
+    let grid = |label, constants: &[(&str, f64)]| {
+        d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
+                targets: &targets,
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let fine = grid("tank", &[]);
+    let coarse = grid("tank (coarse plants)", &[("FINE_PLANTS", 0.0)]);
     // Per instance: top-left cell, size, atlas origin, mirror and turn,
     // frame size and look (vec2 each).
     let attributes = wgpu::vertex_attr_array![
@@ -712,7 +740,7 @@ fn create_pipelines(
         multiview_mask: None,
         cache: None,
     });
-    (grid, sprites)
+    (fine, coarse, sprites)
 }
 
 /// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).
