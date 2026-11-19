@@ -175,12 +175,24 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let table = tank.world().plant_species();
     let plant = table.get(table.id("hygrophila").unwrap()).unwrap();
     let ramp = &plant.colours.leaf;
-    for (channel, &value) in before.iter().enumerate() {
-        assert!(
-            (ramp[0][channel]..=ramp[ramp.len() - 1][channel]).contains(&value),
-            "healthy leaf colour {before:?} outside its species ramp",
-        );
-    }
+    // A shade of the species' leaf ramp (resampled to the texture's eight
+    // shades, so within half a ramp step of an entry).
+    let nearest = ramp
+        .iter()
+        .map(|shade| {
+            shade
+                .iter()
+                .zip(before)
+                .map(|(&a, b)| a.abs_diff(b))
+                .max()
+                .unwrap()
+        })
+        .min()
+        .unwrap();
+    assert!(
+        nearest <= 24,
+        "healthy leaf colour {before:?} is not a shade of its species ramp {ramp:?}",
+    );
     // A minute later its health has fallen (not yet to the 0.5 at which
     // leaves drop); no cell changed in the last ticks, yet the tank wants
     // a frame and draws it yellower.
