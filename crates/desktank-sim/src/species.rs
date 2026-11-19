@@ -468,7 +468,7 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
             .iter()
             .map(|rows| {
                 if rows.len() != height {
-                    return Err("every sprite frame must be the expected height");
+                    return Err("every frame must be as tall as the first (fine frames twice it)");
                 }
                 texels(rows, width, &key)
             })
@@ -771,13 +771,15 @@ mod tests {
             Err(SpeciesError::Invalid { reason, .. }) if reason.contains("fine_frames")
         ));
         // Two base poses in the 6×4 test frame need two 12×8 fine poses.
-        let pose = r#"["aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa"]"#;
-        for invalid in [
-            "[]",
-            r#"[["aa"]]"#,
-            r#"[["aa"], ["aa"]]"#,
-            &format!("[{pose}, {pose}]"),
-        ] {
+        let row = "aaaaaaaaaaaa";
+        let pose =
+            |rows: usize, row: &str| format!("[{}]", vec![format!("{row:?}"); rows].join(", "));
+        let good = pose(8, row);
+        assert!(parse(&format!("{head}fine_frames = [{good}, {good}]")).is_ok());
+        let one = format!("[{good}]");
+        let short = format!("[{0}, {0}]", pose(7, row));
+        let narrow = format!("[{0}, {0}]", pose(8, &row[1..]));
+        for invalid in ["[]", one.as_str(), short.as_str(), narrow.as_str()] {
             assert!(
                 matches!(
                     parse(&format!("{head}fine_frames = {invalid}")),

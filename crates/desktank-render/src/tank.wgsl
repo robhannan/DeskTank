@@ -640,7 +640,8 @@ fn vs_sprite(
     // frame), y the quarter turns clockwise applied after the mirror; the
     // frame's size in texels (a growing creature's body is drawn smaller
     // than it), the look (see SpriteOut) and the fine frame's top-left texel
-    // (the same pose at twice the size).
+    // (the same pose at twice the size; negative for a body drawn smaller
+    // than its frame, which keeps the coarser art).
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
@@ -673,7 +674,7 @@ fn vs_sprite(
     }
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    let fine = fine_scale();
+    let fine = fine_origin.x >= 0.0 && fine_scale();
     o.texel = select(origin, fine_origin, fine) + q * frame_size * select(1.0, 2.0, fine);
     o.look = look;
     return o;

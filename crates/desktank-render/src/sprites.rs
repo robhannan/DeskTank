@@ -8,9 +8,9 @@
 //! drawn as a quad by the sprite pipeline at the grid's cell scale, with
 //! [`desktank_sim::TEXELS_PER_CELL`] texels per cell side for an adult
 //! (half a cell per texel), or from the fine frames at four texels per cell
-//! side when the display scale is divisible by four. A crawler on a wall is turned a quarter, so its
-//! quad swaps width and height and the shader turns the texel lookup;
-//! quarter turns keep the pixel art crisp. WebGL2-safe: a per-instance
+//! side when the display scale is divisible by four. A crawler on a wall
+//! is turned a quarter, so its quad swaps width and height and the shader
+//! turns the texel lookup; quarter turns keep the pixel art crisp. WebGL2-safe: a per-instance
 //! vertex buffer, no storage buffers.
 //!
 //! Life stages (T9): a growing fry or juvenile is drawn at its smaller body
@@ -18,7 +18,7 @@
 //! creatures, belly up on their first frame, desaturated and losing texels
 //! as they rot.
 
-use desktank_sim::{LifeStage, SpeciesTable, World};
+use desktank_sim::{LifeStage, SpeciesTable, TEXELS_PER_CELL, World};
 
 /// Atlas width in texels; species shelves stack downwards.
 pub const ATLAS_WIDTH: usize = 256;
@@ -29,7 +29,8 @@ const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
 /// mirror and quarter turns clockwise (2), the frame's size in texels (2),
 /// the look: 0 alive, 1 elder, 2 dead, then how far a corpse has rotted
-/// (2), and the fine frame's atlas origin (2).
+/// (2), and the fine frame's atlas origin (2), or -1 for a body drawn
+/// smaller than its frame.
 pub const INSTANCE_FLOATS: usize = 14;
 /// Look values (the instance's eleventh float).
 pub const LOOK_ALIVE: f32 = 0.0;
@@ -222,6 +223,15 @@ impl Sprite {
         let (w, h) = (f(self.size.0), f(self.size.1));
         let (w, h) = if self.turn % 2 == 1 { (h, w) } else { (w, h) };
         let (cx, cy) = self.centre;
+        // Fine texels are a quarter cell only on a full-size body; a growing
+        // creature samples the coarser frame, which drops less of its art.
+        let full = self.size.0 * TEXELS_PER_CELL == self.frame.0
+            && self.size.1 * TEXELS_PER_CELL == self.frame.1;
+        let fine = if full {
+            [f(self.fine.0), f(self.fine.1)]
+        } else {
+            [-1.0; 2]
+        };
         out.extend_from_slice(&[
             cx - w / 2.0,
             cy - h / 2.0,
@@ -235,8 +245,8 @@ impl Sprite {
             f(self.frame.1),
             self.look[0],
             self.look[1],
-            f(self.fine.0),
-            f(self.fine.1),
+            fine[0],
+            fine[1],
         ]);
     }
 }
@@ -411,6 +421,8 @@ mod tests {
         assert!(bw < full_w && bh <= full_h);
         assert_eq!(fry_i[2..4], [bw as f32, bh as f32]);
         assert_eq!(fry_i[8..10], frame);
+        assert_eq!(fry_i[12..14], [-1.0; 2], "a fry samples the coarse frame");
+        assert!(old_i[12] >= 0.0);
         assert_eq!(fry_i[10], LOOK_ALIVE);
         assert_eq!(old_i[10], LOOK_ELDER);
         assert_eq!(old_i[2..4], [full_w as f32, full_h as f32]);
