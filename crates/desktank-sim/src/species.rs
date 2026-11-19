@@ -21,6 +21,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::material::{MaterialId, MaterialTable};
+use crate::world::DEPTH_BANDS;
 
 /// Index of a species in the [`SpeciesTable`]; fixed in each species' TOML
 /// file so saves stay stable when species are added.
@@ -163,6 +164,9 @@ pub struct Species {
     /// The band of the water column it keeps to, as fractions from the
     /// surface (0) to the floor (1); `depth[0] < depth[1]`.
     pub depth: [f32; 2],
+    /// Front and back depth bands it keeps to, inclusive (D21): `0` is the
+    /// front glass, [`DEPTH_BANDS`] − 1 the back. Every band by default.
+    pub bands: [u8; 2],
     /// Water depth it needs, in cells (SPEC §2.1).
     pub min_depth: usize,
     /// Whether it needs to reach air at the surface to breathe.
@@ -309,6 +313,8 @@ struct SpeciesDef {
     name: String,
     zone: Zone,
     depth: [f32; 2],
+    #[serde(default = "every_band")]
+    bands: [u8; 2],
     min_depth: usize,
     #[serde(default)]
     breathes_air: bool,
@@ -330,6 +336,10 @@ struct SpeciesDef {
     #[serde(default)]
     genetics: Option<GeneticsDef>,
     sprite: SpriteDef,
+}
+
+fn every_band() -> [u8; 2] {
+    [0, DEPTH_BANDS - 1]
 }
 
 fn default_reach() -> u8 {
@@ -509,6 +519,11 @@ fn validate(
             "depth must be [top, bottom] within 0..=1 with top < bottom",
         ));
     }
+    if d.bands[0] > d.bands[1] || d.bands[1] >= DEPTH_BANDS {
+        return Err(invalid(
+            "bands must be [front, back] within 0..DEPTH_BANDS (8) with front <= back",
+        ));
+    }
     if !(d.speed.is_finite() && d.speed > 0.0 && d.speed <= d.max_speed) {
         return Err(invalid("speed must be > 0 and at most max_speed"));
     }
@@ -574,6 +589,7 @@ fn validate(
         name: d.name.clone(),
         zone: d.zone,
         depth: d.depth,
+        bands: d.bands,
         min_depth: d.min_depth,
         breathes_air: d.breathes_air,
         temperament: d.temperament,
@@ -1273,6 +1289,38 @@ mod tests {
                 ),
                 "{invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn depth_bands_default_to_every_band_and_are_checked() {
+        let m = materials();
+        let t = SpeciesTable::from_toml_sources(&[OK], &m).unwrap();
+        assert_eq!(t.get(SpeciesId(9)).unwrap().bands, [0, DEPTH_BANDS - 1]);
+        let with = |bands: &str| {
+            let src = OK.replace(
+                "min_depth = 10",
+                &format!("min_depth = 10\nbands = {bands}"),
+            );
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        assert_eq!(
+            with("[2, 5]").unwrap().get(SpeciesId(9)).unwrap().bands,
+            [2, 5]
+        );
+        assert_eq!(
+            with("[3, 3]").unwrap().get(SpeciesId(9)).unwrap().bands,
+            [3, 3]
+        );
+        for bad in ["[5, 2]", "[0, 8]", "[9, 9]"] {
+            assert!(
+                matches!(with(bad), Err(SpeciesError::Invalid { .. })),
+                "bands = {bad}"
+            );
+        }
+        // Every built-in species uses every band.
+        for s in SpeciesTable::builtin_for(&m).unwrap().iter() {
+            assert_eq!(s.bands, [0, DEPTH_BANDS - 1], "{}", s.name);
         }
     }
 
