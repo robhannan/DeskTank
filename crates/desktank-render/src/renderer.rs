@@ -1,6 +1,7 @@
-//! GPU resources for one grid and one target format: the cell texture, the
-//! palette, the uniforms, the sprite atlas and instances, and the two
-//! pipelines (the grid, then the creature sprites over it).
+//! GPU resources for one grid and one target format: the cell and plant
+//! band textures, the palette, the uniforms, the sprite atlas and
+//! instances, and the two pipelines (the grid, then the creature sprites
+//! over it, back to front, hidden where a nearer plant cell covers them).
 
 use desktank_sim::{FieldKind, Part, World};
 
@@ -36,7 +37,10 @@ pub struct Renderer {
     /// branch, such as software renderers.
     pipeline: wgpu::RenderPipeline,
     coarse_pipeline: wgpu::RenderPipeline,
+    /// The sprite pipelines likewise: a sprite over a nearer plant cell
+    /// reads its shape to see whether it is covered.
     sprite_pipeline: wgpu::RenderPipeline,
+    coarse_sprite_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     /// Where each species' frames are in the atlas texture.
     atlas: Atlas,
@@ -48,6 +52,11 @@ pub struct Renderer {
     instance_scratch: Vec<f32>,
     view_buffer: wgpu::Buffer,
     cells: wgpu::Texture,
+    /// Each plant cell's depth band (D21), 0 elsewhere; uploaded with the
+    /// cells' dirty rectangles, skipping those without plant cells (the
+    /// shader reads a band only where the cell texture has a plant part).
+    bands: wgpu::Texture,
+    band_scratch: Vec<u8>,
     /// The palette strip image (top-left corner of a fixed-size texture).
     hud: wgpu::Texture,
     /// Nutrient, CO₂ and light per field cell (RGB), for the debug overlay.
@@ -71,21 +80,9 @@ impl Renderer {
     pub fn new(gpu: &Gpu, world: &World, format: wgpu::TextureFormat) -> Self {
         let d = &gpu.device;
         let grid = (side(world.width()), side(world.height()));
-        let cells = d.create_texture(&wgpu::TextureDescriptor {
-            label: Some("cells"),
-            size: wgpu::Extent3d {
-                width: grid.0,
-                height: grid.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // Material, variant and the state's two bytes (a plant id).
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        // Material, variant and the state's two bytes (a plant id).
+        let cells = create_grid_texture(d, "cells", grid, wgpu::TextureFormat::Rgba8Unorm);
+        let bands = create_grid_texture(d, "plant bands", grid, wgpu::TextureFormat::R8Unorm);
         let palette = create_palette(gpu, world);
         let plant_tints = PlantTints::default();
         let plants = create_plants(gpu, &plant_tints);
@@ -122,16 +119,22 @@ impl Renderer {
                 &atlas_texture,
                 &plants,
                 &species,
+                &bands,
             ],
         );
-        let (pipeline, coarse_pipeline, sprite_pipeline) =
-            create_pipelines(d, &bind_layout, format);
+        let [
+            pipeline,
+            coarse_pipeline,
+            sprite_pipeline,
+            coarse_sprite_pipeline,
+        ] = create_pipelines(d, &bind_layout, format);
         Self {
             format,
             grid,
             pipeline,
             coarse_pipeline,
             sprite_pipeline,
+            coarse_sprite_pipeline,
             bind_group,
             atlas,
             instances,
@@ -140,6 +143,8 @@ impl Renderer {
             instance_scratch: Vec::new(),
             view_buffer,
             cells,
+            bands,
+            band_scratch: Vec::new(),
             hud,
             fields,
             fields_size,
@@ -158,7 +163,7 @@ impl Renderer {
     }
 
     /// Copies the waiting dirty rectangles (or the whole grid) into the cell
-    /// texture.
+    /// texture, and their plant cells' bands into the band texture.
     pub fn upload(&mut self, gpu: &Gpu, world: &World, dirty: &mut DirtyRects) {
         let width = world.width();
         let full = desktank_sim::Rect {
@@ -167,33 +172,18 @@ impl Renderer {
             x1: width,
             y1: world.height(),
         };
-        let (cells, scratch, texture) = (world.cells(), &mut self.scratch, &self.cells);
+        let cells = world.cells();
+        let (scratch, band_scratch) = (&mut self.scratch, &mut self.band_scratch);
+        let (texture, bands) = (&self.cells, &self.bands);
         dirty.take(|r| {
             let r = r.unwrap_or(full);
             grid::pack(cells, width, r, scratch);
-            gpu.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: side(r.x0),
-                        y: side(r.y0),
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                scratch,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(side((r.x1 - r.x0) * grid::TEXEL_BYTES)),
-                    rows_per_image: None,
-                },
-                wgpu::Extent3d {
-                    width: side(r.x1 - r.x0),
-                    height: side(r.y1 - r.y0),
-                    depth_or_array_layers: 1,
-                },
-            );
+            write_rect(gpu, texture, r, scratch, grid::TEXEL_BYTES);
+            // A rectangle without plant cells leaves stale bands, which
+            // the shader never reads.
+            if world.plant_bands(r, band_scratch) {
+                write_rect(gpu, bands, r, band_scratch, 1);
+            }
         });
     }
 
@@ -408,11 +398,72 @@ impl Renderer {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
         if self.sprite_count > 0 {
-            pass.set_pipeline(&self.sprite_pipeline);
+            pass.set_pipeline(if fine_scale(layout.scale) {
+                &self.sprite_pipeline
+            } else {
+                &self.coarse_sprite_pipeline
+            });
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..6, 0..self.sprite_count);
         }
     }
+}
+
+/// Writes `texels` (`r`'s cells, row by row, `bytes` each) into `texture`
+/// at `r`.
+fn write_rect(
+    gpu: &Gpu,
+    texture: &wgpu::Texture,
+    r: desktank_sim::Rect,
+    texels: &[u8],
+    bytes: usize,
+) {
+    gpu.queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: side(r.x0),
+                y: side(r.y0),
+                z: 0,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        texels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(side((r.x1 - r.x0) * bytes)),
+            rows_per_image: None,
+        },
+        wgpu::Extent3d {
+            width: side(r.x1 - r.x0),
+            height: side(r.y1 - r.y0),
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// A texture of one texel per grid cell, written by [`write_rect`].
+fn create_grid_texture(
+    d: &wgpu::Device,
+    label: &str,
+    (width, height): (u32, u32),
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
+    d.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
 }
 
 /// The palette texture for `world`'s materials, sRGB-encoded.
@@ -536,8 +587,8 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32))
 }
 
 /// The one bind group layout both pipelines share: the view uniform and
-/// seven textures (cells, palette, HUD, fields, sprite atlas, plant tints,
-/// plant species).
+/// eight textures (cells, palette, HUD, fields, sprite atlas, plant tints,
+/// plant species, plant bands).
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
     let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -570,16 +621,17 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
             texture_entry(5),
             texture_entry(6),
             texture_entry(7),
+            texture_entry(8),
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–7.
+/// The bind group: `view` at binding 0, then `textures` at 1–8.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 7],
+    textures: [&wgpu::Texture; 8],
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {
@@ -655,17 +707,14 @@ fn fine_scale(scale: u32) -> bool {
     scale.is_multiple_of(4)
 }
 
-/// The full-screen-triangle grid pipelines (with and without four-texel
-/// plant art) and the instanced sprite pipeline, drawing into `format`.
+/// The full-screen-triangle grid pipelines and the instanced sprite
+/// pipelines, each with and without four-texel plant art, drawing into
+/// `format`: grid, coarse grid, sprites, coarse sprites.
 fn create_pipelines(
     d: &wgpu::Device,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> (
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-    wgpu::RenderPipeline,
-) {
+) -> [wgpu::RenderPipeline; 4] {
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
         source: wgpu::ShaderSource::Wgsl(include_str!("tank.wgsl").into()),
@@ -706,41 +755,52 @@ fn create_pipelines(
             cache: None,
         })
     };
+    let coarse_plants: &[(&str, f64)] = &[("FINE_PLANTS", 0.0)];
     let fine = grid("tank", &[]);
-    let coarse = grid("tank (coarse plants)", &[("FINE_PLANTS", 0.0)]);
+    let coarse = grid("tank (coarse plants)", coarse_plants);
     // Per instance: top-left cell, size, atlas origin, mirror and turn,
-    // frame size, look and fine atlas origin (vec2 each).
+    // frame size, look and fine atlas origin (vec2 each), then depth.
     let attributes = wgpu::vertex_attr_array![
         0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2,
-        4 => Float32x2, 5 => Float32x2, 6 => Float32x2
+        4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32
     ];
-    let sprites = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("sprites"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_sprite"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: INSTANCE_BYTES,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &attributes,
-            })],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        // Transparent texels are discarded: no blending needed.
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_sprite"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &targets,
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
-    (fine, coarse, sprites)
+    let sprites = |label, constants: &[(&str, f64)]| {
+        d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_sprite"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: INSTANCE_BYTES,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &attributes,
+                })],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            // Transparent texels are discarded: no blending needed.
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_sprite"),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
+                targets: &targets,
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    [
+        fine,
+        coarse,
+        sprites("sprites", &[]),
+        sprites("sprites (coarse plants)", coarse_plants),
+    ]
 }
 
 /// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).
@@ -753,4 +813,16 @@ fn backdrop() -> [f32; 4] {
 /// [`desktank_sim::MAX_SIDE`], so this never saturates in practice.
 fn side(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_shader_knows_the_back_band() {
+        let back = format!(
+            "const BACK_BAND: f32 = {}.0;",
+            desktank_sim::DEPTH_BANDS - 1
+        );
+        assert!(include_str!("tank.wgsl").contains(&back), "{back}");
+    }
 }

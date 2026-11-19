@@ -9,6 +9,11 @@
 // outline) is drawn on top. Creature sprites are instanced quads
 // drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell
 // side, or four from the fine frames at scales divisible by four.
+// 2.5D depth (D21): sprites come back to front, and a sprite fragment over
+// a covered texel of a plant cell in a nearer band is discarded, so the
+// plant the grid drew there stays in front; plant cells behind it are
+// simply drawn over. Creatures and plant cells fade a little towards the
+// water colour with depth.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
 
@@ -63,6 +68,17 @@ struct View {
 // depth, leaf length; blade length, root depth, blade length for rosettes
 // and carpets), as bytes (plants.rs).
 @group(0) @binding(7) var plant_species: texture_2d<f32>;
+// Per cell: a plant cell's depth band (D21) in bands / 255 (0 elsewhere).
+@group(0) @binding(8) var bands: texture_2d<f32>;
+
+// The back band (DEPTH_BANDS - 1; renderer.rs checks it).
+const BACK_BAND: f32 = 7.0;
+// Depth cue at the back band: how far colours fade towards HAZE and how
+// much darker they get (none at the front glass).
+const HAZE_MIX: f32 = 0.22;
+const HAZE_DIM: f32 = 0.1;
+// Haze colour, sRGB-encoded: a deep water blue.
+const HAZE: vec3<f32> = vec3<f32>(0.11, 0.27, 0.42);
 
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
@@ -139,7 +155,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let part = part_of(texel);
     if part >= 0 {
         let quarter = vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 4.0));
-        rgb = plant_colour(at, texel, part, quarter);
+        rgb = plant_texel(at, texel, part, quarter, band_at(at)).rgb;
     } else {
         rgb = ground(at, texel);
     }
@@ -175,6 +191,18 @@ fn ground(at: vec2<i32>, t: vec4<f32>) -> vec3<f32> {
     let tinted = select(0.0, 1.0, c.a > 0.75);
     let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
     return c.rgb * (1.0 - view.depth_dim * depth * tinted);
+}
+
+// A plant cell's depth band (D21).
+fn band_at(at: vec2<i32>) -> f32 {
+    return round(textureLoad(bands, at, 0).r * 255.0);
+}
+
+// `rgb` seen through `depth` bands of water (D21): faded towards the haze
+// and dimmed a little, more towards the back, unchanged at the front.
+fn depth_cue(rgb: vec3<f32>, depth: f32) -> vec3<f32> {
+    let t = clamp(depth / BACK_BAND, 0.0, 1.0);
+    return mix(rgb, HAZE, HAZE_MIX * t) * (1.0 - HAZE_DIM * t);
 }
 
 fn inside(at: vec2<i32>) -> bool {
@@ -277,11 +305,14 @@ fn fine_scale() -> bool {
     return u32(view.scale) % 4u == 0u;
 }
 
-// A plant cell's colour (T6d): its species' shape decides whether the texel is
-// covered, and a shade from the part's ramp by position along the plant and
-// within the shape; the plant's health tint multiplies it. Uncovered texels
-// show what is behind. Scale 1 fills every texel.
-fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> vec3<f32> {
+// A plant cell's colour (T6d), in band `band` (D21): its species' shape
+// decides whether the texel is covered, and a shade from the part's ramp by
+// position along the plant and within the shape; the plant's health tint
+// multiplies it, and the depth cue fades it. Uncovered texels show what is
+// behind. Scale 1 fills every texel. Alpha is 1 where the texel is
+// covered, 0 where it shows what is behind (fs_sprite draws a creature
+// there even when the plant cell is in front of it).
+fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
     let sub = quarter / 2;
     let plant = textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
     let species = i32(round(plant.a * 255.0));
@@ -614,10 +645,11 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> 
     let ramp = select(part, PART_STEM, part == PART_RUNNER);
     if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
-        return textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
+        let rgb = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
+        return vec4<f32>(depth_cue(rgb, band), 1.0);
     }
     let shadow = textureLoad(plant_species, vec2<i32>(ramp * RAMP, species), 0).rgb * tint * 0.6;
-    return behind(at, sub, shadow);
+    return vec4<f32>(behind(at, sub, depth_cue(shadow, band)), 0.0);
 }
 
 // An sRGB-encoded colour as the target expects it. Shading happens in
@@ -633,6 +665,8 @@ struct SpriteOut {
     @location(0) texel: vec2<f32>,
     // 0 alive, 1 elder, 2 dead; how far a corpse has rotted (0..1).
     @location(1) @interpolate(flat) look: vec2<f32>,
+    // Depth in bands from the front glass (D21).
+    @location(2) @interpolate(flat) depth: f32,
 };
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
@@ -648,7 +682,7 @@ fn vs_sprite(
     // frame's size in texels (a growing creature's body is drawn smaller
     // than it), the look (see SpriteOut) and the fine frame's top-left texel
     // (the same pose at twice the size; negative for a body drawn smaller
-    // than its frame, which keeps the coarser art).
+    // than its frame, which keeps the coarser art); its depth in bands.
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
@@ -656,6 +690,7 @@ fn vs_sprite(
     @location(4) frame_size: vec2<f32>,
     @location(5) look: vec2<f32>,
     @location(6) fine_origin: vec2<f32>,
+    @location(7) depth: f32,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -684,7 +719,31 @@ fn vs_sprite(
     let fine = fine_origin.x >= 0.0 && fine_scale();
     o.texel = select(origin, fine_origin, fine) + q * frame_size * select(1.0, 2.0, fine);
     o.look = look;
+    o.depth = depth;
     return o;
+}
+
+// Whether a plant cell in a band nearer the glass than `depth` covers the
+// pixel at `pos` (D21): the grid already drew the plant there, so a sprite
+// fragment behind it is dropped. Texels the plant's shape leaves open, and
+// plant cells level with or behind the creature, don't hide it.
+fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
+    let cell = floor((pos - view.offset) / view.scale);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return false;
+    }
+    let at = vec2<i32>(cell);
+    let t = textureLoad(cells, at, 0);
+    let part = part_of(t);
+    if part < 0 {
+        return false;
+    }
+    let band = band_at(at);
+    if band + 0.5 >= depth {
+        return false;
+    }
+    let quarter = vec2<i32>(floor(fract((pos - view.offset) / view.scale) * 4.0));
+    return plant_texel(at, t, part, quarter, band).a > 0.5;
 }
 
 @fragment
@@ -700,7 +759,7 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
     }
     let texel = vec2<i32>(floor(v.texel));
     let t = textureLoad(atlas, texel, 0);
-    if t.a < 0.5 {
+    if t.a < 0.5 || hidden_by_plant(v.pos.xy, v.depth) {
         discard;
     }
     var rgb = t.rgb;
@@ -715,5 +774,5 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
         // An elder: a little greyer.
         rgb = mix(rgb, grey, 0.3);
     }
-    return out(rgb * view.daylight.rgb);
+    return out(depth_cue(rgb, v.depth) * view.daylight.rgb);
 }

@@ -32,9 +32,9 @@ const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
 /// mirror and quarter turns clockwise (2), the frame's size in texels (2),
 /// the look: 0 alive, 1 elder, 2 dead, then how far a corpse has rotted
-/// (2), and the fine frame's atlas origin (2), or -1 for a body drawn
-/// smaller than its frame.
-pub const INSTANCE_FLOATS: usize = 14;
+/// (2), the fine frame's atlas origin (2), or -1 for a body drawn
+/// smaller than its frame, and the depth in bands (1, D21).
+pub const INSTANCE_FLOATS: usize = 15;
 /// Look values (the instance's eleventh float).
 pub const LOOK_ALIVE: f32 = 0.0;
 /// An elder.
@@ -146,19 +146,20 @@ impl Atlas {
     }
 
     /// One instance per creature, then per corpse (up to [`MAX_SPRITES`]
-    /// in all), as [`INSTANCE_FLOATS`] floats each, into `out`. Returns the
-    /// count.
+    /// in all), as [`INSTANCE_FLOATS`] floats each, into `out`, back to
+    /// front: deepest first, so nearer creatures are drawn over further
+    /// ones (D21; ties keep that order). Returns the count.
     pub fn instances(&self, world: &World, out: &mut Vec<f32>) -> u32 {
         out.clear();
         let tick = world.tick_count();
-        let mut n = 0;
+        let mut sprites = Vec::with_capacity(MAX_SPRITES.min(world.creatures().len()));
         for c in world.creatures() {
             let Some(e) = self.entry(world, c.species(), world.creature_morph(c), c.female())
             else {
                 continue;
             };
-            if n == MAX_SPRITES {
-                return u32::try_from(n).unwrap_or(u32::MAX);
+            if sprites.len() == MAX_SPRITES {
+                break;
             }
             let phase = tick / TICKS_PER_FRAME + u64::from(c.id().0);
             let frame = usize::try_from(phase % e.frames as u64).unwrap_or(0);
@@ -168,7 +169,7 @@ impl Atlas {
                 LOOK_ALIVE
             };
             let (origin, fine) = Self::origins(&e, frame);
-            let sprite = Sprite {
+            sprites.push(Sprite {
                 centre: c.centre(),
                 // On-screen size in cells: the body (half the frame's
                 // texels for an adult, less while it grows).
@@ -179,21 +180,20 @@ impl Atlas {
                 flip: c.facing_left(),
                 turn: c.turn() % 4,
                 look: [look, 0.0],
-            };
-            sprite.push(out);
-            n += 1;
+                depth: c.depth(),
+            });
         }
         for c in world.corpses() {
             let Some(e) = self.entry(world, c.species(), c.morph(), c.female()) else {
                 continue;
             };
-            if n == MAX_SPRITES {
+            if sprites.len() == MAX_SPRITES {
                 break;
             }
             // Belly up: turned twice, mirrored back so it still faces the
             // way it did.
             let (origin, fine) = Self::origins(&e, 0);
-            let sprite = Sprite {
+            sprites.push(Sprite {
                 centre: c.centre(),
                 size: c.size(),
                 origin,
@@ -202,11 +202,15 @@ impl Atlas {
                 flip: !c.facing_left(),
                 turn: 2,
                 look: [LOOK_DEAD, c.decay()],
-            };
-            sprite.push(out);
-            n += 1;
+                depth: f32::from(c.band()),
+            });
         }
-        u32::try_from(n).unwrap_or(u32::MAX)
+        // Stable, so equal depths keep creature-then-corpse, id order.
+        sprites.sort_by(|a, b| b.depth.total_cmp(&a.depth));
+        for s in &sprites {
+            s.push(out);
+        }
+        u32::try_from(sprites.len()).unwrap_or(u32::MAX)
     }
 }
 
@@ -224,6 +228,8 @@ struct Sprite {
     flip: bool,
     turn: u8,
     look: [f32; 2],
+    /// Depth in bands from the front glass (D21).
+    depth: f32,
 }
 
 impl Sprite {
@@ -258,6 +264,7 @@ impl Sprite {
             self.look[1],
             fine[0],
             fine[1],
+            self.depth,
         ]);
     }
 }
@@ -287,7 +294,7 @@ pub fn icon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use desktank_sim::{MaterialTable, WorldConfig};
+    use desktank_sim::{Creature, MaterialTable, WorldConfig};
 
     fn world() -> World {
         let config = WorldConfig {
@@ -297,6 +304,17 @@ mod tests {
             ..WorldConfig::default()
         };
         World::new(config, MaterialTable::builtin().unwrap()).unwrap()
+    }
+
+    /// The instance in `out` centred on `centre` (instances are drawn back
+    /// to front, not in creature order).
+    fn instance_at(out: &[f32], centre: (f32, f32)) -> &[f32] {
+        out.chunks(INSTANCE_FLOATS)
+            .find(|i| {
+                (i[0] + i[2] / 2.0 - centre.0).abs() < 1e-4
+                    && (i[1] + i[3] / 2.0 - centre.1).abs() < 1e-4
+            })
+            .unwrap_or_else(|| panic!("no instance centred on {centre:?}"))
     }
 
     #[test]
@@ -361,11 +379,15 @@ mod tests {
         w.tick();
         let mut out = Vec::new();
         assert_eq!(atlas.instances(&w, &mut out), 4);
+        let centres: Vec<_> = w
+            .creatures()
+            .iter()
+            .map(Creature::centre)
+            .chain(w.corpses().iter().map(desktank_sim::Corpse::centre))
+            .collect();
         let texel = |i: usize| {
-            let (ox, oy) = (
-                out[i * INSTANCE_FLOATS + 4] as usize,
-                out[i * INSTANCE_FLOATS + 5] as usize,
-            );
+            let inst = instance_at(&out, centres[i]);
+            let (ox, oy) = (inst[4] as usize, inst[5] as usize);
             let o = (oy * ATLAS_WIDTH + ox) * 4;
             (ox, oy, o)
         };
@@ -407,7 +429,8 @@ mod tests {
         let mut out = Vec::new();
         assert_eq!(atlas.instances(&world, &mut out) as usize, ids.len());
         assert!(include_str!("tank.wgsl").contains("@location(6) fine_origin: vec2<f32>"));
-        for (c, inst) in world.creatures().iter().zip(out.chunks(INSTANCE_FLOATS)) {
+        for c in world.creatures() {
+            let inst = instance_at(&out, c.centre());
             let s = world.species().get(c.species()).unwrap();
             let look = &s.looks[s.look(world.creature_morph(c), c.female())];
             let frame = c.id().0 as usize % look.fine_frames.len();
@@ -489,8 +512,11 @@ mod tests {
         assert!(w.creature(dying).is_none());
         let mut out = Vec::new();
         assert_eq!(atlas.instances(&w, &mut out), 3);
-        let n = INSTANCE_FLOATS;
-        let (fry_i, old_i, dead_i) = (&out[0..n], &out[n..2 * n], &out[2 * n..3 * n]);
+        let (fry_i, old_i, dead_i) = (
+            instance_at(&out, w.creature(fry).unwrap().centre()),
+            instance_at(&out, w.creature(old).unwrap().centre()),
+            instance_at(&out, w.corpses()[0].centre()),
+        );
         // The fry: its smaller body on screen, the whole frame sampled.
         let (bw, bh) = w.creature_size(w.creature(fry).unwrap());
         assert!(bw < full_w && bh <= full_h);
@@ -508,5 +534,36 @@ mod tests {
         let e = atlas.entries[usize::from(tetra.0)][0];
         assert_eq!(dead_i[4..6], [e.origin.0 as f32, e.origin.1 as f32]);
         assert_eq!(dead_i[12..14], [e.fine.0 as f32, e.fine.1 as f32]);
+    }
+
+    /// D21: sprites are drawn back to front, so a nearer creature covers a
+    /// further one, and each instance carries its depth for the shader.
+    #[test]
+    fn creatures_are_drawn_back_to_front() {
+        let mut w = world();
+        let atlas = Atlas::build(w.species());
+        let tetra = w.species().id("neon_tetra").unwrap();
+        for i in 0..12 {
+            w.add_creature(tetra, 6 + 5 * (i % 6), 12 + 14 * (i / 6))
+                .unwrap();
+        }
+        for _ in 0..200 {
+            w.tick();
+        }
+        let mut out = Vec::new();
+        assert_eq!(atlas.instances(&w, &mut out), 12);
+        let depths: Vec<f32> = out.chunks(INSTANCE_FLOATS).map(|i| i[14]).collect();
+        assert!(
+            depths.windows(2).all(|d| d[0] >= d[1]),
+            "deepest first: {depths:?}"
+        );
+        let mut want: Vec<f32> = w.creatures().iter().map(Creature::depth).collect();
+        want.sort_by(|a, b| b.total_cmp(a));
+        assert_eq!(depths, want);
+        assert!(
+            want.first() > want.last(),
+            "the tetras are at several depths: {want:?}"
+        );
+        assert!(include_str!("tank.wgsl").contains("@location(7) depth: f32"));
     }
 }
