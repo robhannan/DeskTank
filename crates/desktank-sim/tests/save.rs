@@ -1,18 +1,24 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and a version 1 fixture loads.
+//! rigid bodies the hash leaves out), and the version 1 and 2 fixtures
+//! load (version 1 migrated to 2, T9).
 //!
+//! The version 1 fixture is frozen: this build no longer writes version 1.
 //! `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites the
-//! fixture; only do that when the version 1 writer itself was wrong, since
-//! the point of the fixture is that old saves keep loading.
+//! version 2 fixture; only do that while version 2 is unreleased or its
+//! writer was wrong, since the point of a fixture is that old saves keep
+//! loading.
 
 #![allow(clippy::cast_possible_wrap)]
 
 use std::path::PathBuf;
 
 use desktank_sim::save::{self, FORMAT_VERSION, SaveError};
-use desktank_sim::{Brush, MaterialId, MaterialTable, Placeable, Rect, World, WorldConfig};
+use desktank_sim::{
+    Brush, DEFAULT_CREATURE_CAP, ENERGY_RESERVE, LIFE_DAY_TICKS, LifeStage, MaterialId,
+    MaterialTable, Placeable, Rect, World, WorldConfig,
+};
 
 fn table() -> MaterialTable {
     MaterialTable::builtin().unwrap()
@@ -178,18 +184,13 @@ fn a_fresh_tank_compresses_well() {
     assert!(bytes.len() < 20_000, "{} bytes", bytes.len());
 }
 
-fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1.dtank")
+fn fixture(version: u16) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/v{version}.dtank"))
 }
 
 #[test]
 fn a_version_1_fixture_loads() {
-    let path = fixture();
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, save::encode(&busy(1, 1200))).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(1)).unwrap();
     assert_eq!(save::check(&bytes), Ok(1));
     let mut w = save::decode(&bytes, table()).unwrap();
     // What the fixture was written with (seed 1, 1200 ticks of `busy` as
@@ -198,14 +199,87 @@ fn a_version_1_fixture_loads() {
     assert_eq!((w.width(), w.height(), w.tick_count()), (200, 120, 1200));
     assert_eq!(w.plant_count(), 11);
     assert_eq!(w.creatures().len(), 7);
+    // Version 1 creatures arrive as well-fed adults just mature, with the
+    // default cap and easy mode off (T9's migration).
+    for c in w.creatures() {
+        assert_eq!(w.life_stage(c), LifeStage::Adult);
+        let s = w.species().get(c.species()).unwrap();
+        assert_eq!(c.age(), s.maturity_days * LIFE_DAY_TICKS);
+        assert_eq!(c.energy(), ENERGY_RESERVE);
+    }
+    assert_eq!(w.creature_cap(), DEFAULT_CREATURE_CAP);
+    assert!(!w.easy_mode() && w.corpses().is_empty());
     assert!(w.bodies().any(|b| b.anchored));
     let soil = id(&w, "aquasoil");
     assert!(w.material_counts()[usize::from(soil.0)] > 3000);
-    // It runs on.
+    // It runs on, and saves as version 2 that loads to the same state.
     for _ in 0..200 {
         w.tick();
     }
     assert_eq!(w.tick_count(), 1400);
+    let again = save::encode(&w);
+    assert_eq!(save::check(&again), Ok(2));
+    assert_eq!(
+        save::decode(&again, table()).unwrap().state_hash(),
+        w.state_hash()
+    );
+}
+
+/// What the version 2 fixture holds: `busy` with life state (a fry, a
+/// hungry creature, a corpse, easy mode on and a cap of 40).
+fn lively() -> World {
+    let mut w = busy(3, 600);
+    w.set_easy_mode(true);
+    w.set_creature_cap(40);
+    let tetra = w.species().id("neon_tetra").unwrap();
+    w.add_creature_aged(tetra, 100, 50, 300).unwrap();
+    let hungry = w.add_creature(tetra, 60, 50).unwrap();
+    w.set_creature_energy(hungry, 5000);
+    let old = w.add_creature(tetra, 140, 50).unwrap();
+    let span = w.creature_lifespan(w.creature(old).unwrap());
+    w.set_creature_age(old, span - 20);
+    for _ in 0..100 {
+        w.tick();
+    }
+    w
+}
+
+#[test]
+fn a_version_2_fixture_loads() {
+    let path = fixture(2);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&lively())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(2));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    assert_eq!(w.tick_count(), 700);
+    assert!(w.easy_mode());
+    assert_eq!(w.creature_cap(), 40);
+    assert_eq!(w.corpses().len(), 1);
+    assert!(
+        w.creatures()
+            .iter()
+            .any(|c| w.life_stage(c) == LifeStage::Fry)
+    );
+    assert!(w.creatures().iter().any(|c| c.energy() < 5000));
+    // Decoding is pure, so the decoded state is the same on every platform:
+    // pin it, and the life state behind it.
+    assert_eq!(w.state_hash(), 0xf7c4_4953_00e1_0fff);
+    let life = |id: u32| {
+        let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
+        (c.age(), c.growth(), c.energy(), c.stress())
+    };
+    assert_eq!(life(1), (2_160_700, 2_160_000, 575_643, 0));
+    assert_eq!(life(12), (400, 400, 575_900, 0), "the fry");
+    assert_eq!(life(13), (2_160_100, 2_160_000, 4900, 0), "the hungry one");
+    let corpse = &w.corpses()[0];
+    assert_eq!((corpse.died(), corpse.decay()), (620, 0.0));
+    assert_eq!(corpse.cause(), desktank_sim::DeathCause::OldAge);
+    for _ in 0..200 {
+        w.tick();
+    }
+    assert_eq!(w.tick_count(), 900);
 }
 
 #[test]

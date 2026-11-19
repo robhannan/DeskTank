@@ -1,0 +1,51 @@
+# Life stages and corpses (T9): guppies from a fry (newborn) through a
+# juvenile (10 days) to an adult, an elder neon tetra (1610 days, past 80%
+# of its lifespan, drawn greyer), and two tetras past their lifespans: one
+# died at the start and is rotting on the bed, the other died at tick 1200
+# and is still sinking, belly up.
+ticks = 1300
+
+[world]
+starter = true
+
+[[creature]]
+species = "guppy"
+x = 30
+y = 40
+age_days = 0.0
+
+[[creature]]
+species = "guppy"
+x = 55
+y = 40
+age_days = 10.0
+
+[[creature]]
+species = "guppy"
+x = 80
+y = 40
+age_days = 40.0
+
+[[creature]]
+species = "guppy"
+x = 105
+y = 40
+
+[[creature]]
+species = "neon_tetra"
+x = 130
+y = 45
+age_days = 1610.0
+
+[[creature]]
+species = "neon_tetra"
+x = 60
+y = 30
+age_days = 2100.0
+
+[[creature]]
+tick = 1200
+species = "neon_tetra"
+x = 120
+y = 25
+age_days = 2100.0

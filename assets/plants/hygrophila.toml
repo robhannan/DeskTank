@@ -51,4 +51,3 @@ leaf = ["#3c7426", "#4c8a30", "#5ea53b", "#6dbb45", "#86cf5a", "#a3e07a"]
 leaf = "lanceolate"
 stem = "stalk"
 root = "strand"
-fine_detail = true

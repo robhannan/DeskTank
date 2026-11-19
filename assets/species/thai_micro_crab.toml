@@ -11,6 +11,10 @@ depth = [0.0, 1.0]
 min_depth = 6
 # Real-world body length in cm (here the carapace), at two cells per cm.
 length_cm = 0.5
+# Lifespan and age at maturity in real days (about a year; mature at about 4
+# months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
+lifespan_days = 365
+maturity_days = 120
 temperament = "peaceful"
 speed = 1.5
 max_speed = 1.5

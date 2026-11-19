@@ -9,6 +9,11 @@ depth = [0.25, 0.7]
 min_depth = 24
 # Real-world body length in cm, at two cells per cm.
 length_cm = 3.5
+# Lifespan and age at maturity in real days (5 years in an aquarium; mature
+# at about 6 months), on the life clock: a day per 10 world minutes
+# (LIFE_DAY_SECONDS).
+lifespan_days = 1825
+maturity_days = 180
 breathes_air = false
 temperament = "schooling"
 # Cells per second: cruising, and darting after food.

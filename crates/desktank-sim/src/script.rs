@@ -44,6 +44,8 @@
 //! y = 30
 //! count = 6          # how many (default 1)
 //! dx = 3             # move the centre this many cells per creature (default 0)
+//! age_days = 10.0    # age in days of its life (default: just mature); a
+//!                    # young one is as grown as a well-fed one would be
 //! ```
 //!
 //! Water changes, then placements, then pours, then creatures due on tick `t` are applied just
@@ -57,8 +59,8 @@ use thiserror::Error;
 use crate::{BodyId, Brush, Placeable, Propagule, World, WorldConfig, WorldError};
 
 /// Most creatures one `[[creature]]` entry may add.
-#[allow(clippy::cast_possible_truncation)] // 60
-const MAX_COUNT: u32 = crate::MAX_CREATURES as u32;
+#[allow(clippy::cast_possible_truncation)] // 128
+const MAX_COUNT: u32 = crate::MAX_CREATURE_CAP as u32;
 
 /// Error reading or applying a script.
 #[derive(Debug, Error)]
@@ -227,7 +229,7 @@ pub struct WaterChange {
 }
 
 /// One `[[creature]]` entry.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AddCreatures {
     /// Tick to add them on.
@@ -245,6 +247,9 @@ pub struct AddCreatures {
     /// Column step per creature.
     #[serde(default)]
     pub dx: i64,
+    /// Age in days of a creature's life (`None`: just mature).
+    #[serde(default)]
+    pub age_days: Option<f64>,
 }
 
 /// A brush as written in a script.
@@ -408,9 +413,19 @@ impl Player<'_> {
                 .species()
                 .id(&c.species)
                 .ok_or_else(|| ScriptError::UnknownSpecies(c.species.clone()))?;
+            // Clamped to the longest lifespan, so the cast is exact.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let age = c.age_days.map(|d| {
+                (d.clamp(0.0, f64::from(crate::species::MAX_LIFESPAN_DAYS))
+                    * f64::from(crate::LIFE_DAY_TICKS))
+                .round() as u32
+            });
             for i in 0..i64::from(c.count) {
                 let x = c.x.saturating_add(c.dx.saturating_mul(i));
-                world.add_creature(species, x, c.y)?;
+                match age {
+                    Some(age) => world.add_creature_aged(species, x, c.y, age)?,
+                    None => world.add_creature(species, x, c.y)?,
+                };
             }
         }
         Ok(())

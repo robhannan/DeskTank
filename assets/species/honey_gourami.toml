@@ -10,6 +10,10 @@ depth = [0.0, 0.5]
 min_depth = 20
 # Real-world body length in cm (real 4–5 cm), at two cells per cm.
 length_cm = 4.5
+# Lifespan and age at maturity in real days (4–6 years; mature at about 5
+# months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
+lifespan_days = 1825
+maturity_days = 150
 breathes_air = true
 temperament = "peaceful"
 speed = 2.5
