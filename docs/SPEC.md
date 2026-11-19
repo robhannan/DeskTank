@@ -65,7 +65,8 @@ It can run as any combination of four desktop **display modes**, or in a browser
 
 - Native mobile apps. Mobile browsers are covered by the web version
   (D15).
-- 3D.
+- 3D rendering. The tank is drawn as a 2D picture; discrete depth bands
+  for movement, collision and (later) occlusion are in scope (D21).
 - Online features, accounts or telemetry.
 - Progression, unlocks or currency: it is a sandbox (D9).
 - Plugin or scripting support.
@@ -433,10 +434,11 @@ target computes the same bits.
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, drawn as a male until T9), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Two species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Three species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
-  fans reach 2) and `hop_every` (seconds between a bottom walker's short
-  hops off the substrate, for shrimp). Every species also gives its
+  fans reach 2), `hop_every` (seconds between a bottom walker's short
+  hops off the substrate, for shrimp) and `bands` (the depth bands it
+  keeps to, front and back, D21; every band by default). Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
@@ -458,6 +460,16 @@ target computes the same bits.
   - resting at night.
 
   Creatures collide with solid cells and with the substrate surface.
+  The tank is 2.5D (D21): it is eight **depth bands** deep, front glass
+  to back. Plant cells have a band (a plant's stem keeps one, its leaves
+  are up to a band off it, a rosette's blades fan up to two bands either
+  way); a creature has a depth that eases between bands and collides with
+  a plant cell only within one band of it. Rock, substrate, glass, bodies
+  and air span every band, and so do food and other loose particles, so a
+  creature eats from any band. Blocked by a plant, a swimmer shifts band
+  to slip past before it turns away. Species may keep to a range of
+  bands (`bands`, every band by default). Rendering stays 2D until the
+  occlusion part draws plant cells in front of creatures behind them.
 - **Life cycle.** Egg, then fry, juvenile, adult and elder. Growth
   depends on feeding.
   - **Breeding** needs mature, well-fed creatures and suitable
@@ -1953,6 +1965,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
+| D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
