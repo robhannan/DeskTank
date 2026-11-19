@@ -182,3 +182,10 @@ fn invertebrates_scene_matches_reference() {
 fn fish_scene_matches_reference() {
     check("fish");
 }
+
+/// Life stages and corpses (T9): guppies from fry to adult, an elder tetra
+/// drawn greyer, a corpse rotting on the bed and one sinking belly up.
+#[test]
+fn lifecycle_scene_matches_reference() {
+    check("lifecycle");
+}
