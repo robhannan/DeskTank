@@ -3,6 +3,8 @@
 //! instances, and the two pipelines (the grid, then the creature sprites
 //! over it, back to front, hidden where a nearer plant cell covers them).
 
+use std::collections::BTreeMap;
+
 use desktank_sim::{FieldKind, Part, World};
 
 use crate::grid::{self, DirtyRects};
@@ -48,6 +50,7 @@ pub struct Renderer {
     instances: wgpu::Buffer,
     /// Sprites to draw, and the instance bytes last written.
     sprite_count: u32,
+    sprite_scratch: Vec<sprites::Sprite>,
     instance_bytes: Vec<u8>,
     instance_scratch: Vec<f32>,
     view_buffer: wgpu::Buffer,
@@ -57,6 +60,11 @@ pub struct Renderer {
     /// shader reads a band only where the cell texture has a plant part).
     bands: wgpu::Texture,
     band_scratch: Vec<u8>,
+    /// Each plant's base cell when its bands were last uploaded, and the
+    /// plants version then: a stem plant's leaf bands follow its base
+    /// column, which can move without its leaf cells changing.
+    plant_bases: BTreeMap<u16, (usize, usize)>,
+    bases_version: Option<u64>,
     /// The palette strip image (top-left corner of a fixed-size texture).
     hud: wgpu::Texture,
     /// Nutrient, CO₂ and light per field cell (RGB), for the debug overlay.
@@ -139,12 +147,15 @@ impl Renderer {
             atlas,
             instances,
             sprite_count: 0,
+            sprite_scratch: Vec::new(),
             instance_bytes: Vec::new(),
             instance_scratch: Vec::new(),
             view_buffer,
             cells,
             bands,
             band_scratch: Vec::new(),
+            plant_bases: BTreeMap::new(),
+            bases_version: None,
             hud,
             fields,
             fields_size,
@@ -185,6 +196,24 @@ impl Renderer {
                 write_rect(gpu, bands, r, band_scratch, 1);
             }
         });
+        if self.bases_version != Some(world.plants_version()) {
+            self.bases_version = Some(world.plants_version());
+            for p in world.plants() {
+                let old = self.plant_bases.insert(p.id.0, p.base);
+                let r = desktank_sim::Rect {
+                    x0: p.bounds.x0.min(full.x1),
+                    y0: p.bounds.y0.min(full.y1),
+                    x1: p.bounds.x1.min(full.x1),
+                    y1: p.bounds.y1.min(full.y1),
+                };
+                if old.is_some_and(|b| b != p.base)
+                    && !r.is_empty()
+                    && world.plant_bands(r, band_scratch)
+                {
+                    write_rect(gpu, bands, r, band_scratch, 1);
+                }
+            }
+        }
     }
 
     /// Uploads the rows of the plant tint texture whose plants changed
@@ -224,7 +253,9 @@ impl Renderer {
     /// Writes one sprite instance per creature, if they changed since the
     /// last upload.
     pub fn upload_sprites(&mut self, gpu: &Gpu, world: &World) {
-        self.sprite_count = self.atlas.instances(world, &mut self.instance_scratch);
+        self.sprite_count =
+            self.atlas
+                .instances(world, &mut self.sprite_scratch, &mut self.instance_scratch);
         let bytes: Vec<u8> = self
             .instance_scratch
             .iter()

@@ -148,11 +148,13 @@ impl Atlas {
     /// One instance per creature, then per corpse (up to [`MAX_SPRITES`]
     /// in all), as [`INSTANCE_FLOATS`] floats each, into `out`, back to
     /// front: deepest first, so nearer creatures are drawn over further
-    /// ones (D21; ties keep that order). Returns the count.
-    pub fn instances(&self, world: &World, out: &mut Vec<f32>) -> u32 {
+    /// ones (D21; ties keep the world's order, creatures before corpses).
+    /// `sprites` is scratch space, reused between frames. Returns the
+    /// count.
+    pub fn instances(&self, world: &World, sprites: &mut Vec<Sprite>, out: &mut Vec<f32>) -> u32 {
         out.clear();
+        sprites.clear();
         let tick = world.tick_count();
-        let mut sprites = Vec::with_capacity(MAX_SPRITES.min(world.creatures().len()));
         for c in world.creatures() {
             let Some(e) = self.entry(world, c.species(), world.creature_morph(c), c.female())
             else {
@@ -205,9 +207,9 @@ impl Atlas {
                 depth: f32::from(c.band()),
             });
         }
-        // Stable, so equal depths keep creature-then-corpse, id order.
+        // Stable, so equal depths keep the world's order.
         sprites.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        for s in &sprites {
+        for s in sprites.iter() {
             s.push(out);
         }
         u32::try_from(sprites.len()).unwrap_or(u32::MAX)
@@ -215,7 +217,8 @@ impl Atlas {
 }
 
 /// One sprite instance before it is packed into floats.
-struct Sprite {
+#[derive(Clone, Copy, Debug)]
+pub struct Sprite {
     /// Body centre in cells.
     centre: (f32, f32),
     /// Upright body size in cells.
@@ -329,7 +332,7 @@ mod tests {
         let tetra = w.species().id("neon_tetra").unwrap();
         w.add_creature(tetra, 30, 30).unwrap();
         let mut out = Vec::new();
-        assert_eq!(atlas.instances(&w, &mut out), 1);
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 1);
         assert_eq!(out.len(), INSTANCE_FLOATS);
         assert!(include_str!("tank.wgsl").contains("@location(5) look: vec2<f32>"));
         // The frame the instance names holds the species' texels.
@@ -378,7 +381,7 @@ mod tests {
         w.set_creature_age(dying, span);
         w.tick();
         let mut out = Vec::new();
-        assert_eq!(atlas.instances(&w, &mut out), 4);
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 4);
         let centres: Vec<_> = w
             .creatures()
             .iter()
@@ -427,7 +430,10 @@ mod tests {
         }
         let atlas = Atlas::build(world.species());
         let mut out = Vec::new();
-        assert_eq!(atlas.instances(&world, &mut out) as usize, ids.len());
+        assert_eq!(
+            atlas.instances(&world, &mut Vec::new(), &mut out) as usize,
+            ids.len()
+        );
         assert!(include_str!("tank.wgsl").contains("@location(6) fine_origin: vec2<f32>"));
         for c in world.creatures() {
             let inst = instance_at(&out, c.centre());
@@ -456,7 +462,7 @@ mod tests {
         let c = &w.creatures()[0];
         assert_eq!(c.turn(), 1);
         let mut out = Vec::new();
-        atlas.instances(&w, &mut out);
+        atlas.instances(&w, &mut Vec::new(), &mut out);
         let (fw, fh) = w.species().get(nerite).unwrap().size();
         // Quads are in cells: the body, half the sprite's texels.
         let sprite = &w.species().get(nerite).unwrap().sprite;
@@ -511,7 +517,7 @@ mod tests {
         w.tick();
         assert!(w.creature(dying).is_none());
         let mut out = Vec::new();
-        assert_eq!(atlas.instances(&w, &mut out), 3);
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 3);
         let (fry_i, old_i, dead_i) = (
             instance_at(&out, w.creature(fry).unwrap().centre()),
             instance_at(&out, w.creature(old).unwrap().centre()),
@@ -551,7 +557,7 @@ mod tests {
             w.tick();
         }
         let mut out = Vec::new();
-        assert_eq!(atlas.instances(&w, &mut out), 12);
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 12);
         let depths: Vec<f32> = out.chunks(INSTANCE_FLOATS).map(|i| i[14]).collect();
         assert!(
             depths.windows(2).all(|d| d[0] >= d[1]),
