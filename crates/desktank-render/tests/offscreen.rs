@@ -146,7 +146,6 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let Some(gpu) = gpu() else { return };
     let materials = MaterialTable::builtin().unwrap();
     let leaf = materials.id("leaf").unwrap();
-    let leaf_colour = materials.get(leaf).unwrap().colour;
     let config = WorldConfig {
         width: 16,
         height: 8,
@@ -173,12 +172,27 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let healthy = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
     // The cell at (4, 5) covers pixels 24..28 × 20..24.
     let before = px(&healthy, 25, 21);
-    for (got, base) in before.iter().zip(leaf_colour) {
-        assert!(
-            got.abs_diff(base) <= 24,
-            "leaf {before:?} vs {leaf_colour:?}"
-        );
-    }
+    let table = tank.world().plant_species();
+    let plant = table.get(table.id("hygrophila").unwrap()).unwrap();
+    let ramp = &plant.colours.leaf;
+    // A shade of the species' leaf ramp (resampled to the texture's eight
+    // shades, so within half a ramp step of an entry).
+    let nearest = ramp
+        .iter()
+        .map(|shade| {
+            shade
+                .iter()
+                .zip(before)
+                .map(|(&a, b)| a.abs_diff(b))
+                .max()
+                .unwrap()
+        })
+        .min()
+        .unwrap();
+    assert!(
+        nearest <= 24,
+        "healthy leaf colour {before:?} is not a shade of its species ramp {ramp:?}",
+    );
     // A minute later its health has fallen (not yet to the 0.5 at which
     // leaves drop); no cell changed in the last ticks, yet the tank wants
     // a frame and draws it yellower.

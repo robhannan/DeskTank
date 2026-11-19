@@ -18,8 +18,16 @@ speed = 3.5
 max_speed = 7.0
 diet = ["sinking_pellet", "algae_wafer", "bloodworm", "flake_food", "algae", "detritus"]
 
+# Sticks its eggs to glass and leaves; they hatch in 3–5 days.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 4
+brood = [4, 10]
+rest_days = 14
+
 [sprite]
-colours = { t = "#c9b48a", l = "#e3d3ac", d = "#6b5a3e", s = "#a08c68", k = "#0c1016", e = "#ffffff", w = "#efe6d2" }
+colours = { t = "#c9b48a", l = "#e3d3ac", d = "#6b5a3e", s = "#a08c68", k = "#0c1016", e = "#ffffff", w = "#efe6d2", b = "#86734f", m = "#4a3d2a", c = "#d9c69c", q = "#b39f78" }
 frames = [
     [
         ".....dd.........",
@@ -69,4 +77,81 @@ icon = [
     "sdtdtdkl",
     "s.wwwwwl",
     "...s.w.w",
+]
+
+# The same four poses at four texels per cell side (32x16), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "............md..................",
+        "...........sssd.................",
+        "..........sddsd.................",
+        ".........sdssssd................",
+        "sd....bbttttddtttttlllll........",
+        "sdsd..bbttttdtttttttcwwtl.......",
+        "sdsdtttttddtttqddttqwekwcl......",
+        "sdsdttttqdmttqtdmtqtwkkwttll....",
+        ".ssdtqqqqqqqqqqqqqqqqccqsttcll..",
+        ".ssdttddtttqddttqtddsqsststtttl.",
+        "sdsdstdmttqtdmtddtdmqttttstttttl",
+        "sdsds.ttcttttttdttttttttttsttctc",
+        "sds....twwwwwwwwwwwwwwwwwwwwcml.",
+        "sd......twwwwwwwwwwwwwwwswwwl..l",
+        "..........ss..ss........ws...l..",
+        "..........s...s..........ws.....",
+    ],
+    [
+        "............md..................",
+        "...........sssd.................",
+        "..........sddsd.................",
+        ".........sdssssd................",
+        "......bbttttddtttttlllll........",
+        "......bbttttdtttttttcwwtl.......",
+        "..sdtttttddtttqddttqwekwcl......",
+        ".dsdttttqdmttqtdmtqtwkkwttll....",
+        "sssdtqqqqqqqqqqqqqqqqccqsttcll..",
+        "sssdttddtttqddttqtddsqsststtttl.",
+        ".dsdstdmttqtdmtddtdmqttttstttttl",
+        "..sd..ttcttttttdttttttttttsttctc",
+        ".......twwwwwwwwwwwwwwwwwwwwcml.",
+        "........twwwwwwwwwwwwwwwswwwl..l",
+        "..........ss..ss........ws...l..",
+        "..........s...s..........ws.....",
+    ],
+    [
+        "............md..................",
+        "...........sssd.................",
+        "..........sddsd.................",
+        ".........sdssssd................",
+        "sd....bbttttddtttttlllll........",
+        "sdsd..bbttttdtttttttcwwtl.......",
+        "sdsdtttttddtttqddttqwekwcl......",
+        "sdsdttttqdmttqtdmtqtwkkwttll....",
+        ".ssdtqqqqqqqqqqqqqqqqccqsttcll..",
+        ".ssdttddtttqddttqtddsqsststtttl.",
+        "sdsdstdmttqtdmtddtdmqttttstttttl",
+        "sdsds.ttcttttttdttttttttttsttctc",
+        "sds....twwwwwwwwwwwwwwwwwwwwcml.",
+        "sd......twwwwwwwwwwwwwwwswwwl..l",
+        "............ss..ss......ws...l..",
+        "............s...s........ws.....",
+    ],
+    [
+        "............md..................",
+        "...........sssd.................",
+        "..........sddsd.................",
+        ".........sdssssd................",
+        "......bbttttddtttttlllll........",
+        "......bbttttdtttttttcwwtl.......",
+        "..sdtttttddtttqddttqwekwcl......",
+        ".dsdttttqdmttqtdmtqtwkkwttll....",
+        "sssdtqqqqqqqqqqqqqqqqccqsttcll..",
+        "sssdttddtttqddttqtddsqsststtttl.",
+        ".dsdstdmttqtdmtddtdmqttttstttttl",
+        "..sd..ttcttttttdttttttttttsttctc",
+        ".......twwwwwwwwwwwwwwwwwwwwcml.",
+        "........twwwwwwwwwwwwwwwswwwl..l",
+        "............ss..ss......ws...l..",
+        "............s...s........ws.....",
+    ],
 ]

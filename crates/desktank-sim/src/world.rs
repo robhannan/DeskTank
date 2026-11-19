@@ -29,10 +29,11 @@ mod plants;
 use creatures::Creatures;
 pub(crate) use creatures::default_band;
 pub use creatures::{
-    BAND_REACH, BITE_ENERGY, CORPSE_SINK, Corpse, Creature, CreatureId, DEFAULT_CREATURE_CAP,
-    DEPTH_BANDS, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS, LifeStage,
-    MAX_CORPSES, MAX_CREATURE_CAP, POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS,
-    STRESS_LIMIT, UnmetNeed,
+    BAND_REACH, BITE_ENERGY, BREED_CHECK_SECONDS, CONCEIVE_ODDS, CORPSE_SINK, Clutch, Corpse,
+    Creature, CreatureId, DEFAULT_CREATURE_CAP, DEPTH_BANDS, DeathCause, ENERGY_RESERVE,
+    LIFE_DAY_SECONDS, LIFE_DAY_TICKS, LifeStage, MAX_CLUTCHES, MAX_CORPSES, MAX_CREATURE_CAP,
+    MUTATION_PER_MILLE, POOR_QUALITY, PREY_ENERGY, REVERSION_PER_MILLE, ROT_AFTER_SECONDS,
+    ROT_EVERY_SECONDS, SETTLE_TICKS, STRESS_LIMIT, STRIKE_ODDS, Traits, UnmetNeed,
 };
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
@@ -118,6 +119,9 @@ pub enum WorldError {
     /// The tank already holds the most creatures it may.
     #[error("the tank is full ({0} creatures)")]
     PopulationCap(usize),
+    /// The morph allele isn't one of the species' morphs.
+    #[error("species {} has no morph {}", .0.0, .1)]
+    UnknownMorph(SpeciesId, u8),
     /// There is no free water near the spot to put a creature in.
     #[error("no room for a creature there")]
     NoRoom,

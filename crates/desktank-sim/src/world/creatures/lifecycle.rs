@@ -68,7 +68,8 @@ const HATCH_PERCENT: u64 = 35;
 /// Elders are past this percentage of their own lifespan.
 const ELDER_PERCENT: u64 = 80;
 
-/// A creature's life stage (SPEC §2.4). Eggs come with T9 part 2.
+/// A creature's life stage (SPEC §2.4). Eggs aren't creatures: they are
+/// cells of the `egg` material until their clutch hatches (T9 part 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LifeStage {
     /// Newly hatched or born: small, growing fast while fed.
@@ -102,8 +103,9 @@ impl LifeStage {
     }
 }
 
-/// Why a creature died (SPEC §2.4). Predation comes with T9 part 2,
-/// temperature with E1 and chaos materials with E2.
+/// Why a creature died (SPEC §2.4). Temperature comes with E1 and chaos
+/// materials with E2. Prey a predator eats (T9 part 2) leaves no corpse,
+/// so predation is not a cause here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DeathCause {
     /// It reached its lifespan (the only cause in easy mode).
@@ -160,6 +162,9 @@ pub struct Corpse {
     /// Detritus cells released so far, of `total`.
     pub(super) released: u16,
     pub(super) total: u16,
+    /// The morph it showed and its sex, to draw it as it was.
+    pub(super) morph: u8,
+    pub(super) female: bool,
 }
 
 impl Corpse {
@@ -206,6 +211,18 @@ impl Corpse {
     #[must_use]
     pub fn died(&self) -> u64 {
         self.died
+    }
+
+    /// The colour morph it showed (see [`World::creature_morph`]).
+    #[must_use]
+    pub fn morph(&self) -> u8 {
+        self.morph
+    }
+
+    /// Whether it was female.
+    #[must_use]
+    pub fn female(&self) -> bool {
+        self.female
     }
 
     /// How far it has rotted away, from 0 (whole) to 1 (gone).
@@ -312,7 +329,15 @@ impl World {
         y: i64,
         age: u32,
     ) -> Result<CreatureId, crate::WorldError> {
-        self.add_creature_with(species, x, y, Some(age))
+        self.add_creature_with_traits(
+            species,
+            x,
+            y,
+            super::Traits {
+                age: Some(age),
+                ..super::Traits::default()
+            },
+        )
     }
 
     /// Sets a creature's stored energy, in ticks (at most
@@ -335,8 +360,7 @@ impl World {
     pub(super) fn grown_kind(&self, c: &Creature) -> Option<Kind> {
         let mut k = *self.kind(c.species)?;
         if c.growth < k.maturity {
-            let percent = HATCH_PERCENT
-                + (100 - HATCH_PERCENT) * u64::from(c.growth) / u64::from(k.maturity.max(1));
+            let percent = grown_percent(c.growth, k.maturity);
             k.w = grown_side(k.w, percent);
             k.h = grown_side(k.h, percent);
         }
@@ -377,8 +401,7 @@ impl World {
             };
             if step > 0 {
                 let size = |growth: u32| {
-                    let percent = HATCH_PERCENT
-                        + (100 - HATCH_PERCENT) * u64::from(growth) / u64::from(k.maturity.max(1));
+                    let percent = grown_percent(growth, k.maturity);
                     (grown_side(k.w, percent), grown_side(k.h, percent))
                 };
                 let before = size(c.growth);
@@ -429,6 +452,8 @@ impl World {
             died: self.tick,
             released: 0,
             total: cells.div_ceil(3).max(1),
+            morph: self.creature_morph(c),
+            female: c.female,
         }
     }
 
@@ -525,6 +550,8 @@ impl World {
                 c.w,
                 c.h,
                 u8::from(c.facing_left),
+                c.morph,
+                u8::from(c.female),
                 c.band,
             ]);
             h.write(&c.x.to_le_bytes());
@@ -534,6 +561,15 @@ impl World {
             h.write(&c.total.to_le_bytes());
         }
     }
+}
+
+/// Size in percent of the adult's after `growth` of `maturity` ticks of
+/// growth: from [`HATCH_PERCENT`] to 100.
+pub(super) fn grown_percent(growth: u32, maturity: u32) -> u64 {
+    if growth >= maturity {
+        return 100;
+    }
+    HATCH_PERCENT + (100 - HATCH_PERCENT) * u64::from(growth) / u64::from(maturity.max(1))
 }
 
 /// A body side `full` cells long at `percent` of its size: at least a cell,
@@ -576,7 +612,7 @@ mod tests {
         for c in DeathCause::ALL {
             assert_eq!(DeathCause::from_code(c.code()), Some(c));
         }
-        assert_eq!(DeathCause::from_code(3), None);
+        assert_eq!(DeathCause::from_code(4), None);
         for s in ["fry", "juvenile", "adult", "elder"] {
             assert_eq!(LifeStage::from_name(s).map(LifeStage::name), Some(s));
         }

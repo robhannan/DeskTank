@@ -6,7 +6,7 @@
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
     BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, MaterialId, MaterialTable, MovementClass,
-    Rect, Script, SpeciesId, TICKS_PER_SECOND, World, WorldConfig, WorldError,
+    Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig, WorldError,
 };
 
 fn world(width: usize, height: usize, seed: u64) -> World {
@@ -127,9 +127,16 @@ fn busy_tank(seed: u64) -> World {
         let s = species(&w, name);
         for j in 0..3_i64 {
             let x = 12 + 36 * j + i64::try_from(i).unwrap() * 3;
-            w.add_creature(s, x, 50).unwrap();
+            // All males in easy mode: nothing breeds or is eaten, so the
+            // same 33 swim throughout.
+            let male = Traits {
+                female: Some(false),
+                ..Traits::default()
+            };
+            w.add_creature_with_traits(s, x, 50, male).unwrap();
         }
     }
+    w.set_easy_mode(true);
     w
 }
 

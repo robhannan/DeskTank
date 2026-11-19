@@ -2,11 +2,13 @@
 // scale, nearest by construction), looks up (material, variant) in the
 // palette, darkens water with depth and tints by the time of day. Plant
 // cells (T6b, T6d) are drawn from their species instead, at two texels per
-// cell side like the sprites: the cell's state bytes are its plant id, whose
-// texel in the plant texture holds the health tint and the species id; the
-// species texture holds the colour ramps and part shapes. The interact overlay (palette
-// and brush outline) is drawn on top. Creature sprites are instanced quads
-// drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell side.
+// cell side like the sprites, or four at scales divisible by four: the
+// cell's state bytes are its plant id, whose texel in the plant texture
+// holds the health tint and the species id; the species texture holds the
+// colour ramps and part shapes. The interact overlay (palette and brush
+// outline) is drawn on top. Creature sprites are instanced quads
+// drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell
+// side, or four from the fine frames at scales divisible by four.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
 
@@ -136,10 +138,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var rgb: vec3<f32>;
     let part = part_of(texel);
     if part >= 0 {
-        // Which of the cell's 2x2 texels this pixel shows. Below scale 2 a
-        // pixel is a whole cell, so the shape is dropped (filled).
-        let sub = vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 2.0));
-        rgb = plant_colour(at, texel, part, sub, view.scale < 2.0);
+        let quarter = vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 4.0));
+        rgb = plant_colour(at, texel, part, quarter);
     } else {
         rgb = ground(at, texel);
     }
@@ -231,7 +231,7 @@ fn is_water(at: vec2<i32>) -> bool {
     return inside(at) && round(textureLoad(cells, at, 0).r * 255.0) == view.plant_parts.w;
 }
 
-// A static per-texel hash (texel coordinates in the grid's 2x texel space).
+// A static per-texel hash (texel coordinates in the grid's 2x or 4x texel space).
 fn hash(p: vec2<i32>) -> u32 {
     var h = (u32(p.x) * 0x8da6b343u) ^ (u32(p.y) * 0xd8163841u);
     h = (h ^ (h >> 13u)) * 0x5bd1e995u;
@@ -267,17 +267,28 @@ fn behind(at: vec2<i32>, sub: vec2<i32>, shadow: vec3<f32>) -> vec3<f32> {
     return shadow;
 }
 
-// A plant cell's colour at texel `sub` (0 or 1 across and down) of its 2x2
-// block (T6d): its species' shape for the part decides whether the texel is
+// Whether the pipeline may draw four-texel plants: the renderer compiles a
+// second grid pipeline with this false for scales that don't, so the fine
+// code is dropped there rather than skipped per fragment (renderer.rs).
+override FINE_PLANTS: bool = true;
+
+// Quarter-cell art is shown only when each texel covers whole screen pixels.
+fn fine_scale() -> bool {
+    return u32(view.scale) % 4u == 0u;
+}
+
+// A plant cell's colour (T6d): its species' shape decides whether the texel is
 // covered, and a shade from the part's ramp by position along the plant and
 // within the shape; the plant's health tint multiplies it. Uncovered texels
-// show what is behind. `full` fills every texel (scale 1).
-fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: bool) -> vec3<f32> {
+// show what is behind. Scale 1 fills every texel.
+fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> vec3<f32> {
+    let sub = quarter / 2;
     let plant = textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
     let species = i32(round(plant.a * 255.0));
     let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
     let sizes = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0) * 255.0);
     let pos = position_of(me);
+    let fine = FINE_PLANTS && fine_scale();
     let top = sub.y == 0;
     var covered = true;
     var step = noise_step(me);
@@ -296,6 +307,12 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             // One texel wide, the tip a texel lighter.
             covered = sub.x == 0;
             step += select(0, 1, tip);
+            if fine {
+                // A hair-thin blade with a shorter, darker one beside it.
+                let second = quarter.x == 3 && (!tip || quarter.y >= 2);
+                covered = quarter.x == 1 || second;
+                step -= select(0, 2, second);
+            }
         } else if shape == LEAF_PAD {
             // A short stalk to a round pad, its lower rim darker.
             if tip {
@@ -304,6 +321,21 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             } else {
                 covered = sub.x == 0;
                 step -= 1;
+            }
+            if fine {
+                if tip {
+                    // A round pad: a lit crown and highlight, a dark rim
+                    // below and the stalk's notch at the bottom.
+                    let edge_x = quarter.x == 0 || quarter.x == 3;
+                    let edge_y = quarter.y == 0 || quarter.y == 3;
+                    covered = !(edge_x && edge_y) && !(quarter.y == 3 && quarter.x == 2);
+                    step += select(0, 1, all(quarter == vec2<i32>(1, 1)))
+                        - select(0, 1, quarter.y == 3)
+                        - select(0, 1, quarter.x == 3);
+                } else {
+                    // A thread-thin stalk.
+                    covered = quarter.x == 1;
+                }
             }
         } else if shape == LEAF_SWORD {
             // A narrow stalk, then a broad blade with a pale midrib (the
@@ -316,6 +348,26 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             } else {
                 step += select(-1, 1, sub.x == 0);
             }
+            if fine {
+                if pos <= 2 && !tip {
+                    // A slender petiole, paler on its left.
+                    covered = quarter.x == 1 || quarter.x == 2;
+                    step += select(0, 1, quarter.x == 1);
+                } else {
+                    // A pale midrib (second column), lateral veins rising
+                    // to the edge every third cell, a dark rim, a blade
+                    // that flares from the petiole and a pointed tip.
+                    let rib = quarter.x == 1;
+                    let vein = pos % 3 == 0 && quarter.x >= 2 && quarter.x + quarter.y == 4;
+                    let flare = pos == 3 && quarter.y == 3;
+                    let edge = quarter.x == 0 || quarter.x == 3;
+                    let narrow = tip && quarter.y < 2 && edge;
+                    let point = tip && quarter.y == 0 && quarter.x == 2;
+                    covered = !narrow && !point && (!flare || rib || quarter.x == 2);
+                    step = step - select(0, 1, tip) + select(0, 2, rib) + select(0, 2, vein)
+                        - select(0, 1, quarter.x == 3) + select(0, 1, quarter.x == 0);
+                }
+            }
         } else {
             // Ribbon: a strap one texel wide that twists every four cells,
             // crossing to the other side where it shows its full face.
@@ -323,6 +375,20 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             let face = pos % 4 == 0 && !top && !tip;
             covered = sub.x == side || face;
             step += select(0, 1, face) - select(0, 1, sub.x == 1);
+            if fine {
+                // A strap two quarters wide, lit along one edge, that
+                // slides across the cell where it twists, showing its
+                // broader, paler face mid-twist.
+                let twist = pos % 4 == 0 && pos > 0 && !tip;
+                let after = side * 2;
+                let before = 2 - after;
+                let left_edge = select(after, before + (after - before) * (3 - quarter.y) / 3, twist);
+                let wide = twist && (quarter.y == 1 || quarter.y == 2);
+                let width = select(1, 2, wide);
+                covered = quarter.x >= left_edge && quarter.x <= left_edge + width;
+                step = step - select(0, 1, face) + select(0, 1, wide)
+                    + select(-1, 1, quarter.x == left_edge);
+            }
         }
     } else if part == PART_RUNNER {
         // A stolon along the top of its cell, joining runner cells above or
@@ -331,6 +397,13 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
         let down = kin(at, vec2<i32>(0, 1), me).x == PART_RUNNER;
         covered = top || (sub.x == 0 && (up || down));
         step += 2 + select(0, 1, is_water(at + vec2<i32>(0, -1)));
+        if fine {
+            // A rounded stolon, lit along its top, dropping a thin link to
+            // the runner below; every few cells a node puts out a root hair.
+            let hair = !down && (hash(at) & 3u) == 0u && quarter.x == 2 && quarter.y == 2;
+            covered = quarter.y <= 1 || (quarter.x == 1 && down) || hair;
+            step += select(0, 1, quarter.y == 0) - select(0, 2, hair);
+        }
     } else if part == PART_LEAF {
         let left = kin(at, vec2<i32>(-1, 0), me);
         let right = kin(at, vec2<i32>(1, 0), me);
@@ -358,17 +431,60 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             } else {
                 covered = rising;
             }
+            if fine {
+                // A slim needle rising a quarter-cell at a time from the
+                // node to its tip, lit above, with a darker underside short of the tip.
+                let along = (pos - 1) * 4 + select(3 - quarter.x, quarter.x, from_left);
+                let span = 4 * max(i32(sizes.z), 1);
+                let line = 3 - along * 4 / span;
+                let under = quarter.y == line + 1 && along > 0 && along < span - 2;
+                covered = quarter.y == line || under;
+                step += select(0, 1, quarter.y == line) - select(0, 2, under);
+            }
         } else if shape == LEAF_ROUND {
             // Broad to a blunt tip, with a darker rim at the tip's foot.
             covered = !(base && u == 0 && top);
             step -= select(0, 2, tip && u == 1 && !top);
+            if fine {
+                // A short petiole into an oval blade with blunt, rounded
+                // ends, a pale midrib, a lit upper half and a darker rim.
+                let x = select(3 - quarter.x, quarter.x, from_left);
+                let ends = min((pos - 1) * 4 + x - 2, select(4, 3 - x, tip));
+                let rib = quarter.y == 2;
+                let rim = quarter.y == 3 || ends == 0;
+                covered = select(rib, select(quarter.y == 1 || rib, true, ends > 0), ends >= 0);
+                step = step + select(0, 1, rib) + select(0, 1, quarter.y == 0) - select(0, 2, rim);
+            }
         } else if shape == LEAF_FEATHER {
             // A midrib along the bottom, fine teeth above every other texel.
             covered = !top || u == 1;
             step += select(0, 1, top);
+            if fine {
+                // Fishbone: a thin rachis with filaments rising from every
+                // other quarter, short ones hanging between them, and a
+                // forked tip; the filament ends are lightest.
+                let along = (pos - 1) * 4 + select(3 - quarter.x, quarter.x, from_left);
+                let rachis = quarter.y == 2;
+                let rising = quarter.y < 2 && along % 2 == 1;
+                let hanging = quarter.y == 3 && along % 2 == 0 && along > 1;
+                covered = rachis || rising || hanging;
+                step += select(0, 1, quarter.y == 0) - select(0, 1, hanging) - select(1, 0, rachis);
+            }
         } else {
             // Lanceolate: a petiole, a broad blade and a tip that rises.
             covered = !(base && u == 0 && top) && !(tip && u == 1 && !top);
+            if fine {
+                // From petiole to tip, the pale midrib rises through a broad
+                // blade. The darker underside ends one texel before the rib.
+                let x = select(3 - quarter.x, quarter.x, from_left);
+                let rib = select(select(2, 1, x >= 2), 2, base);
+                let upper = select(select(0, 2, base && x < 2), 1, tip && x >= 2);
+                let lower = select(select(3, 2, tip && x >= 1), 1, tip && x == 3);
+                covered = quarter.y >= upper && quarter.y <= lower;
+                step += select(-2, 2, quarter.y <= rib)
+                    + select(0, 1, quarter.y == rib)
+                    - select(0, 2, base && x < 2);
+            }
         }
     } else if part == PART_STEM {
         let shape = shapes.y;
@@ -378,10 +494,25 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             let water_x = is_water(at + vec2<i32>(d.x, 0));
             let water_y = is_water(at + vec2<i32>(0, d.y));
             let exposed = water_x || water_y;
-            let h = hash(at * 2 + sub);
+            var h = hash(at * 2 + sub);
+            // How far into the cell a quarter lies from the water it faces
+            // (0 outermost, 1 next; 2 when not exposed).
+            let depth_x = select(2, select(3 - quarter.x, quarter.x, d.x < 0), water_x);
+            let depth_y = select(2, select(3 - quarter.y, quarter.y, d.y < 0), water_y);
+            let depth = min(depth_x, depth_y);
+            if fine {
+                h = hash(at * 4 + quarter);
+            }
             if shape == STEM_FUZZ {
                 covered = !exposed || (h & 7u) < 5u;
                 step = 1 + i32((h >> 3u) % 4u) + select(0, 3, exposed);
+                if fine {
+                    // Tangled strands thin out towards the water: sparse
+                    // lit wisps on the outer quarter, denser just inside.
+                    let keep = select(select(8u, 6u, depth == 1), 4u, depth == 0);
+                    covered = (h & 7u) < keep;
+                    step = 2 + i32((h >> 3u) % 4u) + select(0, 3, depth < 2) + select(0, 1, depth == 0);
+                }
             } else {
                 // Layered fronds: exposed edges break into regular tiers (a
                 // gap every third texel along the edge), each tier's first
@@ -391,6 +522,18 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
                 let k = select(t.x, t.y, water_x && !water_y) % 3;
                 covered = !exposed || k != 2;
                 step = i32((h >> 3u) & 1u) + select(0, 3, exposed) + select(0, 3, exposed && k == 0);
+                if fine {
+                    // Tiered fronds: along the edge each four-quarter tier
+                    // tapers to a pale tip on the outer quarter, with a gap
+                    // between tiers; inside, side branches angle off a
+                    // darker axis.
+                    let f = at * 4 + quarter;
+                    let m = select(f.x, f.y, water_x && !water_y) % 4;
+                    covered = select(select(true, m != 3, depth == 1), m == 1, depth == 0);
+                    let branch = (f.x + f.y) % 4 == 0;
+                    step = i32((h >> 3u) & 1u) + select(0, 3, depth < 2) + select(0, 3, depth == 0)
+                        + select(0, 2, depth == 2 && branch) + select(0, 2, depth == 1 && m == 0);
+                }
             }
         } else {
             let left = kin(at, vec2<i32>(-1, 0), me);
@@ -399,10 +542,27 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             let tip = kin(at, vec2<i32>(0, -1), me).x != PART_STEM;
             step += 1 + i32(round(f32(pos) / max(sizes.x, 1.0) * 5.0)) - select(0, 1, node) + select(0, 2, tip);
             if shape == STEM_THICK {
-                step -= select(0, 1, sub.x == 1);
+                if fine {
+                    // A round stem, brightest left of centre and darkest on
+                    // the right, a dark joint line at each node and a
+                    // rounded growing tip.
+                    let shoulder = tip && quarter.y == 0 && (quarter.x == 0 || quarter.x == 3);
+                    covered = !shoulder;
+                    step += select(0, 1, quarter.x == 1) - select(0, 1, quarter.x == 3)
+                        - select(0, 1, node && quarter.y == 3);
+                } else {
+                    step -= select(0, 1, sub.x == 1);
+                }
             } else {
                 // Stalk: one texel wide, full at nodes and the growing tip.
                 covered = node || tip || sub.x == 0;
+                if fine {
+                    // A lit stalk with a flared collar joining each leaf pair.
+                    let collar = node && quarter.y == 2;
+                    covered = quarter.x == 1 || quarter.x == 2 || collar
+                        || (tip && quarter.y >= 2 && quarter.x == 0);
+                    step += select(-1, 2, quarter.x == 1) + select(0, 1, collar);
+                }
             }
         }
     } else {
@@ -420,12 +580,39 @@ fn plant_colour(at: vec2<i32>, me: vec4<f32>, part: i32, sub: vec2<i32>, full: b
             let vertical = sub.x == col && select(down, up, top);
             let across = sub.y == row && select(right, left, sub.x == 0);
             covered = vertical || across || (sub.x == col && sub.y == row);
+            if fine {
+                // Each root meets its neighbours at their shared edge centre.
+                // The junction wanders a quarter-cell, leaving fine root hairs.
+                let joint = vec2<i32>(1 + col, 1 + row);
+                let dx = abs(quarter.x - joint.x);
+                let dy = abs(quarter.y - joint.y);
+                let edge_x = select(joint.x, 1, quarter.y == 0 || quarter.y == 3);
+                let edge_y = select(joint.y, 2, quarter.x == 0 || quarter.x == 3);
+                covered = all(quarter == joint)
+                    || (quarter.x == edge_x && select(down, up, quarter.y < joint.y))
+                    || (quarter.y == edge_y && select(right, left, quarter.x < joint.x))
+                    || (dx == 1 && dy == 1 && quarter.x == 0 && row == 1);
+                step += select(-1, 1, dx == 0);
+            }
+        } else if fine {
+            // Thick roots: rounded where they end or bend, fibrous along
+            // their free edges, with a pale core along their run.
+            let up = kin(at, vec2<i32>(0, -1), me).x >= 0;
+            let down = kin(at, vec2<i32>(0, 1), me).x >= 0;
+            let left = kin(at, vec2<i32>(-1, 0), me).x >= 0;
+            let right = kin(at, vec2<i32>(1, 0), me).x >= 0;
+            let free_y = (quarter.y == 0 && !up) || (quarter.y == 3 && !down);
+            let free_x = (quarter.x == 0 && !left) || (quarter.x == 3 && !right);
+            let fibre = (hash(at * 4 + quarter) & 3u) != 0u;
+            covered = !(free_x && free_y) && (!(free_x || free_y) || fibre);
+            let core = select(quarter.y == 1, quarter.x == 1, up || down);
+            step += select(0, 1, core) - select(0, 1, free_x || free_y);
         }
     }
     let tint = plant.rgb;
     // Runners are drawn from the stem's ramp.
     let ramp = select(part, PART_STEM, part == PART_RUNNER);
-    if covered || full {
+    if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
         return textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
     }
@@ -449,7 +636,8 @@ struct SpriteOut {
 };
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
-// to a target pixel and each texel half a cell wide.
+// to a target pixel and each texel half a cell wide (a quarter from the fine
+// frames).
 @vertex
 fn vs_sprite(
     @builtin(vertex_index) i: u32,
@@ -458,13 +646,16 @@ fn vs_sprite(
     // the atlas, and orient: x > 0.5 to mirror (facing left in its own
     // frame), y the quarter turns clockwise applied after the mirror; the
     // frame's size in texels (a growing creature's body is drawn smaller
-    // than it), and the look (see SpriteOut).
+    // than it), the look (see SpriteOut) and the fine frame's top-left texel
+    // (the same pose at twice the size; negative for a body drawn smaller
+    // than its frame, which keeps the coarser art).
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
     @location(3) orient: vec2<f32>,
     @location(4) frame_size: vec2<f32>,
     @location(5) look: vec2<f32>,
+    @location(6) fine_origin: vec2<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -490,7 +681,8 @@ fn vs_sprite(
     }
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    o.texel = origin + q * frame_size;
+    let fine = fine_origin.x >= 0.0 && fine_scale();
+    o.texel = select(origin, fine_origin, fine) + q * frame_size * select(1.0, 2.0, fine);
     o.look = look;
     return o;
 }

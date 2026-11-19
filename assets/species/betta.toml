@@ -11,14 +11,25 @@ length_cm = 4.0
 # months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
 lifespan_days = 1095
 maturity_days = 120
+# Longest prey in cm: a hungry adult takes fry, shrimp and crabs it
+# touches (T9 part 2).
+prey_cm = 2.5
 breathes_air = true
 temperament = "territorial"
 speed = 3.5
 max_speed = 8.0
 diet = ["flake_food", "bloodworm", "sinking_pellet"]
 
+# The male guards a bubble nest; eggs hatch in 1–2 days.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 2
+brood = [6, 12]
+rest_days = 14
+
 [sprite]
-colours = { r = "#c4243a", h = "#e8505e", m = "#9e1c3a", n = "#6c1129", q = "#dc4e66", p = "#e85a6a", k = "#0c1016", e = "#ffffff" }
+colours = { r = "#c4243a", h = "#e8505e", m = "#9e1c3a", n = "#6c1129", q = "#dc4e66", p = "#e85a6a", k = "#0c1016", e = "#ffffff", v = "#a83a54", s = "#ef856e", a = "#ffb58f", c = "#f38582" }
 frames = [
     [
         "..qmmnm.........",
@@ -86,4 +97,113 @@ icon = [
     "qmnrrrr.",
     "mnmmrpr.",
     "nm.m..p.",
+]
+
+# The same four poses at four texels per cell side (32x24), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "..........hh....................",
+        "....pnv....mhhm.................",
+        "...pmnvm...mmmhh................",
+        "..ppmnvm...mvmmmhh..............",
+        "..pmmmnvm.mmmvvmmmhh............",
+        "..pnvmmnvmmnmmmvmmmmmm..........",
+        ".pmmnvvmmvmmnnmmvmmmmmmrmm......",
+        ".pmmmmnvmmvmmmnmvmmsssssshrrr...",
+        ".pnvvmmmvvmnmmnmmmshhhhhhhaksm..",
+        "pmmmnvvvmmvmmmmmrhhhhhhmrskkksss",
+        ".mmmmmmnvvvnnmrhhhhrrrrhmrkksrrr",
+        ".hnvvvvvnnnrrrrrhrrrrhrhmrsssrrm",
+        "hmmmmmmmvvvrrrrrrhrhvcvhmrsssrm.",
+        ".hmmmmmmmmmmmmmmmrmvcvhmrrrm....",
+        ".hmmmmmnvvvnmmmmmrccvvmrrmm.....",
+        ".hmmnvvvmmnmmmnmmvmmmrmmmm......",
+        ".hnvvmmmvnvnmmnmvmmmmmmmp.......",
+        "..hmmmnnvvvmmnmvmmmmhm..p.......",
+        "..mmnvnvvvmmnmvmmmhh.m..p.......",
+        "..pnvnnvmmmmnvmmhhm..m.p........",
+        "...ppnvmmmmnvmmhm....m.p........",
+        ".....pnvv...mhhm....m.p.........",
+        ".....pppnv.mhm.....m..s.........",
+        "...........h....................",
+    ],
+    [
+        "...........h....................",
+        ".....pnv....hhm.................",
+        "....pmnv....mmhh................",
+        "...ppmnvm...mvmmhh..............",
+        "...pmmmnv..mmmvmmmhh............",
+        "...pnvmmnv.mnmmvmmmmmm..........",
+        "..pmmnvvmvmmmnmmvmmmmmmrmm......",
+        "..pmmmmnvmvmmmnmvmmsssssshrrr...",
+        "..pnvvmmmvmnmmnmmmshhhhhhhaksm..",
+        "ppmmmnvvvmvmmmmmrhhhhhhmrskkksss",
+        ".mmmmmmmnvvnnmrhhhhrrrrhmrkksrrr",
+        "..hnvvvvvnnrrrrrhrrrrhrhmrsssrrm",
+        "hhmmmmmmmvvrrrrrrhrhvcvhmrsssrm.",
+        ".hmmmmmmmmmmmmmmmrcccvhmrrrm....",
+        "..hmmmmmnvvnmmmmmvvvvvmrrmm.....",
+        "..hmmnvvvmnmmmnmmmmmmrmmmm......",
+        "..hnvvmmmnvnmmnmvmmmmmmmp.......",
+        "...hmmmnnvvmmnmvmmmmhm..p.......",
+        "...mmnvnvvmmmnvmmmhh.m..p.......",
+        "...pnvnnvmmmnmvmhhm..m..p.......",
+        "....ppnvmmmmnvmhm....m..p.......",
+        "......pnvv...mhm....m..p........",
+        "......pppnv.mh......m..s........",
+        "............h...................",
+    ],
+    [
+        "..........h.....................",
+        "...........hh...................",
+        "....pnv....mmhh.................",
+        "..ppmnvm...mvmmhhh..............",
+        "..pmmnvmm.mmmvvmmmhh............",
+        "..pnvmnvmmmnmmmvmmmmmm..........",
+        ".pmmnvvmvvmmnnmmvmmmmmmrmm......",
+        ".pmmmmnvmmvmmmnmvmmsssssshrrr...",
+        ".pnvvmmmvvmnmmnmmmshhhhhhhaksm..",
+        ".pmmnvvvmmvmmmmmrhhhhhhmrskkksss",
+        ".mmmmmmnvvvnnmrhhhhrrrrhmrkksrrr",
+        ".hnvvvvvnnnrrrrrhrrrrhrhmrsssrrm",
+        ".hmmmmmmvvvrrrrrrhccvcvhmrsssrm.",
+        ".hmmmmmmmmmmmmmmmvvvcvhmrrrm....",
+        ".hmmmmmnvvnnmmmmmrrrrvmrrmm.....",
+        ".hmmnvvvnvvnmmnmmmmmmrmmmm......",
+        ".hnvvmnvvvvmmmnmvmmmmmmmp.......",
+        "..hmnvnvvvmmmnmvmmmmhm..p.......",
+        "..pnvnvvnmmmnmvmmmhh.m..p.......",
+        "...ppnvmmm.mnvmmhhm..m.p........",
+        ".....nnvv.mnvmhhm....m.p........",
+        ".....ppnnv..hhmm....m.p.........",
+        "...........h.......m..s.........",
+        "................................",
+    ],
+    [
+        ".........h......................",
+        "..........hh....................",
+        "...pnv....mmhhh.................",
+        ".ppmnvm...mvmmmhhh..............",
+        ".pmmnvmmmmmmvvmmmmhh............",
+        ".pnvmmvvmmnmmmvvmmmmmm..........",
+        "pmmnvvmmvvmnnmmmvmmmmmmrmm......",
+        "pmmmmmvvmmvmmnnmvmmsssssshrrr...",
+        "pnvvmmmmvvmmmmnmmmshhhhhhhaksm..",
+        ".pmnvvvvmmvmmmmmrhhhhhhmrskkksss",
+        ".mmmmmmnvvvnnmrhhhhrrrrhmrkksrrr",
+        "hnvvvvvvnnnrrrrrhrrrrhrhmrsssrrm",
+        ".hmmmmmmvvvrrrrrrhrhvcvhmrsssrm.",
+        "hmmmmmmmmmmmmmmmmrcccvhmrrrm....",
+        "hmmmmmmnvvnnmmmmmvvvvvmrrmm.....",
+        "hmmnvvvvnvvnmmnmmmmmmrmmmm......",
+        "hnvvmmnvvvvmmmnmvmmmmmmmp.......",
+        ".hmnvvvvvvmmmnmvmmmmhm..p.......",
+        ".pnvnvvvnmmmnvvmmmhh.m.p........",
+        "..ppnvnmmmmnvmmmhhm..m.p........",
+        "....nnvv.mnvmmhhm....mp.........",
+        "....ppnnv..mhhmm...mmp..........",
+        "..........hh......m..s..........",
+        "................................",
+    ],
 ]

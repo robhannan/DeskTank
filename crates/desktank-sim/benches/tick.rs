@@ -272,6 +272,10 @@ fn bench_tick(c: &mut Criterion) {
     // cells, so every chunk stays asleep.
     let mut fish = settled.clone();
     add_thirty(&mut fish, &["neon_tetra", "corydoras", "betta"]);
+    // T9 part 2: they are pairs, so cap the tank at 30: the females check
+    // to breed every minute but never conceive, so the population stays
+    // put for as long as criterion runs.
+    fish.set_creature_cap(30);
     let mut fish = advance(fish, 200);
     let mut since_fed = 0_u32;
     g.bench_function("settled_with_fish", |b| {

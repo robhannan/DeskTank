@@ -21,12 +21,44 @@ max_speed = 6.0
 hop_every = 6.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "flake_food"]
 
+# The female carries her eggs under her tail ("berried") for about 30
+# days and releases tiny shrimplets (real broods of 20–30). Broods are
+# scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "livebearer"
+days = 30
+brood = [3, 8]
+rest_days = 7
+
+# Colour morphs (SPEC §2.4, D13), in allele order (append only: saves keep
+# the index). The sprite is drawn in red, the cherry the palette adds; wild
+# Neocaridina are brown and clear, and mixed colours revert to it. A
+# morph's colours replace the sprite's by key.
+[genetics]
+wildtype = "wild"
+sprite = "red"
+
+[[genetics.morph]]
+name = "red"
+
+[[genetics.morph]]
+name = "wild"
+colours = { r = "#6e5a44", h = "#9a8670", d = "#4a3a2c", a = "#a8968a", l = "#5e4c3a", m = "#3a2c20", s = "#7e6850", w = "#d8ccbc" }
+
+[[genetics.morph]]
+name = "blue"
+colours = { r = "#2a4fa8", h = "#5c84d8", d = "#1a3270", a = "#7a9ad8", l = "#22408a", m = "#12224e", s = "#3a62c0", w = "#cce0ff" }
+
+[[genetics.morph]]
+name = "yellow"
+colours = { r = "#e0b020", h = "#f4d660", d = "#a87a10", a = "#f0d070", l = "#c49418", m = "#7a5408", s = "#eac23a", w = "#fff4cc" }
+
 [sprite]
 # Facing right; two texels per cell side. The body is 10 texels (5 cells,
 # 2.5 cm at two cells per cm) from tail fan to eye, with the antennae
 # reaching 2 texels past it: a 6x2-cell sprite. Four frames: the legs
 # paddle while the tail fan and antennae flick.
-colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430" }
+colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430", w = "#ffd6cc", m = "#7a121c", s = "#e34a44" }
 frames = [
     [
         "...rhhrr...a",
@@ -58,4 +90,49 @@ icon = [
     "..rhra",
     "drrrka",
     ".l.l..",
+]
+
+# The same four poses at four texels per cell side (24x8), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "........hhhhhhhr.......a",
+        "......rhrsssssssrr....a.",
+        "add.rrlrrlrrlrrrlrwk.a..",
+        ".dddrrlrrlrrlrrrlrkkah..",
+        "dd..mlrrlrrlrrrrlrrraa..",
+        "a...mdddddddddddddrr..aa",
+        "......l...l.d.l.d.l.....",
+        ".....l...l.....l...l....",
+    ],
+    [
+        "........hhhhhhhr.......a",
+        "......rhrsssssssrr....a.",
+        "add.rrlrrlrrlrrrlrwk.a..",
+        ".dddrrlrrlrrlrrrlrkkah..",
+        "dd..mlrrlrrlrrrrlrrraa..",
+        "a...mdddddddddddddrr..aa",
+        "....l...l.d.l.d.l.......",
+        "...l...l.....l...l......",
+    ],
+    [
+        "........hhhhhhhr.....a..",
+        "......rhrsssssssrr...a..",
+        "ad..rrlrrlrrlrrrlrwka...",
+        ".dddrrlrrlrrlrrrlrkkah..",
+        "ddddmlrrlrrlrrrrlrrraa..",
+        "addamdddddddddddddrr..aa",
+        "......l...l.d.l.d.l.....",
+        ".....l...l.....l...l....",
+    ],
+    [
+        "........hhhhhhhr.....a..",
+        "......rhrsssssssrr...a..",
+        "ad..rrlrrlrrlrrrlrwka...",
+        ".dddrrlrrlrrlrrrlrkkah..",
+        "ddddmlrrlrrlrrrrlrrraa..",
+        "addamdddddddddddddrr..aa",
+        "....l...l.d.l.d.l.......",
+        "...l...l.....l...l......",
+    ],
 ]

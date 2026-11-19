@@ -21,13 +21,15 @@ max_speed = 1.5
 reach = 2
 diet = ["flake_food", "detritus"]
 
+# Doesn't breed here: its larvae are rarely raised in a tank.
+
 [sprite]
 # Left-right symmetric, so it reads as walking sideways whichever way it
 # goes; two texels per cell side. A carapace 2 texels across (0.5 cm at
 # two cells per cm) with spindly legs spanning the 6x6-texel (3x3-cell,
 # 1.5 cm) sprite, odd in cells as a crawler's body must be. Four frames:
 # the hairy legs step and flicker.
-colours = { l = "#8a7b68", h = "#b3a48e", c = "#a39380", k = "#3a3028" }
+colours = { l = "#8a7b68", h = "#b3a48e", c = "#a39380", k = "#3a3028", d = "#6e604f", e = "#d9ccb6" }
 frames = [
     [
         "l....l",
@@ -68,4 +70,65 @@ icon = [
     "hlklh",
     ".lcl.",
     "l...l",
+]
+
+# The same four poses at four texels per cell side (12x12), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "l..........l",
+        ".l........l.",
+        ".h........h.",
+        "..l......l..",
+        "h.dlkhhkld.h",
+        ".ll.hecc.ll.",
+        "..dlccccld..",
+        "...lcccdl...",
+        "..l.lddl.l..",
+        ".h.l....l.h.",
+        ".ll......ll.",
+        "ll........ll",
+    ],
+    [
+        "l..........l",
+        ".l........l.",
+        ".l........l.",
+        "..h......h..",
+        ".d.lkhhkl.d.",
+        "lhl.hecc.lhl",
+        "..dlccccld..",
+        "...lcccdl...",
+        "..l.lddl.l..",
+        "..hl....lh..",
+        "..ll....ll..",
+        "..l......l..",
+    ],
+    [
+        "l..........l",
+        ".l........l.",
+        ".h........h.",
+        "..l......l..",
+        "h.dlkhhkld.h",
+        ".ll.hecc.ll.",
+        "..dlccccld..",
+        "...lcccdl...",
+        "..l.lddl.l..",
+        ".h.l....l.h.",
+        ".ll......ll.",
+        "ll........ll",
+    ],
+    [
+        "l..........l",
+        ".l........l.",
+        ".l........l.",
+        "..h......h..",
+        ".d.lkhhkl.d.",
+        "lhl.hecc.lhl",
+        "..dlccccld..",
+        "...lcccdl...",
+        "..l.lddl.l..",
+        "..hl....lh..",
+        "..ll....ll..",
+        "..l......l..",
+    ],
 ]

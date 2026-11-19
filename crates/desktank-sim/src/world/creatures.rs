@@ -44,8 +44,10 @@
 //!   a chunk only when they eat (SPEC §2.1). Food is found through a
 //!   registry of food cells kept like the living lists, not by scanning.
 //! - **Life cycle** (T9): age, stages, growth with feeding, deaths and
-//!   corpses are in [`lifecycle`].
+//!   corpses are in [`lifecycle`]; sexes, breeding, eggs, colour genetics
+//!   and predation in [`breeding`].
 
+mod breeding;
 mod lifecycle;
 mod steering;
 
@@ -60,8 +62,12 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v3};
+use crate::save::{SaveError, v4};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
+pub use breeding::{
+    BREED_CHECK_SECONDS, CONCEIVE_ODDS, Clutch, MAX_CLUTCHES, MUTATION_PER_MILLE, PREY_ENERGY,
+    REVERSION_PER_MILLE, SETTLE_TICKS, STRIKE_ODDS,
+};
 pub use lifecycle::{
     BITE_ENERGY, CORPSE_SINK, Corpse, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
     LifeStage, MAX_CORPSES, POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, STRESS_LIMIT,
@@ -214,6 +220,30 @@ pub struct Creature {
     energy: u32,
     /// Stress from poor water, see [`STRESS_LIMIT`].
     stress: u32,
+    /// Its sex (T9 part 2).
+    female: bool,
+    /// Its two colour-morph alleles, indices into its species' morphs.
+    alleles: [u8; 2],
+    /// Ticks left carrying young (a livebearer; 0: not carrying).
+    carrying: u32,
+    /// The father's alleles while carrying.
+    sire: [u8; 2],
+    /// Ticks until it may breed again.
+    rest: u32,
+}
+
+/// What a creature added by a host, a script or a test is like (see
+/// [`World::add_creature_with_traits`]); `None` takes the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Traits {
+    /// Age in ticks, grown as a well-fed creature would be by then (`None`:
+    /// an adult just mature).
+    pub age: Option<u32>,
+    /// Its sex (`None`: whichever its species has fewer of in the tank, a
+    /// male on a tie).
+    pub female: Option<bool>,
+    /// Its two morph alleles (`None`: two of the morph the palette adds).
+    pub alleles: Option<[u8; 2]>,
 }
 
 impl Creature {
@@ -323,6 +353,32 @@ impl Creature {
         fed.min(water)
     }
 
+    /// Whether it is female (T9 part 2).
+    #[must_use]
+    pub fn female(&self) -> bool {
+        self.female
+    }
+
+    /// Its two colour-morph alleles (indices into its species'
+    /// [`crate::Species::morphs`]); [`World::creature_morph`] is the morph
+    /// it shows.
+    #[must_use]
+    pub fn alleles(&self) -> [u8; 2] {
+        self.alleles
+    }
+
+    /// Ticks left until a carrying female gives birth (0: not carrying).
+    #[must_use]
+    pub fn carrying(&self) -> u32 {
+        self.carrying
+    }
+
+    /// Ticks until it may breed again.
+    #[must_use]
+    pub fn rest(&self) -> u32 {
+        self.rest
+    }
+
     /// Mirrors it so its head leads along `(dx, dy)` in its turned frame,
     /// where the sprite's right points along the foot turned anticlockwise.
     /// A move across that axis leaves it as it was.
@@ -360,6 +416,15 @@ struct Kind {
     /// Ticks of growth to maturity, and the species' lifespan in ticks.
     maturity: u32,
     lifespan: u32,
+    /// Adult body length, and the longest prey it eats (0: none), in mm.
+    length_mm: u32,
+    prey_mm: u32,
+    /// How it breeds, if it does.
+    breeding: Option<breeding::Breed>,
+    /// Its morph count, the wildtype's index and the palette's.
+    morphs: u8,
+    wild: u8,
+    palette_morph: u8,
     edible: [bool; 256],
 }
 
@@ -389,6 +454,11 @@ pub(super) struct Creatures {
     easy: bool,
     /// Dead creatures sinking and rotting, oldest first.
     corpses: Vec<Corpse>,
+    /// Egg clutches waiting to hatch, oldest first.
+    clutches: Vec<Clutch>,
+    /// The next clutch id to try (never 0).
+    next_clutch: u16,
+    egg: Option<MaterialId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -452,6 +522,16 @@ impl Creatures {
                 // Validated to at most 7300 days: far inside u32.
                 maturity: s.maturity_days.saturating_mul(LIFE_DAY_TICKS),
                 lifespan: s.lifespan_days.saturating_mul(LIFE_DAY_TICKS),
+                // Validated lengths fit the sprite: at most 8 cm.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                length_mm: (s.length_cm * 10.0).round() as u32,
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                prey_mm: s.prey_cm.map_or(0, |p| (p * 10.0).round() as u32),
+                breeding: s.breeding.as_ref().map(breeding::Breed::of),
+                // At most MAX_MORPHS.
+                morphs: u8::try_from(s.morphs.len()).unwrap_or(1),
+                wild: s.wildtype,
+                palette_morph: s.palette_morph,
                 edible,
             });
         }
@@ -470,6 +550,9 @@ impl Creatures {
             cap: DEFAULT_CREATURE_CAP,
             easy: false,
             corpses: Vec::new(),
+            clutches: Vec::new(),
+            next_clutch: 1,
+            egg: materials.id("egg"),
         }
     }
 
@@ -567,7 +650,9 @@ impl World {
 
     /// Adds an adult of `species`, just mature and well fed, with its body
     /// centred on cell `(x, y)`, or on the nearest free spot within a few
-    /// cells.
+    /// cells. It takes whichever sex its species has fewer of in the tank
+    /// (a male on a tie), shows the morph the palette adds, and settles in
+    /// for [`SETTLE_TICKS`] before it breeds.
     ///
     /// # Errors
     ///
@@ -579,16 +664,46 @@ impl World {
         x: i64,
         y: i64,
     ) -> Result<CreatureId, WorldError> {
-        self.add_creature_with(species, x, y, None)
+        self.add_creature_with_traits(species, x, y, Traits::default())
     }
 
-    /// [`World::add_creature`], `age` ticks old (`None`: just mature).
-    fn add_creature_with(
+    /// [`World::add_creature`] with the age, sex or morph alleles given.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::add_creature`], or if an allele isn't one of the
+    /// species' morphs.
+    pub fn add_creature_with_traits(
         &mut self,
         species: SpeciesId,
         x: i64,
         y: i64,
-        age: Option<u32>,
+        traits: Traits,
+    ) -> Result<CreatureId, WorldError> {
+        let k = *self
+            .kind(species)
+            .ok_or(WorldError::UnknownSpecies(species))?;
+        let alleles = traits.alleles.unwrap_or([k.palette_morph; 2]);
+        if let Some(&bad) = alleles.iter().find(|&&a| a >= k.morphs) {
+            return Err(WorldError::UnknownMorph(species, bad));
+        }
+        let female = traits.female.unwrap_or_else(|| self.default_sex(species));
+        let age = traits.age.unwrap_or(k.maturity);
+        self.spawn(species, x, y, age, female, alleles, SETTLE_TICKS)
+    }
+
+    /// Adds a creature `age` ticks old, grown as a well-fed one would be,
+    /// resting `rest` ticks before it breeds.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(
+        &mut self,
+        species: SpeciesId,
+        x: i64,
+        y: i64,
+        age: u32,
+        female: bool,
+        alleles: [u8; 2],
+        rest: u32,
     ) -> Result<CreatureId, WorldError> {
         let base = *self
             .kind(species)
@@ -596,7 +711,6 @@ impl World {
         if self.creatures.list.len() >= self.creatures.cap {
             return Err(WorldError::PopulationCap(self.creatures.cap));
         }
-        let age = age.unwrap_or(base.maturity);
         let growth = age.min(base.maturity);
         let mut probe = Creature {
             id: CreatureId(self.creatures.next_id),
@@ -624,6 +738,11 @@ impl World {
             growth,
             energy: ENERGY_RESERVE,
             stress: 0,
+            female,
+            alleles,
+            carrying: 0,
+            sire: [0; 2],
+            rest,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -740,16 +859,16 @@ impl World {
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
     /// host's cursor isn't saved.
-    pub(super) fn save_creatures(&self) -> v3::Creatures {
+    pub(super) fn save_creatures(&self) -> v4::Creatures {
         let cr = &self.creatures;
-        v3::Creatures {
+        v4::Creatures {
             next_id: cr.next_id,
             cap: u32::try_from(cr.cap).unwrap_or(u32::MAX),
             easy: cr.easy,
             list: cr
                 .list
                 .iter()
-                .map(|c| v3::Creature {
+                .map(|c| v4::Creature {
                     id: c.id.0,
                     species: c.species.0,
                     x: c.x,
@@ -775,12 +894,17 @@ impl World {
                     growth: c.growth,
                     energy: c.energy,
                     stress: c.stress,
+                    female: c.female,
+                    alleles: c.alleles,
+                    carrying: c.carrying,
+                    sire: c.sire,
+                    rest: c.rest,
                 })
                 .collect(),
             corpses: cr
                 .corpses
                 .iter()
-                .map(|c| v3::Corpse {
+                .map(|c| v4::Corpse {
                     species: c.species.0,
                     cause: c.cause.code(),
                     x: c.x,
@@ -792,13 +916,28 @@ impl World {
                     died: c.died,
                     released: c.released,
                     total: c.total,
+                    morph: c.morph,
+                    female: c.female,
+                })
+                .collect(),
+            next_clutch: cr.next_clutch,
+            clutches: cr
+                .clutches
+                .iter()
+                .map(|c| v4::Clutch {
+                    id: c.id,
+                    species: c.species.0,
+                    mother: c.mother,
+                    sire: c.sire,
+                    hatch: c.hatch,
+                    eggs: c.eggs.clone(),
                 })
                 .collect(),
         }
     }
 
     /// Restores the creatures, corpses and life settings from a save.
-    pub(super) fn load_creatures(&mut self, saved: v3::Creatures) -> Result<(), SaveError> {
+    pub(super) fn load_creatures(&mut self, saved: v4::Creatures) -> Result<(), SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -837,6 +976,13 @@ impl World {
             {
                 return Err(invalid("depth out of range"));
             }
+            let carry_limit = k
+                .breeding
+                .filter(|b| !b.eggs && c.female)
+                .map_or(0, |b| b.days);
+            if c.alleles.iter().chain(&c.sire).any(|&a| a >= k.morphs) || c.carrying > carry_limit {
+                return Err(invalid("morph or pregnancy out of range"));
+            }
             for i in [c.food, c.ignore].into_iter().flatten() {
                 self.cell_index(i, "a creature's food")?;
             }
@@ -866,10 +1012,18 @@ impl World {
                 growth: c.growth,
                 energy: c.energy,
                 stress: c.stress,
+                female: c.female,
+                alleles: c.alleles,
+                carrying: c.carrying,
+                sire: c.sire,
+                rest: c.rest,
             });
         }
-        let corpses = self.load_corpses(saved.corpses, &inside)?;
+        let corpses = self.load_corpses(saved.corpses)?;
+        let clutches = self.load_clutches(saved.clutches)?;
         self.creatures.list = list;
+        self.creatures.clutches = clutches;
+        self.creatures.next_clutch = saved.next_clutch.max(1);
         self.creatures.corpses = corpses;
         self.creatures.cap = cap;
         self.creatures.easy = saved.easy;
@@ -878,13 +1032,14 @@ impl World {
         Ok(())
     }
 
-    /// Checks and restores saved corpses (`inside`: whether a fixed-point
-    /// point lies in the tank).
-    fn load_corpses(
-        &self,
-        saved: Vec<v3::Corpse>,
-        inside: &impl Fn(i32, i32) -> bool,
-    ) -> Result<Vec<Corpse>, SaveError> {
+    /// The corpses from a save, as `corpse_of` makes them.
+    fn load_corpses(&self, saved: Vec<v4::Corpse>) -> Result<Vec<Corpse>, SaveError> {
+        let (w, h) = (
+            to_i64(self.width) * i64::from(ONE),
+            to_i64(self.height) * i64::from(ONE),
+        );
+        let inside =
+            |x: i32, y: i32| (0..=w).contains(&i64::from(x)) && (0..=h).contains(&i64::from(y));
         if saved.len() > MAX_CORPSES {
             return Err(SaveError::Invalid(format!("{} corpses", saved.len())));
         }
@@ -898,7 +1053,9 @@ impl World {
             let cause = DeathCause::from_code(c.cause).ok_or_else(|| invalid("unknown cause"))?;
             // As `corpse_of` makes them: at most the adult body, and a
             // third of its cells to release.
-            let (full_w, full_h) = self.kind(species).map_or((0, 0), |k| (k.w, k.h));
+            let (full_w, full_h, morphs) = self
+                .kind(species)
+                .map_or((0, 0, 0), |k| (k.w, k.h, k.morphs));
             let fits = |side: u8, full: i32| (1..=full).contains(&i32::from(side));
             let total = (u16::from(c.w) * u16::from(c.h)).div_ceil(3).max(1);
             if !inside(c.x, c.y)
@@ -907,6 +1064,7 @@ impl World {
                 || c.total != total
                 || c.released >= c.total
                 || c.band >= DEPTH_BANDS
+                || c.morph >= morphs
             {
                 return Err(invalid("position, size or decay out of range"));
             }
@@ -922,6 +1080,8 @@ impl World {
                 died: c.died,
                 released: c.released,
                 total: c.total,
+                morph: c.morph,
+                female: c.female,
             });
         }
         Ok(corpses)
@@ -945,18 +1105,29 @@ impl World {
             h.write(&c.held_until.to_le_bytes());
             h.write(&c.next_breath.to_le_bytes());
             h.write(&c.eaten.to_le_bytes());
-            for v in [c.age, c.growth, c.energy, c.stress] {
+            for v in [c.age, c.growth, c.energy, c.stress, c.carrying, c.rest] {
                 h.write(&v.to_le_bytes());
             }
+            h.write(&[
+                u8::from(c.female),
+                c.alleles[0],
+                c.alleles[1],
+                c.sire[0],
+                c.sire[1],
+            ]);
         }
         self.hash_corpses(h);
+        self.hash_breeding(h);
     }
 
     /// Runs every creature for one tick, after the cells and life: each
     /// lives a tick (and may die, leaving a corpse), then moves; then the
     /// corpses sink and rot.
     pub(super) fn update_creatures(&mut self) {
-        if self.creatures.list.is_empty() && self.creatures.corpses.is_empty() {
+        if self.creatures.list.is_empty()
+            && self.creatures.corpses.is_empty()
+            && self.creatures.clutches.is_empty()
+        {
             return;
         }
         // Water quality matters once a second, and not in easy mode.
@@ -967,16 +1138,22 @@ impl World {
         let mut list = mem::take(&mut self.creatures.list);
         let mut changed = false;
         let mut dead = Vec::new();
-        list.retain_mut(|c| match self.live(c, quality, &mut changed) {
-            Some(cause) => {
+        let mut breeding = self.breed_tick(&list);
+        list.retain_mut(|c| {
+            if let Some(cause) = self.live(c, quality, &mut changed) {
                 dead.push(self.corpse_of(c, cause));
-                false
+                return false;
             }
-            None => true,
+            self.breed(c, &mut breeding);
+            true
         });
         if !dead.is_empty() {
             self.bury(dead);
             changed = true;
+        }
+        // Predators hunt once a second, with the water-quality sample.
+        if quality.is_some() {
+            changed |= self.predation(&mut list);
         }
         self.creatures.school.clear();
         for c in &list {
@@ -995,6 +1172,7 @@ impl World {
             changed |= self.update_creature(c);
         }
         self.creatures.list = list;
+        changed |= self.finish_breeding(breeding);
         if !self.creatures.corpses.is_empty() {
             changed |= self.update_corpses(self.creatures.detritus);
         }

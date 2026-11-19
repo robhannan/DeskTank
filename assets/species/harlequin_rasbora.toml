@@ -19,11 +19,19 @@ speed = 4.5
 max_speed = 9.0
 diet = ["flake_food", "bloodworm"]
 
+# Lays its eggs under broad leaves; they hatch in about a day.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 1
+brood = [4, 10]
+rest_days = 14
+
 [sprite]
 # Facing right; two texels per cell side. 18 texels (9 cells, 4.5 cm)
 # from the forked tail to the snout, and deeper than the neon: a 9x4-cell
 # sprite. Four frames: the tail lobes sweep.
-colours = { o = "#e47a3e", h = "#f29060", p = "#eaa088", n = "#1b1418", d = "#b85a30", f = "#e8603e", l = "#f4b088", k = "#0c1016", e = "#ffffff" }
+colours = { o = "#e47a3e", h = "#f29060", p = "#eaa088", n = "#1b1418", d = "#b85a30", f = "#e8603e", l = "#f4b088", k = "#0c1016", e = "#ffffff", q = "#3e2a46", r = "#c84a30", g = "#c86a38", m = "#ffd0a8" }
 frames = [
     [
         ".........dd.......",
@@ -72,4 +80,81 @@ icon = [
     "ff.ohnhp",
     ".fonnnek",
     "ff.llnlp",
+]
+
+# The same four poses at four texels per cell side (36x16), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "...................mff..............",
+        ".................fffrff.............",
+        "mff.............dddddddhhh..........",
+        "ffrf...........ooooohhhhhhhho.......",
+        ".ffrf........onnnnnnnnnhhhhhhppp....",
+        ".fffrff...onnnnqqqnnnnngooooopppp...",
+        "..ffggoonnnnnnnnnnnnnnnoghoodpprrp..",
+        "..ffffoonnnnnnnnnnnnnqnoooghdphekhp.",
+        "..ffggoonnnnnnnnnnnnnqnoghoodohkkhpp",
+        "..fffroooooooonnnnnnnqnooogoodohhodo",
+        ".fffrff..oolllllnnnnnnnlllllldppppo.",
+        ".ffrf......llllllnnnnnnllllllpdppo..",
+        "ffrf.........llllllnnnllllllllp.....",
+        "mff............lllllllllllll........",
+        ".................frrff..............",
+        "...................fff..............",
+    ],
+    [
+        "...................mff..............",
+        ".................fffrff.............",
+        "................dddddddhhh..........",
+        "mff............ooooohhhhhhhho.......",
+        "ffrff........onnnnnnnnnhhhhhhppp....",
+        ".ffrrf....onnnnqqqnnnnngooooopppp...",
+        ".ffffroonnnnnnnnnnnnnnnoghoodpprrp..",
+        "..ffffoonnnnnnnnnnnnnqnoooghdphekhp.",
+        "..ffggoonnnnnnnnnnnnnqnoghoodohkkhpp",
+        "..fffgoooooooonnnnnnnqnooogoodohhodo",
+        "..ffgff..oolllllnnnnnnnlllllldppppo.",
+        ".ffrf......llllllnnnnnnllllllpdppo..",
+        "ffrf.........llllllnnnllllllllp.....",
+        "mff............lllllllllllll........",
+        ".................frrff..............",
+        "...................fff..............",
+    ],
+    [
+        "...................mff..............",
+        ".................fffrff.............",
+        "mff.............dddddddhhh..........",
+        "ffrf...........ooooohhhhhhhho.......",
+        ".ffrf........onnnnnnnnnhhhhhhppp....",
+        ".fffrff...onnnnqqqnnnnngooooopppp...",
+        "..ffggoonnnnnnnnnnnnnnnoghoodpprrp..",
+        "..ffffoonnnnnnnnnnnnnqnoooghdphekhp.",
+        "..ffggoonnnnnnnnnnnnnqnoghoodohkkhpp",
+        "..fffroooooooonnnnnnnqnooogoodohhodo",
+        ".fffrff..oolllllnnnnnnnlllllldppppo.",
+        ".ffrf......llllllnnnnnnllllllpdppo..",
+        "ffrf.........llllllnnnllllllllp.....",
+        "mff............lllllllllllll........",
+        ".................frrff..............",
+        "...................fff..............",
+    ],
+    [
+        "...................mff..............",
+        ".................fffrff.............",
+        "mff.............dddddddhhh..........",
+        "ffrf...........ooooohhhhhhhho.......",
+        ".ffrf........onnnnnnnnnhhhhhhppp....",
+        "..ffgff...onnnnqqqnnnnngooooopppp...",
+        "..fffgoonnnnnnnnnnnnnnnoghoodpprrp..",
+        "..ffggoonnnnnnnnnnnnnqnoooghdphekhp.",
+        "..ffffoonnnnnnnnnnnnnqnoghoodohkkhpp",
+        ".ffffroooooooonnnnnnnqnooogoodohhodo",
+        ".ffrrf...oolllllnnnnnnnlllllldppppo.",
+        "ffrff......llllllnnnnnnllllllpdppo..",
+        "mff..........llllllnnnllllllllp.....",
+        "...............lllllllllllll........",
+        ".................frrff..............",
+        "...................fff..............",
+    ],
 ]
