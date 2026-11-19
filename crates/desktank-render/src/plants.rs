@@ -175,12 +175,7 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     }
     let look = s.look;
     let at = SHAPES_COLUMN * 4;
-    row[at..at + 4].copy_from_slice(&[
-        look.leaf as u8,
-        look.stem as u8,
-        look.root as u8,
-        u8::from(look.fine_detail),
-    ]);
+    row[at..at + 4].copy_from_slice(&[look.leaf as u8, look.stem as u8, look.root as u8, 0]);
     // A rosette's or carpet's blades shade by length, as stems by height.
     let sizes = match &s.form {
         Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
@@ -268,12 +263,6 @@ mod tests {
         let shapes = texel(row, SHAPES_COLUMN);
         assert_eq!(shapes[0], rotala.look.leaf as u8);
         assert_eq!(shapes[1], rotala.look.stem as u8);
-        for plant in table.iter() {
-            assert_eq!(
-                texel(usize::from(plant.id.0), SHAPES_COLUMN)[3],
-                u8::from(plant.name == "hygrophila"),
-            );
-        }
         let Form::Stem(f) = &rotala.form else {
             panic!("rotala is a stem plant")
         };
