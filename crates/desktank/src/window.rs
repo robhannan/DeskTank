@@ -32,6 +32,12 @@
 //! creatures to start with. Swimming creatures redraw the tank every tick
 //! (20 fps, under the cap) even when every chunk sleeps.
 //!
+//! Cheats: the Konami code (↑ ↑ ↓ ↓ ← → ← → B A; the window has keyboard
+//! focus, so no chord) opens a cheat field in the title bar. Typing fills
+//! it, Enter runs the line ([`desktank_sim::cheats`]: `help`, `feed`,
+//! `spawn SPECIES [N]`, `clean`), Escape closes it (and doesn't close the
+//! window while it is open). Other key bindings are off while it is open.
+//!
 //! `--demo-pour N` feeds the same code a synthetic left drag sweeping
 //! across the upper tank for N seconds, then prints the CPU it used (the
 //! T4 acceptance measurement; real input can't be scripted without
@@ -53,13 +59,14 @@ use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Palette, PaletteHit, Tank, TankConfig, TankSurface, wgpu,
 };
 use desktank_sim::UnmetNeed;
+use desktank_sim::cheats::{self, CheatKey, Konami};
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
 use desktank_sim::{FieldKind, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::persist::Persistence;
@@ -241,8 +248,10 @@ struct Running {
     groups: Vec<(PaletteGroup, Vec<PaletteItem>)>,
     /// Index of the group the palette shows.
     open: usize,
-    /// Whether Shift is held.
-    shift: bool,
+    /// Modifier keys held (Shift steps groups backwards; with Ctrl or
+    /// Command a key is a shortcut, which neither types into the cheat
+    /// field nor counts towards the code).
+    modifiers: ModifiersState,
     /// Trackpad scroll (pixels) not yet turned into a brush-size step.
     scroll: f64,
     /// Wheel scroll (lines) not yet turned into a step; Windows precision
@@ -251,6 +260,10 @@ struct Running {
     /// Open group, selection and plant species last given to the tank
     /// (`None` before the first).
     shown: Option<Shown>,
+    /// Watches key presses for the code that opens the cheat field.
+    konami: Konami,
+    /// The cheat field's text while it is open.
+    cheat: Option<String>,
 }
 
 impl Running {
@@ -316,10 +329,12 @@ impl Running {
             tools,
             groups,
             open: 0,
-            shift: false,
+            modifiers: ModifiersState::empty(),
             scroll: 0.0,
             scroll_lines: 0.0,
             shown: None,
+            konami: Konami::new(),
+            cheat: None,
         };
         // Open the group holding the starting material.
         s.open = s.selection().map_or(0, |(g, _)| g);
@@ -488,6 +503,86 @@ impl Running {
         self.window.set_title(&format!("DeskTank — {text}"));
     }
 
+    /// Shows the open cheat field in the title bar, after `note` (the last
+    /// cheat's error) if any.
+    fn show_cheat(&self, note: Option<&str>) {
+        let Some(line) = &self.cheat else { return };
+        let note = note.map_or(String::new(), |n| format!("{n} · "));
+        self.window.set_title(&format!(
+            "DeskTank — {note}cheat: {line}_ (Enter runs, Esc closes)"
+        ));
+    }
+
+    /// Gives a key press to the cheats first: the open cheat field takes
+    /// every key, and the press completing the Konami code opens the field
+    /// instead of doing its usual binding (A). Returns whether it took it.
+    fn cheat_input(&mut self, event: &KeyEvent) -> bool {
+        if self.cheat.is_some() {
+            self.cheat_key(event);
+            return true;
+        }
+        if let Some(key) = konami_key(&event.logical_key)
+            && !event.repeat
+            && !self.command()
+            && self.konami.key(key, false)
+        {
+            self.cheat = Some(String::new());
+            self.show_cheat(None);
+            return true;
+        }
+        false
+    }
+
+    /// Whether Ctrl or Command is held.
+    fn command(&self) -> bool {
+        self.modifiers.control_key() || self.modifiers.super_key()
+    }
+
+    /// Takes a key press while the cheat field is open: Enter runs the
+    /// line (closing the field if it ran), Escape closes the field,
+    /// Backspace deletes, and text is typed in.
+    fn cheat_key(&mut self, event: &KeyEvent) {
+        let command = self.command();
+        let Some(line) = self.cheat.as_mut() else {
+            return;
+        };
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                self.cheat = None;
+                self.window.set_title("DeskTank");
+            }
+            Key::Named(NamedKey::Enter) => {
+                // Kept on failure, to fix a typo.
+                let line = line.clone();
+                match cheats::run(self.tank.world_mut(), &line) {
+                    Ok(out) => {
+                        if out.cells_changed > 0 {
+                            self.tank.cells_edited();
+                        }
+                        self.cheat = None;
+                        self.window
+                            .set_title(&format!("DeskTank — cheat: {}", out.message));
+                    }
+                    Err(e) => self.show_cheat(Some(&e.to_string())),
+                }
+            }
+            Key::Named(NamedKey::Backspace) => {
+                line.pop();
+                self.show_cheat(None);
+            }
+            _ if command => {}
+            _ => {
+                let typed = event.text.as_ref().map_or("", |t| t.as_str());
+                for c in typed.chars().filter(|c| !c.is_control()) {
+                    if line.chars().count() < cheats::MAX_LINE {
+                        line.push(c);
+                    }
+                }
+                self.show_cheat(None);
+            }
+        }
+    }
+
     /// Scroll up grows the brush, down shrinks it.
     fn scrolled(&mut self, delta: MouseScrollDelta) {
         let steps = match delta {
@@ -649,6 +744,7 @@ impl ApplicationHandler for App {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one arm per event and key binding
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let Some(s) = self.state.as_mut() else { return };
         match event {
@@ -691,7 +787,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
-            WindowEvent::ModifiersChanged(m) => s.shift = m.state().shift_key(),
+            WindowEvent::ModifiersChanged(m) => s.modifiers = m.state(),
+            WindowEvent::Focused(false) => s.konami.reset(),
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed && s.cheat_input(&event) => {}
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
@@ -735,7 +834,7 @@ impl ApplicationHandler for App {
                     // G opens the next group, Shift+G the previous one
                     // (Shift, not the letter's case: Caps Lock doesn't flip it).
                     Key::Character(c) if c.eq_ignore_ascii_case("g") => {
-                        s.step_group(if s.shift { -1 } else { 1 });
+                        s.step_group(if s.modifiers.shift_key() { -1 } else { 1 });
                     }
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the
@@ -813,4 +912,29 @@ impl ApplicationHandler for App {
         let wake = demo_wake.map_or(wake, |d| d.min(wake));
         event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
+}
+
+/// The Konami detector's view of a key; `None` for a modifier on its own
+/// (Shift for a capital B doesn't break the code).
+fn konami_key(key: &Key) -> Option<CheatKey> {
+    Some(match key {
+        Key::Named(NamedKey::ArrowUp) => CheatKey::Up,
+        Key::Named(NamedKey::ArrowDown) => CheatKey::Down,
+        Key::Named(NamedKey::ArrowLeft) => CheatKey::Left,
+        Key::Named(NamedKey::ArrowRight) => CheatKey::Right,
+        Key::Character(c) if c.eq_ignore_ascii_case("b") => CheatKey::B,
+        Key::Character(c) if c.eq_ignore_ascii_case("a") => CheatKey::A,
+        Key::Named(
+            NamedKey::Shift
+            | NamedKey::Control
+            | NamedKey::Alt
+            | NamedKey::Super
+            | NamedKey::Meta
+            | NamedKey::Hyper
+            | NamedKey::Fn
+            | NamedKey::CapsLock
+            | NamedKey::AltGraph,
+        ) => return None,
+        _ => CheatKey::Other,
+    })
 }

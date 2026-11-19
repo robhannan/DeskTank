@@ -215,6 +215,25 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
 
 .inspect[hidden] { display: none; }
 
+/* The cheat field (the Konami code opens it). */
+.cheat {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 8px;
+  background: rgba(5, 11, 17, 0.85);
+  border: 2px solid var(--accent);
+}
+
+.cheat[hidden] { display: none; }
+.cheat input { width: min(24ch, 60vw); font: inherit; }
+.cheat output { opacity: 0.85; }
+
 .settings {
   display: flex;
   flex-wrap: wrap;

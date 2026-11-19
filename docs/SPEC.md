@@ -556,6 +556,29 @@ target computes the same bits.
 
   The tray menu also has quick actions: Feed (default food), Water
   change, and Pause.
+- **Cheats** (D20): the Konami code (↑ ↑ ↓ ↓ ← → ← → B A) opens a small
+  text field over the tank. Enter runs the typed line as a cheat and
+  closes the field; an unknown or malformed cheat shows a short message
+  and leaves the field open; Esc closes it. Cheats are harmless shortcuts
+  to what the tools already do: `help`, `feed`, `spawn SPECIES [N]` (N up
+  to 10, within the population cap) and `clean` (a water change). The
+  detector and the registry are platform-free
+  (`desktank_sim::cheats`); hosts feed key presses (no auto-repeats) and
+  draw the field. Where it works:
+  - **window** and **web**: the host has keyboard focus, so the code is
+    typed as is. The window shows the field in its title bar (as it does
+    inspection, until T9's drawn card); the web uses a text input and
+    shows the result in the inspect readout. A web viewer tab can't
+    cheat.
+  - **overlay and wallpaper** (O5): only while interact mode is on, and
+    in chord mode only while the chord is held (`Konami::with_chord`);
+    letting go starts over. The overlay sees the arrow and letter keys
+    only once interact mode gives it key focus, since chord detection
+    reads modifier flags only (§3.3); checking that ⌃⌥ + arrows aren't
+    taken by the OS (macOS Spaces uses ⌃ + arrows) is part of O5.
+  - **screensaver**: no, any key ends it.
+  - **lock screen**: never; it must not take typed input beyond the OS's
+    own password field.
 - On Wayland, global key state isn't readable. There, the CLI
   `desktank interact toggle` talks to the running app over IPC, so you
   can bind it to a key in the compositor (§4.3).
@@ -1929,6 +1952,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole, can topple and can embed in loose substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
+| D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
