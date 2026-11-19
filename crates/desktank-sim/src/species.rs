@@ -6,7 +6,10 @@
 //! renderer packs every species' frames into one atlas texture. Sprites
 //! are drawn at [`TEXELS_PER_CELL`] texels per cell side, so their sides
 //! must be even, and the sprite sets the creature's body: the cells it
-//! covers and collides with (half its texel size).
+//! covers and collides with (half its texel size). Every sprite also gives
+//! `fine_frames`: the same poses drawn at four texels per cell side (twice
+//! the width and height), which the renderer uses at display scales
+//! divisible by four.
 //!
 //! Units (SPEC §2.1): speeds are in cells per second of world time, depths
 //! in cells or as a fraction of the water column (0 the surface, 1 the
@@ -69,7 +72,8 @@ pub enum Temperament {
 
 /// Pixel art for a species, facing right: `frames` of `width × height`
 /// RGBA texels (sRGB; alpha 0 or 255), row-major from the top left. Both
-/// sides are even ([`TEXELS_PER_CELL`] texels per cell).
+/// sides are even ([`TEXELS_PER_CELL`] texels per cell). `fine_frames` are
+/// the same poses at twice the width and height.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sprite {
     /// Width in texels.
@@ -78,7 +82,8 @@ pub struct Sprite {
     pub height: usize,
     /// Animation frames.
     pub frames: Vec<Vec<[u8; 4]>>,
-    /// Optional second set of frames with twice the width and height.
+    /// The same poses at twice the width and height (four texels per cell
+    /// side), one for each of `frames`.
     pub fine_frames: Vec<Vec<[u8; 4]>>,
     /// The palette icon: hand-drawn at one pixel per cell, at most
     /// [`MAX_ICON_SIDE`] a side, in the same colours.
@@ -448,8 +453,11 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
             })
             .collect::<Result<Vec<_>, _>>()
     };
-    if !def.fine_frames.is_empty() && def.fine_frames.len() != def.frames.len() {
-        return Err("fine frames must match the base animation's frame count");
+    if def.fine_frames.is_empty() {
+        return Err("a sprite needs fine_frames: every pose again at twice the width and height");
+    }
+    if def.fine_frames.len() != def.frames.len() {
+        return Err("fine_frames must have one pose for each of frames");
     }
     let frames = decode(&def.frames, width, height)?;
     let fine_frames = decode(&def.fine_frames, width * 2, height * 2)?;
@@ -543,6 +551,12 @@ mod tests {
             ["aabbaa", "aabbaa", "aa..aa", "aa..aa"],
         ]
         icon = ["aab", "a.a"]
+        fine_frames = [
+            ["aaaabbbbaaaa", "aaaabbbbaaaa", "aaaabbbbaaaa", "aaaabbbbaaaa",
+             ".aaaa.......", ".aaaa.......", ".aaaa.......", ".aaaa......."],
+            ["aaaabbbbaaaa", "aaaabbbbaaaa", "aaaabbbbaaaa", "aaaabbbbaaaa",
+             "aaaa....aaaa", "aaaa....aaaa", "aaaa....aaaa", "aaaa....aaaa"],
+        ]
     "##;
 
     #[test]
@@ -714,20 +728,40 @@ mod tests {
     }
 
     #[test]
-    fn fine_art_must_match_the_base_poses_at_double_size() {
-        let betta = include_str!("../../../assets/species/betta.toml");
+    fn fine_art_is_required_and_must_match_the_base_poses_at_double_size() {
         let materials = materials();
+        let table = SpeciesTable::builtin_for(&materials).unwrap();
+        for s in table.iter() {
+            let art = &s.sprite;
+            assert_eq!(art.fine_frames.len(), art.frames.len(), "{}", s.name);
+            let side = art.width * art.height * 4;
+            assert!(
+                art.fine_frames.iter().all(|f| f.len() == side),
+                "{}",
+                s.name
+            );
+        }
         let parse = |src: &str| SpeciesTable::from_toml_sources(&[src], &materials);
-        let table = parse(betta).unwrap();
-        let art = &table.get(table.id("betta").unwrap()).unwrap().sprite;
-        assert_eq!(art.fine_frames.len(), art.frames.len());
-        assert!(art.fine_frames.iter().all(|f| f.len() == 32 * 24));
+        let (head, _) = OK.split_once("fine_frames").unwrap();
+        assert!(matches!(
+            parse(head),
+            Err(SpeciesError::Invalid { reason, .. }) if reason.contains("fine_frames")
+        ));
         // Two base poses in the 6×4 test frame need two 12×8 fine poses.
-        for invalid in [r#"[["aa"]]"#, r#"[["aa"], ["aa"]]"#] {
-            assert!(matches!(
-                parse(&format!("{OK}\nfine_frames = {invalid}")),
-                Err(SpeciesError::Invalid { .. })
-            ));
+        let pose = r#"["aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa"]"#;
+        for invalid in [
+            "[]",
+            r#"[["aa"]]"#,
+            r#"[["aa"], ["aa"]]"#,
+            &format!("[{pose}, {pose}]"),
+        ] {
+            assert!(
+                matches!(
+                    parse(&format!("{head}fine_frames = {invalid}")),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "{invalid}"
+            );
         }
     }
 

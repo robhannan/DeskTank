@@ -12,7 +12,7 @@ max_speed = 2.0
 diet = ["algae", "detritus"]
 
 [sprite]
-colours = { g = "#d9a548", l = "#f2cc78", b = "#623e27", o = "#b8862f", f = "#ba9772", d = "#9c7b58", k = "#312626" }
+colours = { g = "#d9a548", l = "#f2cc78", b = "#623e27", o = "#b8862f", f = "#ba9772", d = "#9c7b58", k = "#312626", h = "#fbe4a6", n = "#3e2618", c = "#d6b48c", s = "#8a6a4c" }
 frames = [
     [
         "...blgb...",
@@ -53,4 +53,65 @@ icon = [
     "gbgbgb.",
     "obobobk",
     "fffffkf",
+]
+
+# The same four poses at four texels per cell side (20x12), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        "......gbbhhhbb......",
+        ".....gbblggbblg.....",
+        "..gbbhbgggbbgglb....",
+        ".gbllbgggbbgggbbg...",
+        "gggbbbbgggbbgggbbg..",
+        "ggggbbgggbbgggbbgg..",
+        "bggbbgbgbbggbbbgggkk",
+        "bbonoobbonoobbonoof.",
+        "fccccccccccccccckcff",
+        ".ffdfffffffffffffffn",
+        ".fdddfffffffffffffff",
+        "..fdddssssssssssssss",
+    ],
+    [
+        "......gbbhhhbb......",
+        ".....gbblggbblg.....",
+        "..gbbhbgggbbgglb....",
+        ".gbllbgggbbgggbbg...",
+        "gggbbbbgggbbgggbbg..",
+        "ggggbbgggbbgggbbgg..",
+        "bggbbgbgbbggbbbgggkk",
+        "bbonoobbonoobbonoof.",
+        "fccccccccccccccckcff",
+        ".ffffffdfffffffffffn",
+        ".fffffdddfffffffffff",
+        "..fssssdddssssssssss",
+    ],
+    [
+        "......gbbhhhbb......",
+        ".....gbblggbblg.....",
+        "..gbbhbgggbbgglb....",
+        ".gbllbgggbbgggbbg...",
+        "gggbbbbgggbbgggbbg.k",
+        "ggggbbgggbbgggbbggk.",
+        "bggbbgbgbbggbbbgggk.",
+        "bbonoobbonoobbonoof.",
+        "fccccccccccccccckcff",
+        ".ffffffffffdfffffffn",
+        ".fffffffffdddfffffff",
+        "..fssssssssdddssssss",
+    ],
+    [
+        "......gbbhhhbb......",
+        ".....gbblggbblg.....",
+        "..gbbhbgggbbgglb....",
+        ".gbllbgggbbgggbbg...",
+        "gggbbbbgggbbgggbbg.k",
+        "ggggbbgggbbgggbbggk.",
+        "bggbbgbgbbggbbbgggk.",
+        "bbonoobbonoobbonoof.",
+        "fccccccccccccccckcff",
+        ".ffffffffffffffdfffn",
+        ".fffffffffffffdddfff",
+        "..fssssssssssssdddss",
+    ],
 ]

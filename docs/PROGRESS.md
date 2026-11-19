@@ -7,6 +7,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 ## Done
 
 - Four-texel artwork spike on betta and hygrophila. At a display scale divisible by four, the betta uses four new 32×24 frames for its 8×6-cell body. Hygrophila draws pointed leaves with a midrib, stalk collars and fine root strands. Lower and intervening scales use the original two-texel art.
+- Four-texel art for every creature: the ten other species get hand-drawn `fine_frames` (fin rays, scales, ringed eyes with a glint, the neon's blue line, the harlequin's wedge, cory scutes and barbels, shrimp segments, legs and antennae, the nerite's whorl and zebra stripes, the crab's hairy legs), pose for pose with the base frames. `fine_frames` is now required in species TOML.
 
 - Repository, licences (MIT OR Apache-2.0), README.
 - DeskTank developer skill (`.agents/skills/desktank-developer/SKILL.md`) and `AGENTS.md`. Codex, Antigravity and Claude Code (`.claude/agents/`, Opus developer, Haiku reviewer; `CLAUDE.md` imports `AGENTS.md`) each provide a named developer and a lower-cost adversarial reviewer. PRs use `.github/pull_request_template.md`.
@@ -43,6 +44,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 ## Learnings
 
 - The trial keeps crisp texels at the existing even display scales by choosing the two-texel artwork at scales such as 6, where a four-texel pattern would alternate between one and two screen pixels per texel. The extra betta shelf costs 24 KiB of atlas space and a second frame origin costs eight bytes per creature instance. Plant detail uses the existing species texture.
+- With fine art for all eleven species the sprite atlas is 256×240 texels (240 KiB, 160 KiB of it fine frames), well inside WebGL2 limits. The `climbing` render scene is 80×45 cells at 320×180, scale 4, so it is the one reference that shows fine creature art; the bench (2560×1440, scale 4) draws fine frames too.
 
 - naga is laxer than Tint, Chrome's WGSL compiler: it accepts `a * b ^ c`, which WGSL forbids (bitwise operands must be unary expressions). Native tests and the Playwright tests (WebGL2 on SwiftShader, translated to GLSL by naga) never parse WGSL in the browser, so a Tint-only error shows up only as a black canvas on WebGPU. Parenthesise every operand of `&`, `|`, `^`, `<<` and `>>` that is not a single term, and never chain comparisons or mix `&&` with `||`; the `wgsl_precedence` test enforces this without a GPU.
 - Lock screens are restricted: macOS allows no custom lock screen and Windows only a picture, slideshow or Spotlight (no live rendering), so "lock screen" mode may mean the screensaver shown while locked.

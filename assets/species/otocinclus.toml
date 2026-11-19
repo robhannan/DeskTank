@@ -19,7 +19,7 @@ diet = ["algae", "detritus", "algae_wafer"]
 # texels (7 cells, 3.5 cm) from tail to snout: a 7x3-cell sprite, odd on
 # both sides, so a quarter turn on the glass never leaves it on half
 # cells. Four frames: the fins paddle and the tail flicks.
-colours = { g = "#9c8f74", d = "#6a5f4c", s = "#2a2520", w = "#d9cfb6", m = "#4a4238", f = "#b7aa8c", k = "#0c1016", e = "#ffffff" }
+colours = { g = "#9c8f74", d = "#6a5f4c", s = "#2a2520", w = "#d9cfb6", m = "#4a4238", f = "#b7aa8c", k = "#0c1016", e = "#ffffff", o = "#c9a95a", h = "#b8ab8e", n = "#5a5040", c = "#c8bda2" }
 frames = [
     [
         "......dd......",
@@ -59,4 +59,65 @@ icon = [
     "d.ddgd.",
     "ssssssk",
     "d.wwwwm",
+]
+
+# The same four poses at four texels per cell side (28x12), used at
+# display scales divisible by four.
+fine_frames = [
+    [
+        ".............hgd............",
+        "............gdggd...........",
+        "gdd.....ghhhhhhhhhhhhhhg....",
+        "dhdd...ngddggddggddggddoog..",
+        "dddddgddgggdnggdnggdngoekog.",
+        "ddggdggggggdgggdgggdggokkoh.",
+        "ssskksssssssssssssssssssssgg",
+        ".dskkssssssssssssssssssssggg",
+        "dhggggwwwcwwwcwwwcwwwcwwwwmm",
+        "gdd...ffwwwwwwwwwwwwwwwwwnmm",
+        "........ff..ff......ff......",
+        "........f...f.......f.......",
+    ],
+    [
+        ".............hgd............",
+        "............gdggd...........",
+        "........ghhhhhhhhhhhhhhg....",
+        ".......ngddggddggddggddoog..",
+        "gdd..gddgggdnggdnggdngoekog.",
+        "dhggdggggggdgggdgggdggokkoh.",
+        "ssskksssssssssssssssssssssgg",
+        ".dskkssssssssssssssssssssggg",
+        "dhggggwwwcwwwcwwwcwwwcwwwwmm",
+        "gdd...ffwwwwwwwwwwwwwwwwwnmm",
+        "..........ff..ff......ff....",
+        "..........f...f.......f.....",
+    ],
+    [
+        ".............hgd............",
+        "............gdggd...........",
+        "gdd.....ghhhhhhhhhhhhhhg....",
+        "dhdd...ngddggddggddggddoog..",
+        "dddddgddgggdnggdnggdngoekog.",
+        "ddggdggggggdgggdgggdggokkoh.",
+        "ssskksssssssssssssssssssssgg",
+        ".dskkssssssssssssssssssssggg",
+        "dhggggwwwcwwwcwwwcwwwcwwwwmm",
+        "gdd...ffwwwwwwwwwwwwwwwwwnmm",
+        "........ff..ff......ff......",
+        "........f...f.......f.......",
+    ],
+    [
+        ".............hgd............",
+        "............gdggd...........",
+        "gdd.....ghhhhhhhhhhhhhhg....",
+        "dhdd...ngddggddggddggddoog..",
+        "dddddgddgggdnggdnggdngoekog.",
+        "ddggdggggggdgggdgggdggokkoh.",
+        "ssskksssssssssssssssssssssgg",
+        "gdskkssssssssssssssssssssggg",
+        "..ggggwwwcwwwcwwwcwwwcwwwwmm",
+        "......ffwwwwwwwwwwwwwwwwwnmm",
+        "......ff..ff......ff........",
+        "......f...f.......f.........",
+    ],
 ]
