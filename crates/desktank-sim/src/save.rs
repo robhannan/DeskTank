@@ -17,7 +17,8 @@
 //!
 //! **Payload**: an LZ4 block (its uncompressed size prepended as a
 //! little-endian `u32`) holding the `postcard` encoding of the version's
-//! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2). The grid inside it is stored
+//! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2,
+//! `save::v3::Save` for 3). The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
 //! the LZ4 pass).
@@ -30,7 +31,9 @@
 //! random-tick lists and cursor, and the nutrient, CO₂ and light fields
 //! (T5); the plant table with its update bookkeeping (T6b); the creatures
 //! (T7) with their age, growth, energy and stress, the corpses, easy mode
-//! and the population cap (T9, version 2). Random streams are derived from `(seed, tick, stream)` (SPEC
+//! and the population cap (T9, version 2), and their sex, colour-morph
+//! alleles and breeding state, the egg clutches and every species' morph
+//! names (T9 part 2, version 3). Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
 //! the build, and the save records the name behind every material and
@@ -42,6 +45,11 @@
 //! [`decode`] runs them in turn. A version newer than the build is
 //! rejected. Version 2 (T9) migrates a version 1 tank's creatures to
 //! well-fed adults just mature, with the default cap and easy mode off.
+//! Version 3 (T9 part 2) gives a version 2 tank's creatures the morph they
+//! were drawn in (the palette's) and alternates their sexes within each
+//! species in id order; none is carrying, and each settles for a day
+//! before breeding. A species' morphs may only be appended to: a save
+//! whose morph names aren't a prefix of the build's is a mismatch.
 
 use thiserror::Error;
 
@@ -51,11 +59,12 @@ use crate::world::{LIFE_DAY_TICKS, World, WorldError};
 
 pub(crate) mod v1;
 pub(crate) mod v2;
+pub(crate) mod v3;
 
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 3;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -102,7 +111,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v2();
+    let snapshot = world.to_v3();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     let payload = lz4_flex::block::compress_prepend_size(&raw);
@@ -129,21 +138,32 @@ pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError
     let (version, payload) = open(bytes)?;
     let raw = decompress(payload)?;
     let payload = |e: postcard::Error| SaveError::Payload(e.to_string());
+    let species =
+        || SpeciesTable::builtin_for(&materials).map_err(|e| WorldError::Species(e.to_string()));
     let snapshot = match version {
-        1 => {
-            let v1: v1::Save = postcard::from_bytes(&raw).map_err(payload)?;
-            let species = SpeciesTable::builtin_for(&materials)
-                .map_err(|e| WorldError::Species(e.to_string()))?;
-            v2::Save::from_v1(v1, |id| {
-                species
-                    .get(SpeciesId(id))
-                    .map_or(0, |s| s.maturity_days.saturating_mul(LIFE_DAY_TICKS))
+        1 | 2 => {
+            let species = species()?;
+            let v2 = if version == 1 {
+                let v1: v1::Save = postcard::from_bytes(&raw).map_err(payload)?;
+                v2::Save::from_v1(v1, |id| {
+                    species
+                        .get(SpeciesId(id))
+                        .map_or(0, |s| s.maturity_days.saturating_mul(LIFE_DAY_TICKS))
+                })
+            } else {
+                postcard::from_bytes(&raw).map_err(payload)?
+            };
+            v3::Save::from_v2(v2, |id| {
+                species.get(SpeciesId(id)).map(|s| v3::Before {
+                    palette_morph: s.palette_morph,
+                    morphs: s.morphs.clone(),
+                })
             })
         }
-        2 => postcard::from_bytes(&raw).map_err(payload)?,
+        3 => postcard::from_bytes(&raw).map_err(payload)?,
         v => return Err(SaveError::UnsupportedVersion(v)),
     };
-    World::from_v2(snapshot, materials)
+    World::from_v3(snapshot, materials)
 }
 
 /// Checks the envelope (magic, version, length, checksum) without decoding
@@ -266,8 +286,8 @@ mod tests {
         let rock = world.materials().id("rock").unwrap();
         world.paint(20, 10, 3, rock, crate::Brush::Pour).unwrap();
         world.tick();
-        let good = world.to_v2();
-        let load = |s: v2::Save| World::from_v2(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v3();
+        let load = |s: v3::Save| World::from_v3(s, MaterialTable::builtin().unwrap());
         assert!(load(good.clone()).is_ok());
 
         let mut renamed = good.clone();
@@ -303,7 +323,7 @@ mod tests {
         // their cells, as a death makes them.
         let mut dead = good.clone();
         let tetra = world.species().id("neon_tetra").unwrap();
-        dead.creatures.corpses.push(v2::Corpse {
+        dead.creatures.corpses.push(v3::Corpse {
             species: tetra.0,
             cause: 0,
             x: 20 * 256,
@@ -314,13 +334,16 @@ mod tests {
             died: 0,
             released: 0,
             total: 7,
+            morph: 0,
+            female: false,
         });
         assert!(load(dead.clone()).is_ok());
         for bad in [
-            |c: &mut v2::Corpse| c.w = 255,
-            |c: &mut v2::Corpse| c.h = 0,
-            |c: &mut v2::Corpse| c.total = 65_535,
-            |c: &mut v2::Corpse| c.released = 7,
+            |c: &mut v3::Corpse| c.w = 255,
+            |c: &mut v3::Corpse| c.h = 0,
+            |c: &mut v3::Corpse| c.total = 65_535,
+            |c: &mut v3::Corpse| c.released = 7,
+            |c: &mut v3::Corpse| c.morph = 1,
         ] {
             let mut s = dead.clone();
             bad(&mut s.creatures.corpses[0]);
@@ -332,6 +355,101 @@ mod tests {
         let mut big = good;
         big.width = 9000;
         assert!(matches!(load(big), Err(SaveError::World(_))));
+    }
+
+    /// Crafted version 3 saves with breeding state no tank makes: a
+    /// carrying male, a pregnancy longer than the species', alleles outside
+    /// its morphs, and clutches that are malformed or of a species that lays
+    /// no eggs.
+    #[test]
+    fn rejects_bad_breeding_state() {
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 128,
+                height: 48,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let guppy = world.species().id("guppy").unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let nerite = world.species().id("nerite").unwrap();
+        for (x, female) in [(40, false), (60, true)] {
+            let traits = crate::Traits {
+                female: Some(female),
+                ..crate::Traits::default()
+            };
+            world
+                .add_creature_with_traits(guppy, x, 20, traits)
+                .unwrap();
+        }
+        let mut good = world.to_v3();
+        let gestation =
+            world.species().get(guppy).unwrap().breeding.unwrap().days * crate::LIFE_DAY_TICKS;
+        let female = good.creatures.list.iter().position(|c| c.female).unwrap();
+        let male = 1 - female;
+        good.creatures.list[female].carrying = gestation;
+        good.creatures.clutches.push(v3::Clutch {
+            id: 1,
+            species: tetra.0,
+            mother: [0, 0],
+            sire: [0, 0],
+            hatch: 100,
+            eggs: vec![130, 140],
+        });
+        good.creatures.next_clutch = 2;
+        let load = |s: v3::Save| World::from_v3(s, MaterialTable::builtin().unwrap());
+        assert!(load(good.clone()).is_ok());
+        // The next clutch id is only where the search starts: 0 becomes 1.
+        let mut zero = good.clone();
+        zero.creatures.next_clutch = 0;
+        assert!(load(zero).is_ok());
+
+        let creature_bad: [fn(&mut v3::Creature); 3] = [
+            |c| c.carrying += 1,
+            |c| c.alleles = [0, 9],
+            |c| c.sire = [9, 0],
+        ];
+        for (n, bad) in creature_bad.iter().enumerate() {
+            let mut s = good.clone();
+            bad(&mut s.creatures.list[female]);
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))), "female {n}");
+        }
+        let mut carrying_male = good.clone();
+        carrying_male.creatures.list[male].carrying = 1;
+        assert!(matches!(load(carrying_male), Err(SaveError::Invalid(_))));
+
+        let clutch_bad: [fn(&mut v3::Clutch); 7] = [
+            |c| c.id = 0,
+            |c| c.species = 250,
+            |c| c.mother = [0, 9],
+            |c| c.sire = [9, 9],
+            |c| c.eggs = vec![140, 130],
+            |c| c.eggs = vec![130, 130],
+            |c| c.eggs = vec![128 * 48],
+        ];
+        for (n, bad) in clutch_bad.iter().enumerate() {
+            let mut s = good.clone();
+            bad(&mut s.creatures.clutches[0]);
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))), "clutch {n}");
+        }
+        let mut snail = good.clone();
+        snail.creatures.clutches[0].species = nerite.0;
+        assert!(matches!(load(snail), Err(SaveError::Invalid(_))));
+        let mut live = good.clone();
+        live.creatures.clutches[0].species = guppy.0;
+        assert!(matches!(load(live), Err(SaveError::Invalid(_))));
+        let mut twice = good.clone();
+        let again = twice.creatures.clutches[0].clone();
+        twice.creatures.clutches.push(again);
+        assert!(matches!(load(twice), Err(SaveError::Invalid(_))));
+        let mut many = good;
+        let one = many.creatures.clutches[0].clone();
+        many.creatures.clutches = (1..=65)
+            .map(|id| v3::Clutch { id, ..one.clone() })
+            .collect();
+        assert!(matches!(load(many), Err(SaveError::Invalid(_))));
     }
 
     #[test]

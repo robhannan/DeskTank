@@ -1,0 +1,88 @@
+# Breeding and colour genetics (T9 part 2): cherry shrimp in each morph
+# (red, the brown wildtype, blue, yellow) along the bed; guppies in pairs,
+# the long-tailed male above the plainer, deeper, short-tailed female, in
+# the wild, red and blue strains; and a corydoras pair that settles in for
+# a day of its life (10 minutes) and then lays a clutch of cream eggs on
+# the bed beside it.
+ticks = 18000
+
+[world]
+starter = true
+
+[[creature]]
+species = "cherry_shrimp"
+x = 20
+y = 80
+morph = "red"
+
+[[creature]]
+species = "cherry_shrimp"
+x = 32
+y = 80
+morph = "wild"
+
+[[creature]]
+species = "cherry_shrimp"
+x = 44
+y = 80
+morph = "blue"
+
+[[creature]]
+species = "cherry_shrimp"
+x = 56
+y = 80
+morph = "yellow"
+
+[[creature]]
+species = "guppy"
+x = 30
+y = 30
+sex = "male"
+morph = "wild"
+
+[[creature]]
+species = "guppy"
+x = 30
+y = 45
+sex = "female"
+morph = "wild"
+
+[[creature]]
+species = "guppy"
+x = 70
+y = 30
+sex = "male"
+morph = "red"
+
+[[creature]]
+species = "guppy"
+x = 70
+y = 45
+sex = "female"
+morph = "red"
+
+[[creature]]
+species = "guppy"
+x = 110
+y = 30
+sex = "male"
+morph = "blue"
+
+[[creature]]
+species = "guppy"
+x = 110
+y = 45
+sex = "female"
+morph = "blue"
+
+[[creature]]
+species = "corydoras"
+x = 120
+y = 78
+sex = "male"
+
+[[creature]]
+species = "corydoras"
+x = 135
+y = 78
+sex = "female"

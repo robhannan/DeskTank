@@ -46,6 +46,10 @@
 //! dx = 3             # move the centre this many cells per creature (default 0)
 //! age_days = 10.0    # age in days of its life (default: just mature); a
 //!                    # young one is as grown as a well-fed one would be
+//! sex = "female"     # "female" or "male" (default: whichever its species
+//!                    # has fewer of, a male on a tie)
+//! morph = "blue"     # a colour morph of the species, both alleles (default:
+//!                    # the palette's)
 //! ```
 //!
 //! Water changes, then placements, then pours, then creatures due on tick `t` are applied just
@@ -94,6 +98,14 @@ pub enum ScriptError {
     /// A pour names a propagule but no plant.
     #[error("propagule {0:?} needs a plant")]
     PropaguleWithoutPlant(&'static str),
+    /// A `[[creature]]` entry names a morph its species doesn't have.
+    #[error("species {species:?} has no morph {morph:?}")]
+    UnknownMorph {
+        /// The species name.
+        species: String,
+        /// The morph name.
+        morph: String,
+    },
     /// A `[[creature]]` entry asks for more creatures than a tank holds.
     #[error("count {0} is more than a tank holds")]
     TooMany(u32),
@@ -250,6 +262,22 @@ pub struct AddCreatures {
     /// Age in days of a creature's life (`None`: just mature).
     #[serde(default)]
     pub age_days: Option<f64>,
+    /// Its sex (`None`: whichever its species has fewer of).
+    #[serde(default)]
+    pub sex: Option<Sex>,
+    /// A colour morph name, given both alleles (`None`: the palette's).
+    #[serde(default)]
+    pub morph: Option<String>,
+}
+
+/// A creature's sex as written in a script.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Sex {
+    /// Female.
+    Female,
+    /// Male.
+    Male,
 }
 
 /// A brush as written in a script.
@@ -420,12 +448,28 @@ impl Player<'_> {
                     * f64::from(crate::LIFE_DAY_TICKS))
                 .round() as u32
             });
+            let alleles = match &c.morph {
+                Some(name) => {
+                    let m = world
+                        .species()
+                        .get(species)
+                        .and_then(|s| s.morph(name))
+                        .ok_or_else(|| ScriptError::UnknownMorph {
+                            species: c.species.clone(),
+                            morph: name.clone(),
+                        })?;
+                    Some([m, m])
+                }
+                None => None,
+            };
+            let traits = crate::Traits {
+                age,
+                female: c.sex.map(|s| s == Sex::Female),
+                alleles,
+            };
             for i in 0..i64::from(c.count) {
                 let x = c.x.saturating_add(c.dx.saturating_mul(i));
-                match age {
-                    Some(age) => world.add_creature_aged(species, x, c.y, age)?,
-                    None => world.add_creature(species, x, c.y)?,
-                };
+                world.add_creature_with_traits(species, x, c.y, traits)?;
             }
         }
         Ok(())
@@ -602,6 +646,31 @@ mod tests {
         assert!(matches!(
             Script::parse("[[creature]]\nspecies = \"betta\"\nx = 1\ny = 1\ncount = 999"),
             Err(ScriptError::TooMany(999))
+        ));
+        // Sex and morph (T9 part 2).
+        let s = Script::parse(
+            "[[creature]]\nspecies = \"cherry_shrimp\"\nx = 20\ny = 40\ncount = 2\ndx = 10\n\
+             sex = \"female\"\nmorph = \"blue\"",
+        )
+        .unwrap();
+        let mut w = world(&s, 1);
+        s.run(&mut w, 1).unwrap();
+        let blue = w
+            .species()
+            .get(w.creatures()[0].species())
+            .unwrap()
+            .morph("blue");
+        for c in w.creatures() {
+            assert!(c.female());
+            assert_eq!(Some(w.creature_morph(c)), blue);
+        }
+        let bad = Script::parse(
+            "[[creature]]\nspecies = \"cherry_shrimp\"\nx = 20\ny = 40\nmorph = \"tartan\"",
+        )
+        .unwrap();
+        assert!(matches!(
+            bad.run(&mut world(&bad, 1), 1),
+            Err(ScriptError::UnknownMorph { .. })
         ));
     }
 

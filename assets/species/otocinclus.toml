@@ -18,6 +18,14 @@ speed = 3.0
 max_speed = 3.0
 diet = ["algae", "detritus", "algae_wafer"]
 
+# Rarely spawns in a tank; eggs on leaves hatch in 2–3 days.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 3
+brood = [2, 6]
+rest_days = 30
+
 [sprite]
 # Facing right, belly and sucker mouth down; two texels per cell side. 14
 # texels (7 cells, 3.5 cm) from tail to snout: a 7x3-cell sprite, odd on

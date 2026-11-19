@@ -243,6 +243,10 @@ fn bench_tick(c: &mut Criterion) {
         let _ = fish.add_creature(kind, column, row);
         column = (column + 23) % 630;
     }
+    // T9 part 2: they are pairs, so cap the tank at 30: the females check
+    // to breed every minute but never conceive, so the population stays
+    // put for as long as criterion runs.
+    fish.set_creature_cap(30);
     let mut fish = advance(fish, 200);
     // T9: unfed creatures starve after 8 hours of world time (576 000
     // ticks), sooner than criterion's run ends, so top their energy up

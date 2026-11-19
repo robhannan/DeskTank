@@ -19,6 +19,14 @@ speed = 4.5
 max_speed = 9.0
 diet = ["flake_food", "bloodworm"]
 
+# Lays its eggs under broad leaves; they hatch in about a day.
+# Broods are scaled down for a desktop tank; days are on the life clock.
+[breeding]
+mode = "eggs"
+days = 1
+brood = [4, 10]
+rest_days = 14
+
 [sprite]
 # Facing right; two texels per cell side. 18 texels (9 cells, 4.5 cm)
 # from the forked tail to the snout, and deeper than the neon: a 9x4-cell
