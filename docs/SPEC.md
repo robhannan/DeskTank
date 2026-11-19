@@ -431,7 +431,7 @@ target computes the same bits.
   Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
   the examples above), honey gourami (*Trichogaster chuna*, an
   air-breather like the betta), guppy (*Poecilia reticulata*, the
-  livebearer, drawn as a male until T9), harlequin rasbora
+  livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
   sucker-mouth catfish that crawls surfaces like the nerite). Two species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
@@ -515,6 +515,68 @@ target computes the same bits.
     the population cap (60 by default, 1–128, never below the creatures
     already there). `desktank window --easy-mode[=false]` and
     `--creature-cap N`; the web has an easy-mode setting.
+- *T9 part 2 (sexes, breeding, eggs, colour genetics, predation):*
+  - **Species data.** `[breeding]` gives `mode` (`livebearer` or `eggs`),
+    `days` (carried, or until a clutch hatches), `brood = [fewest, most]`
+    (1–16) and `rest_days`; species without it don't breed in fresh water
+    (nerite, amano shrimp, Thai micro crab). `prey_cm` (below `length_cm`)
+    makes a predator. `[genetics]` lists `[[genetics.morph]]` entries in
+    allele order (append only), each recolouring the sprite by key, and
+    names the `wildtype` and the `sprite`'s own morph (the one the palette
+    adds); without it a species has one morph, `wild`. `[sprite]` may give
+    `female_frames` (same size and count) and `female` colours for a
+    species drawn differently by sex. Real figures, broods scaled down for
+    a desktop tank: guppy livebearer 28 days, 3–8; cherry shrimp carries
+    her eggs 30 days, 3–8; neon tetra and harlequin eggs 1 day, corydoras
+    4, betta 2, honey gourami 1, otocinclus 3. Cherry shrimp morphs red
+    (palette), wild (brown, the wildtype), blue and yellow; guppy strains
+    wild (palette and wildtype), red and blue, and a plainer, deeper,
+    short-tailed female. Predators: betta 2.5 cm (fry, cherry shrimp,
+    crabs), honey gourami and guppy 1.2 cm (fry, shrimplets, crabs).
+  - **Sexes.** Every creature is male or female. One added from the
+    palette (or a script or host without a sex) takes whichever sex its
+    species has fewer of in the tank, a male on a tie, so adding two makes
+    a pair; young are either at even odds.
+  - **Breeding** is checked once a world minute. A female conceives when
+    she is an adult (mature, not an elder), her energy reserve at least
+    half full, unstressed, rested, not in the net, with a mature male of
+    her species in the tank and the tank under its cap, with a chance of a
+    quarter times the share of the cap still free, so crowding slows it
+    and a full tank stops it. A creature added to the tank settles for a
+    day of its life first. A livebearer then carries her young for `days`
+    and gives birth to a brood of fry around her, cut to the room left
+    under the cap; an egg layer lays a clutch at once. Either then rests
+    `rest_days`.
+  - **Eggs** are cells of the `egg` material (solid, amber), each holding
+    its clutch's id in its state; the clutch (species, both parents'
+    alleles, hatch tick, egg cells) is in `World::clutches` (at most 64).
+    Eggs go on water cells around the mother that touch glass, rock,
+    plants or the bed, then on whatever lies below her, never under a
+    creature. When due, each egg still in place hatches into a fry there,
+    or rots into detritus if the tank is at its cap.
+  - **Colour genetics** (D13): two morph alleles per creature; it shows a
+    morph when both match and the wildtype otherwise. A young takes one
+    allele from each parent at random; each mutates into a random other
+    morph 5 times in 1000 and reverts to the wildtype 10 times in 1000.
+    Same-morph lines breed true, two morphs crossed give wildtype young
+    (red × blue cherry shrimp give brown), and mixed lines stay mostly
+    wildtype, drifting further towards it.
+  - **Predation**, once a second, not in easy mode: a hungry adult
+    predator whose reach touches a creature no longer than its `prey_cm`
+    (its species' length at its size, own young included) eats it with a
+    chance of 1 in 4. The prey leaves no corpse (cause `predation`); the
+    predator is fed (an hour of energy). Neither may be in the net.
+  - **Drawing.** Each creature and corpse is drawn in its look (morph and
+    sex), one atlas shelf per look.
+  - **Save format v3** adds each creature's sex, alleles, pregnancy and
+    rest, each corpse's morph and sex, the clutches and every species'
+    morph names (checked on load: a species' morphs may only be appended
+    to). v2 saves migrate: every creature shows its palette morph, sexes
+    alternate within a species in id order, none is carrying, and each
+    settles for a day.
+  - **Scripts** take `sex` and `morph` in `[[creature]]`; `World` has
+    `add_creature_with_traits` (age, sex, alleles) and the debug hook
+    `skip_breeding_time`.
 - **Names** (D4): none by default. In interact mode, click a creature to
   see its card (species, age, health) and give it a name.
 
@@ -589,7 +651,9 @@ target computes the same bits.
     - the creatures (genetics, age and names included; T9 part 1 adds
       age, growth, energy and stress, the corpses, easy mode and the
       population cap in format version 2, migrating version 1 creatures
-      to well-fed adults just mature);
+      to well-fed adults just mature; T9 part 2 adds sex, morph alleles,
+      pregnancy and rest, the egg clutches and the species' morph names in
+      version 3);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -1655,6 +1719,14 @@ Each package depends only on the packages before it.
   per cause so far, easy mode, the cap and the save round trip
   (`crates/desktank-sim/tests/lifecycle.rs`) and the `lifecycle`
   reference image; 30 settled fish tick in 7.37 µs (main 7.13 µs).
+  *Part 2 done:* §2.4 *T9 part 2*: sexes, livebearers and egg layers,
+  breeding rules (mature, well fed, rested, paired, slower when crowded,
+  within the cap), eggs as cells that hatch or rot, colour morphs with
+  inheritance, reversion and mutation, predation of fry and shrimp, female
+  guppy frames, and save format v3 with a v2 migration; tests in
+  `crates/desktank-sim/tests/breeding.rs` (including the seeded
+  multi-generation test and a predation death), the `breeding` reference
+  image; 30 settled fish tick in 7.75 µs (main 7.52 µs).
 - [ ] **T10 Catch-up and cross-OS measurement.** Optional catch-up (off
   by default, capped at 24 h), plus `desktank bench` on Windows and Linux
   with measurement recipes in PROGRESS. *Accept:*
