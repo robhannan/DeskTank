@@ -5,8 +5,8 @@
 
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
-    Brush, Creature, DEFAULT_CREATURE_CAP, MaterialId, MaterialTable, MovementClass, Rect, Script,
-    SpeciesId, TICKS_PER_SECOND, World, WorldConfig, WorldError,
+    BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, MaterialId, MaterialTable, MovementClass,
+    Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig, WorldError,
 };
 
 fn world(width: usize, height: usize, seed: u64) -> World {
@@ -48,9 +48,9 @@ fn sand_bed(w: &mut World, bed: usize) {
         .unwrap();
 }
 
-/// Whether a creature's body may overlap `m`: water, bubbles and passable
-/// loose particles. Everything else (rock, substrate, bodies, plants,
-/// air) is solid to it.
+/// Whether a creature's body may overlap `m` in any band: water, bubbles
+/// and passable loose particles. Everything else (rock, substrate, bodies,
+/// plants, air) is solid to it, plants only near its band ([`blocks`]).
 fn swimmable(w: &World, m: MaterialId) -> bool {
     let m = w.materials().get(m).unwrap();
     match m.class {
@@ -60,14 +60,24 @@ fn swimmable(w: &World, m: MaterialId) -> bool {
     }
 }
 
-/// The first solid cell under `c`'s body, if any.
+/// Whether the cell at `(x, y)` blocks a creature in `band`: anything not
+/// swimmable, except a plant cell more than [`BAND_REACH`] bands away
+/// (D21).
+fn blocks(w: &World, x: usize, y: usize, band: u8) -> bool {
+    let m = w.cell(x, y).unwrap().material;
+    !swimmable(w, m)
+        && w.plant_band(x, y)
+            .is_none_or(|p| p.abs_diff(band) <= BAND_REACH)
+}
+
+/// The first cell under `c`'s body that blocks it, if any.
 fn solid_under(w: &World, c: &Creature) -> Option<(usize, usize, String)> {
     let b = w.creature_body(c);
     assert!(!b.is_empty(), "creature {:?} has no body", c.id());
     for y in b.y0..b.y1 {
         for x in b.x0..b.x1 {
             let m = w.cell(x, y).unwrap().material;
-            if !swimmable(w, m) {
+            if blocks(w, x, y, c.band()) {
                 let name = w.materials().get(m).unwrap().name.clone();
                 return Some((x, y, name));
             }
@@ -117,9 +127,16 @@ fn busy_tank(seed: u64) -> World {
         let s = species(&w, name);
         for j in 0..3_i64 {
             let x = 12 + 36 * j + i64::try_from(i).unwrap() * 3;
-            w.add_creature(s, x, 50).unwrap();
+            // All males in easy mode: nothing breeds or is eaten, so the
+            // same 33 swim throughout.
+            let male = Traits {
+                female: Some(false),
+                ..Traits::default()
+            };
+            w.add_creature_with_traits(s, x, 50, male).unwrap();
         }
     }
+    w.set_easy_mode(true);
     w
 }
 
@@ -708,12 +725,11 @@ fn nerite_traces_the_faces_of_a_submerged_rock() {
 }
 
 /// Whether the cells just past `c`'s foot (the side its turn points to)
-/// hold something solid, or are the tank glass.
+/// hold something solid in its band, or are the tank glass.
 fn foot_held(w: &World, c: &Creature) -> bool {
     let b = w.creature_body(c);
     let solid = |x: usize, y: usize| {
-        let m = w.cell(x, y).unwrap().material;
-        m != id(w, "air") && !swimmable(w, m)
+        w.cell(x, y).unwrap().material != id(w, "air") && blocks(w, x, y, c.band())
     };
     match c.turn() {
         0 => b.y1 == w.height() || (b.x0..b.x1).any(|x| solid(x, b.y1)),

@@ -6,15 +6,15 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v3};
+use crate::save::{SaveError, runs, unrun, v1, v5};
 use crate::species::SpeciesId;
 
 impl World {
-    /// The world as a version 3 snapshot.
-    pub(crate) fn to_v3(&self) -> v3::Save {
+    /// The world as a version 5 snapshot.
+    pub(crate) fn to_v5(&self) -> v5::Save {
         let base = |i: usize| variant(self.seed, 0, i);
         #[allow(clippy::cast_possible_truncation)] // sides ≤ MAX_SIDE
-        v3::Save {
+        v5::Save {
             width: self.width as u32,
             height: self.height as u32,
             seed: self.seed,
@@ -35,6 +35,14 @@ impl World {
                 .species()
                 .iter()
                 .map(|s| named(s.id.0, &s.name))
+                .collect(),
+            morphs: self
+                .species()
+                .iter()
+                .map(|s| v5::Morphs {
+                    species: s.id.0,
+                    names: s.morphs.clone(),
+                })
                 .collect(),
             grid: v1::Grid {
                 materials: runs(self.cells.iter().map(|c| c.material.0)),
@@ -64,8 +72,8 @@ impl World {
         }
     }
 
-    /// A world restored from a version 3 snapshot, on `materials`.
-    pub(crate) fn from_v3(s: v3::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+    /// A world restored from a version 5 snapshot, on `materials`.
+    pub(crate) fn from_v5(s: v5::Save, materials: MaterialTable) -> Result<Self, SaveError> {
         let config = WorldConfig {
             width: s.width as usize,
             height: s.height as usize,
@@ -148,8 +156,8 @@ impl World {
     }
 
     /// Every material and species id the save names must still name the
-    /// same thing.
-    fn check_names(&self, s: &v3::Save) -> Result<(), SaveError> {
+    /// same thing, and every species' morphs must start with the saved ones.
+    fn check_names(&self, s: &v5::Save) -> Result<(), SaveError> {
         let check = |what: &str, saved: &[v1::Named], now: &dyn Fn(u8) -> Option<String>| {
             for e in saved {
                 let current = now(e.id);
@@ -174,7 +182,19 @@ impl World {
         })?;
         check("species", &s.species, &|id| {
             self.species().get(SpeciesId(id)).map(|p| p.name.clone())
-        })
+        })?;
+        for m in &s.morphs {
+            let now = self.species().get(SpeciesId(m.species));
+            if !now.is_some_and(|sp| sp.morphs.starts_with(&m.names)) {
+                return Err(SaveError::Mismatch(format!(
+                    "species {} morphs were {:?}, now {:?}",
+                    m.species,
+                    m.names,
+                    now.map(|sp| &sp.morphs)
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Checks a saved cell index.

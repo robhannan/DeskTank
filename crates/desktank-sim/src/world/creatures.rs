@@ -10,9 +10,26 @@
 //!   rounded outwards when it sits between cells). It may only overlap
 //!   *swimmable* cells: water (dense liquids), bubbles and passable loose
 //!   particles such as food and detritus (material `passable`). Rock,
-//!   substrate, bodies, plants and air block it. If the world moves a
-//!   solid into a creature (a pour, a growing plant) it hops to the nearest
-//!   free spot.
+//!   substrate, bodies and air block it; a plant cell blocks it only
+//!   within [`BAND_REACH`] of its depth band (below). If the world moves a
+//!   solid into a creature (a pour, a growing plant) it shifts to a free
+//!   band where it is, or else hops to the nearest free spot.
+//! - **Depth** (2.5D, D21). The tank is [`DEPTH_BANDS`] bands deep, 0 at
+//!   the front glass. Each plant cell has a band ([`World::plant_band`]);
+//!   everything else (rock, substrate, glass, bodies, air) spans every
+//!   band, and so do food and other loose particles, which a creature eats
+//!   from any band. A creature has a depth in 1/256 band (hashed and
+//!   saved) that eases towards a target band: a new random one in its
+//!   species' `bands` with each wander target, or, when a plant blocks its
+//!   way, the nearest band it can shift to in place where the way is clear
+//!   (front first for even ids, back first for odd), holding still while
+//!   it shifts, so it slips past the plant rather than turning away; it
+//!   turns away if that takes over [`DODGE_TICKS`]. A schooler that can't
+//!   reach its school at all strays on a wander target of its own for a
+//!   while, out of whatever pocket holds it. Crawlers keep the band they
+//!   start in (unless buried, when any creature may shift band to get
+//!   free), so they climb only the plants in it. A corpse sinks in
+//!   the band it died in.
 //! - **Walkers** keep to the substrate, stepping up one-row ledges; a
 //!   species with `hop_every` (shrimp) kicks off it now and then and sinks
 //!   back a few cells on.
@@ -27,10 +44,12 @@
 //!   a chunk only when they eat (SPEC §2.1). Food is found through a
 //!   registry of food cells kept like the living lists, not by scanning.
 //! - **Life cycle** (T9): age, stages, growth with feeding, deaths and
-//!   corpses are in [`lifecycle`].
+//!   corpses are in [`lifecycle`]; sexes, breeding, eggs, colour genetics
+//!   and predation in [`breeding`].
 //! - **Habits** of a few species (waste, eating corpses, a home with a
 //!   carpet patch) are in [`habits`].
 
+mod breeding;
 mod habits;
 mod lifecycle;
 mod steering;
@@ -40,13 +59,18 @@ use core::mem;
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 
+use super::plants::PlantDepth;
 use super::{TICKS_PER_SECOND, World, WorldError};
 use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v3};
+use crate::save::{SaveError, v5};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
+pub use breeding::{
+    BREED_CHECK_SECONDS, CONCEIVE_ODDS, Clutch, MAX_CLUTCHES, MUTATION_PER_MILLE, PREY_ENERGY,
+    REVERSION_PER_MILLE, SETTLE_TICKS, STRIKE_ODDS,
+};
 use habits::{home_span, near_home};
 pub use lifecycle::{
     BITE_ENERGY, CORPSE_SINK, Corpse, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
@@ -73,8 +97,12 @@ const BITE: u16 = 30 * TICKS_PER_SECOND as u16;
 const SEARCH_EVERY: u64 = 10;
 /// How far a creature notices food, in cells.
 const FOOD_SENSE: i64 = 160;
-/// How far a creature hops to get out of a solid, in cells.
-const UNSTUCK_RADIUS: i32 = 8;
+/// How far from where it is asked for a creature is added, in cells.
+const PLACE_RADIUS: i32 = 8;
+/// How far a creature hops to get out of a solid, in cells: twice
+/// [`PLACE_RADIUS`], so a big walker caught by sand raining onto a mound
+/// still finds room (the search runs only while it is buried).
+const UNSTUCK_RADIUS: i32 = 16;
 /// Ticks a netted creature stays held after the last hold.
 const HOLD_TICKS: u64 = 2;
 /// Creature random streams: above every chunk id, below the life stream.
@@ -87,6 +115,33 @@ const REACHED: i64 = 2 * ONE as i64;
 const RETARGET_TICKS: (u32, u32) = (40, 160);
 /// Liquids at least this dense are water to a creature (not air).
 const WATER_DENSITY: f32 = 0.5;
+/// Depth bands, front (0) to back (D21).
+pub const DEPTH_BANDS: u8 = 8;
+/// A creature collides with a plant cell whose band is at most this far
+/// from its own. With 1, a creature and a leaf are each about a band
+/// thick: they touch when they share a band or are next to one another,
+/// so a plant blocks three of the eight bands at each cell and a fish
+/// shifts two bands to slip past a leaf. (With 0, plants hardly block at
+/// all; with 2, a stand of stem plants is a wall in every band.)
+pub const BAND_REACH: u8 = 1;
+/// Depth change per tick, in 1/256 band: a band in 4 ticks (0.2 s).
+const DEPTH_SPEED: i32 = ONE / 4;
+/// Ticks a creature holds still shifting band past a plant before it gives
+/// up and turns away (1 s: time to cross five bands).
+#[allow(clippy::cast_possible_truncation)] // 40
+const DODGE_TICKS: u16 = TICKS_PER_SECOND as u16;
+
+/// What [`World::try_move`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Move {
+    /// It moved (or didn't want to).
+    Moved,
+    /// It holds still, shifting band to get past a plant.
+    Dodging,
+    /// It couldn't move.
+    Blocked,
+}
+
 /// Sideways speed, in 1/256 cell per tick, past which a creature turns to
 /// face the way it swims.
 const TURN_SPEED: i32 = 12;
@@ -126,12 +181,21 @@ pub struct Creature {
     /// Body centre, 1/256 cells.
     x: i32,
     y: i32,
+    /// Depth, 1/256 band from the front (0) to the back.
+    z: i32,
     /// Velocity, 1/256 cells per tick.
     vx: i32,
     vy: i32,
     /// Wander target (body centre), 1/256 cells.
     tx: i32,
     ty: i32,
+    /// Depth it eases towards, 1/256 band (a whole band).
+    tz: i32,
+    /// Ticks it has held still shifting band past a plant.
+    dodging: u16,
+    /// Ticks a schooling creature wanders on its own after its way to the
+    /// school was blocked.
+    stray: u16,
     /// Ticks until the next wander target.
     retarget: u32,
     /// Ticks of food in the belly.
@@ -163,6 +227,30 @@ pub struct Creature {
     /// The substrate cell `(x, y)` a home owning species picked as its
     /// home and planted its carpet patch on (see [`habits`]).
     home: Option<(u32, u32)>,
+    /// Its sex (T9 part 2).
+    female: bool,
+    /// Its two colour-morph alleles, indices into its species' morphs.
+    alleles: [u8; 2],
+    /// Ticks left carrying young (a livebearer; 0: not carrying).
+    carrying: u32,
+    /// The father's alleles while carrying.
+    sire: [u8; 2],
+    /// Ticks until it may breed again.
+    rest: u32,
+}
+
+/// What a creature added by a host, a script or a test is like (see
+/// [`World::add_creature_with_traits`]); `None` takes the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Traits {
+    /// Age in ticks, grown as a well-fed creature would be by then (`None`:
+    /// an adult just mature).
+    pub age: Option<u32>,
+    /// Its sex (`None`: whichever its species has fewer of in the tank, a
+    /// male on a tie).
+    pub female: Option<bool>,
+    /// Its two morph alleles (`None`: two of the morph the palette adds).
+    pub alleles: Option<[u8; 2]>,
 }
 
 impl Creature {
@@ -185,6 +273,22 @@ impl Creature {
         #[allow(clippy::cast_precision_loss)]
         let f = |v: i32| v as f32 / ONE as f32;
         (f(self.x), f(self.y))
+    }
+
+    /// Depth in bands from the front glass (fractional, 0 to
+    /// [`DEPTH_BANDS`] − 1) while it shifts between bands.
+    #[must_use]
+    pub fn depth(&self) -> f32 {
+        // At most 7 × 256: exact in f32.
+        #[allow(clippy::cast_precision_loss)]
+        let z = self.z as f32 / ONE as f32;
+        z
+    }
+
+    /// The depth band it collides in: its depth, rounded.
+    #[must_use]
+    pub fn band(&self) -> u8 {
+        band_of(self.z)
     }
 
     /// The cell its body centre is in.
@@ -263,6 +367,32 @@ impl Creature {
         fed.min(water)
     }
 
+    /// Whether it is female (T9 part 2).
+    #[must_use]
+    pub fn female(&self) -> bool {
+        self.female
+    }
+
+    /// Its two colour-morph alleles (indices into its species'
+    /// [`crate::Species::morphs`]); [`World::creature_morph`] is the morph
+    /// it shows.
+    #[must_use]
+    pub fn alleles(&self) -> [u8; 2] {
+        self.alleles
+    }
+
+    /// Ticks left until a carrying female gives birth (0: not carrying).
+    #[must_use]
+    pub fn carrying(&self) -> u32 {
+        self.carrying
+    }
+
+    /// Ticks until it may breed again.
+    #[must_use]
+    pub fn rest(&self) -> u32 {
+        self.rest
+    }
+
     /// Mirrors it so its head leads along `(dx, dy)` in its turned frame,
     /// where the sprite's right points along the foot turned anticlockwise.
     /// A move across that axis leaves it as it was.
@@ -289,6 +419,8 @@ struct Kind {
     accel: i32,
     /// Depth band as fractions of the water column.
     depth: [f32; 2],
+    /// Front and back depth bands it keeps to (D21), inclusive.
+    bands: (u8, u8),
     schooling: bool,
     zone: Zone,
     breathes_air: bool,
@@ -299,6 +431,15 @@ struct Kind {
     /// Ticks of growth to maturity, and the species' lifespan in ticks.
     maturity: u32,
     lifespan: u32,
+    /// Adult body length, and the longest prey it eats (0: none), in mm.
+    length_mm: u32,
+    prey_mm: u32,
+    /// How it breeds, if it does.
+    breeding: Option<breeding::Breed>,
+    /// Its morph count, the wildtype's index and the palette's.
+    morphs: u8,
+    wild: u8,
+    palette_morph: u8,
     edible: [bool; 256],
     /// Ticks between droppings of waste (0: it leaves none).
     waste_every: u64,
@@ -335,6 +476,11 @@ pub(super) struct Creatures {
     easy: bool,
     /// Dead creatures sinking and rotting, oldest first.
     corpses: Vec<Corpse>,
+    /// Egg clutches waiting to hatch, oldest first.
+    clutches: Vec<Clutch>,
+    /// The next clutch id to try (never 0).
+    next_clutch: u16,
+    egg: Option<MaterialId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -385,6 +531,7 @@ impl Creatures {
                 top,
                 accel: (top / 6).max(2),
                 depth: s.depth,
+                bands: (s.bands[0], s.bands[1]),
                 schooling: s.temperament == Temperament::Schooling,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
@@ -397,6 +544,16 @@ impl Creatures {
                 // Validated to at most 7300 days: far inside u32.
                 maturity: s.maturity_days.saturating_mul(LIFE_DAY_TICKS),
                 lifespan: s.lifespan_days.saturating_mul(LIFE_DAY_TICKS),
+                // Validated lengths fit the sprite: at most 8 cm.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                length_mm: (s.length_cm * 10.0).round() as u32,
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                prey_mm: s.prey_cm.map_or(0, |p| (p * 10.0).round() as u32),
+                breeding: s.breeding.as_ref().map(breeding::Breed::of),
+                // At most MAX_MORPHS.
+                morphs: u8::try_from(s.morphs.len()).unwrap_or(1),
+                wild: s.wildtype,
+                palette_morph: s.palette_morph,
                 edible,
                 // Validated to 1..=600 s.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -423,6 +580,9 @@ impl Creatures {
             cap: DEFAULT_CREATURE_CAP,
             easy: false,
             corpses: Vec::new(),
+            clutches: Vec::new(),
+            next_clutch: 1,
+            egg: materials.id("egg"),
         }
     }
 
@@ -520,7 +680,9 @@ impl World {
 
     /// Adds an adult of `species`, just mature and well fed, with its body
     /// centred on cell `(x, y)`, or on the nearest free spot within a few
-    /// cells.
+    /// cells. It takes whichever sex its species has fewer of in the tank
+    /// (a male on a tie), shows the morph the palette adds, and settles in
+    /// for [`SETTLE_TICKS`] before it breeds.
     ///
     /// # Errors
     ///
@@ -532,16 +694,46 @@ impl World {
         x: i64,
         y: i64,
     ) -> Result<CreatureId, WorldError> {
-        self.add_creature_with(species, x, y, None)
+        self.add_creature_with_traits(species, x, y, Traits::default())
     }
 
-    /// [`World::add_creature`], `age` ticks old (`None`: just mature).
-    fn add_creature_with(
+    /// [`World::add_creature`] with the age, sex or morph alleles given.
+    ///
+    /// # Errors
+    ///
+    /// As [`World::add_creature`], or if an allele isn't one of the
+    /// species' morphs.
+    pub fn add_creature_with_traits(
         &mut self,
         species: SpeciesId,
         x: i64,
         y: i64,
-        age: Option<u32>,
+        traits: Traits,
+    ) -> Result<CreatureId, WorldError> {
+        let k = *self
+            .kind(species)
+            .ok_or(WorldError::UnknownSpecies(species))?;
+        let alleles = traits.alleles.unwrap_or([k.palette_morph; 2]);
+        if let Some(&bad) = alleles.iter().find(|&&a| a >= k.morphs) {
+            return Err(WorldError::UnknownMorph(species, bad));
+        }
+        let female = traits.female.unwrap_or_else(|| self.default_sex(species));
+        let age = traits.age.unwrap_or(k.maturity);
+        self.spawn(species, x, y, age, female, alleles, SETTLE_TICKS)
+    }
+
+    /// Adds a creature `age` ticks old, grown as a well-fed one would be,
+    /// resting `rest` ticks before it breeds.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(
+        &mut self,
+        species: SpeciesId,
+        x: i64,
+        y: i64,
+        age: u32,
+        female: bool,
+        alleles: [u8; 2],
+        rest: u32,
     ) -> Result<CreatureId, WorldError> {
         let base = *self
             .kind(species)
@@ -549,17 +741,20 @@ impl World {
         if self.creatures.list.len() >= self.creatures.cap {
             return Err(WorldError::PopulationCap(self.creatures.cap));
         }
-        let age = age.unwrap_or(base.maturity);
         let growth = age.min(base.maturity);
         let mut probe = Creature {
             id: CreatureId(self.creatures.next_id),
             species,
             x: 0,
             y: 0,
+            z: 0,
             vx: 0,
             vy: 0,
             tx: 0,
             ty: 0,
+            tz: 0,
+            dodging: 0,
+            stray: 0,
             retarget: 0,
             satiety: 0,
             food: None,
@@ -573,18 +768,30 @@ impl World {
             growth,
             energy: ENERGY_RESERVE,
             stress: 0,
+            female,
+            alleles,
+            carrying: 0,
+            sire: [0; 2],
+            rest,
             home: None,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
-        let (fx, fy) = if self.fits(&k, 0, fx, fy) {
-            (fx, fy)
+        let band = default_band(self.seed, probe.id.0, k.bands);
+        let (fx, fy, band) = if self.fits(&k, 0, fx, fy, band) {
+            (fx, fy, band)
+        } else if let Some(b) = self.free_band(&k, 0, fx, fy, band) {
+            (fx, fy, b)
         } else {
-            self.nearest_fit(&k, 0, fx, fy).ok_or(WorldError::NoRoom)?
+            let (x, y) = self
+                .nearest_fit(&k, 0, fx, fy, band, PLACE_RADIUS)
+                .ok_or(WorldError::NoRoom)?;
+            (x, y, band)
         };
         let id = probe.id;
         self.creatures.next_id += 1;
         (probe.x, probe.y, probe.tx, probe.ty) = (fx, fy, fx, fy);
+        (probe.z, probe.tz) = (z_of(band), z_of(band));
         self.creatures.list.push(probe);
         self.creatures.version += 1;
         Ok(id)
@@ -629,7 +836,7 @@ impl World {
             return false;
         };
         let (fx, fy) = (centre_of(x), centre_of(y));
-        if (fx, fy) == (c.x, c.y) || !self.fits(&k, c.turn, fx, fy) {
+        if (fx, fy) == (c.x, c.y) || !self.fits(&k, c.turn, fx, fy, c.band()) {
             return false;
         }
         let tick = self.tick;
@@ -656,7 +863,7 @@ impl World {
     pub fn in_zone(&self, creature: &Creature) -> bool {
         if let Some(k) = self.grown_kind(creature)
             && k.zone == Zone::Surfaces
-            && !self.on_surface(&k, creature.turn, creature.x, creature.y)
+            && !self.on_surface(&k, creature.turn, creature.x, creature.y, creature.band())
         {
             return false;
         }
@@ -683,20 +890,24 @@ impl World {
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
     /// host's cursor isn't saved.
-    pub(super) fn save_creatures(&self) -> v3::Creatures {
+    pub(super) fn save_creatures(&self) -> v5::Creatures {
         let cr = &self.creatures;
-        v3::Creatures {
+        v5::Creatures {
             next_id: cr.next_id,
             cap: u32::try_from(cr.cap).unwrap_or(u32::MAX),
             easy: cr.easy,
             list: cr
                 .list
                 .iter()
-                .map(|c| v3::Creature {
+                .map(|c| v5::Creature {
                     id: c.id.0,
                     species: c.species.0,
                     x: c.x,
                     y: c.y,
+                    z: c.z,
+                    tz: c.tz,
+                    dodging: c.dodging,
+                    stray: c.stray,
                     vx: c.vx,
                     vy: c.vy,
                     tx: c.tx,
@@ -714,13 +925,18 @@ impl World {
                     growth: c.growth,
                     energy: c.energy,
                     stress: c.stress,
+                    female: c.female,
+                    alleles: c.alleles,
+                    carrying: c.carrying,
+                    sire: c.sire,
+                    rest: c.rest,
                     home: c.home,
                 })
                 .collect(),
             corpses: cr
                 .corpses
                 .iter()
-                .map(|c| v3::Corpse {
+                .map(|c| v5::Corpse {
                     species: c.species.0,
                     cause: c.cause.code(),
                     x: c.x,
@@ -728,16 +944,32 @@ impl World {
                     w: c.w,
                     h: c.h,
                     facing_left: c.facing_left,
+                    band: c.band,
                     died: c.died,
                     released: c.released,
                     total: c.total,
+                    morph: c.morph,
+                    female: c.female,
+                })
+                .collect(),
+            next_clutch: cr.next_clutch,
+            clutches: cr
+                .clutches
+                .iter()
+                .map(|c| v5::Clutch {
+                    id: c.id,
+                    species: c.species.0,
+                    mother: c.mother,
+                    sire: c.sire,
+                    hatch: c.hatch,
+                    eggs: c.eggs.clone(),
                 })
                 .collect(),
         }
     }
 
     /// Restores the creatures, corpses and life settings from a save.
-    pub(super) fn load_creatures(&mut self, saved: v3::Creatures) -> Result<(), SaveError> {
+    pub(super) fn load_creatures(&mut self, saved: v5::Creatures) -> Result<(), SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -765,6 +997,24 @@ impl World {
             if c.growth > k.maturity || c.energy > ENERGY_RESERVE {
                 return Err(invalid("growth or energy out of range"));
             }
+            // Within its species' bands (as every move keeps it).
+            let deep = |z: i32| (z_of(k.bands.0)..=z_of(k.bands.1)).contains(&z);
+            if !(deep(c.z)
+                && deep(c.tz)
+                && (k.schooling || c.stray == 0)
+                && c.tz % ONE == 0
+                && c.dodging <= DODGE_TICKS
+                && u32::from(c.stray) < RETARGET_TICKS.1)
+            {
+                return Err(invalid("depth out of range"));
+            }
+            let carry_limit = k
+                .breeding
+                .filter(|b| !b.eggs && c.female)
+                .map_or(0, |b| b.days);
+            if c.alleles.iter().chain(&c.sire).any(|&a| a >= k.morphs) || c.carrying > carry_limit {
+                return Err(invalid("morph or pregnancy out of range"));
+            }
             for i in [c.food, c.ignore].into_iter().flatten() {
                 self.cell_index(i, "a creature's food")?;
             }
@@ -778,10 +1028,14 @@ impl World {
                 species,
                 x: c.x,
                 y: c.y,
+                z: c.z,
                 vx: c.vx,
                 vy: c.vy,
                 tx: c.tx,
                 ty: c.ty,
+                tz: c.tz,
+                dodging: c.dodging,
+                stray: c.stray,
                 retarget: c.retarget,
                 satiety: c.satiety,
                 food: c.food,
@@ -795,11 +1049,19 @@ impl World {
                 growth: c.growth,
                 energy: c.energy,
                 stress: c.stress,
+                female: c.female,
+                alleles: c.alleles,
+                carrying: c.carrying,
+                sire: c.sire,
+                rest: c.rest,
                 home: c.home,
             });
         }
         let corpses = self.load_corpses(saved.corpses)?;
+        let clutches = self.load_clutches(saved.clutches)?;
         self.creatures.list = list;
+        self.creatures.clutches = clutches;
+        self.creatures.next_clutch = saved.next_clutch.max(1);
         self.creatures.corpses = corpses;
         self.creatures.cap = cap;
         self.creatures.easy = saved.easy;
@@ -808,8 +1070,8 @@ impl World {
         Ok(())
     }
 
-    /// The corpses from a save, checked against the species.
-    fn load_corpses(&self, saved: Vec<v3::Corpse>) -> Result<Vec<Corpse>, SaveError> {
+    /// The corpses from a save, as `corpse_of` makes them.
+    fn load_corpses(&self, saved: Vec<v5::Corpse>) -> Result<Vec<Corpse>, SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -829,7 +1091,9 @@ impl World {
             let cause = DeathCause::from_code(c.cause).ok_or_else(|| invalid("unknown cause"))?;
             // As `corpse_of` makes them: at most the adult body, and a
             // third of its cells to release.
-            let (full_w, full_h) = self.kind(species).map_or((0, 0), |k| (k.w, k.h));
+            let (full_w, full_h, morphs) = self
+                .kind(species)
+                .map_or((0, 0, 0), |k| (k.w, k.h, k.morphs));
             let fits = |side: u8, full: i32| (1..=full).contains(&i32::from(side));
             let total = (u16::from(c.w) * u16::from(c.h)).div_ceil(3).max(1);
             if !inside(c.x, c.y)
@@ -837,6 +1101,8 @@ impl World {
                 || !fits(c.h, full_h)
                 || c.total != total
                 || c.released >= c.total
+                || c.band >= DEPTH_BANDS
+                || c.morph >= morphs
             {
                 return Err(invalid("position, size or decay out of range"));
             }
@@ -848,9 +1114,12 @@ impl World {
                 w: c.w,
                 h: c.h,
                 facing_left: c.facing_left,
+                band: c.band,
                 died: c.died,
                 released: c.released,
                 total: c.total,
+                morph: c.morph,
+                female: c.female,
             });
         }
         Ok(corpses)
@@ -861,20 +1130,29 @@ impl World {
         for c in &self.creatures.list {
             h.write(&c.id.0.to_le_bytes());
             h.write(&[c.species.0, u8::from(c.facing_left), c.turn]);
-            for v in [c.x, c.y, c.vx, c.vy, c.tx, c.ty] {
+            for v in [c.x, c.y, c.z, c.vx, c.vy, c.tx, c.ty, c.tz] {
                 h.write(&v.to_le_bytes());
             }
             h.write(&c.retarget.to_le_bytes());
             h.write(&c.satiety.to_le_bytes());
+            h.write(&c.dodging.to_le_bytes());
+            h.write(&c.stray.to_le_bytes());
             for v in [c.food, c.ignore] {
                 h.write(&v.map_or(u64::MAX, u64::from).to_le_bytes());
             }
             h.write(&c.held_until.to_le_bytes());
             h.write(&c.next_breath.to_le_bytes());
             h.write(&c.eaten.to_le_bytes());
-            for v in [c.age, c.growth, c.energy, c.stress] {
+            for v in [c.age, c.growth, c.energy, c.stress, c.carrying, c.rest] {
                 h.write(&v.to_le_bytes());
             }
+            h.write(&[
+                u8::from(c.female),
+                c.alleles[0],
+                c.alleles[1],
+                c.sire[0],
+                c.sire[1],
+            ]);
             // Only home owners have one, so other tanks hash as before.
             if let Some((x, y)) = c.home {
                 h.write(&x.to_le_bytes());
@@ -882,13 +1160,17 @@ impl World {
             }
         }
         self.hash_corpses(h);
+        self.hash_breeding(h);
     }
 
     /// Runs every creature for one tick, after the cells and life: each
     /// lives a tick (and may die, leaving a corpse), then moves; then the
     /// corpses sink and rot.
     pub(super) fn update_creatures(&mut self) {
-        if self.creatures.list.is_empty() && self.creatures.corpses.is_empty() {
+        if self.creatures.list.is_empty()
+            && self.creatures.corpses.is_empty()
+            && self.creatures.clutches.is_empty()
+        {
             return;
         }
         // Water quality matters once a second, and not in easy mode.
@@ -899,16 +1181,22 @@ impl World {
         let mut list = mem::take(&mut self.creatures.list);
         let mut changed = false;
         let mut dead = Vec::new();
-        list.retain_mut(|c| match self.live(c, quality, &mut changed) {
-            Some(cause) => {
+        let mut breeding = self.breed_tick(&list);
+        list.retain_mut(|c| {
+            if let Some(cause) = self.live(c, quality, &mut changed) {
                 dead.push(self.corpse_of(c, cause));
-                false
+                return false;
             }
-            None => true,
+            self.breed(c, &mut breeding);
+            true
         });
         if !dead.is_empty() {
             self.bury(dead);
             changed = true;
+        }
+        // Predators hunt once a second, with the water-quality sample.
+        if quality.is_some() {
+            changed |= self.predation(&mut list);
         }
         self.creatures.school.clear();
         for c in &list {
@@ -927,6 +1215,7 @@ impl World {
             changed |= self.update_creature(c);
         }
         self.creatures.list = list;
+        changed |= self.finish_breeding(breeding);
         if !self.creatures.corpses.is_empty() {
             changed |= self.update_corpses(self.creatures.detritus);
         }
@@ -944,9 +1233,14 @@ impl World {
         if c.held_until >= self.tick {
             return false;
         }
-        // The world moved something solid into it: hop out.
-        if !self.fits(&k, c.turn, c.x, c.y) {
-            if let Some((x, y)) = self.nearest_fit(&k, c.turn, c.x, c.y) {
+        // The world moved something solid into it: shift to a free band
+        // where it is, or hop out.
+        if !self.fits(&k, c.turn, c.x, c.y, c.band()) {
+            if let Some(b) = self.free_band(&k, c.turn, c.x, c.y, c.band()) {
+                (c.z, c.tz) = (z_of(b), z_of(b));
+            } else if let Some((x, y)) =
+                self.nearest_fit(&k, c.turn, c.x, c.y, c.band(), UNSTUCK_RADIUS)
+            {
                 (c.x, c.y, c.vx, c.vy) = (x, y, 0, 0);
                 c.retarget = 0;
             }
@@ -956,6 +1250,7 @@ impl World {
         c.satiety = c.satiety.saturating_sub(1);
         let hungry = c.hungry();
         self.habits(&k, c, &mut rng);
+        self.shift_depth(&k, c);
         if k.zone == Zone::Surfaces {
             self.crawl(&k, c);
             if hungry && self.anything_to_eat(&k) {
@@ -978,16 +1273,35 @@ impl World {
             };
         }
 
-        // Move, sliding along whatever blocks one axis.
-        let blocked = !self.try_move(&k, c);
+        // Move, sliding along whatever blocks one axis; a plant in the way
+        // sends it to another band.
+        let mut moved = self.try_move(&k, c);
+        if moved == Move::Dodging {
+            c.dodging += 1;
+            // A dodge that doesn't clear the plant in time is given up.
+            if c.dodging > DODGE_TICKS {
+                moved = Move::Blocked;
+                c.tz = z_of(c.band());
+            }
+        }
+        if moved != Move::Dodging {
+            c.dodging = 0;
+        }
         if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
             c.food = None;
-        } else if blocked {
+        } else if moved != Move::Moved {
             (c.vx, c.vy) = (0, 0);
-            if let Some(f) = c.food.take() {
-                c.ignore = Some(f);
+            if moved == Move::Blocked {
+                if let Some(f) = c.food.take() {
+                    c.ignore = Some(f);
+                }
+                self.pick_target(&k, c, &mut rng);
+                // A schooler that can't reach its school strays for a while
+                // on its new target, out of whatever pocket holds it.
+                if k.schooling {
+                    c.stray = u16::try_from(c.retarget).unwrap_or(0);
+                }
             }
-            self.pick_target(&k, c, &mut rng);
         }
         if c.vx > TURN_SPEED {
             c.facing_left = false;
@@ -1034,27 +1348,30 @@ impl World {
     }
 
     /// Moves `c` by its velocity, or along one axis if the other is
-    /// blocked. Returns false if it wanted to move and couldn't at all.
-    fn try_move(&self, k: &Kind, c: &mut Creature) -> bool {
+    /// blocked. Where a move is blocked only by plants and clear in a band
+    /// it can shift to, it holds still and heads for that band instead (see
+    /// the module docs).
+    fn try_move(&self, k: &Kind, c: &mut Creature) -> Move {
         if (c.vx, c.vy) == (0, 0) {
-            return true;
+            return Move::Moved;
         }
+        let band = c.band();
         if k.zone == Zone::Bottom
             && c.vx != 0
-            && !self.fits(k, c.turn, c.x, c.y + ONE)
-            && !self.fits(k, c.turn, c.x + c.vx, c.y)
-            && self.fits(k, c.turn, c.x, c.y - ONE)
-            && self.fits(k, c.turn, c.x + c.vx, c.y - ONE)
+            && !self.fits(k, c.turn, c.x, c.y + ONE, band)
+            && !self.fits(k, c.turn, c.x + c.vx, c.y, band)
+            && self.fits(k, c.turn, c.x, c.y - ONE, band)
+            && self.fits(k, c.turn, c.x + c.vx, c.y - ONE, band)
         {
             c.x += c.vx;
             c.y -= ONE;
-            return true;
+            return Move::Moved;
         }
         for (dx, dy) in [(c.vx, c.vy), (c.vx, 0), (0, c.vy)] {
             if (dx, dy) == (0, 0) {
                 continue;
             }
-            if self.fits(k, c.turn, c.x + dx, c.y + dy) {
+            if self.fits(k, c.turn, c.x + dx, c.y + dy, band) {
                 c.x += dx;
                 c.y += dy;
                 if dx == 0 {
@@ -1063,10 +1380,111 @@ impl World {
                 if dy == 0 {
                     c.vy = 0;
                 }
-                return true;
+                return Move::Moved;
+            }
+            // Blocked in this band: if the move is clear in a band it can
+            // reach, shift there rather than slide, keeping to a shift
+            // under way.
+            if c.dodging > 0 && c.z != c.tz && self.only_plants_block(k, c.turn, c.x + dx, c.y + dy)
+            {
+                return Move::Dodging;
+            }
+            if let Some(b) = self.depth_route(k, c, c.x + dx, c.y + dy) {
+                c.tz = z_of(b);
+                return Move::Dodging;
             }
         }
-        false
+        Move::Blocked
+    }
+
+    /// Eases `c`'s depth a step towards its target band. It enters a new
+    /// band only where its body fits there; if not, it stays and gives up
+    /// on that target.
+    fn shift_depth(&self, k: &Kind, c: &mut Creature) {
+        if c.z == c.tz {
+            return;
+        }
+        let z = c.z + (c.tz - c.z).clamp(-DEPTH_SPEED, DEPTH_SPEED);
+        if band_of(z) == c.band() || self.fits(k, c.turn, c.x, c.y, band_of(z)) {
+            c.z = z;
+        } else {
+            c.tz = z_of(c.band());
+            c.z = c.tz;
+        }
+    }
+
+    /// The nearest band in `c`'s species range, other than its own, where
+    /// its body fits at `(x, y)` and that it can shift to from where it is
+    /// (it fits in every band on the way): front first for an even id,
+    /// back first for an odd one.
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn depth_route(&self, k: &Kind, c: &Creature, x: i32, y: i32) -> Option<u8> {
+        // Only plants have bands: anything else in the way blocks them all.
+        if !self.only_plants_block(k, c.turn, x, y) {
+            return None;
+        }
+        let here = i32::from(c.band());
+        let (lo, hi) = (i32::from(k.bands.0), i32::from(k.bands.1));
+        let dirs = if c.id.0.is_multiple_of(2) {
+            [-1, 1]
+        } else {
+            [1, -1]
+        };
+        let mut open = [true; 2];
+        for d in 1..i32::from(DEPTH_BANDS) {
+            for (side, dir) in dirs.into_iter().enumerate() {
+                let b = here + dir * d;
+                if !open[side] {
+                    continue;
+                }
+                let Ok(b) = u8::try_from(b) else {
+                    open[side] = false;
+                    continue;
+                };
+                if !(lo..=hi).contains(&i32::from(b)) || !self.fits(k, c.turn, c.x, c.y, b) {
+                    open[side] = false;
+                } else if self.fits(k, c.turn, x, y, b) {
+                    return Some(b);
+                }
+            }
+            if open == [false; 2] {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Whether a body turned `turn` at `(x, y)` lies inside the grid and
+    /// overlaps plant cells but nothing else it can't swim through.
+    fn only_plants_block(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+        let (wide, tall) = extent(k, turn);
+        let Some(to) = body_box(wide, tall, x, y, self.width, self.height) else {
+            return false;
+        };
+        let mut plant = false;
+        for row in to.y0..to.y1 {
+            for i in row * self.width + to.x0..row * self.width + to.x1 {
+                let m = self.cells[i].material;
+                if !self.creatures.swim[usize::from(m.0)] {
+                    if self.plants.part(m).is_none() {
+                        return false;
+                    }
+                    plant = true;
+                }
+            }
+        }
+        plant
+    }
+
+    /// The nearest other band in the species' range where a body turned
+    /// `turn` fits at `(x, y)`, front first.
+    fn free_band(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> Option<u8> {
+        let (lo, hi) = k.bands;
+        (1..DEPTH_BANDS)
+            .flat_map(|d| [band.checked_sub(d), band.checked_add(d)])
+            .flatten()
+            .filter(|b| (lo..=hi).contains(b))
+            .find(|&b| self.fits(k, turn, x, y, b))
     }
 
     /// Eats one food cell within the species' reach of the body, if there
@@ -1168,19 +1586,34 @@ impl World {
         (c.tx, c.ty) = (centre_of(x), centre_of(y));
         let (lo, hi) = RETARGET_TICKS;
         c.retarget = lo + rng.next_u32() % (hi - lo);
+        // Every other target or so, a new band too.
+        let (front, back) = k.bands;
+        let pick = rng.next_u32();
+        if pick.is_multiple_of(2) {
+            let n = u32::from(back - front) + 1;
+            c.tz = z_of(front + u8::try_from((pick >> 1) % n).unwrap_or(0));
+        }
     }
 
-    /// The nearest spot within [`UNSTUCK_RADIUS`] cells where the body
-    /// fits, searching rings outwards in a fixed order.
-    fn nearest_fit(&self, k: &Kind, turn: u8, x: i32, y: i32) -> Option<(i32, i32)> {
-        for r in 1..=UNSTUCK_RADIUS {
+    /// The nearest spot within `radius` cells where the body fits in
+    /// `band`, searching rings outwards in a fixed order.
+    fn nearest_fit(
+        &self,
+        k: &Kind,
+        turn: u8,
+        x: i32,
+        y: i32,
+        band: u8,
+        radius: i32,
+    ) -> Option<(i32, i32)> {
+        for r in 1..=radius {
             for dy in -r..=r {
                 for dx in -r..=r {
                     if dx.abs() != r && dy.abs() != r {
                         continue;
                     }
                     let (nx, ny) = (x + dx * ONE, y + dy * ONE);
-                    if self.fits(k, turn, nx, ny) {
+                    if self.fits(k, turn, nx, ny, band) {
                         return Some((nx, ny));
                     }
                 }
@@ -1190,23 +1623,45 @@ impl World {
     }
 
     /// Whether a body turned `turn` and centred at `(x, y)` (fixed point)
-    /// lies inside the grid on swimmable cells only.
-    fn fits(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+    /// lies inside the grid on cells it may overlap in `band`.
+    fn fits(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
         let (wide, tall) = extent(k, turn);
-        self.fits_box(wide, tall, x, y)
+        self.fits_box(wide, tall, x, y, Some(band))
     }
 
     /// Whether a `w × h`-cell box centred at `(x, y)` (fixed point) lies
-    /// inside the grid on swimmable cells only.
-    fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32) -> bool {
+    /// inside the grid on cells it may overlap: swimmable ones, and plant
+    /// cells further than [`BAND_REACH`] from `band` (`None`: none).
+    fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>) -> bool {
         let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
         };
+        let mut memo = None;
         (b.y0..b.y1).all(|row| {
-            let row = &self.cells[row * self.width + b.x0..row * self.width + b.x1];
-            row.iter()
-                .all(|cell| self.creatures.swim[usize::from(cell.material.0)])
+            (row * self.width + b.x0..row * self.width + b.x1)
+                .all(|i| !self.blocks_with(i, band, &mut memo))
         })
+    }
+
+    /// Whether the cell at index `i` blocks a body in `band` (`None`: in
+    /// every band).
+    pub(super) fn blocks(&self, i: usize, band: Option<u8>) -> bool {
+        self.blocks_with(i, band, &mut None)
+    }
+
+    /// [`World::blocks`], with a plant memo for a run of cells.
+    #[inline]
+    fn blocks_with(&self, i: usize, band: Option<u8>, memo: &mut Option<PlantDepth>) -> bool {
+        let m = self.cells[i].material;
+        if self.creatures.swim[usize::from(m.0)] {
+            return false;
+        }
+        match (band, self.plants.part(m)) {
+            (Some(band), Some(_)) => self
+                .plant_band_with(i, memo)
+                .is_none_or(|p| p.abs_diff(band) <= BAND_REACH),
+            _ => true,
+        }
     }
 
     fn kind(&self, species: SpeciesId) -> Option<&Kind> {
@@ -1290,6 +1745,25 @@ fn zone(k: &Kind, surface_row: usize, height: usize) -> (usize, usize) {
     (top, bottom.max(top + 1).min(height))
 }
 
+/// The band a depth (1/256 band) rounds to.
+fn band_of(z: i32) -> u8 {
+    u8::try_from(((z + ONE / 2) / ONE).clamp(0, i32::from(DEPTH_BANDS) - 1)).unwrap_or(0)
+}
+
+/// The depth (1/256 band) of the middle of `band`.
+fn z_of(band: u8) -> i32 {
+    i32::from(band.min(DEPTH_BANDS - 1)) * ONE
+}
+
+/// The band creature `id` starts in (and a save from before depth gives
+/// it): a hash of the world seed and its id, within `bands`.
+pub(crate) fn default_band(seed: u64, id: u32, bands: (u8, u8)) -> u8 {
+    let (front, back) = (bands.0.min(bands.1), bands.0.max(bands.1));
+    let n = u64::from(back - front) + 1;
+    let h = crate::rng::splitmix64(seed ^ crate::rng::splitmix64(u64::from(id) ^ 0x0064_6570_7468));
+    front + u8::try_from(h % n).unwrap_or(0)
+}
+
 /// The fixed-point centre of cell `v`, clamped well inside `i32`.
 fn centre_of(v: i64) -> i32 {
     let v = v.clamp(-(1 << 20), 1 << 20);
@@ -1305,4 +1779,93 @@ fn dist(dx: i32, dy: i32) -> i64 {
 
 fn to_i64(v: usize) -> i64 {
     i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Brush, WorldConfig};
+
+    fn planted(seed: u64) -> World {
+        let mut w = World::new(
+            WorldConfig {
+                width: 120,
+                height: 80,
+                seed,
+                water_level: 0.95,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let soil = w.materials().id("aquasoil").unwrap();
+        w.fill_rect(
+            Rect {
+                x0: 0,
+                y0: 72,
+                x1: 120,
+                y1: 80,
+            },
+            soil,
+            Brush::Replace,
+        )
+        .unwrap();
+        let cutting = w.materials().id("cutting").unwrap();
+        for x in (20..100).step_by(10) {
+            w.set_cell(x, 71, cutting).unwrap();
+        }
+        for _ in 0..6000 {
+            w.tick();
+        }
+        w
+    }
+
+    #[test]
+    fn creatures_keep_to_their_species_bands() {
+        let mut w = planted(3);
+        let tetra = w.species().id("neon_tetra").unwrap();
+        w.creatures.kinds[usize::from(tetra.0)]
+            .as_mut()
+            .unwrap()
+            .bands = (2, 3);
+        let ids: Vec<_> = [(15, 40), (60, 30), (100, 50)]
+            .into_iter()
+            .map(|(x, y)| w.add_creature(tetra, x, y).unwrap())
+            .collect();
+        let nerite = w.species().id("nerite").unwrap();
+        let snail = w.add_creature(nerite, 60, 70).unwrap();
+        let start = w.creature(snail).unwrap().band();
+        let mut seen = [false; DEPTH_BANDS as usize];
+        for _ in 0..4000 {
+            w.tick();
+            for &id in &ids {
+                let c = w.creature(id).unwrap();
+                assert!((2..=3).contains(&c.band()), "band {}", c.band());
+                assert!((2.0..=3.0).contains(&c.depth()), "depth {}", c.depth());
+                seen[usize::from(c.band())] = true;
+            }
+            // A crawler keeps its band.
+            assert_eq!(w.creature(snail).unwrap().band(), start);
+        }
+        assert!(seen[2] && seen[3], "they wander between their bands");
+    }
+
+    /// Deepest depth, 1/256 band.
+    const MAX_Z: i32 = (DEPTH_BANDS as i32 - 1) * ONE;
+
+    #[test]
+    fn bands_round_and_default_within_range() {
+        assert_eq!(band_of(0), 0);
+        assert_eq!(band_of(ONE / 2 - 1), 0);
+        assert_eq!(band_of(ONE / 2), 1);
+        assert_eq!(band_of(MAX_Z), DEPTH_BANDS - 1);
+        assert_eq!(z_of(DEPTH_BANDS), MAX_Z);
+        let mut seen = [false; DEPTH_BANDS as usize];
+        for id in 1..200 {
+            let b = default_band(7, id, (0, DEPTH_BANDS - 1));
+            seen[usize::from(b)] = true;
+            assert_eq!(b, default_band(7, id, (0, DEPTH_BANDS - 1)));
+            assert!((2..=4).contains(&default_band(7, id, (2, 4))));
+        }
+        assert_eq!(seen, [true; DEPTH_BANDS as usize]);
+    }
 }

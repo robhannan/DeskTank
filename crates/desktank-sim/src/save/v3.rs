@@ -1,16 +1,17 @@
-//! Format version 3 snapshot types: version 2 with each creature's home (a
-//! home owning species' patch of substrate, SPEC §2.5's cheat-only
-//! creatures). Frozen like [`super::v2`]: once version 3 has shipped these
-//! types never change, and the parts earlier versions already had keep
-//! their types.
+//! Format version 3 snapshot types (T9 part 2): version 2 with each
+//! creature's sex, colour-morph alleles and breeding state (the young it
+//! carries, its rest), each corpse's morph and sex, the egg clutches, and
+//! every species' morph names. Frozen like [`super::v1`] and
+//! [`super::v2`]: once version 3 has shipped these types never change, and
+//! the parts earlier versions already had keep their types.
 //!
 //! Field order is the wire order (`postcard` writes fields in declaration
 //! order with no names), so fields are never reordered or removed.
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use super::v1::{Body, Chunk, Grid, Life, Named, Plants};
 use super::v2;
-pub(crate) use super::v2::{Body, Chunk, Corpse, Grid, Life, Named, Plants};
 
 /// A whole tank.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ pub(crate) struct Save {
     pub materials: Vec<Named>,
     pub plant_species: Vec<Named>,
     pub species: Vec<Named>,
+    /// Every species' morph names in allele order, to check on load.
+    pub morphs: Vec<Morphs>,
     pub grid: Grid,
     pub chunks: Vec<Chunk>,
     pub next_body: u16,
@@ -34,7 +37,14 @@ pub(crate) struct Save {
     pub creatures: Creatures,
 }
 
-/// The creatures, corpses and life settings (T7, T9).
+/// One species' morph names, in allele order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Morphs {
+    pub species: u8,
+    pub names: Vec<String>,
+}
+
+/// The creatures, corpses, clutches and life settings (T7, T9).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Creatures {
     pub next_id: u32,
@@ -44,9 +54,12 @@ pub(crate) struct Creatures {
     pub easy: bool,
     pub list: Vec<Creature>,
     pub corpses: Vec<Corpse>,
+    /// The next clutch id to try.
+    pub next_clutch: u16,
+    pub clutches: Vec<Clutch>,
 }
 
-/// One creature: version 2's, then its home.
+/// One creature.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Creature {
     pub id: u32,
@@ -66,30 +79,87 @@ pub(crate) struct Creature {
     pub held_until: u64,
     pub next_breath: u64,
     pub eaten: u32,
-    /// Ticks lived.
     pub age: u32,
-    /// Ticks of growth towards maturity.
     pub growth: u32,
-    /// Stored energy, in ticks.
     pub energy: u32,
-    /// Stress from poor water.
     pub stress: u32,
-    /// The substrate cell `(x, y)` it picked as its home, if it has one.
-    pub home: Option<(u32, u32)>,
+    pub female: bool,
+    /// Morph alleles, indices into the species' morphs.
+    pub alleles: [u8; 2],
+    /// Ticks left carrying young.
+    pub carrying: u32,
+    /// The father's alleles while carrying.
+    pub sire: [u8; 2],
+    /// Ticks until it may breed again.
+    pub rest: u32,
+}
+
+/// A dead creature, sinking and rotting.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Corpse {
+    pub species: u8,
+    /// 0 old age, 1 starvation, 2 poor water.
+    pub cause: u8,
+    pub x: i32,
+    pub y: i32,
+    pub w: u8,
+    pub h: u8,
+    pub facing_left: bool,
+    pub died: u64,
+    pub released: u16,
+    pub total: u16,
+    /// The morph it showed.
+    pub morph: u8,
+    pub female: bool,
+}
+
+/// A clutch of eggs waiting to hatch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Clutch {
+    /// Its egg cells hold this in their state.
+    pub id: u16,
+    pub species: u8,
+    pub mother: [u8; 2],
+    pub sire: [u8; 2],
+    /// Tick it hatches on.
+    pub hatch: u64,
+    /// Egg cell indices, ascending.
+    pub eggs: Vec<u32>,
+}
+
+/// Ticks a version 2 creature waits before it breeds: a day of its life
+/// (`SETTLE_TICKS`, 600 s at 20 ticks a second), as for one just added.
+const V2_REST: u32 = 600 * 20;
+
+/// What a species was like before version 3, for the migration.
+pub(crate) struct Before {
+    /// The morph the palette adds (the sprite's colours, which every
+    /// creature was drawn in).
+    pub palette_morph: u8,
+    /// Morph names, in allele order.
+    pub morphs: Vec<String>,
 }
 
 impl Save {
-    /// Migrates a version 2 snapshot: no creature has a home yet.
-    pub(crate) fn from_v2(s: v2::Save) -> Self {
-        let creatures = Creatures {
-            next_id: s.creatures.next_id,
-            cap: s.creatures.cap,
-            easy: s.creatures.easy,
-            list: s
-                .creatures
-                .list
-                .into_iter()
-                .map(|c| Creature {
+    /// Migrates a version 2 snapshot. Every creature shows the morph it
+    /// was drawn in (the palette's, `species` gives it by species id), with
+    /// two alleles of it; within each species they alternate male, female,
+    /// … in id order, as the palette now adds them; none is carrying, and
+    /// each settles for a day before it breeds. Corpses keep the palette's
+    /// morph and are male. There are no clutches.
+    pub(crate) fn from_v2(s: v2::Save, species: impl Fn(u8) -> Option<Before>) -> Self {
+        let mut seen = [0_u32; 256];
+        let palette = |id: u8| species(id).map_or(0, |b| b.palette_morph);
+        let list = s
+            .creatures
+            .list
+            .into_iter()
+            .map(|c| {
+                let n = &mut seen[usize::from(c.species)];
+                let female = *n % 2 == 1;
+                *n += 1;
+                let morph = palette(c.species);
+                Creature {
                     id: c.id,
                     species: c.species,
                     x: c.x,
@@ -111,11 +181,43 @@ impl Save {
                     growth: c.growth,
                     energy: c.energy,
                     stress: c.stress,
-                    home: None,
+                    female,
+                    alleles: [morph; 2],
+                    carrying: 0,
+                    sire: [morph; 2],
+                    rest: V2_REST,
+                }
+            })
+            .collect();
+        let corpses = s
+            .creatures
+            .corpses
+            .into_iter()
+            .map(|c| Corpse {
+                species: c.species,
+                cause: c.cause,
+                x: c.x,
+                y: c.y,
+                w: c.w,
+                h: c.h,
+                facing_left: c.facing_left,
+                died: c.died,
+                released: c.released,
+                total: c.total,
+                morph: palette(c.species),
+                female: false,
+            })
+            .collect();
+        let morphs = s
+            .species
+            .iter()
+            .filter_map(|n| {
+                species(n.id).map(|b| Morphs {
+                    species: n.id,
+                    names: b.morphs,
                 })
-                .collect(),
-            corpses: s.creatures.corpses,
-        };
+            })
+            .collect();
         Self {
             width: s.width,
             height: s.height,
@@ -126,13 +228,30 @@ impl Save {
             materials: s.materials,
             plant_species: s.plant_species,
             species: s.species,
+            morphs,
             grid: s.grid,
             chunks: s.chunks,
             next_body: s.next_body,
             bodies: s.bodies,
             life: s.life,
             plants: s.plants,
-            creatures,
+            creatures: Creatures {
+                next_id: s.creatures.next_id,
+                cap: s.creatures.cap,
+                easy: s.creatures.easy,
+                list,
+                corpses,
+                next_clutch: 1,
+                clutches: Vec::new(),
+            },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn version_2_creatures_settle_for_a_day() {
+        assert_eq!(super::V2_REST, crate::world::SETTLE_TICKS);
     }
 }

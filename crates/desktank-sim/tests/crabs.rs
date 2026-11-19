@@ -138,7 +138,7 @@ fn crabs_never_breed() {
         w.species()
             .iter()
             .filter(|s| s.cheat_only)
-            .all(|s| !s.breeds())
+            .all(|s| s.breeding.is_none())
     );
 }
 

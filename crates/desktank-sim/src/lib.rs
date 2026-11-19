@@ -34,12 +34,16 @@ pub use plants::{
     Propagule,
 };
 pub use script::{Player, Script, ScriptError};
-pub use species::{Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL};
+pub use species::{
+    Breeding, BreedingMode, Look, Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL,
+};
 pub use world::{
-    BITE_ENERGY, BodyId, BodyInfo, Brush, CHUNK_SIZE, CORPSE_SINK, Corpse, Creature, CreatureId,
-    DEFAULT_CREATURE_CAP, DeathCause, ENERGY_RESERVE, Ecosystem, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
-    LifeStage, MAX_CORPSES, MAX_CREATURE_CAP, MAX_PLANTS, MAX_SIDE, MAX_UPDATES_PER_TICK,
-    POOR_QUALITY, PlantId, PlantInfo, RANDOM_TICK_BUDGET, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS,
-    RandomTickStats, SLEEP_TICKS, STRESS_LIMIT, TICKS_PER_SECOND, UPDATE_SECONDS, UnmetNeed, World,
-    WorldConfig, WorldError,
+    BAND_REACH, BITE_ENERGY, BREED_CHECK_SECONDS, BodyId, BodyInfo, Brush, CHUNK_SIZE,
+    CONCEIVE_ODDS, CORPSE_SINK, Clutch, Corpse, Creature, CreatureId, DEFAULT_CREATURE_CAP,
+    DEPTH_BANDS, DeathCause, ENERGY_RESERVE, Ecosystem, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
+    LifeStage, MAX_CLUTCHES, MAX_CORPSES, MAX_CREATURE_CAP, MAX_PLANTS, MAX_SIDE,
+    MAX_UPDATES_PER_TICK, MUTATION_PER_MILLE, POOR_QUALITY, PREY_ENERGY, PlantId, PlantInfo,
+    RANDOM_TICK_BUDGET, REVERSION_PER_MILLE, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, RandomTickStats,
+    SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT, STRIKE_ODDS, TICKS_PER_SECOND, Traits, UPDATE_SECONDS,
+    UnmetNeed, World, WorldConfig, WorldError,
 };

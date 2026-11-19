@@ -65,7 +65,8 @@ It can run as any combination of four desktop **display modes**, or in a browser
 
 - Native mobile apps. Mobile browsers are covered by the web version
   (D15).
-- 3D.
+- 3D rendering. The tank is drawn as a 2D picture; discrete depth bands
+  for movement, collision and (later) occlusion are in scope (D21).
 - Online features, accounts or telemetry.
 - Progression, unlocks or currency: it is a sandbox (D9).
 - Plugin or scripting support.
@@ -431,12 +432,13 @@ target computes the same bits.
   Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
   the examples above), honey gourami (*Trichogaster chuna*, an
   air-breather like the betta), guppy (*Poecilia reticulata*, the
-  livebearer, drawn as a male until T9), harlequin rasbora
+  livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Two species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Three species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
-  fans reach 2) and `hop_every` (seconds between a bottom walker's short
-  hops off the substrate, for shrimp). Every species also gives its
+  fans reach 2), `hop_every` (seconds between a bottom walker's short
+  hops off the substrate, for shrimp) and `bands` (the depth bands it
+  keeps to, front and back, D21; every band by default). Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
@@ -458,6 +460,16 @@ target computes the same bits.
   - resting at night.
 
   Creatures collide with solid cells and with the substrate surface.
+  The tank is 2.5D (D21): it is eight **depth bands** deep, front glass
+  to back. Plant cells have a band (a plant's stem keeps one, its leaves
+  are up to a band off it, a rosette's blades fan up to two bands either
+  way); a creature has a depth that eases between bands and collides with
+  a plant cell only within one band of it. Rock, substrate, glass, bodies
+  and air span every band, and so do food and other loose particles, so a
+  creature eats from any band. Blocked by a plant, a swimmer shifts band
+  to slip past before it turns away. Species may keep to a range of
+  bands (`bands`, every band by default). Rendering stays 2D until the
+  occlusion part draws plant cells in front of creatures behind them.
 - **Life cycle.** Egg, then fry, juvenile, adult and elder. Growth
   depends on feeding.
   - **Breeding** needs mature, well-fed creatures and suitable
@@ -476,7 +488,7 @@ target computes the same bits.
     configurable) protects the budget.
 - **Death** (D4) can come from old age, starvation, poor water quality,
   wrong temperature (full mode), predation (larger fish eat fry and
-  shrimp) or chaos materials.
+  shrimp whole: no corpse and no recorded cause) or chaos materials.
   - **Easy mode** limits deaths to old age.
   - A dead creature becomes a sinking corpse sprite, which turns into
     detritus cells and disintegrates.
@@ -515,6 +527,72 @@ target computes the same bits.
     the population cap (60 by default, 1–128, never below the creatures
     already there). `desktank window --easy-mode[=false]` and
     `--creature-cap N`; the web has an easy-mode setting.
+- *T9 part 2 (sexes, breeding, eggs, colour genetics, predation):*
+  - **Species data.** `[breeding]` gives `mode` (`livebearer` or `eggs`),
+    `days` (carried, or until a clutch hatches), `brood = [fewest, most]`
+    (1–16) and `rest_days`; species without it don't breed in fresh water
+    (nerite, amano shrimp, Thai micro crab). `prey_cm` (below `length_cm`)
+    makes a predator. `[genetics]` lists `[[genetics.morph]]` entries in
+    allele order (append only), each recolouring the sprite by key, and
+    names the `wildtype` and the `sprite`'s own morph (the one the palette
+    adds); without it a species has one morph, `wild`. `[sprite]` may give
+    `female_frames` (same size and count) and `female` colours for a
+    species drawn differently by sex. Real figures, broods scaled down for
+    a desktop tank: guppy livebearer 28 days, 3–8; cherry shrimp carries
+    her eggs 30 days, 3–8; neon tetra and harlequin eggs 1 day, corydoras
+    4, betta 2, honey gourami 1, otocinclus 3. Cherry shrimp morphs red
+    (palette), wild (brown, the wildtype), blue and yellow; guppy strains
+    wild (palette and wildtype), red and blue, and a plainer, deeper,
+    short-tailed female. Predators: betta 2.5 cm (fry, cherry shrimp,
+    crabs), honey gourami and guppy 1.2 cm (fry, shrimplets, crabs).
+  - **Sexes.** Every creature is male or female. One added from the
+    palette (or a script or host without a sex) takes whichever sex its
+    species has fewer of in the tank, a male on a tie, so adding two makes
+    a pair; young are either at even odds.
+  - **Breeding** is checked once a world minute. A female conceives when
+    she is an adult (mature, not an elder), her energy reserve at least
+    half full, unstressed, rested, not in the net, with a mature male of
+    her species in the tank and the tank under its cap, with a chance of a
+    quarter times the share of the cap still free, so crowding slows it
+    and a full tank stops it. A creature added to the tank settles for a
+    day of its life first. A livebearer then carries her young for `days`
+    and gives birth to a brood of fry around her, cut to the room left
+    under the cap; an egg layer lays a clutch at once. Either then rests
+    `rest_days`: after the birth, or once a clutch is down (none goes
+    down at the clutch limit or with nowhere to lay, and she stays
+    ready).
+  - **Eggs** are cells of the `egg` material (solid, amber), each holding
+    its clutch's id in its state; the clutch (species, both parents'
+    alleles, hatch tick, egg cells) is in `World::clutches` (at most 64).
+    Eggs go on water cells around the mother that touch glass, rock,
+    plants or the bed (not the surface air: no eggs on the waterline), then on whatever lies below her, never under a
+    creature. When due, each egg still in place hatches into a fry there,
+    or rots into detritus if the tank is at its cap.
+  - **Colour genetics** (D13): two morph alleles per creature; it shows a
+    morph when both match and the wildtype otherwise. A young takes one
+    allele from each parent at random; each mutates into a random
+    non-wildtype morph (possibly its own) 5 times in 1000 and reverts to
+    the wildtype 10 times in 1000.
+    Same-morph lines breed true, two morphs crossed give wildtype young
+    (red × blue cherry shrimp give brown), and mixed lines stay mostly
+    wildtype, drifting further towards it.
+  - **Predation**, once a second, not in easy mode: a hungry adult
+    predator whose reach touches a creature no longer than its `prey_cm`
+    (its species' length at its size, own young included) eats it with a
+    chance of 1 in 4. The prey leaves no corpse (and no death cause); the
+    predator is fed (an hour of energy). Neither may be in the net.
+  - **Drawing.** Each creature and corpse is drawn in its look (morph and
+    sex), two atlas shelves per look: its frames, then its recoloured
+    fine frames at four texels per cell.
+  - **Save format v3** adds each creature's sex, alleles, pregnancy and
+    rest, each corpse's morph and sex, the clutches and every species'
+    morph names (checked on load: a species' morphs may only be appended
+    to). v2 saves migrate: every creature shows its palette morph, sexes
+    alternate within a species in id order, none is carrying, and each
+    settles for a day.
+  - **Scripts** take `sex` and `morph` in `[[creature]]`; `World` has
+    `add_creature_with_traits` (age, sex, alleles) and the debug hook
+    `skip_breeding_time`.
 - **Names** (D4): none by default. In interact mode, click a creature to
   see its card (species, age, health) and give it a name.
 
@@ -572,7 +650,7 @@ target computes the same bits.
   stocked species has one), and the home owner picks a home on the
   substrate soon after it arrives, plants three dwarf hairgrass
   plantlets there once (species key `home_carpet`) and keeps within 12
-  cells of it. The home is saved (format version 3). The
+  cells of it. The home is saved (format version 5). The
   detector and the registry are platform-free
   (`desktank_sim::cheats`); hosts feed key presses (no auto-repeats) and
   draw the field. Where it works:
@@ -623,8 +701,11 @@ target computes the same bits.
     - the creatures (genetics, age and names included; T9 part 1 adds
       age, growth, energy and stress, the corpses, easy mode and the
       population cap in format version 2, migrating version 1 creatures
-      to well-fed adults just mature; format version 3 adds a home
-      owning crab's home, migrating version 2 creatures without one);
+      to well-fed adults just mature; T9 part 2 adds sex, morph alleles,
+      pregnancy and rest, the egg clutches and the species' morph names in
+      version 3; 2.5D depth adds each creature's depth and each corpse's
+      band in version 4, D21; a home owning crab's home in version 5,
+      migrating version 4 creatures without one);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -1666,7 +1747,8 @@ Each package depends only on the packages before it.
 - [ ] **T9 Life cycle.** Eggs and livebearing, growth stages, breeding
   rules, colour genetics (inheritance, reversion to wildtype, mutation),
   predation, the death causes available in simple mode (old age,
-  starvation, poor water quality, predation), easy mode, corpses that
+  starvation, poor water quality; predation eats the prey whole, with no
+  corpse or recorded cause), easy mode, corpses that
   turn into detritus, the population cap, and names on the inspect card.
   Temperature deaths come with E1 and chaos deaths with E2. *Accept:*
   - a test for each cause of death;
@@ -1690,6 +1772,14 @@ Each package depends only on the packages before it.
   per cause so far, easy mode, the cap and the save round trip
   (`crates/desktank-sim/tests/lifecycle.rs`) and the `lifecycle`
   reference image; 30 settled fish tick in 7.37 µs (main 7.13 µs).
+  *Part 2 done:* §2.4 *T9 part 2*: sexes, livebearers and egg layers,
+  breeding rules (mature, well fed, rested, paired, slower when crowded,
+  within the cap), eggs as cells that hatch or rot, colour morphs with
+  inheritance, reversion and mutation, predation of fry and shrimp, female
+  guppy frames, and save format v3 with a v2 migration; tests in
+  `crates/desktank-sim/tests/breeding.rs` (including the seeded
+  multi-generation test and a predation death), the `breeding` reference
+  image; 30 settled fish tick in 7.75 µs (main 7.52 µs).
 - [ ] **T10 Catch-up and cross-OS measurement.** Optional catch-up (off
   by default, capped at 24 h), plus `desktank bench` on Windows and Linux
   with measurement recipes in PROGRESS. *Accept:*
@@ -1965,6 +2055,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
+| D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
