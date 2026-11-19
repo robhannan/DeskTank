@@ -480,6 +480,41 @@ target computes the same bits.
   - **Easy mode** limits deaths to old age.
   - A dead creature becomes a sinking corpse sprite, which turns into
     detritus cells and disintegrates.
+- *T9 part 1 (age, stages, growth, deaths, corpses, cap):*
+  - **Life clock.** Species give `lifespan_days` and `maturity_days` in
+    real days, from aquarium figures (neon tetra 1825 and 180, cherry
+    shrimp 550 and 75, guppy 730 and 90, …); a day of a creature's life
+    passes every `LIFE_DAY_SECONDS` = 600 s of world time, so a neon lives
+    about 300 hours of world time (which only passes while the tank is
+    shown, §2.6) and a cherry shrimp about 90. Each creature's own lifespan
+    is within ±10% of its species', picked from its id and the seed.
+  - **Energy and growth.** A creature stores up to 8 hours of energy
+    (`ENERGY_RESERVE`, in ticks); it burns a tick's worth each tick, each
+    bite of food or grazed cell adds 20 minutes, and at zero it starves.
+    It grows towards maturity at full rate while the reserve is at least
+    half full, at half rate down to an eighth, and not below that.
+  - **Stages.** Fry until a quarter of the way to maturity, juvenile until
+    maturity, adult, and elder past 80% of its own lifespan. Fry and
+    juveniles are drawn and collide at 35% of the adult size at hatching
+    rising to 100% at maturity (each side at least a cell, odd when the
+    adult's is); elders are drawn a little greyer. A creature added from
+    the palette is an adult just mature and well fed; scripts take
+    `age_days`.
+  - **Water quality** is sampled once a second (`World::water_quality`):
+    the §2.3 score from water and pollutant counts per field cell,
+    recounted only where cells changed, not a grid scan. Below 0.5 a
+    creature builds stress at up to a second a second (in the foulest
+    water) and sheds half a second a second above it; it dies at 300 s,
+    so foul water kills in 5 minutes at the earliest.
+  - **Corpses** lie belly up (the first frame turned twice), sink at a
+    cell a second through anything a creature swims in, and from 60 s
+    after death release a detritus cell every 2 s into the water they
+    cover, losing texels as they go, until a third of their cells have
+    become detritus (a neon tetra makes 7). At most 128 corpses.
+  - **Settings** (saved with the tank): easy mode (off by default) and
+    the population cap (60 by default, 1–128, never below the creatures
+    already there). `desktank window --easy-mode[=false]` and
+    `--creature-cap N`; the web has an easy-mode setting.
 - **Names** (D4): none by default. In interact mode, click a creature to
   see its card (species, age, health) and give it a name.
 
@@ -551,7 +586,10 @@ target computes the same bits.
     - the fields;
     - the plant table (§2.7: species by name, age, health, stored energy,
       lineage), which the grid alone can't rebuild;
-    - the creatures (genetics, age and names included);
+    - the creatures (genetics, age and names included; T9 part 1 adds
+      age, growth, energy and stress, the corpses, easy mode and the
+      population cap in format version 2, migrating version 1 creatures
+      to well-fed adults just mature);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -1602,6 +1640,21 @@ Each package depends only on the packages before it.
     and mixed lines reverting towards wildtype;
   - the population never exceeds the cap;
   - a named creature keeps its name across save and load.
+
+  Split into three PRs: (1) age, life stages, growth with feeding, deaths
+  from old age, starvation and poor water, easy mode, corpses, the
+  configurable population cap and save format v2; (2) eggs and
+  livebearing, breeding rules, colour genetics (with the multi-generation
+  test) and predation; (3) names on the inspect card (window and web),
+  kept across save and load.
+  *Part 1 done:* §2.4 *T9 part 1*: species lifespans and maturity ages,
+  fry, juvenile, adult and elder stages drawn to size, energy that feeds
+  growth and starves, foul-water stress from a once-a-second quality
+  sample, easy mode, sinking corpses that rot into detritus, the cap
+  (`World::set_creature_cap`), save format v2 with a v1 migration; a test
+  per cause so far, easy mode, the cap and the save round trip
+  (`crates/desktank-sim/tests/lifecycle.rs`) and the `lifecycle`
+  reference image; 30 settled fish tick in 7.37 µs (main 7.13 µs).
 - [ ] **T10 Catch-up and cross-OS measurement.** Optional catch-up (off
   by default, capped at 24 h), plus `desktank bench` on Windows and Linux
   with measurement recipes in PROGRESS. *Accept:*

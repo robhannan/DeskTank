@@ -5,13 +5,18 @@
 //! the palette). Each frame, every creature becomes one instance: its
 //! top-left cell, on-screen size, atlas frame, mirror and quarter turns,
 //! drawn as a quad by the sprite pipeline at the grid's cell scale, with
-//! [`TEXELS_PER_CELL`] texels per cell side (half a cell per texel). A
-//! crawler on a wall is turned a quarter, so its quad swaps width and
-//! height and the shader turns the texel lookup; quarter turns keep the
-//! pixel art crisp. WebGL2-safe: a per-instance vertex
-//! buffer, no storage buffers.
+//! [`desktank_sim::TEXELS_PER_CELL`] texels per cell side for an adult
+//! (half a cell per texel). A crawler on a wall is turned a quarter, so its
+//! quad swaps width and height and the shader turns the texel lookup;
+//! quarter turns keep the pixel art crisp. WebGL2-safe: a per-instance
+//! vertex buffer, no storage buffers.
+//!
+//! Life stages (T9): a growing fry or juvenile is drawn at its smaller body
+//! size from the full frame, an elder a little greyer. Corpses follow the
+//! creatures, belly up on their first frame, desaturated and losing texels
+//! as they rot.
 
-use desktank_sim::{SpeciesTable, TEXELS_PER_CELL, World};
+use desktank_sim::{LifeStage, SpeciesTable, World};
 
 /// Atlas width in texels; species shelves stack downwards.
 pub const ATLAS_WIDTH: usize = 256;
@@ -20,8 +25,16 @@ pub const MAX_SPRITES: usize = 256;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
-/// mirror and quarter turns clockwise (2).
-pub const INSTANCE_FLOATS: usize = 8;
+/// mirror and quarter turns clockwise (2), the frame's size in texels (2),
+/// and the look: 0 alive, 1 elder, 2 dead, then how far a corpse has
+/// rotted (2).
+pub const INSTANCE_FLOATS: usize = 12;
+/// Look values (the instance's eleventh float).
+pub const LOOK_ALIVE: f32 = 0.0;
+/// An elder.
+pub const LOOK_ELDER: f32 = 1.0;
+/// A corpse.
+pub const LOOK_DEAD: f32 = 2.0;
 
 /// Where one species' frames sit in the atlas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,40 +107,102 @@ impl Atlas {
         )
     }
 
-    /// One instance per creature (up to [`MAX_SPRITES`]), as
-    /// [`INSTANCE_FLOATS`] floats each, into `out`. Returns the count.
+    /// One instance per creature, then per corpse (up to [`MAX_SPRITES`]
+    /// in all), as [`INSTANCE_FLOATS`] floats each, into `out`. Returns the
+    /// count.
     pub fn instances(&self, world: &World, out: &mut Vec<f32>) -> u32 {
         out.clear();
         let tick = world.tick_count();
         let mut n = 0;
-        for c in world.creatures().iter().take(MAX_SPRITES) {
+        for c in world.creatures() {
             let Some(e) = self.entries[usize::from(c.species().0)] else {
                 continue;
             };
+            if n == MAX_SPRITES {
+                return u32::try_from(n).unwrap_or(u32::MAX);
+            }
             let phase = tick / TICKS_PER_FRAME + u64::from(c.id().0);
             let frame = usize::try_from(phase % e.frames as u64).unwrap_or(0);
-            let (ox, oy) = Self::frame_origin(&e, frame);
-            let (cx, cy) = c.centre();
-            // On-screen size in cells: the body, half the frame's texels.
-            let (w, h) = (e.size.0 / TEXELS_PER_CELL, e.size.1 / TEXELS_PER_CELL);
-            #[allow(clippy::cast_precision_loss)] // sprite sides and atlas texels are small
-            let (w, h, ox, oy) = (w as f32, h as f32, ox as f32, oy as f32);
-            let turn = c.turn() % 4;
-            let (w, h) = if turn % 2 == 1 { (h, w) } else { (w, h) };
-            let flip = if c.facing_left() { 1.0 } else { 0.0 };
-            out.extend_from_slice(&[
-                cx - w / 2.0,
-                cy - h / 2.0,
-                w,
-                h,
-                ox,
-                oy,
-                flip,
-                f32::from(turn),
-            ]);
+            let look = if world.life_stage(c) == LifeStage::Elder {
+                LOOK_ELDER
+            } else {
+                LOOK_ALIVE
+            };
+            let sprite = Sprite {
+                centre: c.centre(),
+                // On-screen size in cells: the body (half the frame's
+                // texels for an adult, less while it grows).
+                size: world.creature_size(c),
+                origin: Self::frame_origin(&e, frame),
+                frame: e.size,
+                flip: c.facing_left(),
+                turn: c.turn() % 4,
+                look: [look, 0.0],
+            };
+            sprite.push(out);
             n += 1;
         }
-        n
+        for c in world.corpses() {
+            let Some(e) = self.entries[usize::from(c.species().0)] else {
+                continue;
+            };
+            if n == MAX_SPRITES {
+                break;
+            }
+            // Belly up: turned twice, mirrored back so it still faces the
+            // way it did.
+            let sprite = Sprite {
+                centre: c.centre(),
+                size: c.size(),
+                origin: Self::frame_origin(&e, 0),
+                frame: e.size,
+                flip: !c.facing_left(),
+                turn: 2,
+                look: [LOOK_DEAD, c.decay()],
+            };
+            sprite.push(out);
+            n += 1;
+        }
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+}
+
+/// One sprite instance before it is packed into floats.
+struct Sprite {
+    /// Body centre in cells.
+    centre: (f32, f32),
+    /// Upright body size in cells.
+    size: (usize, usize),
+    /// Atlas texel of the frame's top-left, and the frame's size in texels.
+    origin: (usize, usize),
+    frame: (usize, usize),
+    flip: bool,
+    turn: u8,
+    look: [f32; 2],
+}
+
+impl Sprite {
+    fn push(&self, out: &mut Vec<f32>) {
+        // Sprite sides and atlas texels are small: exact in f32.
+        #[allow(clippy::cast_precision_loss)]
+        let f = |v: usize| v as f32;
+        let (w, h) = (f(self.size.0), f(self.size.1));
+        let (w, h) = if self.turn % 2 == 1 { (h, w) } else { (w, h) };
+        let (cx, cy) = self.centre;
+        out.extend_from_slice(&[
+            cx - w / 2.0,
+            cy - h / 2.0,
+            w,
+            h,
+            f(self.origin.0),
+            f(self.origin.1),
+            if self.flip { 1.0 } else { 0.0 },
+            f32::from(self.turn),
+            f(self.frame.0),
+            f(self.frame.1),
+            self.look[0],
+            self.look[1],
+        ]);
     }
 }
 
@@ -182,6 +257,7 @@ mod tests {
         let mut out = Vec::new();
         assert_eq!(atlas.instances(&w, &mut out), 1);
         assert_eq!(out.len(), INSTANCE_FLOATS);
+        assert!(include_str!("tank.wgsl").contains("@location(5) look: vec2<f32>"));
         // The frame the instance names holds the species' texels.
         let s = w.species().get(tetra).unwrap();
         let frame = usize::try_from(w.creatures()[0].id().0).unwrap() % s.sprite.frames.len();
@@ -249,8 +325,38 @@ mod tests {
     }
 
     #[test]
-    fn the_shader_draws_the_same_texels_per_cell() {
-        let want = format!("const TEXELS_PER_CELL: f32 = {TEXELS_PER_CELL}.0;");
-        assert!(include_str!("tank.wgsl").contains(&want));
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)] // small exact values
+    fn fry_are_drawn_small_elders_grey_and_corpses_belly_up() {
+        let mut w = world();
+        let atlas = Atlas::build(w.species());
+        let tetra = w.species().id("neon_tetra").unwrap();
+        let s = w.species().get(tetra).unwrap();
+        let (full_w, full_h) = s.size();
+        let frame = [s.sprite.width as f32, s.sprite.height as f32];
+        let fry = w.add_creature_aged(tetra, 20, 30, 0).unwrap();
+        let old = w.add_creature(tetra, 40, 30).unwrap();
+        let span = w.creature_lifespan(w.creature(old).unwrap());
+        w.set_creature_age(old, span * 9 / 10);
+        let dying = w.add_creature(tetra, 50, 20).unwrap();
+        w.set_creature_age(dying, span * 2);
+        w.tick();
+        assert!(w.creature(dying).is_none());
+        let mut out = Vec::new();
+        assert_eq!(atlas.instances(&w, &mut out), 3);
+        let (fry_i, old_i, dead_i) = (&out[0..12], &out[12..24], &out[24..36]);
+        // The fry: its smaller body on screen, the whole frame sampled.
+        let (bw, bh) = w.creature_size(w.creature(fry).unwrap());
+        assert!(bw < full_w && bh <= full_h);
+        assert_eq!(fry_i[2..4], [bw as f32, bh as f32]);
+        assert_eq!(fry_i[8..10], frame);
+        assert_eq!(fry_i[10], LOOK_ALIVE);
+        assert_eq!(old_i[10], LOOK_ELDER);
+        assert_eq!(old_i[2..4], [full_w as f32, full_h as f32]);
+        // The corpse: full size, upside down on frame 0, not yet rotting.
+        assert_eq!(dead_i[7], 2.0);
+        assert_eq!(dead_i[10], LOOK_DEAD);
+        assert_eq!(dead_i[11], 0.0);
+        let e = atlas.entries[usize::from(tetra.0)].unwrap();
+        assert_eq!(dead_i[4..6], [e.origin.0 as f32, e.origin.1 as f32]);
     }
 }

@@ -618,13 +618,12 @@ fn out(c: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(select(c, linear, view.srgb_target > 0.5), 1.0);
 }
 
-// Sprite texels per cell side (desktank_sim::TEXELS_PER_CELL).
-const TEXELS_PER_CELL: f32 = 2.0;
-
 struct SpriteOut {
     @builtin(position) pos: vec4<f32>,
     // Atlas texel coordinate, interpolated across the quad.
     @location(0) texel: vec2<f32>,
+    // 0 alive, 1 elder, 2 dead; how far a corpse has rotted (0..1).
+    @location(1) @interpolate(flat) look: vec2<f32>,
 };
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
@@ -635,11 +634,15 @@ fn vs_sprite(
     // Top-left in cells (fractional), on-screen size in cells (the frame's
     // size, swapped when turned a quarter), the frame's top-left texel in
     // the atlas, and orient: x > 0.5 to mirror (facing left in its own
-    // frame), y the quarter turns clockwise applied after the mirror.
+    // frame), y the quarter turns clockwise applied after the mirror; the
+    // frame's size in texels (a growing creature's body is drawn smaller
+    // than it), and the look (see SpriteOut).
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
     @location(3) orient: vec2<f32>,
+    @location(4) frame_size: vec2<f32>,
+    @location(5) look: vec2<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -663,11 +666,10 @@ fn vs_sprite(
     if orient.x > 0.5 {
         q.x = 1.0 - q.x;
     }
-    // The frame's size in texels.
-    let frame = select(size, size.yx, turn % 2u == 1u) * TEXELS_PER_CELL;
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    o.texel = origin + q * frame;
+    o.texel = origin + q * frame_size;
+    o.look = look;
     return o;
 }
 
@@ -682,9 +684,22 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
             discard;
         }
     }
-    let t = textureLoad(atlas, vec2<i32>(floor(v.texel)), 0);
+    let texel = vec2<i32>(floor(v.texel));
+    let t = textureLoad(atlas, texel, 0);
     if t.a < 0.5 {
         discard;
     }
-    return out(t.rgb * view.daylight.rgb);
+    var rgb = t.rgb;
+    let grey = vec3<f32>(dot(rgb, vec3<f32>(0.299, 0.587, 0.114)));
+    if v.look.x > 1.5 {
+        // A corpse: pale and brownish, losing texels as it rots.
+        if f32(hash(texel) & 1023u) < v.look.y * 1024.0 {
+            discard;
+        }
+        rgb = mix(rgb, grey * vec3<f32>(0.85, 0.8, 0.7), 0.7);
+    } else if v.look.x > 0.5 {
+        // An elder: a little greyer.
+        rgb = mix(rgb, grey, 0.3);
+    }
+    return out(rgb * view.daylight.rgb);
 }

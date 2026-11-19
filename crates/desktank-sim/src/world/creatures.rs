@@ -26,7 +26,10 @@
 //! - **Cost.** Creatures are updated every tick, after the cells, and wake
 //!   a chunk only when they eat (SPEC §2.1). Food is found through a
 //!   registry of food cells kept like the living lists, not by scanning.
+//! - **Life cycle** (T9): age, stages, growth with feeding, deaths and
+//!   corpses are in [`lifecycle`].
 
+mod lifecycle;
 mod steering;
 
 use core::mem;
@@ -39,12 +42,19 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v1};
+use crate::save::{SaveError, v2};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
+pub use lifecycle::{
+    BITE_ENERGY, CORPSE_SINK, Corpse, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
+    LifeStage, MAX_CORPSES, POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, STRESS_LIMIT,
+};
 
-/// Most creatures a world holds (SPEC §2.4: the default population cap per
-/// display, which protects the budget).
-pub const MAX_CREATURES: usize = 60;
+/// The default population cap per display (SPEC §2.4), which protects the
+/// budget; [`World::set_creature_cap`] changes it.
+pub const DEFAULT_CREATURE_CAP: usize = 60;
+/// Highest population cap a tank may set (with [`MAX_CORPSES`], within the
+/// renderer's 256 sprites).
+pub const MAX_CREATURE_CAP: usize = 128;
 
 /// One cell in fixed point.
 const ONE: i32 = 256;
@@ -137,6 +147,15 @@ pub struct Creature {
     next_breath: u64,
     /// Food or grazing cells eaten so far.
     eaten: u32,
+    /// Ticks lived (T9).
+    age: u32,
+    /// Ticks of growth towards maturity: a tick a tick while well fed,
+    /// slower or not at all while hungry; at most the species' maturity.
+    growth: u32,
+    /// Stored energy in ticks, at most [`ENERGY_RESERVE`]; it starves at 0.
+    energy: u32,
+    /// Stress from poor water, see [`STRESS_LIMIT`].
+    stress: u32,
 }
 
 impl Creature {
@@ -194,6 +213,42 @@ impl Creature {
         self.satiety <= FULL - BITE
     }
 
+    /// Ticks it has lived.
+    #[must_use]
+    pub fn age(&self) -> u32 {
+        self.age
+    }
+
+    /// Ticks of growth towards maturity (see [`World::life_stage`]).
+    #[must_use]
+    pub fn growth(&self) -> u32 {
+        self.growth
+    }
+
+    /// Stored energy in ticks (at most [`ENERGY_RESERVE`]).
+    #[must_use]
+    pub fn energy(&self) -> u32 {
+        self.energy
+    }
+
+    /// Stress from poor water so far (it dies at [`STRESS_LIMIT`]).
+    #[must_use]
+    pub fn stress(&self) -> u32 {
+        self.stress
+    }
+
+    /// Health from 0 to 1 for the inspect card: the lower of how full its
+    /// energy reserve is (counting a quarter full as healthy) and how far
+    /// it is from dying of poor water.
+    #[must_use]
+    pub fn health(&self) -> f32 {
+        #[allow(clippy::cast_precision_loss)] // ≤ 576 000
+        let fed = (self.energy as f32 * 4.0 / ENERGY_RESERVE as f32).min(1.0);
+        #[allow(clippy::cast_precision_loss)]
+        let water = 1.0 - (self.stress as f32 / STRESS_LIMIT as f32).min(1.0);
+        fed.min(water)
+    }
+
     /// Mirrors it so its head leads along `(dx, dy)` in its turned frame,
     /// where the sprite's right points along the foot turned anticlockwise.
     /// A move across that axis leaves it as it was.
@@ -226,6 +281,9 @@ struct Kind {
     reach: usize,
     /// Ticks between a walker's hops (0: it never hops).
     hop_every: u64,
+    /// Ticks of growth to maturity, and the species' lifespan in ticks.
+    maturity: u32,
+    lifespan: u32,
     edible: [bool; 256],
 }
 
@@ -245,8 +303,16 @@ pub(super) struct Creatures {
     swim: Vec<bool>,
     water: MaterialId,
     air: MaterialId,
-    /// Bumped whenever a creature is added, removed, moves or turns.
+    detritus: Option<MaterialId>,
+    /// Bumped whenever a creature or corpse is added, removed, moves or
+    /// turns, or a corpse fades.
     version: u64,
+    /// The population cap.
+    cap: usize,
+    /// Easy mode: only old age kills.
+    easy: bool,
+    /// Dead creatures sinking and rotting, oldest first.
+    corpses: Vec<Corpse>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -306,6 +372,9 @@ impl Creatures {
                 hop_every: s.hop_every.map_or(0, |every| {
                     (f64::from(every) * f64::from(TICKS_PER_SECOND)).round() as u64
                 }),
+                // Validated to at most 7300 days: far inside u32.
+                maturity: s.maturity_days.saturating_mul(LIFE_DAY_TICKS),
+                lifespan: s.lifespan_days.saturating_mul(LIFE_DAY_TICKS),
                 edible,
             });
         }
@@ -319,7 +388,11 @@ impl Creatures {
             swim,
             water,
             air,
+            detritus: materials.id("detritus"),
             version: 0,
+            cap: DEFAULT_CREATURE_CAP,
+            easy: false,
+            corpses: Vec::new(),
         }
     }
 
@@ -387,10 +460,10 @@ impl World {
     /// The cells `creature`'s body covers.
     #[must_use]
     pub fn creature_body(&self, creature: &Creature) -> Rect {
-        self.kind(creature.species)
+        self.grown_kind(creature)
             .and_then(|k| {
                 body(
-                    k,
+                    &k,
                     creature.turn,
                     creature.x,
                     creature.y,
@@ -415,52 +488,73 @@ impl World {
             .map(|c| c.id)
     }
 
-    /// Adds a creature of `species` with its body centred on cell `(x, y)`,
-    /// or on the nearest free spot within a few cells.
+    /// Adds an adult of `species`, just mature and well fed, with its body
+    /// centred on cell `(x, y)`, or on the nearest free spot within a few
+    /// cells.
     ///
     /// # Errors
     ///
-    /// Returns an error if the species is unknown, the tank is at
-    /// [`MAX_CREATURES`], or there is no room there.
+    /// Returns an error if the species is unknown, the tank is at its
+    /// [population cap](World::creature_cap), or there is no room there.
     pub fn add_creature(
         &mut self,
         species: SpeciesId,
         x: i64,
         y: i64,
     ) -> Result<CreatureId, WorldError> {
-        let k = *self
+        self.add_creature_with(species, x, y, None)
+    }
+
+    /// [`World::add_creature`], `age` ticks old (`None`: just mature).
+    fn add_creature_with(
+        &mut self,
+        species: SpeciesId,
+        x: i64,
+        y: i64,
+        age: Option<u32>,
+    ) -> Result<CreatureId, WorldError> {
+        let base = *self
             .kind(species)
             .ok_or(WorldError::UnknownSpecies(species))?;
-        if self.creatures.list.len() >= MAX_CREATURES {
-            return Err(WorldError::PopulationCap(MAX_CREATURES));
+        if self.creatures.list.len() >= self.creatures.cap {
+            return Err(WorldError::PopulationCap(self.creatures.cap));
         }
+        let age = age.unwrap_or(base.maturity);
+        let growth = age.min(base.maturity);
+        let mut probe = Creature {
+            id: CreatureId(self.creatures.next_id),
+            species,
+            x: 0,
+            y: 0,
+            vx: 0,
+            vy: 0,
+            tx: 0,
+            ty: 0,
+            retarget: 0,
+            satiety: 0,
+            food: None,
+            ignore: None,
+            facing_left: self.creatures.next_id % 2 == 1,
+            turn: 0,
+            held_until: 0,
+            next_breath: self.tick + u64::from(self.creatures.next_id % 20),
+            eaten: 0,
+            age,
+            growth,
+            energy: ENERGY_RESERVE,
+            stress: 0,
+        };
+        let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
         let (fx, fy) = if self.fits(&k, 0, fx, fy) {
             (fx, fy)
         } else {
             self.nearest_fit(&k, 0, fx, fy).ok_or(WorldError::NoRoom)?
         };
-        let id = CreatureId(self.creatures.next_id);
+        let id = probe.id;
         self.creatures.next_id += 1;
-        self.creatures.list.push(Creature {
-            id,
-            species,
-            x: fx,
-            y: fy,
-            vx: 0,
-            vy: 0,
-            tx: fx,
-            ty: fy,
-            retarget: 0,
-            satiety: 0,
-            food: None,
-            ignore: None,
-            facing_left: id.0 % 2 == 1,
-            turn: 0,
-            held_until: 0,
-            next_breath: self.tick + u64::from(id.0 % 20),
-            eaten: 0,
-        });
+        (probe.x, probe.y, probe.tx, probe.ty) = (fx, fy, fx, fy);
+        self.creatures.list.push(probe);
         self.creatures.version += 1;
         Ok(id)
     }
@@ -500,7 +594,7 @@ impl World {
         let Some(c) = self.creature(id) else {
             return false;
         };
-        let Some(k) = self.kind(c.species).copied() else {
+        let Some(k) = self.grown_kind(c) else {
             return false;
         };
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -529,9 +623,9 @@ impl World {
     /// touching a submerged support.
     #[must_use]
     pub fn in_zone(&self, creature: &Creature) -> bool {
-        if let Some(k) = self.kind(creature.species)
+        if let Some(k) = self.grown_kind(creature)
             && k.zone == Zone::Surfaces
-            && !self.on_surface(k, creature.turn, creature.x, creature.y)
+            && !self.on_surface(&k, creature.turn, creature.x, creature.y)
         {
             return false;
         }
@@ -556,15 +650,18 @@ impl World {
         (s.breathes_air && self.surface_row == 0).then_some(UnmetNeed::Air)
     }
 
-    /// The creatures as saved (T8). The host's cursor isn't saved.
-    pub(super) fn save_creatures(&self) -> v1::Creatures {
-        v1::Creatures {
-            next_id: self.creatures.next_id,
-            list: self
-                .creatures
+    /// The creatures, corpses and life settings as saved (T8, T9). The
+    /// host's cursor isn't saved.
+    pub(super) fn save_creatures(&self) -> v2::Creatures {
+        let cr = &self.creatures;
+        v2::Creatures {
+            next_id: cr.next_id,
+            cap: u32::try_from(cr.cap).unwrap_or(u32::MAX),
+            easy: cr.easy,
+            list: cr
                 .list
                 .iter()
-                .map(|c| v1::Creature {
+                .map(|c| v2::Creature {
                     id: c.id.0,
                     species: c.species.0,
                     x: c.x,
@@ -582,29 +679,59 @@ impl World {
                     held_until: c.held_until,
                     next_breath: c.next_breath,
                     eaten: c.eaten,
+                    age: c.age,
+                    growth: c.growth,
+                    energy: c.energy,
+                    stress: c.stress,
+                })
+                .collect(),
+            corpses: cr
+                .corpses
+                .iter()
+                .map(|c| v2::Corpse {
+                    species: c.species.0,
+                    cause: c.cause.code(),
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    facing_left: c.facing_left,
+                    died: c.died,
+                    released: c.released,
+                    total: c.total,
                 })
                 .collect(),
         }
     }
 
-    /// Restores the creatures from a save.
-    pub(super) fn load_creatures(&mut self, saved: v1::Creatures) -> Result<(), SaveError> {
+    /// Restores the creatures, corpses and life settings from a save.
+    pub(super) fn load_creatures(&mut self, saved: v2::Creatures) -> Result<(), SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
         );
+        let inside =
+            |x: i32, y: i32| (0..=w).contains(&i64::from(x)) && (0..=h).contains(&i64::from(y));
+        let cap = saved.cap as usize;
+        if !(1..=MAX_CREATURE_CAP).contains(&cap) || saved.list.len() > cap {
+            return Err(SaveError::Invalid(format!(
+                "{} creatures with a cap of {cap}",
+                saved.list.len()
+            )));
+        }
         let mut list = Vec::with_capacity(saved.list.len());
         for c in saved.list {
             let invalid = |what: &str| SaveError::Invalid(format!("creature {}: {what}", c.id));
             let species = SpeciesId(c.species);
-            if self.kind(species).is_none() {
+            let Some(k) = self.kind(species) else {
                 return Err(invalid("unknown species"));
-            }
-            let inside =
-                |x: i32, y: i32| (0..=w).contains(&i64::from(x)) && (0..=h).contains(&i64::from(y));
+            };
             let slow = |v: i32| v.abs() <= 16 * ONE;
             if !(inside(c.x, c.y) && inside(c.tx, c.ty) && slow(c.vx) && slow(c.vy) && c.turn < 4) {
                 return Err(invalid("position, speed or turn out of range"));
+            }
+            if c.growth > k.maturity || c.energy > ENERGY_RESERVE {
+                return Err(invalid("growth or energy out of range"));
             }
             for i in [c.food, c.ignore].into_iter().flatten() {
                 self.cell_index(i, "a creature's food")?;
@@ -627,12 +754,56 @@ impl World {
                 held_until: c.held_until,
                 next_breath: c.next_breath,
                 eaten: c.eaten,
+                age: c.age,
+                growth: c.growth,
+                energy: c.energy,
+                stress: c.stress,
             });
         }
-        if list.len() > MAX_CREATURES {
-            return Err(SaveError::Invalid(format!("{} creatures", list.len())));
+        if saved.corpses.len() > MAX_CORPSES {
+            return Err(SaveError::Invalid(format!(
+                "{} corpses",
+                saved.corpses.len()
+            )));
+        }
+        let mut corpses = Vec::with_capacity(saved.corpses.len());
+        for c in saved.corpses {
+            let invalid = |what: &str| SaveError::Invalid(format!("corpse: {what}"));
+            let species = SpeciesId(c.species);
+            if self.kind(species).is_none() {
+                return Err(invalid("unknown species"));
+            }
+            let cause = DeathCause::from_code(c.cause).ok_or_else(|| invalid("unknown cause"))?;
+            // As `corpse_of` makes them: at most the adult body, and a
+            // third of its cells to release.
+            let (full_w, full_h) = self.kind(species).map_or((0, 0), |k| (k.w, k.h));
+            let fits = |side: u8, full: i32| (1..=full).contains(&i32::from(side));
+            let total = (u16::from(c.w) * u16::from(c.h)).div_ceil(3).max(1);
+            if !inside(c.x, c.y)
+                || !fits(c.w, full_w)
+                || !fits(c.h, full_h)
+                || c.total != total
+                || c.released >= c.total
+            {
+                return Err(invalid("position, size or decay out of range"));
+            }
+            corpses.push(Corpse {
+                species,
+                cause,
+                x: c.x,
+                y: c.y,
+                w: c.w,
+                h: c.h,
+                facing_left: c.facing_left,
+                died: c.died,
+                released: c.released,
+                total: c.total,
+            });
         }
         self.creatures.list = list;
+        self.creatures.corpses = corpses;
+        self.creatures.cap = cap;
+        self.creatures.easy = saved.easy;
         self.creatures.next_id = saved.next_id.max(1);
         self.creatures.version += 1;
         Ok(())
@@ -654,15 +825,39 @@ impl World {
             h.write(&c.held_until.to_le_bytes());
             h.write(&c.next_breath.to_le_bytes());
             h.write(&c.eaten.to_le_bytes());
+            for v in [c.age, c.growth, c.energy, c.stress] {
+                h.write(&v.to_le_bytes());
+            }
         }
+        self.hash_corpses(h);
     }
 
-    /// Runs every creature for one tick, after the cells and life.
+    /// Runs every creature for one tick, after the cells and life: each
+    /// lives a tick (and may die, leaving a corpse), then moves; then the
+    /// corpses sink and rot.
     pub(super) fn update_creatures(&mut self) {
-        if self.creatures.list.is_empty() {
+        if self.creatures.list.is_empty() && self.creatures.corpses.is_empty() {
             return;
         }
+        // Water quality matters once a second, and not in easy mode.
+        let quality = (!self.creatures.easy
+            && !self.creatures.list.is_empty()
+            && self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND)))
+        .then(|| self.water_quality());
         let mut list = mem::take(&mut self.creatures.list);
+        let mut changed = false;
+        let mut dead = Vec::new();
+        list.retain_mut(|c| match self.live(c, quality, &mut changed) {
+            Some(cause) => {
+                dead.push(self.corpse_of(c, cause));
+                false
+            }
+            None => true,
+        });
+        if !dead.is_empty() {
+            self.bury(dead);
+            changed = true;
+        }
         self.creatures.school.clear();
         for c in &list {
             if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
@@ -676,11 +871,13 @@ impl World {
                 });
             }
         }
-        let mut changed = false;
         for c in &mut list {
             changed |= self.update_creature(c);
         }
         self.creatures.list = list;
+        if !self.creatures.corpses.is_empty() {
+            changed |= self.update_corpses(self.creatures.detritus);
+        }
         if changed {
             self.creatures.version += 1;
         }
@@ -688,7 +885,7 @@ impl World {
 
     /// One tick of one creature. Returns whether it moved or turned.
     fn update_creature(&mut self, c: &mut Creature) -> bool {
-        let Some(k) = self.kind(c.species).copied() else {
+        let Some(k) = self.grown_kind(c) else {
             return false;
         };
         let before = (c.x, c.y, c.facing_left, c.turn);
@@ -842,6 +1039,7 @@ impl World {
                     };
                     self.write_cell(x, y, to, &mut None);
                     c.satiety = c.satiety.saturating_add(BITE).min(FULL);
+                    c.energy = c.energy.saturating_add(BITE_ENERGY).min(ENERGY_RESERVE);
                     c.eaten += 1;
                     return true;
                 }
@@ -936,7 +1134,14 @@ impl World {
     /// Whether a body turned `turn` and centred at `(x, y)` (fixed point)
     /// lies inside the grid on swimmable cells only.
     fn fits(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
-        let Some(b) = body(k, turn, x, y, self.width, self.height) else {
+        let (wide, tall) = extent(k, turn);
+        self.fits_box(wide, tall, x, y)
+    }
+
+    /// Whether a `w × h`-cell box centred at `(x, y)` (fixed point) lies
+    /// inside the grid on swimmable cells only.
+    fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32) -> bool {
+        let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
         };
         (b.y0..b.y1).all(|row| {
@@ -999,6 +1204,12 @@ fn extent(k: &Kind, turn: u8) -> (i32, i32) {
 /// covers, rounded outwards; `None` if any part is outside the grid.
 fn body(k: &Kind, turn: u8, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
     let (wide, tall) = extent(k, turn);
+    body_box(wide, tall, x, y, width, height)
+}
+
+/// The cells a `wide × tall`-cell box centred at `(x, y)` (fixed point)
+/// covers, rounded outwards; `None` if any part is outside the grid.
+fn body_box(wide: i32, tall: i32, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
     let (left, top) = (x - wide * ONE / 2, y - tall * ONE / 2);
     let x0 = usize::try_from(left.div_euclid(ONE)).ok()?;
     let y0 = usize::try_from(top.div_euclid(ONE)).ok()?;

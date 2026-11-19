@@ -1,7 +1,7 @@
 //! Starting scenes shared by `desktank window` and `desktank bench`.
 
 use desktank_sim::species::Zone;
-use desktank_sim::{Brush, MAX_CREATURES, MaterialId, Rect, World, WorldError};
+use desktank_sim::{Brush, MaterialId, Rect, World, WorldError};
 
 /// A built-in material's ID. The built-in table always has these.
 pub fn material(world: &World, name: &str) -> anyhow::Result<MaterialId> {
@@ -47,7 +47,7 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Adds `count` creatures (stopping at [`MAX_CREATURES`]), cycling through the
+/// Adds `count` creatures (stopping at the tank's population cap), cycling through the
 /// swimming and bottom-walking species (fish and shrimp; not the surface
 /// crawlers), each placed at a seeded spot in the middle of its zone (or the
 /// nearest free water). Returns how many were added.
@@ -70,7 +70,7 @@ pub fn stock(world: &mut World, count: usize, seed: u64) -> anyhow::Result<usize
     let mut state = seed ^ 0x9e37_79b9_7f4a_7c15;
     let mut added = 0;
     for i in 0..count {
-        if world.creatures().len() >= MAX_CREATURES {
+        if world.creatures().len() >= world.creature_cap() {
             break;
         }
         let s = species[i % species.len()];
@@ -159,6 +159,9 @@ mod tests {
                 .iter()
                 .all(|c| world.species().get(c.species()).unwrap().zone != Zone::Surfaces)
         );
-        assert_eq!(stock(&mut world, 1000, 7).unwrap(), MAX_CREATURES - 30);
+        assert_eq!(
+            stock(&mut world, 1000, 7).unwrap(),
+            desktank_sim::DEFAULT_CREATURE_CAP - 30
+        );
     }
 }
