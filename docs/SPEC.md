@@ -2368,7 +2368,7 @@ Each package depends only on the packages before it.
     or wake locks held;
   - the README gives the Google TV setup steps, and they work on the
     reference device.
-- [ ] **A2 Android CI smoke test.** CI starts the Dream on an Android TV
+- [x] **A2 Android CI smoke test.** CI starts the Dream on an Android TV
   emulator image (`x86_64`), captures a frame and checks the tank is
   drawn, and fails on a panic or `FATAL` in logcat. *Accept:* the job is
   green on `main` and red on a PR that breaks the Dream (shown once in
