@@ -1,0 +1,171 @@
+id = 23
+name = "ramshorn_snail"
+zone = "surfaces"
+depth = [0.0, 1.0]
+min_depth = 12
+length_cm = 2.0
+lifespan_days = 365
+maturity_days = 60
+temperament = "peaceful"
+speed = 0.8
+max_speed = 1.5
+diet = ["algae", "detritus"]
+
+
+[breeding]
+mode = "eggs"
+days = 12
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+# Silhouette traced from Wikimedia Commons "Planorbelladuryi.jpg" (flat coiled disc on edge, sunken centre), shaded in the house style:
+# dark-shade outline, dithered highlight, small glinting eye.
+colours = { A = "#4a1a10", B = "#5a2218", C = "#c46a50", D = "#a04a38", E = "#3a140e", F = "#5a3a2e", G = "#8a4030", H = "#8a5a4a", I = "#7a5040", J = "#a87866", K = "#0c1016", L = "#3e2418", M = "#e09070", N = "#6e2e22", O = "#3a120c", P = "#6a2a1e" }
+frames = [
+    [
+        "..AAAA....",
+        ".ABBBBA...",
+        "ABCDCBA...",
+        "ABDEDBA..F",
+        "ABDDDBA.F.",
+        ".ABBBGHF..",
+        "..ADGHIJK.",
+        ".LIIIIIHHL",
+        "..LLLLLLL.",
+        "..........",
+    ],
+    [
+        "..AAAA....",
+        ".ABBBBA...",
+        "ABCDCBA...",
+        "ABDEDBA...",
+        "ABDDDBA.FF",
+        ".ABBBGHF..",
+        "..ADGHIJK.",
+        ".LIIIIIHHL",
+        "..LLLLLLL.",
+        "..........",
+    ],
+    [
+        "..AAAA....",
+        ".ABBBBA...",
+        "ABCDCBA...",
+        "ABDEDBA...",
+        "ABDDDBA..F",
+        ".ABBBGHFF.",
+        "..ADGHIJK.",
+        ".LIIIIIHHL",
+        "..LLLLLLL.",
+        "..........",
+    ],
+    [
+        "..AAAA....",
+        ".ABBBBA...",
+        "ABCDCBA...",
+        "ABDEDBA...",
+        "ABDDDBA.FF",
+        ".ABBBGHF..",
+        "..ADGHIJK.",
+        ".LIIIIIHHL",
+        "..LLLLLLL.",
+        "..........",
+    ],
+]
+fine_frames = [
+    [
+        "....................",
+        ".....AAAAAAAA.......",
+        "....ACMCMBMCNA......",
+        "...ACCBBCCCBBMA.....",
+        "..ACCBCDCDCDCBMA....",
+        ".ACCBCDCBBBCDCBMA...",
+        ".ACNBDCBCDCBBDNBA...",
+        ".ADCBDBDDDDDBDDBA...",
+        ".ACDNDBDEEBDDBDBA...",
+        ".ADDBDBDEEBDDBDBA...",
+        ".ADDBNDBBBDDBDDBA...",
+        ".ABDBBDDDDDNBDDBA...",
+        "..ADDBBDDDGBGDBA...F",
+        "...ODGDBBBBGNGO...F.",
+        "...AODGNGDGDBBA..F..",
+        ".....ABBDBBBGIHLL...",
+        "....LIIINGIIIIIIIL..",
+        "...LIIIIIIIIIIIIIL..",
+        "...LIIIIIILLLLLLLL..",
+        "..LLLLLLLL..........",
+    ],
+    [
+        "....................",
+        ".....AAAAAAAA.......",
+        "....ACMCMBMCNA......",
+        "...ACCBBCCCBBMA.....",
+        "..ACCBCDCDCDCBMA....",
+        ".ACCBCDCBBBCDCBMA...",
+        ".ACNBDCBCDCBBDNBA...",
+        ".ADCBDBDDDDDBDDBA...",
+        ".ACDNDBDEEBDDBDBA...",
+        ".ADDBDBDEEBDDBDBA...",
+        ".ADDBNDBBBDDBDDBA...",
+        ".ABDBBDDDDDNBDDBA...",
+        "..ADDBBDDDGBGDBA...F",
+        "...ODGDBBBBGNGO...F.",
+        "...AODGNGDGDBBA..F..",
+        ".....ABBDBBBGIHLL...",
+        "....LIIINGIIIIIIILL.",
+        "...LIIIIIIIIIIIIIHL.",
+        "...LIIIIIILLLLLLLLL.",
+        "..LLLLLLLL..........",
+    ],
+    [
+        "....................",
+        ".....AAAAAAAA.......",
+        "....ACMCMBMCNA......",
+        "...ACCBBCCCBBMA.....",
+        "..ACCBCDCDCDCBMA....",
+        ".ACCBCDCBBBCDCBMA...",
+        ".ACNBDCBCDCBBDNBA...",
+        ".ADCBDBDDDDDBDDBA...",
+        ".ACDNDBDEEBDDBDBA...",
+        ".ADDBDBDEEBDDBDBA...",
+        ".ADDBNDBBBDDBDDBA...",
+        ".ABDBBDDDDDNBDDBA...",
+        "..ADDBBDDDGBGDBA....",
+        "...ODGDBBBBGNGO....F",
+        "...AODGNGDGDBBA...F.",
+        ".....ABBDBBBGIHLLL..",
+        "....LIIINGIIIIIIIHL.",
+        "...LIIIIIIIIIIIIIIL.",
+        "...LIIIIIILLLLLLLLL.",
+        "..LLLLLLLL..........",
+    ],
+    [
+        "....................",
+        ".....AAAAAAAA.......",
+        "....ACMCMBMCNA......",
+        "...ACCBBCCCBBMA.....",
+        "..ACCBCDCDCDCBMA....",
+        ".ACCBCDCBBBCDCBMA...",
+        ".ACNBDCBCDCBBDNBA...",
+        ".ADCBDBDDDDDBDDBA...",
+        ".ACDNDBDEEBDDBDBA...",
+        ".ADDBDBDEEBDDBDBA...",
+        ".ADDBNDBBBDDBDDBA...",
+        ".ABDBBDDDDDNBDDBA...",
+        "..ADDBBDDDGBGDBA....",
+        "...ODGDBBBBGNGO....F",
+        "...AODGNGDGDBBA...F.",
+        ".....ABBDBBBGIHLLL..",
+        "....LIIINGIIIIIIIHL.",
+        "...LIIIIIIIIIIIIIIL.",
+        "...LIIIIIILLLLLLLLL.",
+        "..LLLLLLLL..........",
+    ],
+]
+icon = [
+    ".DDD.",
+    "DPDPD",
+    "DDADD",
+    ".DDDJ",
+    "HHHHH",
+]
