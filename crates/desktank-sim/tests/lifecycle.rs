@@ -247,6 +247,8 @@ fn fry_grow_with_feeding() {
     let fry = w.creature_size(w.creature(fed).unwrap());
     assert_eq!(w.life_stage(w.creature(fed).unwrap()), LifeStage::Fry);
     assert!(fry.0 < full.0 && fry.1 <= full.1, "{fry:?} < {full:?}");
+    // It would hunt the fry down.
+    w.remove_creature(adult);
     for _ in 0..1000 {
         w.tick();
     }

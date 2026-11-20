@@ -39,6 +39,9 @@ pub const MAX_SPRITE_SIDE: usize = 64;
 /// scale, so a 3.5 cm neon tetra is 7 cells long and sits beside a 2.5 cm
 /// cherry shrimp (5 cells) as it would in a tank.
 pub const CELLS_PER_CM: f32 = 2.0;
+/// Smallest and largest territory radius a species may give, in cm.
+const MIN_TERRITORY_CM: f32 = 2.0;
+const MAX_TERRITORY_CM: f32 = 50.0;
 /// Largest palette icon side, in pixels (a palette slot's face).
 pub const MAX_ICON_SIDE: usize = 8;
 /// Fastest allowed speed, in cells per second: under one cell per tick, so
@@ -233,6 +236,10 @@ pub struct Species {
     /// hungry adult takes any smaller creature it touches: fry, shrimp
     /// (SPEC §2.4, T9 part 2).
     pub prey_cm: Option<f32>,
+    /// Radius in cm of the territory a `territorial` adult claims where it
+    /// settles and drives other fish out of (`None`: it keeps none; only
+    /// territorial species may set it).
+    pub territory_cm: Option<f32>,
     /// How it breeds, or `None` if it doesn't in a freshwater tank.
     pub breeding: Option<Breeding>,
     /// Its night glow, or `None` (every species but the blinker).
@@ -379,6 +386,8 @@ struct SpeciesDef {
     #[serde(default)]
     cheat_only: bool,
     prey_cm: Option<f32>,
+    #[serde(default)]
+    territory_cm: Option<f32>,
     #[serde(default)]
     breeding: Option<BreedingDef>,
     #[serde(default)]
@@ -653,6 +662,15 @@ fn validate(
     {
         return Err(invalid("prey_cm must be > 0 and below length_cm"));
     }
+    if let Some(radius) = d.territory_cm
+        && !(radius.is_finite()
+            && (MIN_TERRITORY_CM..=MAX_TERRITORY_CM).contains(&radius)
+            && d.temperament == Temperament::Territorial)
+    {
+        return Err(invalid(
+            "territory_cm must be 2..=50 and only for a territorial species",
+        ));
+    }
     let breeding = d
         .breeding
         .as_ref()
@@ -689,6 +707,7 @@ fn validate(
         home_carpet: d.home_carpet.clone(),
         cheat_only: d.cheat_only,
         prey_cm: d.prey_cm,
+        territory_cm: d.territory_cm,
         breeding,
         glow,
         morphs,
@@ -1413,6 +1432,37 @@ mod tests {
         assert_eq!((tetra.morphs.len(), tetra.looks.len()), (1, 1));
         assert_eq!(tetra.looks[0].frames, tetra.sprite.frames);
         assert_eq!(tetra.look(5, true), 0);
+    }
+
+    #[test]
+    fn a_territory_is_only_for_a_territorial_species() {
+        let m = materials();
+        // 2–50 cm across.
+        let territory = |temperament: &str, cm: &str| {
+            SpeciesTable::from_toml_sources(
+                &[&OK.replace(
+                    "temperament = \"peaceful\"",
+                    &format!("temperament = \"{temperament}\"\nterritory_cm = {cm}"),
+                )],
+                &m,
+            )
+        };
+        let held = territory("territorial", "15.0").unwrap();
+        assert_eq!(held.get(SpeciesId(9)).unwrap().territory_cm, Some(15.0));
+        for (temperament, cm) in [
+            ("peaceful", "15.0"),
+            ("territorial", "1.0"),
+            ("territorial", "51.0"),
+            ("territorial", "nan"),
+        ] {
+            assert!(
+                matches!(
+                    territory(temperament, cm),
+                    Err(SpeciesError::Invalid { .. })
+                ),
+                "{temperament} {cm}"
+            );
+        }
     }
 
     #[test]

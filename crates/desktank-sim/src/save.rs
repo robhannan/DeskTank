@@ -19,7 +19,8 @@
 //! little-endian `u32`) holding the `postcard` encoding of the version's
 //! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2,
 //! `save::v3::Save` for 3, `save::v4::Save` for 4, `save::v5::Save` for 5,
-//! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8).
+//! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8,
+//! `save::v9::Save` for 9).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -40,7 +41,9 @@
 //! creature's home (a home owning species', version 5); and each
 //! creature's name (T9 part 3, version 6); and each floater's raft, its
 //! motion as a buoyant body (T6c part 2, version 7); and each plant's
-//! colouration (T6d, version 8). Random streams are derived from `(seed, tick, stream)` (SPEC
+//! colouration (T6d, version 8); and each creature's quarry, pursuit
+//! counter and fright (hunting and territory, version 9).
+//! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
 //! the build, and the save records the name behind every material and
@@ -63,7 +66,8 @@
 //! Version 5 migrates a version 4 tank's creatures with no home, version
 //! 6 a version 5 tank's with no name, version 7 a version 6 tank with
 //! no rafts (no build before it had floaters), and version 8 a version 7
-//! tank's plants uncoloured.
+//! tank's plants uncoloured, and version 9 a version 8 tank's creatures
+//! calm, with no quarry and no rest from a chase.
 
 use thiserror::Error;
 
@@ -79,11 +83,12 @@ pub(crate) mod v5;
 pub(crate) mod v6;
 pub(crate) mod v7;
 pub(crate) mod v8;
+pub(crate) mod v9;
 
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 8;
+pub const FORMAT_VERSION: u16 = 9;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -130,7 +135,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v8();
+    let snapshot = world.to_v9();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     let payload = lz4_flex::block::compress_prepend_size(&raw);
@@ -157,11 +162,16 @@ pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError
     let (version, payload) = open(bytes)?;
     let raw = decompress(payload)?;
     let payload = |e: postcard::Error| SaveError::Payload(e.to_string());
-    let from_v7 = |s: v7::Save| World::from_v8(v8::Save::from_v7(s), materials.clone());
+    let from_v8 = |s: v8::Save| World::from_v9(v9::Save::from_v8(s), materials.clone());
+    let from_v7 = |s: v7::Save| from_v8(v8::Save::from_v7(s));
     let from_v6 = |s: v6::Save| from_v7(v7::Save::from_v6(s));
+    if version == 9 {
+        let snapshot: v9::Save = postcard::from_bytes(&raw).map_err(payload)?;
+        return World::from_v9(snapshot, materials);
+    }
     if version == 8 {
         let snapshot: v8::Save = postcard::from_bytes(&raw).map_err(payload)?;
-        return World::from_v8(snapshot, materials);
+        return from_v8(snapshot);
     }
     if version == 7 {
         let snapshot: v7::Save = postcard::from_bytes(&raw).map_err(payload)?;
@@ -348,10 +358,10 @@ mod tests {
             world.tick();
         }
         let id = world.plants().next().unwrap().id.0;
-        let mut good = world.to_v8();
-        let colour = |plant, colour| v8::PlantColour { plant, colour };
+        let mut good = world.to_v9();
+        let colour = |plant, colour| v9::PlantColour { plant, colour };
         good.colours = vec![colour(id, 0.5)];
-        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
         let loaded = load(good.clone()).unwrap();
         assert!((loaded.plants().next().unwrap().colour - 0.5).abs() < f32::EPSILON);
         for bad in [
@@ -386,11 +396,11 @@ mod tests {
         for _ in 0..20 {
             world.tick();
         }
-        let mut saved = world.to_v8();
+        let mut saved = world.to_v9();
         assert_eq!(saved.life.food.iter().map(Vec::len).sum::<usize>(), 1);
         saved.life.food.iter_mut().for_each(Vec::clear);
-        let restored = World::from_v8(saved, MaterialTable::builtin().unwrap()).unwrap();
-        assert_eq!(restored.to_v8().life.food, world.to_v8().life.food);
+        let restored = World::from_v9(saved, MaterialTable::builtin().unwrap()).unwrap();
+        assert_eq!(restored.to_v9().life.food, world.to_v9().life.food);
     }
 
     #[test]
@@ -407,8 +417,8 @@ mod tests {
         let rock = world.materials().id("rock").unwrap();
         world.paint(20, 10, 3, rock, crate::Brush::Pour).unwrap();
         world.tick();
-        let good = world.to_v8();
-        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v9();
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
         assert!(load(good.clone()).is_ok());
 
         let mut renamed = good.clone();
@@ -507,12 +517,17 @@ mod tests {
                 .add_creature_with_traits(guppy, x, 20, traits)
                 .unwrap();
         }
-        let mut good = world.to_v8();
+        let mut good = world.to_v9();
         let gestation =
             world.species().get(guppy).unwrap().breeding.unwrap().days * crate::LIFE_DAY_TICKS;
-        let female = good.creatures.list.iter().position(|c| c.female).unwrap();
+        let female = good
+            .creatures
+            .list
+            .iter()
+            .position(|c| c.base.female)
+            .unwrap();
         let male = 1 - female;
-        good.creatures.list[female].carrying = gestation;
+        good.creatures.list[female].base.carrying = gestation;
         good.creatures.clutches.push(v3::Clutch {
             id: 1,
             species: tetra.0,
@@ -522,7 +537,7 @@ mod tests {
             eggs: vec![130, 140],
         });
         good.creatures.next_clutch = 2;
-        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
         assert!(load(good.clone()).is_ok());
         // The next clutch id is only where the search starts: 0 becomes 1.
         let mut zero = good.clone();
@@ -536,11 +551,11 @@ mod tests {
         ];
         for (n, bad) in creature_bad.iter().enumerate() {
             let mut s = good.clone();
-            bad(&mut s.creatures.list[female]);
+            bad(&mut s.creatures.list[female].base);
             assert!(matches!(load(s), Err(SaveError::Invalid(_))), "female {n}");
         }
         let mut carrying_male = good.clone();
-        carrying_male.creatures.list[male].carrying = 1;
+        carrying_male.creatures.list[male].base.carrying = 1;
         assert!(matches!(load(carrying_male), Err(SaveError::Invalid(_))));
 
         let clutch_bad: [fn(&mut v3::Clutch); 7] = [
@@ -590,11 +605,11 @@ mod tests {
             let s = world.species().id(name).unwrap();
             world.add_creature(s, 32, 30).unwrap();
         }
-        let good = world.to_v8();
-        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v9();
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
         let with = |i: usize, home| {
             let mut s = good.clone();
-            s.creatures.list[i].home = Some(home);
+            s.creatures.list[i].base.home = Some(home);
             load(s)
         };
         let owner = with(1, (10, 40)).unwrap();
@@ -602,6 +617,50 @@ mod tests {
         assert!(matches!(with(1, (64, 40)), Err(SaveError::Invalid(_))));
         assert!(matches!(with(1, (10, 48)), Err(SaveError::Invalid(_))));
         assert!(matches!(with(0, (10, 40)), Err(SaveError::Invalid(_))));
+    }
+
+    #[test]
+    fn rejects_pursuit_state_a_tank_wouldnt_have() {
+        use crate::world::pursuit::{DRIVE_TICKS, FEAR_TICKS, HUNT_TICKS, PURSUIT_REST};
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 64,
+                height: 48,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        for name in ["betta", "neon_tetra"] {
+            let s = world.species().id(name).unwrap();
+            world.add_creature(s, 32, 30).unwrap();
+        }
+        let good = world.to_v9();
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
+        let with = |quarry: Option<u32>, pursuit: u16, fear: u16| {
+            let mut s = good.clone();
+            let c = &mut s.creatures.list[0];
+            (c.quarry, c.pursuit, c.fear) = (quarry, pursuit, fear);
+            load(s)
+        };
+        let hunting = with(Some(2), HUNT_TICKS.max(DRIVE_TICKS), FEAR_TICKS).unwrap();
+        let betta = &hunting.creatures()[0];
+        assert_eq!(betta.quarry(), Some(crate::CreatureId(2)));
+        assert_eq!(betta.fear(), u32::from(FEAR_TICKS));
+        assert!(with(None, PURSUIT_REST, 0).is_ok());
+        let bad = [
+            (Some(1), 0, 0),
+            (Some(9), 0, 0),
+            (Some(2), HUNT_TICKS.max(DRIVE_TICKS) + 1, 0),
+            (None, PURSUIT_REST + 1, 0),
+            (None, 0, FEAR_TICKS + 1),
+        ];
+        for (quarry, pursuit, fear) in bad {
+            assert!(
+                matches!(with(quarry, pursuit, fear), Err(SaveError::Invalid(_))),
+                "{quarry:?} {pursuit} {fear}"
+            );
+        }
     }
 
     #[test]
@@ -618,12 +677,12 @@ mod tests {
         let tetra = world.species().id("neon_tetra").unwrap();
         let id = world.add_creature(tetra, 32, 30).unwrap();
         world.set_creature_name(id, "Bubbles");
-        let good = world.to_v8();
-        assert_eq!(good.creatures.list[0].name, "Bubbles");
-        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v9();
+        assert_eq!(good.creatures.list[0].base.name, "Bubbles");
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
         let with = |name: &str| {
             let mut s = good.clone();
-            s.creatures.list[0].name = name.to_owned();
+            s.creatures.list[0].base.name = name.to_owned();
             load(s)
         };
         assert_eq!(
@@ -662,9 +721,9 @@ mod tests {
         world.set_cell(40, 40, stem).unwrap();
         world.tick();
         assert_eq!(world.plant_count(), 2);
-        let good = world.to_v8();
+        let good = world.to_v9();
         assert_eq!(good.rafts.len(), 1, "only the floater has a raft");
-        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let load = |s: v9::Save| World::from_v9(s, MaterialTable::builtin().unwrap());
         assert_eq!(load(good.clone()).unwrap().state_hash(), world.state_hash());
         let floater = good.rafts[0].plant;
         let other = good
@@ -674,7 +733,7 @@ mod tests {
             .find(|p| p.id != floater)
             .unwrap()
             .id;
-        let bad: [fn(&mut v8::Raft, u16); 4] = [
+        let bad: [fn(&mut v9::Raft, u16); 4] = [
             |r, other| r.plant = other,
             |r, _| r.plant = 999,
             |r, _| r.off = (0, 5 * 256),
@@ -691,7 +750,7 @@ mod tests {
         let mut missing = good;
         missing.rafts.clear();
         let filled = load(missing).unwrap();
-        assert_eq!(filled.to_v8().rafts.len(), 1);
+        assert_eq!(filled.to_v9().rafts.len(), 1);
     }
 
     #[test]

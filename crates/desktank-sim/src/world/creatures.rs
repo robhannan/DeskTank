@@ -49,11 +49,13 @@
 //! - **Habits** of a few species (waste, eating corpses, a home with a
 //!   carpet patch) are in [`habits`].
 //! - **Names** and the inspect card are in [`naming`].
+//! - **Hunting, fleeing to cover and territory** are in [`pursuit`].
 
 mod breeding;
 mod habits;
 mod lifecycle;
 mod naming;
+pub mod pursuit;
 mod steering;
 
 use core::mem;
@@ -67,7 +69,7 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v6};
+use crate::save::{SaveError, v6, v9};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
 pub use breeding::{
     BREED_CHECK_SECONDS, CONCEIVE_ODDS, Clutch, MAX_CLUTCHES, MUTATION_PER_MILLE, PREY_ENERGY,
@@ -228,7 +230,8 @@ pub struct Creature {
     /// Stress from poor water, see [`STRESS_LIMIT`].
     stress: u32,
     /// The substrate cell `(x, y)` a home owning species picked as its
-    /// home and planted its carpet patch on (see [`habits`]).
+    /// home and planted its carpet patch on (see [`habits`]), or the centre
+    /// of a territorial species' territory (see [`pursuit`]).
     home: Option<(u32, u32)>,
     /// Its user-given name, cleaned (see [`naming`]); `None` until named.
     name: Option<Box<str>>,
@@ -242,6 +245,14 @@ pub struct Creature {
     sire: [u8; 2],
     /// Ticks until it may breed again.
     rest: u32,
+    /// The creature it is hunting or driving out of its territory (see
+    /// [`pursuit`]).
+    quarry: Option<CreatureId>,
+    /// Ticks it has chased its quarry; without one, ticks it rests before
+    /// the next chase.
+    pursuit: u16,
+    /// Ticks of fright left: it flees to cover or away while above 0.
+    fear: u16,
 }
 
 /// What a creature added by a host, a script or a test is like (see
@@ -354,7 +365,8 @@ impl Creature {
     }
 
     /// The substrate cell `(x, y)` it picked as its home, if it keeps one
-    /// (a species with a `home_carpet`) and has picked it.
+    /// (a species with a `home_carpet`) and has picked it; for a
+    /// territorial species, the cell at the centre of its territory.
     #[must_use]
     pub fn home(&self) -> Option<(usize, usize)> {
         self.home.map(|(x, y)| (x as usize, y as usize))
@@ -396,6 +408,18 @@ impl Creature {
     #[must_use]
     pub fn rest(&self) -> u32 {
         self.rest
+    }
+
+    /// The creature it is hunting or driving out of its territory, if any.
+    #[must_use]
+    pub fn quarry(&self) -> Option<CreatureId> {
+        self.quarry
+    }
+
+    /// Ticks of fright left (0: calm).
+    #[must_use]
+    pub fn fear(&self) -> u32 {
+        u32::from(self.fear)
     }
 
     /// Mirrors it so its head leads along `(dx, dy)` in its turned frame,
@@ -452,6 +476,8 @@ struct Kind {
     eats_corpses: bool,
     /// It picks a home and plants a carpet there.
     homebody: bool,
+    /// Its territory's radius in cells (0: it keeps none).
+    territory: i32,
 }
 
 /// The creatures in a world and the per-species and per-material lookups
@@ -464,6 +490,9 @@ pub(super) struct Creatures {
     cursor: Option<(i32, i32)>,
     /// Reused start-of-tick snapshots for schooling, in creature id order.
     school: Vec<Schoolmate>,
+    /// Reused start-of-tick snapshot for hunting and territory, in id
+    /// order (empty while no creature hunts or keeps a territory).
+    near: Vec<pursuit::Near>,
     next_id: u32,
     kinds: Vec<Option<Kind>>,
     /// Per material: a creature's body may overlap it.
@@ -567,6 +596,11 @@ impl Creatures {
                 }),
                 eats_corpses: s.eats_corpses,
                 homebody: s.home_carpet.is_some(),
+                // Validated to 2..=50 cm.
+                #[allow(clippy::cast_possible_truncation)]
+                territory: s
+                    .territory_cm
+                    .map_or(0, |t| (t * crate::species::CELLS_PER_CM).round() as i32),
             });
         }
         Self {
@@ -574,6 +608,7 @@ impl Creatures {
             list: Vec::new(),
             cursor: None,
             school: Vec::new(),
+            near: Vec::new(),
             next_id: 1,
             kinds,
             swim,
@@ -780,6 +815,9 @@ impl World {
             rest,
             home: None,
             name: None,
+            quarry: None,
+            pursuit: 0,
+            fear: 0,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -896,48 +934,53 @@ impl World {
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
     /// host's cursor isn't saved.
-    pub(super) fn save_creatures(&self) -> v6::Creatures {
+    pub(super) fn save_creatures(&self) -> v9::Creatures {
         let cr = &self.creatures;
-        v6::Creatures {
+        v9::Creatures {
             next_id: cr.next_id,
             cap: u32::try_from(cr.cap).unwrap_or(u32::MAX),
             easy: cr.easy,
             list: cr
                 .list
                 .iter()
-                .map(|c| v6::Creature {
-                    id: c.id.0,
-                    species: c.species.0,
-                    x: c.x,
-                    y: c.y,
-                    z: c.z,
-                    tz: c.tz,
-                    dodging: c.dodging,
-                    stray: c.stray,
-                    vx: c.vx,
-                    vy: c.vy,
-                    tx: c.tx,
-                    ty: c.ty,
-                    retarget: c.retarget,
-                    satiety: c.satiety,
-                    food: c.food,
-                    ignore: c.ignore,
-                    facing_left: c.facing_left,
-                    turn: c.turn,
-                    held_until: c.held_until,
-                    next_breath: c.next_breath,
-                    eaten: c.eaten,
-                    age: c.age,
-                    growth: c.growth,
-                    energy: c.energy,
-                    stress: c.stress,
-                    female: c.female,
-                    alleles: c.alleles,
-                    carrying: c.carrying,
-                    sire: c.sire,
-                    rest: c.rest,
-                    home: c.home,
-                    name: c.name.as_deref().unwrap_or_default().to_owned(),
+                .map(|c| v9::Creature {
+                    base: v6::Creature {
+                        id: c.id.0,
+                        species: c.species.0,
+                        x: c.x,
+                        y: c.y,
+                        z: c.z,
+                        tz: c.tz,
+                        dodging: c.dodging,
+                        stray: c.stray,
+                        vx: c.vx,
+                        vy: c.vy,
+                        tx: c.tx,
+                        ty: c.ty,
+                        retarget: c.retarget,
+                        satiety: c.satiety,
+                        food: c.food,
+                        ignore: c.ignore,
+                        facing_left: c.facing_left,
+                        turn: c.turn,
+                        held_until: c.held_until,
+                        next_breath: c.next_breath,
+                        eaten: c.eaten,
+                        age: c.age,
+                        growth: c.growth,
+                        energy: c.energy,
+                        stress: c.stress,
+                        female: c.female,
+                        alleles: c.alleles,
+                        carrying: c.carrying,
+                        sire: c.sire,
+                        rest: c.rest,
+                        home: c.home,
+                        name: c.name.as_deref().unwrap_or_default().to_owned(),
+                    },
+                    quarry: c.quarry.map(|q| q.0),
+                    pursuit: c.pursuit,
+                    fear: c.fear,
                 })
                 .collect(),
             corpses: cr
@@ -976,7 +1019,8 @@ impl World {
     }
 
     /// Restores the creatures, corpses and life settings from a save.
-    pub(super) fn load_creatures(&mut self, saved: v6::Creatures) -> Result<(), SaveError> {
+    #[allow(clippy::too_many_lines)] // one check per property
+    pub(super) fn load_creatures(&mut self, saved: v9::Creatures) -> Result<(), SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -990,8 +1034,15 @@ impl World {
                 saved.list.len()
             )));
         }
+        let ids: Vec<u32> = saved.list.iter().map(|c| c.base.id).collect();
         let mut list = Vec::with_capacity(saved.list.len());
-        for c in saved.list {
+        for v9::Creature {
+            base: c,
+            quarry,
+            pursuit,
+            fear,
+        } in saved.list
+        {
             let invalid = |what: &str| SaveError::Invalid(format!("creature {}: {what}", c.id));
             let species = SpeciesId(c.species);
             let Some(k) = self.kind(species) else {
@@ -1029,6 +1080,9 @@ impl World {
             if !self.home_fits(k, c.home) || clean_name(&c.name) != c.name {
                 return Err(invalid("home out of place, or a name not as kept"));
             }
+            if !pursuit::fits(c.id, quarry, pursuit, fear, &ids) {
+                return Err(invalid("quarry, pursuit or fright out of range"));
+            }
             list.push(Creature {
                 id: CreatureId(c.id),
                 species,
@@ -1062,6 +1116,9 @@ impl World {
                 rest: c.rest,
                 home: c.home,
                 name: (!c.name.is_empty()).then(|| c.name.into_boxed_str()),
+                quarry: quarry.map(CreatureId),
+                pursuit,
+                fear,
             });
         }
         let corpses = self.load_corpses(saved.corpses)?;
@@ -1170,6 +1227,14 @@ impl World {
                 h.write(&(name.len() as u64).to_le_bytes());
                 h.write(name.as_bytes());
             }
+            // Only hunters, territory keepers and frightened creatures hash
+            // their pursuit, so calm tanks hash as before version 9.
+            if c.quarry.is_some() || c.pursuit > 0 || c.fear > 0 {
+                h.write(&[0x70]);
+                h.write(&c.quarry.map_or(u64::MAX, |q| u64::from(q.0)).to_le_bytes());
+                h.write(&c.pursuit.to_le_bytes());
+                h.write(&c.fear.to_le_bytes());
+            }
         }
         self.hash_corpses(h);
         self.hash_breeding(h);
@@ -1210,6 +1275,7 @@ impl World {
         if quality.is_some() {
             changed |= self.predation(&mut list);
         }
+        self.snapshot_near(&list);
         self.creatures.school.clear();
         for c in &list {
             if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
@@ -1272,10 +1338,11 @@ impl World {
             }
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
+        self.pursue(&k, c);
         self.choose_food(&k, c, hungry);
 
         let (tx, ty, speed) = self.steering_target(&k, c, &mut rng);
-        steer(&k, c, tx, ty, speed, speed == k.top);
+        steer(&k, c, tx, ty, speed, speed > k.cruise);
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.
         // Hoppers (shrimp) kick upwards now and then and sink back.
@@ -1309,6 +1376,7 @@ impl World {
                 if let Some(f) = c.food.take() {
                     c.ignore = Some(f);
                 }
+                self.pursuit_blocked(&k, c);
                 self.pick_target(&k, c, &mut rng);
                 // A schooler that can't reach its school strays for a while
                 // on its new target, out of whatever pocket holds it.
@@ -1573,7 +1641,7 @@ impl World {
                     to_i64(i as usize % self.width),
                     to_i64(i as usize / self.width),
                 );
-                if !near_home(c, fx) {
+                if !near_home(k, c, fx) {
                     continue;
                 }
                 let d = (fx - cx).pow(2) + (fy - cy).pow(2);
@@ -1600,9 +1668,20 @@ impl World {
         // Body centres that keep the whole body inside the zone and walls.
         let (hw, hh) = (i64::from(k.w / 2 + 1), i64::from(k.h / 2));
         // A home owner wanders only near its home.
-        let (x0, x1) = home_span(c).map_or((hw, w - hw), |(lo, hi)| (lo.max(hw), hi.min(w - hw)));
+        let (x0, x1) =
+            home_span(k, c).map_or((hw, w - hw), |(lo, hi)| (lo.max(hw), hi.min(w - hw)));
         let x = span(x0, x1, rng);
-        let y = span(to_i64(top) + hh, to_i64(bottom) - hh, rng);
+        // A territorial fish keeps to rows within its territory, too.
+        let (y0, y1) = (to_i64(top) + hh, to_i64(bottom) - hh);
+        let (y0, y1) = match c.home {
+            Some((_, hy)) if k.territory > 0 => {
+                let r = i64::from(k.territory);
+                let (lo, hi) = (y0.max(i64::from(hy) - r), y1.min(i64::from(hy) + r + 1));
+                if lo < hi { (lo, hi) } else { (y0, y1) }
+            }
+            _ => (y0, y1),
+        };
+        let y = span(y0, y1, rng);
         (c.tx, c.ty) = (centre_of(x), centre_of(y));
         let (lo, hi) = RETARGET_TICKS;
         c.retarget = lo + rng.next_u32() % (hi - lo);
@@ -1700,7 +1779,8 @@ impl World {
 
 /// Accelerates `c` towards `(tx, ty)` at up to `speed`, slowing on
 /// arrival. While wandering vertical speed is held to half, as fish mostly
-/// swim level; `darting` (after food) lifts that.
+/// swim level; `darting` (above cruising speed: after food, hunting or
+/// fleeing) lifts that.
 fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool) {
     let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
     let d = dist(tx - c.x, ty - c.y);
