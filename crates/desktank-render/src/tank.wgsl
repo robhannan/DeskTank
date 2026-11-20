@@ -51,7 +51,8 @@ struct View {
     // Day and night: a colour multiplier for the tank (rgb; 1 by day), and
     // how dark it is (w: 0 by day, 1 at night) for glowing creatures.
     daylight: vec4<f32>,
-    // Target size in pixels (xy).
+    // Target size in pixels (xy), sway phase in seconds (z), and sway
+    // enabled (w: 1 when active, 0 when off).
     target_size: vec4<f32>,
     // Material ids of the plant parts root (x), stem (y) and leaf (z), and
     // of water (w); -1 if missing.
@@ -210,12 +211,50 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var plant_rgb = vec3<f32>(0.0);
     var plant_alpha = 0.0;
     let part = part_of(texel);
-    if part >= 0 {
-        let band = band_at(at);
-        let pt = plant_texel(at, texel, part, quarter, band);
+    let sway_on = view.target_size.w > 0.5;
+    let self_sways = sway_on && part >= 0 && is_swaying_part(part, texel);
+    var src_at = at;
+    var src_texel = texel;
+    var src_part = part;
+    var src_quarter = quarter;
+    var from_sway = false;
+    var swayed_away = false;
+    if sway_on && (part < 0 || self_sways) {
+        let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
+        let s_cell = floor(s_grid);
+        let s_at = vec2<i32>(s_cell);
+        var s_sways = false;
+        var s_texel = vec4<f32>(0.0);
+        var s_part = -1;
+        if inside(s_at) {
+            s_texel = textureLoad(cells, s_at, 0);
+            s_part = part_of(s_texel);
+            s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
+        }
+        if s_sways && (self_sways || style_of(texel) == STYLE_WATER) {
+            src_at = s_at;
+            src_texel = s_texel;
+            src_part = s_part;
+            src_quarter = clamp(
+                vec2<i32>(floor((s_grid - s_cell) * 4.0)),
+                vec2<i32>(0),
+                vec2<i32>(3),
+            );
+            from_sway = !self_sways;
+        } else if self_sways {
+            src_part = -1;
+            swayed_away = true;
+        }
+    }
+    if src_part >= 0 {
+        let band = band_at(src_at);
+        let pt = plant_texel(src_at, src_texel, src_part, src_quarter, band);
         if pt.a >= 0.999 {
             rgb = pt.rgb;
             need_ground = false;
+        } else if from_sway {
+            plant_rgb = pt.rgb;
+            plant_alpha = pt.a;
         } else {
             let nbr = behind_cell(at, quarter);
             if nbr.x >= 0 {
@@ -223,10 +262,19 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                 plant_rgb = pt.rgb;
                 plant_alpha = pt.a;
             } else {
-                let shadow = plant_shadow_of(texel, part, band);
+                let shadow = plant_shadow_of(src_texel, src_part, band);
                 rgb = mix(shadow, pt.rgb, pt.a);
                 need_ground = false;
             }
+        }
+    } else if swayed_away {
+        // The swaying leaf moved away from `at`, revealing what is behind.
+        let nbr = behind_cell(at, quarter);
+        if nbr.x >= 0 {
+            ground_texel = textureLoad(cells, nbr, 0);
+        } else {
+            rgb = water_bg(at, quarter, FINE_PLANTS && fine_scale());
+            need_ground = false;
         }
     }
     if need_ground {
@@ -795,6 +843,22 @@ fn part_of(t: vec4<f32>) -> i32 {
     return -1;
 }
 
+// Whether a plant part cell sways when optional sway is active (T6d):
+// leaves and upper stems sway; roots, runners, rhizomes, floaters, crowns
+// (pos 0) and mats (pos 0..3) stay anchored.
+fn is_swaying_part(part: i32, t: vec4<f32>) -> bool {
+    return part == PART_LEAF || (part == PART_STEM && position_of(t) >= 4);
+}
+
+// Gentle horizontal sway offset in cells (-0.5..+0.5, 1 cell peak-to-peak)
+// as a smooth wave of grid position and sway phase (view.target_size.z).
+fn sway_dx(grid_pos: vec2<f32>) -> f32 {
+    let phase = view.target_size.z;
+    let w = sin(phase * 1.6 + grid_pos.y * 0.14 + grid_pos.x * 0.05) * 0.65
+        + sin(phase * 0.9 - grid_pos.y * 0.08 + grid_pos.x * 0.11) * 0.35;
+    return w * 0.5;
+}
+
 // A plant cell's part-local position (the variant's low 6 bits).
 fn position_of(t: vec4<f32>) -> i32 {
     return i32(round(t.g * 255.0)) & 63;
@@ -1043,6 +1107,26 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                     + select(-1, 1, quarter.x == left_edge);
             }
         }
+        // Night folding on rosette, carpet and epiphyte blades (T6d): broad
+        // blades and pads tuck narrower at night (view.daylight.w: 0 day, 1 night).
+        let night = view.daylight.w;
+        if night > 0.01 {
+            if fine {
+                if shape == LEAF_SWORD && night >= 0.6 && pos > 2 && (quarter.x == 0 || quarter.x == 3) {
+                    covered = false;
+                } else if shape == LEAF_PAD && night >= 0.6 && tip && (quarter.x == 3 || quarter.y == 3) {
+                    covered = false;
+                } else if shape == LEAF_GRASS && night >= 0.75 && quarter.x == 3 {
+                    covered = false;
+                }
+            } else {
+                if shape == LEAF_SWORD && night >= 0.75 && pos > 2 && sub.x == 1 {
+                    covered = false;
+                } else if shape == LEAF_PAD && night >= 0.75 && tip && sub.x == 1 && !top {
+                    covered = false;
+                }
+            }
+        }
     } else if part == PART_FLOAT {
         // A floating leaf (T6c part 2) lying on the water line, lit on top,
         // rounded where the row of leaves ends.
@@ -1203,6 +1287,38 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                 step += select(-2, 2, quarter.y <= rib)
                     + select(0, 1, quarter.y == rib)
                     - select(0, 2, base && x < 2);
+            }
+        }
+        // Night folding on stem leaves (T6d): leaves tuck inward toward the
+        // stem and fold upward as darkness rises (view.daylight.w: 0 day, 1 night).
+        let night = view.daylight.w;
+        if night > 0.01 {
+            if fine {
+                let x = select(3 - quarter.x, quarter.x, from_left);
+                let along = (pos - 1) * 4 + x;
+                let span = max(i32(sizes.z), 1) * 4;
+                if tip && !base {
+                    let tuck = i32(round(night * 2.0));
+                    if x >= 4 - tuck {
+                        covered = false;
+                    }
+                } else if tip && base && night >= 0.75 && x == 3 {
+                    covered = false;
+                }
+                if quarter.y == 3 && night >= 0.5 && along >= 2 {
+                    covered = false;
+                }
+                if quarter.y == 2 && night >= 0.8 && along >= span / 2 {
+                    covered = false;
+                }
+            } else {
+                if tip && !base {
+                    if (night >= 0.75 && u == 1) || (night >= 0.5 && u == 1 && !top) {
+                        covered = false;
+                    }
+                } else if night >= 0.75 && u == 1 && !top {
+                    covered = false;
+                }
             }
         }
     } else if part == PART_STEM {
@@ -1396,7 +1512,16 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
     if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
         let base = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb;
-        let rgb = depth_cue(health_tint(coloured(base, shade, ramp, plant.g, species), health), band);
+        var rgb = depth_cue(health_tint(coloured(base, shade, ramp, plant.g, species), health), band);
+        // Subtle night dimming on folded leaves (T6d).
+        if view.daylight.w > 0.01 && (part == PART_LEAF || part == PART_FLOAT) {
+            let dim = select(
+                mix(1.0, 0.84, view.daylight.w),
+                mix(1.0, 0.90, view.daylight.w),
+                part == PART_FLOAT,
+            );
+            rgb = rgb * dim;
+        }
         let opacity = select(mix(MIN_OPACITY, 1.0, health / FADE_AT), 1.0, health >= FADE_AT);
         return vec4<f32>(rgb, opacity);
     }
@@ -1555,22 +1680,52 @@ fn vs_sprite(
 // fragment behind it is dropped. Texels the plant's shape leaves open, and
 // plant cells level with or behind the creature, don't hide it.
 fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
-    let cell = floor((pos - view.offset) / view.scale);
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
         return false;
     }
     let at = vec2<i32>(cell);
     let t = textureLoad(cells, at, 0);
     let part = part_of(t);
-    if part < 0 {
+    let sway_on = view.target_size.w > 0.5;
+    let self_sways = sway_on && part >= 0 && is_swaying_part(part, t);
+    var src_at = at;
+    var src_t = t;
+    var src_part = part;
+    var src_quarter = vec2<i32>(floor(fract(grid_pos) * 4.0));
+    if sway_on && (part < 0 || self_sways) {
+        let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
+        let s_cell = floor(s_grid);
+        let s_at = vec2<i32>(s_cell);
+        if !inside(s_at) {
+            return false;
+        }
+        let s_t = textureLoad(cells, s_at, 0);
+        let s_part = part_of(s_t);
+        if s_part < 0 || !is_swaying_part(s_part, s_t) {
+            return false;
+        }
+        if !self_sways && style_of(t) != STYLE_WATER {
+            return false;
+        }
+        src_at = s_at;
+        src_t = s_t;
+        src_part = s_part;
+        src_quarter = clamp(
+            vec2<i32>(floor((s_grid - s_cell) * 4.0)),
+            vec2<i32>(0),
+            vec2<i32>(3),
+        );
+    }
+    if src_part < 0 {
         return false;
     }
-    let band = band_at(at);
+    let band = band_at(src_at);
     if band + 0.5 >= depth {
         return false;
     }
-    let quarter = vec2<i32>(floor(fract((pos - view.offset) / view.scale) * 4.0));
-    return plant_texel(at, t, part, quarter, band).a > 0.5;
+    return plant_texel(src_at, src_t, src_part, src_quarter, band).a > 0.5;
 }
 
 // The atlas texel at `p` within `frame` (transparent outside it).

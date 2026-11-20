@@ -10,6 +10,7 @@ export interface Settings {
   field: string; // "" or a field overlay name
   avoidCursor: boolean;
   easyMode: boolean;
+  sway: boolean;
   stats: boolean;
   seed: number;
   radius: number;

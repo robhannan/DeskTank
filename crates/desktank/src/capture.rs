@@ -30,6 +30,8 @@ pub struct Options {
     pub script: Option<PathBuf>,
     /// Field to tint the tank by (debug overlay).
     pub field: Option<FieldOverlay>,
+    /// Enable optional render-only plant sway.
+    pub sway: bool,
     /// Output directory.
     pub out: PathBuf,
 }
@@ -59,6 +61,7 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
     }
     let mut tank = Tank::new(world, TankConfig::default());
     tank.set_field_overlay(opts.field);
+    tank.set_sway(opts.sway);
     if let Some(minute) = opts.time {
         tank.set_time_of_day(minute);
     }

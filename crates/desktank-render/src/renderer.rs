@@ -352,6 +352,7 @@ impl Renderer {
         size: (u32, u32),
         surface_row: usize,
         daylight: [f32; 3],
+        sway: Option<f32>,
         overlay: (
             Option<PaletteLayout>,
             Option<BrushPreview>,
@@ -388,7 +389,12 @@ impl Renderer {
                 [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
             });
             #[allow(clippy::cast_precision_loss)] // target pixels
-            let target = [size.0 as f32, size.1 as f32, 0.0, 0.0];
+            let target = [
+                size.0 as f32,
+                size.1 as f32,
+                sway.unwrap_or(0.0),
+                if sway.is_some() { 1.0 } else { 0.0 },
+            ];
             hud.into_iter()
                 .chain(cursor)
                 .chain(daylight)
