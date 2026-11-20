@@ -890,4 +890,13 @@ mod tests {
         }
         assert!(wgsl.contains("@location(8) glow: vec4<f32>"));
     }
+
+    #[test]
+    fn the_shader_knows_the_ground_styles() {
+        let wgsl = include_str!("tank.wgsl");
+        for (name, style) in crate::palette::GroundStyle::ALL {
+            let line = format!("const {name}: i32 = {};", style as u8);
+            assert!(wgsl.contains(&line), "{line}");
+        }
+    }
 }

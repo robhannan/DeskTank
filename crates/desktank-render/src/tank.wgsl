@@ -90,6 +90,20 @@ const HAZE_DIM: f32 = 0.1;
 // Haze colour, sRGB-encoded: a deep water blue.
 const HAZE: vec3<f32> = vec3<f32>(0.11, 0.27, 0.42);
 
+// Ground styles stored in palette.a (palette.rs GroundStyle; renderer.rs checks them).
+const STYLE_DEFAULT: i32 = 0;
+const STYLE_WATER: i32 = 1;
+const STYLE_AIR: i32 = 2;
+const STYLE_FERTILISER: i32 = 3;
+const STYLE_SAND: i32 = 4;
+const STYLE_GRAVEL: i32 = 5;
+const STYLE_AQUASOIL: i32 = 6;
+const STYLE_ROCK: i32 = 7;
+const STYLE_DRIFTWOOD: i32 = 8;
+const STYLE_BUBBLE: i32 = 9;
+const STYLE_ALGAE: i32 = 10;
+const STYLE_DETRITUS: i32 = 11;
+
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
 const PART_STEM: i32 = 1;
@@ -176,19 +190,46 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             }
         }
     }
-    let cell = floor((pos.xy - view.offset) / view.scale);
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
         return out(view.backdrop.rgb);
     }
     let at = vec2<i32>(cell);
     let texel = textureLoad(cells, at, 0);
-    var rgb: vec3<f32>;
+    let quarter = clamp(
+        vec2<i32>(floor((grid_pos - cell) * 4.0)),
+        vec2<i32>(0),
+        vec2<i32>(3),
+    );
+    var rgb = vec3<f32>(0.0);
+    var ground_texel = texel;
+    var need_ground = true;
+    var plant_rgb = vec3<f32>(0.0);
+    var plant_alpha = 0.0;
     let part = part_of(texel);
     if part >= 0 {
-        let quarter = vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 4.0));
-        rgb = plant_texel(at, texel, part, quarter, band_at(at)).rgb;
-    } else {
-        rgb = ground(at, texel);
+        let band = band_at(at);
+        let pt = plant_texel(at, texel, part, quarter, band);
+        if pt.a >= 0.999 {
+            rgb = pt.rgb;
+            need_ground = false;
+        } else {
+            let nbr = behind_cell(at, quarter);
+            if nbr.x >= 0 {
+                ground_texel = textureLoad(cells, nbr, 0);
+                plant_rgb = pt.rgb;
+                plant_alpha = pt.a;
+            } else {
+                let shadow = plant_shadow_of(texel, part, band);
+                rgb = mix(shadow, pt.rgb, pt.a);
+                need_ground = false;
+            }
+        }
+    }
+    if need_ground {
+        let bg = ground(at, ground_texel, quarter);
+        rgb = mix(bg, plant_rgb, plant_alpha);
     }
     rgb = rgb * view.daylight.rgb;
     // Debug overlay: tint by a field's value.
@@ -217,14 +258,499 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return out(rgb);
 }
 
-// The colour of a non-plant cell: its palette entry, darkened with depth if
-// it is water (before the daylight tint).
-fn ground(at: vec2<i32>, t: vec4<f32>) -> vec3<f32> {
-    let c = textureLoad(palette, vec2<i32>(round(t.rg * 255.0)), 0);
-    // Palette alpha flags: 1 darkens with depth, 0 not.
-    let tinted = select(0.0, 1.0, c.a > 0.75);
-    let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
-    return c.rgb * (1.0 - view.depth_dim * depth * tinted);
+// Ground style of a cell texel (from the palette alpha byte).
+fn style_of(t: vec4<f32>) -> i32 {
+    let mat = i32(round(t.r * 255.0));
+    return i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
+}
+
+// Ground style of the cell at `at`, or STYLE_DEFAULT outside the grid.
+fn style_at(at: vec2<i32>) -> i32 {
+    if !inside(at) {
+        return STYLE_DEFAULT;
+    }
+    return style_of(textureLoad(cells, at, 0));
+}
+
+// Whether `at` holds the same material id as `mat`.
+fn same_mat(at: vec2<i32>, mat: i32) -> bool {
+    return inside(at) && i32(round(textureLoad(cells, at, 0).r * 255.0)) == mat;
+}
+
+// Whether `at` is an open fluid (water, air, liquid fertiliser or bubble), so
+// light reaches an adjacent substrate or hardscape face. Skips the palette read
+// when the neighbour holds the caller's own non-fluid material `self_mat`.
+fn is_open_fluid(at: vec2<i32>, self_mat: i32) -> bool {
+    if !inside(at) {
+        return false;
+    }
+    let nt = textureLoad(cells, at, 0);
+    if i32(round(nt.r * 255.0)) == self_mat {
+        return false;
+    }
+    let s = style_of(nt);
+    return s == STYLE_WATER || s == STYLE_AIR || s == STYLE_FERTILISER || s == STYLE_BUBBLE;
+}
+
+// Per-texel hash mixed with a cell's variant byte so moving powders carry
+// their grain pattern while settled cells stay static.
+fn hash_grain(p: vec2<i32>, v: u32) -> u32 {
+    let ox = i32((v & 15u) * 7u);
+    let oy = i32(((v >> 4u) & 15u) * 11u);
+    return hash(p + vec2<i32>(ox, oy)) ^ (v * 0x9e3779b1u);
+}
+
+// Depth darkening multiplier for water/fertiliser at vertical position `y`.
+fn depth_factor(y: f32) -> f32 {
+    let depth = clamp((y - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
+    return 1.0 - view.depth_dim * depth;
+}
+
+// Sub-cell background water colour at `(at, quarter)` (used behind bubbles,
+// algae fringes and detritus edges).
+fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
+    let mat = max(i32(round(view.plant_parts.w)), 0);
+    let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
+    let sub = quarter / 2;
+    let p = select(at * 2 + sub, at * 4 + quarter, fine);
+    let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
+    let h = hash(vec2<i32>(p.x / 2, p.y));
+    let shimmer = 1.0 + (f32(h & 7u) - 3.5) * 0.006;
+    return base * depth_factor(f32(at.y) + sub_y) * shimmer;
+}
+
+// The colour of a non-plant cell: at scale 1 a flat palette lookup with
+// whole-cell depth darkening; at scale >= 2 (2x2) and fine scales (4x4),
+// sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
+// textures and refined bubbles/algae/detritus (before the daylight tint).
+fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
+    let mat = i32(round(t.r * 255.0));
+    let v = u32(round(t.g * 255.0));
+    if view.scale < 2.0 {
+        let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
+        let s = i32(round(c.a * 255.0));
+        let tinted = select(0.0, 1.0, s == STYLE_WATER || s == STYLE_FERTILISER);
+        let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
+        return c.rgb * (1.0 - view.depth_dim * depth * tinted);
+    }
+
+    let fine = FINE_PLANTS && fine_scale();
+    let sub = quarter / 2;
+    let p = select(at * 2 + sub, at * 4 + quarter, fine);
+    // Variant 0 is unglued base shade 0; variant 1 is glued base shade 0
+    // (for rigid bodies, palette.rs shades odd variants amber).
+    let base_v = i32(v & 1u);
+    let base_texel = textureLoad(palette, vec2<i32>(mat, base_v), 0);
+    let base = base_texel.rgb;
+    let style = i32(round(base_texel.a * 255.0));
+
+    if style == STYLE_WATER || style == STYLE_FERTILISER {
+        let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
+        let d = depth_factor(f32(at.y) + sub_y);
+        var rgb: vec3<f32>;
+        if style == STYLE_WATER {
+            // Subtle horizontal-biased pixel-art water grain.
+            let h1 = hash(vec2<i32>(i32(u32(p.x) >> 1u), p.y));
+            let h2 = hash(p);
+            let grain = 1.0 + (f32(h1 & 7u) - 3.5) * 0.005 + (f32(h2 & 3u) - 1.5) * 0.004;
+            rgb = base * d * grain;
+        } else {
+            // Liquid fertiliser: wispy plume variation driven by cell variant.
+            let h = hash_grain(vec2<i32>(i32(u32(p.x) >> 1u), p.y), v);
+            let plume = 1.0 + (f32(h & 15u) - 7.5) * 0.008;
+            rgb = base * d * plume;
+        }
+        // Crisp water-surface highlight where water meets air. Only cells near
+        // the water surface can touch air above, so skip the neighbour read
+        // everywhere else in the water column.
+        if at.y > 0 && abs(f32(at.y) - view.surface_row) <= 8.0 && (!fine || quarter.y < 3) {
+            let above = textureLoad(cells, at + vec2<i32>(0, -1), 0);
+            if i32(round(above.r * 255.0)) != mat && style_of(above) == STYLE_AIR {
+                let ripple = hash(vec2<i32>(p.x / 2, at.y)) & 3u;
+                let surface_tint = vec3<f32>(0.72, 0.90, 0.98);
+                if fine {
+                    if quarter.y == 0 {
+                        let k = select(0.32, 0.42, ripple == 0u);
+                        rgb = mix(rgb, surface_tint, k);
+                    } else if quarter.y == 1 {
+                        let k = select(0.10, 0.16, ripple < 2u);
+                        rgb = mix(rgb, surface_tint, k);
+                    } else if quarter.y == 2 {
+                        rgb = mix(rgb, surface_tint, 0.04);
+                    }
+                } else {
+                    if sub.y == 0 {
+                        let k = select(0.24, 0.34, ripple == 0u);
+                        rgb = mix(rgb, surface_tint, k);
+                    } else {
+                        rgb = mix(rgb, surface_tint, 0.06);
+                    }
+                }
+            }
+        }
+        return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_AIR {
+        let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
+        let t_sky = clamp((f32(at.y) + sub_y) / max(view.surface_row, 1.0), 0.0, 1.0);
+        // Gentle top-to-surface air lift + super subtle sub-cell grain.
+        let lift = mix(1.03, 0.97, t_sky);
+        let h = hash(p);
+        let grain = 1.0 + (f32(h & 7u) - 3.5) * 0.004;
+        return clamp(base * lift * grain, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_SAND {
+        let h = hash_grain(p, v);
+        let r = h & 31u;
+        // Multi-grain quartz palette: warm base, soft tan shadow, bright glint,
+        // pale quartz sparkle and occasional dark mineral fleck.
+        var k = 1.0;
+        var tint = vec3<f32>(1.0);
+        if r < 2u {
+            k = 0.80;
+            tint = vec3<f32>(0.95, 0.93, 0.90);
+        } else if r < 9u {
+            k = 0.91;
+        } else if r < 15u {
+            k = 1.08;
+        } else if r < 18u {
+            k = 1.13;
+            tint = vec3<f32>(1.02, 1.02, 1.00);
+        }
+        // Subtle horizontal bedding strata.
+        let band = (u32(p.y) >> 1u) & 3u;
+        k = k * select(1.0, 0.975, band == 0u);
+        // Top-edge water lighting and gentle slope shading.
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        if open_up {
+            if fine {
+                if quarter.y == 0 {
+                    k = k * 1.13;
+                } else if quarter.y == 1 {
+                    k = k * 1.04;
+                } else if quarter.y == 3 {
+                    k = k * 0.95;
+                }
+            } else {
+                k = k * select(0.96, 1.10, sub.y == 0);
+            }
+        } else {
+            k = k * 0.96;
+        }
+        if select(sub.x == 0, quarter.x == 0, fine) && is_open_fluid(at + vec2<i32>(-1, 0), mat) {
+            k = k * 1.07;
+        } else if select(sub.x == 1, quarter.x == 3, fine) && is_open_fluid(at + vec2<i32>(1, 0), mat) {
+            k = k * 0.93;
+        }
+        return clamp(base * tint * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_GRAVEL {
+        // Staggered rounded river pebbles (5x4 texels at 4x, 3x2 at 2x) so
+        // stones interlock organically instead of forming a cell grid.
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        var k: f32;
+        var warm: vec3<f32>;
+        if fine {
+            let ry = p.y / 4;
+            let shift = (ry & 1) * 2 + i32(hash(vec2<i32>(0, ry)) & 1u);
+            let sx = p.x + shift;
+            let rx = sx / 5;
+            let lx = sx - rx * 5;
+            let ly = p.y - ry * 4;
+            let ph = hash(vec2<i32>(rx, ry));
+            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
+            k = 0.88 + f32(ph & 7u) * 0.032 + cell_n;
+            warm = select(
+                vec3<f32>(0.96, 0.99, 1.04),
+                vec3<f32>(1.05, 1.00, 0.93),
+                ((ph >> 3u) & 1u) != 0u,
+            );
+            let corner = (lx == 0 || lx == 4) && (ly == 0 || ly == 3);
+            let crown = (ly == 1 && (lx == 1 || lx == 2)) || (ly == 0 && lx == 2);
+            let rim = lx == 4 || ly == 3;
+            let spek = (hash(p) & 7u) == 0u;
+            if corner {
+                k = k * select(0.78, 0.72, lx == 4 && ly == 3);
+            } else if crown {
+                k = k * select(1.11, 1.17, lx == 1 && ly == 1);
+            } else if rim {
+                k = k * 0.87;
+            } else if spek {
+                k = k * 0.94;
+            }
+            if open_up && quarter.y == 0 {
+                k = k * 1.11;
+            }
+        } else {
+            let ry = p.y / 2;
+            let sx = p.x + (ry & 1);
+            let rx = sx / 3;
+            let lx = sx - rx * 3;
+            let ly = p.y - ry * 2;
+            let ph = hash(vec2<i32>(rx, ry));
+            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
+            k = 0.89 + f32(ph & 7u) * 0.030 + cell_n;
+            warm = select(
+                vec3<f32>(0.96, 0.99, 1.04),
+                vec3<f32>(1.05, 1.00, 0.93),
+                ((ph >> 3u) & 1u) != 0u,
+            );
+            let tl = lx == 0 && ly == 0;
+            let br = lx == 2 && ly == 1;
+            k = k * select(select(1.0, 0.82, br), 1.12, tl);
+            if open_up && sub.y == 0 {
+                k = k * 1.09;
+            }
+        }
+        if !open_up {
+            k = k * 0.96;
+        }
+        return clamp(base * warm * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_AQUASOIL {
+        // Staggered dark rounded matte soil pellets (3x3 texels at 4x,
+        // offset 2x2 at 2x): smaller than gravel pebbles, breaking the cell grid.
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        var k: f32;
+        if fine {
+            let ry = p.y / 3;
+            let shift = (ry & 1) + ((ry / 2) & 1);
+            let sx = p.x + shift;
+            let rx = sx / 3;
+            let lx = sx - rx * 3;
+            let ly = p.y - ry * 3;
+            let ph = hash(vec2<i32>(rx, ry));
+            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.02;
+            k = 0.90 + f32(ph & 7u) * 0.028 + cell_n;
+            if lx == 2 && ly == 2 {
+                k = k * 0.74;
+            } else if lx == 0 && ly == 0 {
+                k = k * 1.15;
+            } else if (lx == 1 && ly == 0) || (lx == 0 && ly == 1) {
+                k = k * 1.06;
+            } else if lx == 2 || ly == 2 {
+                k = k * 0.85;
+            }
+            if open_up && quarter.y == 0 {
+                k = k * 1.15;
+            }
+        } else {
+            let ry = p.y / 2;
+            let sx = p.x + (ry & 1);
+            let rx = sx / 2;
+            let lx = sx - rx * 2;
+            let ly = p.y - ry * 2;
+            let ph = hash(vec2<i32>(rx, ry));
+            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.02;
+            k = 0.91 + f32(ph & 7u) * 0.026 + cell_n;
+            let tl = lx == 0 && ly == 0;
+            let br = lx == 1 && ly == 1;
+            k = k * select(select(0.99, 0.82, br), 1.11, tl);
+            if open_up && sub.y == 0 {
+                k = k * 1.11;
+            }
+        }
+        if !open_up {
+            k = k * 0.95;
+        }
+        return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_ROCK {
+        // World-space faceted stone strata + fine mineral grain.
+        let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
+        let grain = hash(p);
+        let cell_n = (f32((v >> 2u) & 3u) - 1.5) * 0.018;
+        var k = 1.0 + (f32(facet & 7u) - 3.5) * 0.028 + (f32(grain & 7u) - 3.5) * 0.012 + cell_n;
+        // Occasional dark micro-crack along a facet seam.
+        if ((facet >> 4u) & 15u) == 0u && ((grain >> 3u) & 3u) == 0u {
+            k = k * 0.86;
+        }
+        // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
+        if fine {
+            if quarter.y <= 1 && !same_mat(at + vec2<i32>(0, -1), mat) {
+                k = k * select(1.06, 1.15, quarter.y == 0);
+            }
+            if quarter.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
+                k = k * 1.08;
+            }
+            if quarter.y >= 2 && !same_mat(at + vec2<i32>(0, 1), mat) {
+                k = k * select(0.92, 0.82, quarter.y == 3);
+            }
+            if quarter.x == 3 && !same_mat(at + vec2<i32>(1, 0), mat) {
+                k = k * 0.88;
+            }
+        } else {
+            if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
+                k = k * 1.12;
+            }
+            if sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
+                k = k * 1.06;
+            }
+            if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
+                k = k * 0.86;
+            }
+            if sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat) {
+                k = k * 0.90;
+            }
+        }
+        return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_DRIFTWOOD {
+        // Flowing horizontal wood grain fibres with gentle organic wave.
+        let wave = i32(hash(vec2<i32>(p.x / 6, p.y / 5)) & 3u) - 1;
+        let row = u32(p.y + wave + 1024);
+        let stripe = row % 4u;
+        var k = 1.0;
+        if stripe == 0u {
+            k = 0.86;
+        } else if stripe == 1u {
+            k = 1.08;
+        } else if stripe == 2u {
+            k = 0.98;
+        } else {
+            k = 1.03;
+        }
+        let fibre = hash(vec2<i32>(p.x / 2, p.y));
+        k = k * (1.0 + (f32(fibre & 7u) - 3.5) * 0.015);
+        // Bark top highlight, deep underside shadow, slightly darker ends.
+        if fine {
+            if quarter.y <= 1 && !same_mat(at + vec2<i32>(0, -1), mat) {
+                k = k * select(1.05, 1.14, quarter.y == 0);
+            }
+            if quarter.y >= 2 && !same_mat(at + vec2<i32>(0, 1), mat) {
+                k = k * select(0.90, 0.78, quarter.y == 3);
+            }
+            if (quarter.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat))
+                || (quarter.x == 3 && !same_mat(at + vec2<i32>(1, 0), mat))
+            {
+                k = k * 0.88;
+            }
+        } else {
+            if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
+                k = k * 1.10;
+            }
+            if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
+                k = k * 0.82;
+            }
+            if (sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat))
+                || (sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat))
+            {
+                k = k * 0.90;
+            }
+        }
+        return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_BUBBLE {
+        let same_u = style_at(at + vec2<i32>(0, -1)) == STYLE_BUBBLE;
+        let same_d = style_at(at + vec2<i32>(0, 1)) == STYLE_BUBBLE;
+        let same_l = style_at(at + vec2<i32>(-1, 0)) == STYLE_BUBBLE;
+        let same_r = style_at(at + vec2<i32>(1, 0)) == STYLE_BUBBLE;
+        let isolated = !same_u && !same_d && !same_l && !same_r;
+        let bg = water_bg(at, quarter, fine);
+        if isolated {
+            if fine {
+                let corner = (quarter.x == 0 || quarter.x == 3) && (quarter.y == 0 || quarter.y == 3);
+                if corner {
+                    return bg;
+                }
+                if quarter.x == 1 && quarter.y == 1 {
+                    return mix(base, vec3<f32>(1.0), 0.65);
+                }
+                let rim = quarter.x == 0 || quarter.x == 3 || quarter.y == 0 || quarter.y == 3;
+                if rim {
+                    let lit = quarter.x == 0 || quarter.y == 0;
+                    return mix(bg, base * select(0.82, 1.05, lit), select(0.55, 0.80, lit));
+                }
+                // Translucent interior showing water behind.
+                return mix(bg, base, 0.35);
+            } else {
+                if sub.x == 0 && sub.y == 0 {
+                    return mix(base, vec3<f32>(1.0), 0.55);
+                }
+                if sub.x == 1 && sub.y == 1 {
+                    return mix(bg, base * 0.80, 0.50);
+                }
+                return mix(bg, base, 0.68);
+            }
+        }
+        // Multi-cell bubble: round outer convex corners and add a glossy rim.
+        if fine {
+            let cut_tl = !same_u && !same_l && quarter.x == 0 && quarter.y == 0;
+            let cut_tr = !same_u && !same_r && quarter.x == 3 && quarter.y == 0;
+            let cut_bl = !same_d && !same_l && quarter.x == 0 && quarter.y == 3;
+            let cut_br = !same_d && !same_r && quarter.x == 3 && quarter.y == 3;
+            if cut_tl || cut_tr || cut_bl || cut_br {
+                return bg;
+            }
+            let top_rim = (!same_u && quarter.y == 0) || (!same_l && quarter.x == 0);
+            let bot_rim = (!same_d && quarter.y == 3) || (!same_r && quarter.x == 3);
+            if top_rim {
+                return mix(base, vec3<f32>(1.0), 0.55);
+            }
+            if bot_rim {
+                return mix(bg, base * 0.84, 0.72);
+            }
+            return mix(bg, base, 0.72);
+        }
+        let top_rim = (!same_u && sub.y == 0) || (!same_l && sub.x == 0);
+        let bot_rim = (!same_d && sub.y == 1) || (!same_r && sub.x == 1);
+        if top_rim {
+            return mix(base, vec3<f32>(1.0), 0.45);
+        }
+        if bot_rim {
+            return mix(bg, base * 0.85, 0.75);
+        }
+        return mix(bg, base, 0.78);
+    }
+
+    if style == STYLE_ALGAE {
+        let d = sub * 2 - 1;
+        let wx = is_water(at + vec2<i32>(d.x, 0));
+        let wy = is_water(at + vec2<i32>(0, d.y));
+        let exposed = wx || wy;
+        let h = hash_grain(p, v);
+        if exposed {
+            let outer = select(
+                true,
+                (wx && (quarter.x == 0 || quarter.x == 3))
+                    || (wy && (quarter.y == 0 || quarter.y == 3)),
+                fine,
+            );
+            if outer && (h & 3u) == 0u {
+                return water_bg(at, quarter, fine);
+            }
+        }
+        let k = 0.86 + f32((h >> 2u) & 7u) * 0.04;
+        return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    if style == STYLE_DETRITUS {
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        let water_up = is_water(at + vec2<i32>(0, -1));
+        let h = hash_grain(p, v);
+        if fine && water_up && quarter.y == 0 && (h & 3u) == 0u {
+            return water_bg(at, quarter, fine);
+        }
+        let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);
+        return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    // STYLE_DEFAULT: clean sub-cell grain with gentle top/bottom edge cues.
+    let h = hash_grain(p, v);
+    var k = 1.0 + (f32(h & 7u) - 3.5) * 0.015;
+    if select(sub.y == 0, quarter.y == 0, fine) && is_open_fluid(at + vec2<i32>(0, -1), mat) {
+        k = k * 1.07;
+    } else if select(sub.y == 1, quarter.y == 3, fine) && is_open_fluid(at + vec2<i32>(0, 1), mat) {
+        k = k * 0.93;
+    }
+    return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 // A plant cell's depth band (D21).
@@ -306,33 +832,24 @@ fn hash(p: vec2<i32>) -> u32 {
     return h ^ (h >> 15u);
 }
 
-// What shows through an empty texel of a plant cell: the first non-plant
-// neighbour on that texel's side (across, then above or below, then
-// diagonally), or `shadow` when the plant fills all three.
-fn behind(at: vec2<i32>, sub: vec2<i32>, shadow: vec3<f32>) -> vec3<f32> {
+// The first non-plant neighbour on `quarter`'s side (across, then above or
+// below, then diagonally), or (-1, -1) when the plant fills all three.
+fn behind_cell(at: vec2<i32>, quarter: vec2<i32>) -> vec2<i32> {
+    let sub = quarter / 2;
     let d = sub * 2 - 1;
     let a = at + vec2<i32>(d.x, 0);
-    if inside(a) {
-        let t = textureLoad(cells, a, 0);
-        if part_of(t) < 0 {
-            return ground(a, t);
-        }
+    if inside(a) && part_of(textureLoad(cells, a, 0)) < 0 {
+        return a;
     }
     let b = at + vec2<i32>(0, d.y);
-    if inside(b) {
-        let t = textureLoad(cells, b, 0);
-        if part_of(t) < 0 {
-            return ground(b, t);
-        }
+    if inside(b) && part_of(textureLoad(cells, b, 0)) < 0 {
+        return b;
     }
     let c = at + d;
-    if inside(c) {
-        let t = textureLoad(cells, c, 0);
-        if part_of(t) < 0 {
-            return ground(c, t);
-        }
+    if inside(c) && part_of(textureLoad(cells, c, 0)) < 0 {
+        return c;
     }
-    return shadow;
+    return vec2<i32>(-1, -1);
 }
 
 // Whether the pipeline may draw four-texel plants: the renderer compiles a
@@ -767,20 +1284,22 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
         let shade = clamp(step, 0, RAMP - 1);
         let base = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb;
         let rgb = depth_cue(health_tint(coloured(base, shade, ramp, plant.g, species), health), band);
-        if health >= FADE_AT {
-            return vec4<f32>(rgb, 1.0);
-        }
-        // A dying plant: what is behind shows through.
-        let opacity = mix(MIN_OPACITY, 1.0, health / FADE_AT);
-        let shadow = plant_shadow(ramp, plant, species, band);
-        return vec4<f32>(mix(behind(at, sub, shadow), rgb, opacity), opacity);
+        let opacity = select(mix(MIN_OPACITY, 1.0, health / FADE_AT), 1.0, health >= FADE_AT);
+        return vec4<f32>(rgb, opacity);
     }
-    return vec4<f32>(behind(at, sub, plant_shadow(ramp, plant, species, band)), 0.0);
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
 }
 
-// What shows through a plant cell's empty texel where the plant fills its
-// neighbours: the ramp's darkest shade, darkened.
-fn plant_shadow(ramp: i32, plant: vec4<f32>, species: i32, band: f32) -> vec3<f32> {
+// What shows through a plant cell's empty or translucent texel where the
+// plant fills all three neighbours: the ramp's darkest shade, darkened.
+fn plant_shadow_of(me: vec4<f32>, part: i32, band: f32) -> vec3<f32> {
+    let plant = textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
+    let species = i32(round(plant.a * 255.0));
+    let ramp = select(
+        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME),
+        PART_LEAF,
+        part == PART_FLOAT,
+    );
     let rgb = textureLoad(plant_species, vec2<i32>(ramp * RAMP, species), 0).rgb;
     return depth_cue(health_tint(coloured(rgb, 0, ramp, plant.g, species), plant.r) * 0.6, band);
 }
