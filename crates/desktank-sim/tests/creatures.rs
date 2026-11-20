@@ -813,10 +813,13 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
 
 #[test]
 fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
-    let grazers: [(&str, &[&str]); 6] = [
+    let grazers: [(&str, &[&str]); 9] = [
         ("corydoras", &["algae", "detritus"]),
         ("nerite", &["algae", "detritus"]),
         ("otocinclus", &["algae", "detritus"]),
+        ("bristlenose_pleco", &["algae", "detritus"]),
+        ("mystery_snail", &["algae", "detritus"]),
+        ("ramshorn_snail", &["algae", "detritus"]),
         ("cherry_shrimp", &["algae", "detritus"]),
         ("amano_shrimp", &["algae", "detritus"]),
         ("thai_micro_crab", &["detritus"]),

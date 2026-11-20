@@ -495,6 +495,10 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/angelfish.toml"),
     include_str!("../../../assets/species/pea_puffer.toml"),
     include_str!("../../../assets/species/flowerhorn.toml"),
+    include_str!("../../../assets/species/bristlenose_pleco.toml"),
+    include_str!("../../../assets/species/kuhli_loach.toml"),
+    include_str!("../../../assets/species/mystery_snail.toml"),
+    include_str!("../../../assets/species/ramshorn_snail.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -1030,7 +1034,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 19);
+        assert_eq!(t.len(), 23);
         for name in [
             "neon_tetra",
             "corydoras",

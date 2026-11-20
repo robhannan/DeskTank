@@ -1,0 +1,172 @@
+id = 23
+name = "ramshorn_snail"
+zone = "surfaces"
+depth = [0.0, 1.0]
+min_depth = 12
+length_cm = 2.0
+lifespan_days = 365
+maturity_days = 60
+temperament = "peaceful"
+speed = 0.8
+max_speed = 1.5
+diet = ["algae", "detritus"]
+
+
+[breeding]
+mode = "eggs"
+days = 12
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+colours = { r = "#b45949", l = "#d46956", d = "#5d2e25", w = "#f5dec1", k = "#151c23", a = "#c94e65" }
+frames = [
+    [
+        "..rrrr....",
+        ".rrdddr...",
+        ".rddrrd...",
+        "rdddddrdd.",
+        "rdrdddrrd.",
+        "rrddddrrd.",
+        ".rddddr.dw",
+        ".rrrrrrwdw",
+        "wwrrrrwwww",
+        "..wwwwwwww",
+    ],
+    [
+        "..rrrr....",
+        ".rrdddr...",
+        ".rddrrd...",
+        "rdddddrd.d",
+        "rdrdddrr.d",
+        "rrddddrr.d",
+        ".rddddr.dw",
+        ".rrrrrrwdw",
+        "wwrrrrwwww",
+        "..wwwwwwww",
+    ],
+    [
+        "..rrrr....",
+        ".rrdddr...",
+        ".rddrrd...",
+        "rdddddrd.d",
+        "rdrdddrr.d",
+        "rrddddrr.d",
+        ".rddddr.dw",
+        ".rrrrrrwdw",
+        "wwrrrrwwww",
+        "..wwwwwwww",
+    ],
+    [
+        "..rrrr....",
+        ".rrdddr...",
+        ".rddrrd...",
+        "rdddddrdd.",
+        "rdrdddrrd.",
+        "rrddddrrd.",
+        ".rddddr.dw",
+        ".rrrrrrwdw",
+        "wwrrrrwwww",
+        "..wwwwwwww",
+    ],
+]
+fine_frames = [
+    [
+        "....................",
+        "......rrrrr.........",
+        "....rrdddddrr.......",
+        "...rrdrrrrrddr......",
+        "...rdrrrrrrrrd......",
+        "..rrdrrrrrrrrrd.....",
+        "..rdrrrddddrrrd.....",
+        ".rrdrrrdrrdrrrrr..d.",
+        ".rrdrrdrrrrdrrrr..d.",
+        ".rrdrrdrdrrdrrrr..d.",
+        ".rrdrrrddrrdrrrr..d.",
+        ".rrdrrrrrrrdrrrr.d..",
+        "..rrdrrrrrrdrrr..d..",
+        "..rrrddrrddrrrr.kkw.",
+        "...rrrrddrrrrr.wwdww",
+        "...rrrrrrrrrrrwwwwww",
+        "...wrrrrrrrrrwwwwww.",
+        "wwwwwwrrrrrwwwwwwww.",
+        "..wwwwwwwwwwwwwwwww.",
+        "....w...............",
+    ],
+    [
+        "....................",
+        "......rrrrr.........",
+        "....rrdddddrr.......",
+        "...rrdrrrrrddr......",
+        "...rdrrrrrrrrd......",
+        "..rrdrrrrrrrrrd.....",
+        "..rdrrrddddrrrd.....",
+        ".rrdrrrdrrdrrrrr...d",
+        ".rrdrrdrrrrdrrrr...d",
+        ".rrdrrdrdrrdrrrr..d.",
+        ".rrdrrrddrrdrrrr..d.",
+        ".rrdrrrrrrrdrrrr..d.",
+        "..rrdrrrrrrdrrr..wd.",
+        "..rrrddrrddrrrr.kkw.",
+        "...rrrrddrrrrr.wwdww",
+        "...rrrrrrrrrrrwwwwww",
+        "...wrrrrrrrrrwwwwww.",
+        "wwwwwwrrrrrwwwwwwww.",
+        "..wwwwwwwwwwwwwwwww.",
+        "....w...............",
+    ],
+    [
+        "....................",
+        "......rrrrr.........",
+        "....rrdddddrr.......",
+        "...rrdrrrrrddr......",
+        "...rdrrrrrrrrd......",
+        "..rrdrrrrrrrrrd.....",
+        "..rdrrrddddrrrd.....",
+        ".rrdrrrdrrdrrrrr..d.",
+        ".rrdrrdrrrrdrrrr..d.",
+        ".rrdrrdrdrrdrrrr..d.",
+        ".rrdrrrddrrdrrrr..d.",
+        ".rrdrrrrrrrdrrrr.d..",
+        "..rrdrrrrrrdrrr..d..",
+        "..rrrddrrddrrrr.kkw.",
+        "...rrrrddrrrrr.wwdww",
+        "...rrrrrrrrrrrwwwwww",
+        "...wrrrrrrrrrwwwwww.",
+        "wwwwwwrrrrrwwwwwwww.",
+        "..wwwwwwwwwwwwwwwww.",
+        "....w...............",
+    ],
+    [
+        "....................",
+        "......rrrrr.........",
+        "....rrdddddrr.......",
+        "...rrdrrrrrddr......",
+        "...rdrrrrrrrrd......",
+        "..rrdrrrrrrrrrd.....",
+        "..rdrrrddddrrrd.....",
+        ".rrdrrrdrrdrrrrr.d..",
+        ".rrdrrdrrrrdrrrr.d..",
+        ".rrdrrdrdrrdrrrr.d..",
+        ".rrdrrrddrrdrrrr.d..",
+        ".rrdrrrrrrrdrrrr.d..",
+        "..rrdrrrrrrdrrr.wdw.",
+        "..rrrddrrddrrrr.kkw.",
+        "...rrrrddrrrrr.wwdww",
+        "...rrrrrrrrrrrwwwwww",
+        "...wrrrrrrrrrwwwwww.",
+        "wwwwwwrrrrrwwwwwwww.",
+        "..wwwwwwwwwwwwwwwww.",
+        "....w...............",
+    ],
+]
+icon = [
+    "..rr....",
+    ".rddd...",
+    "rddddd.d",
+    "rddddr.d",
+    "rddddrd.",
+    ".rdddwdw",
+    "wwrrwwww",
+    ".wwwwwww",
+]
