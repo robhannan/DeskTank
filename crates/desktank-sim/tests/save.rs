@@ -1,13 +1,13 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and the version 1, 2 and 3 fixtures
+//! rigid bodies the hash leaves out), and the version 1 to 5 fixtures
 //! load (version 1 migrated to 2, T9; version 2 to 3, T9 part 2; version
-//! 3 to 4, D21).
+//! 3 to 4, D21; version 4 to 5, the crabs' homes).
 //!
-//! The version 1, 2 and 3 fixtures are frozen: this build no longer writes
+//! The version 1 to 4 fixtures are frozen: this build no longer writes
 //! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
-//! the version 4 fixture; only do that while version 4 is unreleased or its
+//! the version 5 fixture; only do that while version 5 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -82,11 +82,12 @@ fn busy(seed: u64, ticks: u32) -> World {
         w.paint(100, 20, 2, m, Brush::Pour).unwrap();
     }
     let species: Vec<_> = w.species().iter().map(|s| s.id).collect();
+    let n = species.len() as i64;
     for (k, s) in species.into_iter().enumerate() {
         let (top, bottom) = w.zone_rows(s).unwrap();
         let y = i64::try_from(usize::midpoint(top, bottom)).unwrap();
         // Room for a creature is not guaranteed; a full spot is fine.
-        let _ = w.add_creature(s, 15 + 17 * k as i64, y);
+        let _ = w.add_creature(s, 15 + 175 * k as i64 / n, y);
     }
     for t in 0..ticks {
         w.tick();
@@ -235,6 +236,8 @@ fn a_version_2_fixture_loads() {
     let bytes = std::fs::read(fixture(2)).unwrap();
     assert_eq!(save::check(&bytes), Ok(2));
     let mut w = save::decode(&bytes, table()).unwrap();
+    // Version 2 had no homes.
+    assert!(w.creatures().iter().all(|c| c.home().is_none()));
     assert_eq!(w.tick_count(), 700);
     assert!(w.easy_mode());
     assert_eq!(w.creature_cap(), 40);
@@ -377,26 +380,71 @@ fn a_version_3_fixture_loads() {
 
 #[test]
 fn a_version_4_fixture_loads() {
-    let path = fixture(4);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&bred())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(4)).unwrap();
     assert_eq!(save::check(&bytes), Ok(4));
     let mut w = save::decode(&bytes, table()).unwrap();
     assert!(!w.clutches().is_empty() && !w.corpses().is_empty());
-    // Depth is saved: decoded, it matches the tank that wrote it.
-    let fresh = bred();
-    let depths = |w: &World| -> Vec<(u32, f32)> {
+    // Version 5 migrates it with no homes.
+    assert!(w.creatures().iter().all(|c| c.home().is_none()));
+    // Decoding is pure, so the decoded state is the same on every platform:
+    // pin it. A creature without a home hashes as before version 5, so this
+    // is the hash version 4 pinned.
+    let hash = w.state_hash();
+    assert_eq!(hash, 0x07c8_5bc4_801d_be6e);
+    let again = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(again.state_hash(), hash);
+    let mut again = again;
+    for _ in 0..200 {
+        w.tick();
+        again.tick();
+    }
+    assert_eq!(w.state_hash(), again.state_hash());
+}
+
+/// A creature's id, depth and home.
+type Saved = (u32, f32, Option<(usize, usize)>);
+
+/// What the version 5 fixture holds: [`bred`] (with every species, the
+/// cheat-only crabs too) and a home owning crab on the sand that has had
+/// time to pick its home.
+fn homely() -> World {
+    let mut w = bred();
+    let owner = w.species().id("home_owning_crab").unwrap();
+    w.add_creature(owner, 170, 94).unwrap();
+    for _ in 0..600 {
+        w.tick();
+    }
+    w
+}
+
+#[test]
+fn a_version_5_fixture_loads() {
+    let path = fixture(5);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&homely())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(5));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    assert_ne!(w.clutches().len(), 0);
+    // Every home owning crab picked its home, and only they have one.
+    let owner = w.species().id("home_owning_crab").unwrap();
+    for c in w.creatures() {
+        assert_eq!(c.home().is_some(), c.species() == owner, "{:?}", c.id());
+    }
+    assert!(w.creatures().iter().any(|c| c.species() == owner));
+    // Homes and depth are saved: decoded, it matches the tank that wrote it.
+    let fresh = homely();
+    let saved = |w: &World| -> Vec<Saved> {
         w.creatures()
             .iter()
-            .map(|c| (c.id().0, c.depth()))
+            .map(|c| (c.id().0, c.depth(), c.home()))
             .collect()
     };
-    assert_eq!(depths(&w), depths(&fresh));
+    assert_eq!(saved(&w), saved(&fresh));
     assert_eq!(w.state_hash(), fresh.state_hash());
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x07c8_5bc4_801d_be6e);
+    assert_eq!(w.state_hash(), 0x38d9_9bb5_afdb_8907);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
