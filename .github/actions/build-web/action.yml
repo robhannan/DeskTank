@@ -1,5 +1,5 @@
 name: Build web demo
-description: Builds the browser demo (crates/desktank-web + web/) into target/site/ with scripts/build-web.mjs. Linux runners only.
+description: Builds the browser demo (crates/desktank-web + web/) into target/site/ with scripts/build-web.ts. Linux runners only.
 
 runs:
   using: composite
@@ -46,7 +46,7 @@ runs:
       with:
         cache: true
 
-    - name: Install zx
+    - name: Install pnpm dependencies (zx, Playwright, TypeScript)
       shell: bash
       run: pnpm install --frozen-lockfile
 

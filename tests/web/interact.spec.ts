@@ -2,8 +2,9 @@
 // palette (the sim's list, keyboard navigation), the menu, the settings
 // panel and the canvas's gesture suppression. The tank is paused so only the
 // tools change cells.
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import {
+  boxOf,
   cellCount,
   cellPoint,
   choose,
@@ -14,9 +15,9 @@ import {
   stateHash,
   touchscreen,
   watchErrors,
-} from "./support.mjs";
+} from "./support.ts";
 
-const glued = (page) => page.evaluate(() => window.desktank.tank.gluedBodies());
+const glued = (page: Page) => page.evaluate(() => window.desktank.tank.gluedBodies());
 
 test.describe("mouse", () => {
   test("pour, drag, scoop and the scoop tool change the cells", async ({ page }) => {
@@ -148,7 +149,7 @@ test.describe("mouse", () => {
   test("the wheel sizes the brush and doesn't scroll or zoom the page", async ({ page }) => {
     await open(page, "?backend=webgl2");
     const canvas = page.locator("#tank");
-    const box = await canvas.boundingBox();
+    const box = await boxOf(canvas);
     expect(await page.evaluate(() => document.documentElement.scrollHeight > innerHeight), "the page can scroll").toBe(true);
     const scroll = await page.evaluate(() => scrollY);
     const radius = () => page.evaluate(() => window.desktank.tank.radius());
@@ -163,7 +164,7 @@ test.describe("mouse", () => {
     await page.mouse.wheel(0, 120);
     await page.keyboard.up("Control");
     await expect.poll(radius).toBe(5);
-    expect(await page.evaluate(() => visualViewport.scale)).toBe(1);
+    expect(await page.evaluate(() => visualViewport!.scale)).toBe(1);
     expect(await page.evaluate(() => scrollY)).toBe(scroll);
   });
 
@@ -229,7 +230,7 @@ test.describe("touch", () => {
     const touch = await touchscreen(page);
     const [w, h] = await gridSize(page);
     const [x, y] = [Math.round(w / 2), Math.round(h / 2)];
-    const tap = async (cx, cy) => {
+    const tap = async (cx: number, cy: number) => {
       const p = await cellPoint(page, cx, cy);
       await touch.start([p]);
       await touch.end();
@@ -261,9 +262,9 @@ test.describe("touch", () => {
     const touch = await touchscreen(page);
     // Keep part of the page below the canvas, so a scroll would show.
     await page.evaluate(() => scrollTo(0, 0));
-    const box = await page.locator("#tank").boundingBox();
+    const box = await boxOf(page.locator("#tank"));
     const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
-    const scroll = () => page.evaluate(() => [scrollX, scrollY, visualViewport.scale]);
+    const scroll = () => page.evaluate(() => [scrollX, scrollY, visualViewport!.scale]);
     const before = await scroll();
 
     // Pinch out.
@@ -277,7 +278,7 @@ test.describe("touch", () => {
     expect(await scroll()).toEqual(before);
 
     // Control: the same swipe on the text below scrolls the page.
-    const about = await page.locator(".about").boundingBox();
+    const about = await boxOf(page.locator(".about"));
     const ax = about.x + about.width / 2;
     const ay = Math.min(about.y + 40, 840);
     await touch.drag([{ x: ax, y: ay }], [{ x: ax, y: ay - 300 }]);
@@ -292,7 +293,7 @@ test.describe("touch", () => {
     }
     // Touch-sized targets.
     for (const sel of ['#groups [role="tab"]', '#palette .swatch:not([hidden])']) {
-      const heights = await page.locator(sel).evaluateAll((els) => els.map((b) => b.offsetHeight));
+      const heights = await page.locator(sel).evaluateAll((els: HTMLElement[]) => els.map((b) => b.offsetHeight));
       expect(Math.min(...heights), sel).toBeGreaterThanOrEqual(44);
     }
     // Every item can be reached through its group.

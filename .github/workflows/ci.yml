@@ -77,6 +77,11 @@ jobs:
       # Same build as the Pages deploy, so a broken demo fails the PR.
       - uses: ./.github/actions/build-web
 
+      # Strict tsc over the scripts, tests and page (after the build, which
+      # writes wasm-bindgen's declarations).
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 

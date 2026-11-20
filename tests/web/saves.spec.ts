@@ -4,8 +4,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
-import { cellPoint, choose, gridSize, open, stateHash, watchErrors } from "./support.mjs";
+import { expect, type Page, test } from "@playwright/test";
+import { boxOf, cellPoint, choose, gridSize, open, stateHash, watchErrors } from "./support.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // Written by the native app (desktank-sim's T8 fixture: 200×120 cells, tick
@@ -20,12 +20,12 @@ const NATIVE_HASH = "0b5b1fa4ab04c681";
 const SCENE = path.join(root, "crates/desktank/tests/scenes/layers.toml");
 const SCENE_SAVE = path.join(root, "crates/desktank-web/tests/fixtures/layers-seed1.dtank");
 
-const ticks = (page) => page.evaluate(() => window.desktank.tank.tickCount());
-const owner = (page) => page.evaluate(() => window.desktank.owner);
-const writes = (page) => page.evaluate(() => window.desktank.writes);
+const ticks = (page: Page) => page.evaluate(() => window.desktank.tank.tickCount());
+const owner = (page: Page) => page.evaluate(() => window.desktank.owner);
+const writes = (page: Page) => page.evaluate(() => window.desktank.writes);
 
 // Makes the page hidden as a background tab or a minimised window would.
-async function setHidden(page, hidden) {
+async function setHidden(page: Page, hidden: boolean) {
   await page.evaluate((hidden) => {
     Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
@@ -33,15 +33,15 @@ async function setHidden(page, hidden) {
   }, hidden);
 }
 
-async function pour(page) {
-  const box = await page.locator("#tank").boundingBox();
+async function pour(page: Page) {
+  const box = await boxOf(page.locator("#tank"));
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.2, { steps: 8 });
   await page.mouse.up();
 }
 
-async function download(page, button) {
+async function download(page: Page, button: string) {
   // dispatchEvent: the render scene pins the canvas over the menu.
   const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: button }).dispatchEvent("click")]);
   expect(file.suggestedFilename()).toMatch(/^desktank-\d{8}-\d{4}\.dtank$/);
@@ -104,7 +104,7 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   const loaded = await page.evaluate(() => window.desktank.loaded);
-  expect({ hash: loaded.hash, tick: loaded.tick }).toEqual(saved);
+  expect({ hash: loaded?.hash, tick: loaded?.tick }).toEqual(saved);
   await expect(page.locator("#saved")).toHaveText(/^Saved \d/);
   expect(errors).toEqual([]);
 });
@@ -132,7 +132,7 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await setHidden(b, false);
   expect(await writes(b)).toBe(0);
   // Its controls are inert.
-  expect(await b.locator("nav.menu").evaluate((el) => el.inert)).toBe(true);
+  expect(await b.locator("nav.menu").evaluate((el: HTMLElement) => el.inert)).toBe(true);
 
   await expect.poll(() => ticks(a)).toBeGreaterThan(20);
   const aWrites = await writes(a);
@@ -145,10 +145,10 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   // A saved on handing over; B opened exactly that state.
   const released = await a.evaluate(() => window.desktank.released);
   const loaded = await b.evaluate(() => window.desktank.loaded);
-  expect({ hash: loaded.hash, tick: loaded.tick }).toEqual(released);
+  expect({ hash: loaded?.hash, tick: loaded?.tick }).toEqual(released);
   expect(await writes(a)).toBe(aWrites + 1);
   await expect(b.locator("#elsewhere")).toBeHidden();
-  await expect.poll(() => ticks(b)).toBeGreaterThan(released.tick);
+  await expect.poll(() => ticks(b)).toBeGreaterThan(released!.tick);
 
   // A is now the viewer: paused, and it never writes again.
   expect(await owner(a)).toBe(false);
@@ -166,7 +166,7 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await b.close();
   await setHidden(a, false);
   await expect.poll(() => owner(a), { timeout: 5000 }).toBe(true);
-  expect(await a.evaluate(() => window.desktank.loaded.hash)).toBe(last);
+  expect(await a.evaluate(() => window.desktank.loaded?.hash)).toBe(last);
   expect(errors).toEqual([]);
 });
 
@@ -175,7 +175,7 @@ test("Take over steals the lock from an owner that doesn't answer", async ({ con
   const errors = watchErrors(a);
   await open(a, "?backend=webgl2");
   // A frozen owner: it never hears the request.
-  await a.evaluate(() => window.desktank.ownership.channel.close());
+  await a.evaluate(() => window.desktank.ownership!.channel.close());
   const b = await context.newPage();
   errors.push(...watchErrors(b));
   await open(b, "?backend=webgl2");
@@ -215,7 +215,7 @@ test("a native save imports, letterboxed, and exports what native writes", async
   // scale that fits, with a letterbox.
   const fit = await page.evaluate(() => {
     const t = window.desktank.tank;
-    const c = document.querySelector("#tank");
+    const c = document.querySelector<HTMLCanvasElement>("#tank")!;
     const s = t.cellScale();
     const [gw, gh] = [t.width(), t.height()];
     return { s, w: gw * s, h: gh * s, nw: gw * (s + 2), nh: gh * (s + 2), cw: c.width, ch: c.height };
@@ -230,7 +230,7 @@ test("a native save imports, letterboxed, and exports what native writes", async
   // The import was saved: a reload opens it.
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
-  expect(await page.evaluate(() => window.desktank.loaded.hash)).toBe(NATIVE_HASH);
+  expect(await page.evaluate(() => window.desktank.loaded?.hash)).toBe(NATIVE_HASH);
 
   // Not a save: refused with a message, the tank unchanged.
   await page.getByRole("button", { name: "Pause" }).click();

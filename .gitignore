@@ -31,7 +31,7 @@ rustc-ice-*.txt
 .claude/settings.local.json
 .claude/worktrees/
 
-# pnpm (zx scripts)
+# pnpm (TypeScript scripts and web tests)
 node_modules/
 
 # Playwright output

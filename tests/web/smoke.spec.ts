@@ -2,7 +2,13 @@
 // WebGL2 and once with the default backend (WebGPU, falling back to WebGL2
 // where the browser has no adapter), with no console errors.
 import { expect, test } from "@playwright/test";
-import { choose, framesDrawn, open, watchErrors } from "./support.mjs";
+import { boxOf, callTank, choose, framesDrawn, open, type TankMethod, watchErrors, type WebTank } from "./support.ts";
+
+declare global {
+  interface Window {
+    loseExt: WEBGL_lose_context; // the context-loss tests' handle
+  }
+}
 
 for (const [name, query] of [
   ["webgl2", "?backend=webgl2"],
@@ -22,7 +28,7 @@ for (const [name, query] of [
     const pixelsBefore = await canvas.screenshot();
     const drawn = await framesDrawn(page);
 
-    const box = await canvas.boundingBox();
+    const box = await boxOf(canvas);
     await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.2);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.2, { steps: 10 });
@@ -41,7 +47,8 @@ test("recovers from a lost WebGL2 context without a reload", async ({ page }) =>
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   await page.evaluate(() => {
-    window.loseExt = document.querySelector("#tank").getContext("webgl2").getExtension("WEBGL_lose_context");
+    const gl = document.querySelector<HTMLCanvasElement>("#tank")!.getContext("webgl2")!;
+    window.loseExt = gl.getExtension("WEBGL_lose_context")!;
     window.loseExt.loseContext();
   });
   await page.waitForTimeout(300);
@@ -55,7 +62,7 @@ test("recovers from a lost WebGL2 context without a reload", async ({ page }) =>
   expect(await page.evaluate(() => window.desktank.tank.tickCount()), "the world kept its state").toBeGreaterThanOrEqual(ticks);
 
   // Pour after recovery: the new renderer draws the change.
-  const box = await page.locator("#tank").boundingBox();
+  const box = await boxOf(page.locator("#tank"));
   const drawn = await framesDrawn(page);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.2);
   await page.mouse.down();
@@ -85,7 +92,8 @@ test("reset during a lost WebGL2 context draws once restored", async ({ page }) 
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   await page.evaluate(() => {
-    window.loseExt = document.querySelector("#tank").getContext("webgl2").getExtension("WEBGL_lose_context");
+    const gl = document.querySelector<HTMLCanvasElement>("#tank")!.getContext("webgl2")!;
+    window.loseExt = gl.getExtension("WEBGL_lose_context")!;
     window.loseExt.loseContext();
   });
   await page.getByRole("button", { name: "Reset" }).click();
@@ -104,10 +112,10 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   // canvas partly out), so bring the canvas back and measure it after each.
   const box = async () => {
     await canvas.scrollIntoViewIfNeeded();
-    return canvas.boundingBox();
+    return boxOf(canvas);
   };
   // Material counts, not the state hash: that changes every tick anyway.
-  const cells = (name) => page.evaluate((n) => window.desktank.tank.materialCount(n), name);
+  const cells = (name: string) => page.evaluate((n) => window.desktank.tank.materialCount(n), name);
   expect(await cells("bubbler")).toBe(0);
 
   // A click with the bubbler places one (8 cells), which releases bubbles.
@@ -131,7 +139,7 @@ test("the bubbler and the new materials work from the palette", async ({ page })
 test("the plants slot pours the species picked beside it", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
-  const tank = (f, ...a) => page.evaluate(([f, a]) => window.desktank.tank[f](...a), [f, a]);
+  const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
   const picker = page.locator("#plant-species");
   const names = await tank("plantSpecies");
   await expect(picker.locator("option")).toHaveCount(names.length);
@@ -148,7 +156,7 @@ test("the plants slot pours the species picked beside it", async ({ page }) => {
   // A click pours its cuttings.
   const canvas = page.locator("#tank");
   await canvas.scrollIntoViewIfNeeded();
-  const b = await canvas.boundingBox();
+  const b = await boxOf(canvas);
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
   expect(await tank("materialCount", "cutting")).toBeGreaterThan(0);
   // The pick survives a reset.
@@ -161,7 +169,7 @@ test("the plants slot pours the species picked beside it", async ({ page }) => {
 test("the propagule picker offers the species' own methods and pours seeds", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
-  const tank = (f, ...a) => page.evaluate(([f, a]) => window.desktank.tank[f](...a), [f, a]);
+  const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
   const species = page.locator("#plant-species");
   const way = page.locator("#plant-propagule");
   // Hygrophila (the default) grows from all three; cuttings come first.
@@ -174,7 +182,7 @@ test("the propagule picker offers the species' own methods and pours seeds", asy
   expect(await tank("plantPropagule")).toBe("seeds");
   const canvas = page.locator("#tank");
   await canvas.scrollIntoViewIfNeeded();
-  const b = await canvas.boundingBox();
+  const b = await boxOf(canvas);
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
   expect(await tank("materialCount", "seed")).toBeGreaterThan(0);
   // Rotala only grows from cuttings; java moss only from fragments.
