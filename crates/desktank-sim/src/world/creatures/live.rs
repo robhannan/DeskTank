@@ -21,7 +21,8 @@
 //! - **Death.** Live food dies as any creature does (old age, foul water)
 //!   but leaves no corpse: it becomes one cell of its material in the
 //!   water it lay in (a bloodworm becomes frozen bloodworm), which rots
-//!   like any food.
+//!   like any food. One whose body covers no water cell (wholly in
+//!   another fluid) leaves nothing.
 //! - **A pinch.** Adding a live food from the palette adds [`PINCH`] of
 //!   them, scattered a few cells round the pointer, within the limit.
 

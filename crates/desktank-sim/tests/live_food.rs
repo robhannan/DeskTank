@@ -271,6 +271,17 @@ fn live_food_is_not_stock() {
     assert_eq!(worms(&w), []);
     assert!(cheats::run(&mut w, "spawn live_bloodworm").is_err());
     assert_eq!(worms(&w), []);
+    // Live food in the tank doesn't stop `spawn` or `scene::stock` short
+    // of the cap: only stock counts against it.
+    let mut w = world(240, 60, 9);
+    w.set_creature_cap(10);
+    for k in 0..4 {
+        pinch(&mut w, (40 + 40 * k, 40));
+    }
+    assert_eq!(worms(&w).len(), 4 * PINCH);
+    cheats::run(&mut w, "spawn neon_tetra 6").unwrap();
+    assert_eq!(scene::stock(&mut w, 10, 9).unwrap(), 4);
+    assert_eq!(w.stock_count(), 10);
 }
 
 #[test]

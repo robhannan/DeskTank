@@ -76,7 +76,7 @@ pub fn stock(world: &mut World, count: usize, seed: u64) -> Result<usize, WorldE
     let mut state = seed ^ 0x9e37_79b9_7f4a_7c15;
     let mut added = 0;
     for i in 0..count {
-        if world.creatures().len() >= world.creature_cap() {
+        if world.stock_count() >= world.creature_cap() {
             break;
         }
         let s = species[i % species.len()];
