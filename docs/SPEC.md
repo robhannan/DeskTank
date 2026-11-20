@@ -1010,8 +1010,8 @@ stays a material film, not individuals.
 | Lock screen | ⚠️ saver shown while locked | ⚠️ static snapshot image only 🔍 | ⚠️ via saver | ⚠️ `ext-session-lock-v1` (stretch) |
 | Interact (modifier key) | ✅ modifier polling 🔍 | ✅ | ✅ | ⚠️ tray toggle or compositor key binding to the CLI |
 
-Android (§3.6, D23): screensaver ✅ as a Dream (⚠️ Google TV hides
-third-party screensavers from its picker 🔍); wallpaper ✅ as a live
+Android (§3.6, D23): screensaver ✅ as a Dream (⚠️ Google TV has no
+screensaver picker: the Dream is chosen over ADB); wallpaper ✅ as a live
 wallpaper on phones and tablets; window ✅ as an app; overlay and lock
 screen ❌.
 
@@ -1284,24 +1284,33 @@ over the keyguard while charging).
   GLES 3.0 meets. A setting forces one backend for testing, and a Vulkan
   device that is lost or fails to create falls back to GLES. Android
   requires Vulkan 1.1 only of 64-bit devices, and most Google TV devices
-  run a 32-bit userspace (below), so GLES is the expected path on them.
+  run a 32-bit userspace (below), so Vulkan can't be assumed there.
   *A0:* on the Android TV and Google TV emulators wgpu gets Vulkan
-  (SwiftShader) and, forced, GLES 3.0; both draw. 🔍 Which backend the
-  reference TV device gets, and whether its Vulkan driver is usable, waits
-  for the owner's run on a real device (PROGRESS).
+  (SwiftShader) and, forced, GLES 3.0; both draw. On the reference TV
+  device (Chromecast with Google TV 4K, 32-bit userspace, Mali-G31) wgpu
+  gets Vulkan 1.3 and draws with it, so its Vulkan driver is usable;
+  forced GLES 3.2 draws too. On an NVIDIA SHIELD (64-bit, Tegra X1+)
+  Vulkan draws but forced GLES fails to open the device ("Parent device
+  is lost", cause not yet known), so A1 must verify the fallback there
+  (PROGRESS).
 - **Builds**: `cargo-ndk` builds the `cdylib` for `arm64-v8a`,
   `armeabi-v7a` (many TV devices run a 32-bit userspace on a 64-bit CPU,
   including Chromecast with Google TV and the Google TV Streamer; wgpu
   builds for it) and `x86_64` (the emulator); Gradle packages it, and
   `./gradlew assembleDebug` runs `cargo-ndk` itself. `minSdk` is API 26
   (Android 8): every Google TV device ships Android 10 or later, and
-  older Android TV boxes are out of scope (A0).
+  older Android TV boxes are out of scope (A0). *A0:* the reference TV
+  device runs only 32-bit code (`armeabi-v7a`) and the app runs there as
+  `armeabi-v7a`, so that ABI stays in every build.
 - **Grid and scale**: an even scale from 2 to 8 (§2.1, D19), chosen from
   the display's size: at 1080p the default 4× (D1) gives 480×270 cells,
   and at 4K the same tank is drawn at 8×, so a tank looks the same on any
   TV. Phones use the web's
   rule (§3.5). A tank keeps its grid size when the display changes; it is
-  drawn at the largest even scale that fits, letterboxed.
+  drawn at the largest even scale that fits, letterboxed. The grid and
+  scale come from the Dream's surface, not the panel: *A0:* both TV
+  devices tried have 4K panels but, with their UI at 1080p as found, give
+  the Dream a 1920×1080 surface.
 - **Screensaver** (the Dream):
   - full screen, non-interactive (`isInteractive = false`), so any key or
     touch ends it, as a screensaver should; no tools, inspect card or
@@ -1313,18 +1322,26 @@ over the keyguard while charging).
     within the letterbox margin or by a crop of at most one cell;
   - its `android:settingsActivity` meta-data opens the app's settings
     (A3).
-- **Choosing the screensaver** 🔍: plain Android TV and phones list the
+- **Choosing the screensaver**: plain Android TV and phones list the
   Dream in Settings (Display → Screen saver). Google TV devices (Android
   TV 12 and later: Chromecast with Google TV, Google TV Streamer, and
-  Google TV sets) hide third-party screensavers from that picker. There,
+  Google TV sets) hide third-party screensavers from that picker, or
+  have none. There,
   the user grants `WRITE_SECURE_SETTINGS` once over ADB, after which the
   app's settings can set `screensaver_components` itself; the README and
   the settings screen give the one-line command. A launcher with a
   screensaver override is the other route, though a 2025 Google TV update
   blocked one such launcher (Projectivy). *A0:* on the Google TV emulator
   image (Android 16) `adb shell settings put secure screensaver_components`
-  selects the Dream and it runs; 🔍 a current Google TV device is the
-  owner's check (PROGRESS).
+  selects the Dream and it runs. On the reference TV device (Chromecast
+  with Google TV 4K, Android 14, a 2025 build) there is no screensaver
+  picker at all (`android.settings.DREAM_SETTINGS` doesn't resolve), and
+  the same `settings put` selects the Dream: the screensaver timeout
+  starts it, a remote key ends it, and the setting survives a reboot.
+  Setting it from an app granted `WRITE_SECURE_SETTINGS` is untested
+  (A3). Turning on network ADB there takes Wireless debugging (pairing
+  with a code), and the "Stay awake" developer option stops the
+  screensaver from starting; A1's README says both (PROGRESS).
 - **Persistence**: one shared tank across the modes (D10): the same
   envelope and payload as §2.6, through `SaveStore` in the app's private
   files directory (`Context.getFilesDir()`, passed in over JNI). Every
@@ -1554,7 +1571,7 @@ Linux numbers are recorded and tracked, but not gated in v1.
 | Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
 | Web transfer size (wasm + JS + assets, gzip, as reported by `scripts/build-web.ts`) | ≤ 3 MB | — | — |
 | Web on the reference phone (🔍 to be chosen in WB2: a 2021-era mid-range iPhone or Android) | p95 frame interval ≤ 50 ms, no thermal throttling within 10 min | — | — |
-| Android TV reference device (🔍 chosen in A0: a current low-end Google TV device) and Android reference phone | Screensaver: p95 frame interval ≤ 40 ms at the 30 fps cap, no thermal throttling within 1 h, memory (PSS from `dumpsys meminfo`) ≤ 120 MB 🔍, start to first frame ≤ 1 s; APK ≤ 25 MB per ABI | — | — |
+| Android TV reference device (Chromecast with Google TV 4K: 2 GB RAM, Mali-G31, 32-bit userspace, Android 14; chosen in A0) and Android reference phone | Screensaver: p95 frame interval ≤ 40 ms at the 30 fps cap, no thermal throttling within 1 h, memory (PSS from `dumpsys meminfo`) ≤ 120 MB (A0's empty Dream on the reference device: 39–48 MB on Vulkan, 55 MB with GLES forced), start to first frame ≤ 1 s (A0: 208–257 ms cold from `surfaceCreated`, not counting process and Dream start); APK ≤ 25 MB per ABI | — | — |
 | Cold start to first frame (including loading the save) | ≤ 500 ms | — | ≤ 500 ms |
 | Energy Impact (Activity Monitor) | "Low" while visible | — | "Low" |
 
@@ -2244,7 +2261,7 @@ Each package depends only on the packages before it.
 
 ### MA — Android (D23)
 
-- [ ] **A0 Android spike and skeleton** (findings in PROGRESS). A Kotlin
+- [x] **A0 Android spike and skeleton** (findings in PROGRESS). A Kotlin
   `DreamService` hands its surface to a minimal `desktank-android`
   `cdylib` that clears it with wgpu, built by `cargo-ndk` and Gradle, and
   run on the Android TV emulator and a real Google TV device. Answer:
