@@ -1,0 +1,6 @@
+# Dependency build scripts pnpm may run. Tapsmith's gRPC and tsx bring in
+# these two; Tapsmith works with their scripts blocked (its docs: "Package
+# manager notes").
+allowBuilds:
+  esbuild: false
+  protobufjs: false

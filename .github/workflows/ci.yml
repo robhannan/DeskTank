@@ -79,9 +79,13 @@ jobs:
               - crates/desktank/tests/**
               - web/**
               - tests/web/**
+              # `pnpm typecheck` (run here) covers the Android tests too.
+              - tests/android/**
+              - tapsmith.config.ts
               - scripts/**
               - package.json
               - pnpm-lock.yaml
+              - pnpm-workspace.yaml
               - tsconfig.json
               - playwright.config.ts
               - .github/workflows/pages.yml
@@ -89,6 +93,12 @@ jobs:
               - *core
               - crates/desktank-android/**
               - android/**
+              # The Tapsmith smoke test and its dependencies.
+              - tests/android/**
+              - tapsmith.config.ts
+              - package.json
+              - pnpm-lock.yaml
+              - pnpm-workspace.yaml
 
   check:
     name: ${{ matrix.os }}
@@ -177,7 +187,8 @@ jobs:
         run: cargo clippy -p desktank-render --target wasm32-unknown-unknown --locked -- -D warnings
 
   # The Android host (SPEC §3.6, §7): libdesktank_android.so for every ABI
-  # with cargo-ndk, packaged into the debug APK by Gradle.
+  # with cargo-ndk, packaged into the debug APK by Gradle, then the A2 smoke
+  # test on an Android TV emulator with Tapsmith (tests/android/).
   android:
     name: android
     needs: changes
@@ -244,6 +255,51 @@ jobs:
         with:
           name: desktank-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # Installs the pnpm version from package.json's packageManager.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+
+      - name: Install pnpm dependencies (Tapsmith)
+        run: pnpm install --frozen-lockfile
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The A0 spike's recipe (PROGRESS): the API 36 Android TV image at
+      # 1080p on SwiftShader. Tapsmith installs the APK (its x86_64 library)
+      # and the test starts the Dream, checks the frame and logcat, and ends it.
+      - name: Smoke test the Dream on the Android TV emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          TAPSMITH_TELEMETRY: "0"
+        with:
+          api-level: 36
+          target: android-tv
+          arch: x86_64
+          profile: tv_1080p
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: pnpm test:android
+
+      # Screenshots, the Dream's frame and logcat, and a trace on failure.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: android-smoke-test
+          path: |
+            tapsmith-results/
+            tapsmith-report/
+          if-no-files-found: ignore
           retention-days: 14
 
   # The one check to require: passes when every job above passed or was
