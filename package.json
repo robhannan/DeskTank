@@ -12,11 +12,13 @@
     "serve:web": "node scripts/serve-web.ts",
     "test:web": "playwright test",
     "bench:web": "node scripts/bench-web.ts",
+    "test:android": "tapsmith test",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json --noEmit && tsc -p web/worker/tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",
     "@types/node": "26.6.6",
+    "tapsmith": "0.8.0",
     "typescript": "7.0.2",
     "zx": "8.8.5"
   }
