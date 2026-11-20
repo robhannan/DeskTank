@@ -44,7 +44,7 @@ struct View {
     // and 1 if shown.
     hud: vec4<f32>,
     // Palette image size in palette pixels (xy), and the field overlay (z):
-    // 0 none, 1 nutrient, 2 CO2, 3 light.
+    // 0 none, 1 nutrient, 2 CO2, 3 light, 4 flow.
     hud_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
@@ -65,7 +65,7 @@ struct View {
 @group(0) @binding(1) var cells: texture_2d<f32>;
 @group(0) @binding(2) var palette: texture_2d<f32>;
 @group(0) @binding(3) var hud: texture_2d<f32>;
-// Nutrient, CO2 and light per 8x8-cell field cell, for the overlay.
+// Nutrient, CO2, light and current speed per 8x8-cell field cell, for the overlay.
 @group(0) @binding(4) var fields: texture_2d<f32>;
 // Creature sprite frames (sRGB-encoded RGBA; alpha 0 is transparent).
 @group(0) @binding(5) var atlas: texture_2d<f32>;
@@ -137,17 +137,17 @@ const ROOT_STRAND: i32 = 0;
 const ROOT_THICK: i32 = 1;
 
 // The fields at `cell`, interpolated between field-cell centres.
-fn field_at(cell: vec2<f32>) -> vec3<f32> {
+fn field_at(cell: vec2<f32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(fields));
     let f = (cell + 0.5) / 8.0 - 0.5;
     let base = floor(f);
     let t = f - base;
     let lo = clamp(vec2<i32>(base), vec2<i32>(0), size - 1);
     let hi = clamp(vec2<i32>(base) + 1, vec2<i32>(0), size - 1);
-    let a = textureLoad(fields, vec2<i32>(lo.x, lo.y), 0).rgb;
-    let b = textureLoad(fields, vec2<i32>(hi.x, lo.y), 0).rgb;
-    let c = textureLoad(fields, vec2<i32>(lo.x, hi.y), 0).rgb;
-    let d = textureLoad(fields, vec2<i32>(hi.x, hi.y), 0).rgb;
+    let a = textureLoad(fields, vec2<i32>(lo.x, lo.y), 0);
+    let b = textureLoad(fields, vec2<i32>(hi.x, lo.y), 0);
+    let c = textureLoad(fields, vec2<i32>(lo.x, hi.y), 0);
+    let d = textureLoad(fields, vec2<i32>(hi.x, hi.y), 0);
     return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
 }
 
@@ -199,8 +199,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             rgb = mix(rgb, vec3<f32>(0.35, 1.0, 0.3), 0.75 * f.r);
         } else if mode < 2.5 {
             rgb = mix(rgb, vec3<f32>(0.85, 0.5, 1.0), 0.75 * f.g);
-        } else {
+        } else if mode < 3.5 {
             rgb = rgb * mix(0.15, 1.0, f.b);
+        } else {
+            let tint = mix(vec3<f32>(0.05, 0.8, 0.85), vec3<f32>(1.0, 0.94, 0.35), f.a);
+            rgb = mix(rgb, tint, 0.75 * f.a);
         }
     }
     // Brush outline: disc cells with a 4-neighbour outside the disc.

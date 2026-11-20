@@ -14,7 +14,8 @@
 //!   A visit wakes a chunk only if it changes a cell's material; ages and
 //!   buffer levels live in the cell `state` and are written quietly.
 //! - **Devices** act every tick: bubblers release bubbles, and the outlet
-//!   jet's current pushes floating and liquid cells.
+//!   jet's current pushes floating and liquid cells (rising bubbles are
+//!   deflected in the movement pass).
 //! - **Fields** step every [`FIELD_EVERY`] ticks.
 
 use core::mem;

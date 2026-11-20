@@ -178,7 +178,10 @@ It can run as any combination of four desktop **display modes**, in a browser ta
   `reach` cells and widening as it goes; the current swaps floating cells
   and non-water dense liquids one cell downstream with probability
   speed / 20 per tick. Water is the medium and never starts a swap, so a
-  jet through clear water changes no cells and wakes no chunks.
+  jet through clear water changes no cells and wakes no chunks. A rising
+  bubble in the jet steps diagonally up and downstream instead of its
+  usual move with probability speed / 20 per tick, when that cell is
+  enterable.
 - **Movement rules.**
   - The movement pass runs bottom-up for falling materials and top-down
     for buoyant ones. The horizontal sweep direction alternates every

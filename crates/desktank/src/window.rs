@@ -930,11 +930,13 @@ impl ApplicationHandler for App {
                             .set_title(&format!("DeskTank — cursor avoidance {state}"));
                     }
                     Key::Character(c) if c.eq_ignore_ascii_case("f") => {
+                        use desktank_render::FieldOverlay::{Flow, Scalar};
                         let next = match s.tank.field_overlay() {
-                            None => Some(FieldKind::Nutrient),
-                            Some(FieldKind::Nutrient) => Some(FieldKind::Co2),
-                            Some(FieldKind::Co2) => Some(FieldKind::Light),
-                            Some(FieldKind::Light) => None,
+                            None => Some(Scalar(FieldKind::Nutrient)),
+                            Some(Scalar(FieldKind::Nutrient)) => Some(Scalar(FieldKind::Co2)),
+                            Some(Scalar(FieldKind::Co2)) => Some(Scalar(FieldKind::Light)),
+                            Some(Scalar(FieldKind::Light)) => Some(Flow),
+                            Some(Flow) => None,
                         };
                         s.tank.set_field_overlay(next);
                         let title = next.map_or("DeskTank".to_owned(), |f| {

@@ -14,7 +14,7 @@ desktank capture --seed 7 --size 640x360 --frames 60 \
 | `--size WxH` | `640x360` | Output size in pixels. The grid is drawn at the largest integer scale that fits, letterboxed. |
 | `--frames K` | 1 | Frames to write, `frame_every` ticks apart. One frame is `frame.png`; several are `frame_0000.png`, `frame_0001.png`, … |
 | `--script FILE` | none | Input script (below). Without one, an empty 160×90 tank. |
-| `--field F` | none | Debug overlay: tint the tank by the `nutrient`, `co2` or `light` field. |
+| `--field F` | none | Debug overlay: tint the tank by the `nutrient`, `co2` or `light` field, or show water speed in colour with `flow`. |
 | `--out DIR` | required | Output directory, created if missing. |
 
 A GIF from a frame sequence:

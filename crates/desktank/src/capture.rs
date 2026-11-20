@@ -8,8 +8,8 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
-use desktank_sim::{FieldKind, MaterialTable, Script, World};
+use desktank_render::{FieldOverlay, Gpu, GpuOptions, Tank, TankConfig, wgpu};
+use desktank_sim::{MaterialTable, Script, World};
 
 use desktank_sim::scene;
 
@@ -29,7 +29,7 @@ pub struct Options {
     /// Input script; `None` is the empty script (an idle default world).
     pub script: Option<PathBuf>,
     /// Field to tint the tank by (debug overlay).
-    pub field: Option<FieldKind>,
+    pub field: Option<FieldOverlay>,
     /// Output directory.
     pub out: PathBuf,
 }
@@ -113,8 +113,8 @@ pub fn parse_size(s: &str) -> Result<(u32, u32), String> {
 }
 
 /// Parses a field name (`nutrient`, `co2`, `light`).
-pub fn parse_field(s: &str) -> Result<FieldKind, String> {
-    FieldKind::from_name(s).ok_or_else(|| format!("{s:?} is not nutrient, co2 or light"))
+pub fn parse_field(s: &str) -> Result<FieldOverlay, String> {
+    FieldOverlay::from_name(s).ok_or_else(|| format!("{s:?} is not nutrient, co2, light or flow"))
 }
 
 /// Parses `HH:MM` into minutes after midnight.
