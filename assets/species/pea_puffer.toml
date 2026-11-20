@@ -1,0 +1,171 @@
+id = 18
+name = "pea_puffer"
+zone = "mid"
+depth = [0.2, 0.8]
+min_depth = 12
+length_cm = 3.0
+lifespan_days = 1460
+maturity_days = 150
+temperament = "territorial"
+speed = 3.0
+max_speed = 9.0
+diet = ["bloodworm"]
+prey_cm = 1.0
+territory_cm = 5
+
+[breeding]
+mode = "eggs"
+days = 3
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+# Silhouette traced from the Wikimedia Commons lead photo of Carinotetraodon travancoricus (olive back with dark blotches, cream belly, gold-ringed eye), shaded in the house style:
+# dark-shade outline, dithered back highlight, fin rays, small glinting eye.
+colours = { A = "#8a8410", B = "#4a4a18", C = "#d4d066", D = "#3a3418", E = "#b4b046", F = "#0c1016", G = "#6a5010", H = "#e8c040", I = "#c8c020", J = "#c8c070", K = "#e8e2c0", L = "#d8d0b0", M = "#7a7450", N = "#f0e440", O = "#4c4422", P = "#f0ec98", Q = "#f8dc70", R = "#ffffff", S = "#2e2812" }
+frames = [
+    [
+        "..............",
+        "....ABBBBB....",
+        "...BCDCECEBB..",
+        "..BCEEEEEDEFG.",
+        "ABEDEDDEEEHFG.",
+        "AIEJEJKLKLKLM.",
+        ".MMMLMMLLLMM..",
+        "....A..MMM....",
+        "..............",
+        "..............",
+    ],
+    [
+        "..............",
+        "....ABBBBB....",
+        "...BCDCECEBB..",
+        "..BCEEEEEDEFG.",
+        "ABEDEDDEEEHFG.",
+        "AIEJEJKLKLKLM.",
+        ".MMMLMMLLLMM..",
+        "....A..MMM....",
+        "..............",
+        "..............",
+    ],
+    [
+        "..............",
+        "....ABBBBB....",
+        "...BCDCECEBB..",
+        "..BCEEEEEDEFG.",
+        "ABEDEDDEEEHFG.",
+        "AIEJEJKLKLKLM.",
+        ".MMMLMMLLLMM..",
+        "....A..MMM....",
+        "..............",
+        "..............",
+    ],
+    [
+        "..............",
+        "....ABBBBB....",
+        "...BCDCECEBB..",
+        "..BCEEEEEDEFG.",
+        ".BEDEDDEEEHFG.",
+        "ANEJEJKLKLKLM.",
+        "AMMMLMMLLLMM..",
+        "....A..MMM....",
+        "..............",
+        "..............",
+    ],
+]
+fine_frames = [
+    [
+        "............................",
+        "............................",
+        "........A...BBBBBB..........",
+        ".......AIBBBOOCCOOBBB.......",
+        ".......BPCOCCECEODCCCB......",
+        "......BCOODODCECECDCEOBB....",
+        ".....BCECEEEEEEEEEODEEQQG...",
+        "....BCEEEEEEEEEEEEDEEQFRQG..",
+        ".AABCEEDEEDDDDEEEEEEEQFFQG..",
+        "ANNCEDDSDEDDDDEEEEEEEQQQQEB.",
+        "AIIEEEJEJEJELKLKLKLKLKLKLKM.",
+        "AINLKLLLLLKLLLKLKLKLKLKLLM..",
+        ".AAMMMMMLLLLLLLLLLLLLLLLM...",
+        "........ALMMMLLLLLLLMMMM....",
+        "........AA...MMMMMMM........",
+        ".......AA...................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    ],
+    [
+        "............................",
+        "............................",
+        "........A...BBBBBB..........",
+        ".......AIBBBOOCCOOBBB.......",
+        ".......BPCOCCECEODCCCB......",
+        "......BCOODODCECECDCEOBB....",
+        ".....BCECEEEEEEEEEODEEQQG...",
+        "....BCEEEEEEEEEEEEDEEQFRQG..",
+        ".AABCEEDEEDDDDEEEEEEEQFFQG..",
+        "ANNCEDDSDEDDDDEEEEEEEQQQQEB.",
+        "AIIEEEJEJEJELKLKLKLKLKLKLKM.",
+        ".ANLKLLLLLKLLLKLKLKLKLKLLM..",
+        "..AMMMMMLLLLLLLLLLLLLLLLM...",
+        "........ALMMMLLLLLLLMMMM....",
+        "........AA...MMMMMMM........",
+        ".......AA...................",
+        "........A...................",
+        "............................",
+        "............................",
+        "............................",
+    ],
+    [
+        "............................",
+        "............................",
+        "........A...BBBBBB..........",
+        ".......AIBBBOOCCOOBBB.......",
+        ".......BPCOCCECEODCCCB......",
+        "......BCOODODCECECDCEOBB....",
+        ".....BCECEEEEEEEEEODEEQQG...",
+        "....BCEEEEEEEEEEEEDEEQFRQG..",
+        ".AABCEEDEEDDDDEEEEEEEQFFQG..",
+        "ANNCEDDSDEDDDDEEEEEEEQQQQEB.",
+        "AIIEEEJEJEJELKLKLKLKLKLKLKM.",
+        "AINLKLLLLLKLLLKLKLKLKLKLLM..",
+        ".AAMMMMMLLLLLLLLLLLLLLLLM...",
+        "........ALMMMLLLLLLLMMMM....",
+        "........AA...MMMMMMM........",
+        ".......AA...................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    ],
+    [
+        "............................",
+        "............................",
+        "........A...BBBBBB..........",
+        ".......AIBBBOOCCOOBBB.......",
+        ".......BPCOCCECEODCCCB......",
+        "......BCOODODCECECDCEOBB....",
+        ".....BCECEEEEEEEEEODEEQQG...",
+        "....BCEEEEEEEEEEEEDEEQFRQG..",
+        "...BCEEDEEDDDDEEEEEEEQFFQG..",
+        ".AACEDDSDEDDDDEEEEEEEQQQQEB.",
+        "AINEEEJEJEJELKLKLKLKLKLKLKM.",
+        "ANNLKLLLLLKLLLKLKLKLKLKLLM..",
+        "AAAMMMMMLLLLLLLLLLLLLLLLM...",
+        "........ALMMMLLLLLLLMMMM....",
+        ".......AIA...MMMMMMM........",
+        "........A...................",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+    ],
+]
+icon = [
+    "...DN.",
+    ".EDDEN",
+    "HFEEEN",
+    ".KKK..",
+]

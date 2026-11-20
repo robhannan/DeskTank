@@ -1,0 +1,195 @@
+id = 24
+name = "african_dwarf_frog"
+zone = "mid"
+depth = [0.0, 1.0]
+min_depth = 12
+length_cm = 4.0
+lifespan_days = 1825
+maturity_days = 270
+temperament = "peaceful"
+speed = 3.5
+max_speed = 12.0
+diet = ["bloodworm", "sinking_pellet"]
+breathes_air = true
+prey_cm = 0.8
+
+[breeding]
+mode = "eggs"
+days = 3
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+# Silhouette traced from Wikimedia Commons "African_dwarf_frog.jpg" (flat slim
+# body, pointed snout, high eyes, spotted olive-grey skin, webbed feet), drawn
+# swimming: the hind legs kick from stretched back to tucked. House shading.
+colours = { A = "#2e2a20", B = "#6a5020", C = "#4a4436", D = "#9c9274", E = "#7e7458", F = "#c8a050", G = "#0c1016", H = "#2a261c", I = "#1e1a12", J = "#625a44", K = "#766c52", L = "#a89c80", M = "#9a8e74", N = "#5a5240", O = "#8a8268", P = "#e0bc70", Q = "#ffffff", R = "#2e281c", S = "#a49c84", T = "#6a6048", U = "#92886c", V = "#bab092", W = "#bcb49e" }
+frames = [
+    [
+        "......................",
+        "......................",
+        "......................",
+        "............AAAAAAB...",
+        "C.........AADEDEDFGB..",
+        ".CC......AHHEEEEEEEDI.",
+        ".CCCHI..IHJHEEEEEEEEAA",
+        ".C..HKHHKHHHLMLMHHNN..",
+        ".....HHHI...NNNNHH....",
+        ".................HHHCC",
+        "..................HHCC",
+        "......................",
+    ],
+    [
+        "......................",
+        "......................",
+        "......................",
+        "............AAAAAAB...",
+        "..........AADEDEDFGB..",
+        "..C......AEEEEEEEDEDI.",
+        "..CC.I...HHHEEEEEEEEAA",
+        "..COCKH.HJKHLMLMHHNN..",
+        "..CC.HKHKHH.NNNNHH....",
+        "......HHH........HIHC.",
+        ".................HHHC.",
+        "......................",
+    ],
+    [
+        "......................",
+        "......................",
+        "......................",
+        "............AAAAAAB...",
+        "..........AADEDEDFGB..",
+        ".........ADDEEEEEDEDI.",
+        ".........AHHEEEEEEEEAA",
+        ".........HKHLMLMHHNN..",
+        "........HKH.NNNNHH....",
+        ".......HKH......HJIHC.",
+        "......HHJJHH.....HHCC.",
+        "........CHHH..........",
+    ],
+    [
+        "......................",
+        "......................",
+        "......................",
+        "............AAAAAAB...",
+        "..........AADEDEDFGB..",
+        "..C......AEEEEEEEDEDI.",
+        "..CC.I...HHHEEEEEEEEAA",
+        "..COCKH.HJKHLMLMHHNN..",
+        "..CC.HKHKHH.NNNNHH....",
+        "......HHH........HIHC.",
+        ".................HHHC.",
+        "......................",
+    ],
+]
+fine_frames = [
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "..............................IA............",
+        "........................AAIAIADDAAAABB......",
+        ".C...................AAADDDDDDDEDDDPGQBI....",
+        ".CC.................ADDDEDEDEDREEDEPGGPDA...",
+        "..CCC..............ADHHEREEEEREEEEREDEDERI..",
+        "..COSC.HH.........ARHRKREEEEEEEEEEEEEEEDEEA.",
+        "..CSSOCKKH.......IHKRKKKHEEEEEEEEEEEEEERTEAA",
+        "..CSSCCIKKIH...HIUKKKJKJHTETETETEHHEEEEEAI..",
+        "..CSC...HKKKHHHKKKKKJJJHMLMLMLMLHKKHLLNN....",
+        "..CC.....HKKKKKKKJKHHHHNMMMMMMMMHJKHNN......",
+        "..C.......HKJKJKIHH.....NNNNNNNNNHJH........",
+        "...........HHHHH.................HJH........",
+        "..................................HJH....CC.",
+        "..................................HJRHHHCSC.",
+        "...................................HHHHJOOC.",
+        ".......................................CCCC.",
+        "............................................",
+        "............................................",
+    ],
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "..............................IA............",
+        "........................AAIAIADDAAAABB......",
+        ".....................AAADDDDDDDEDDVPGQBI....",
+        "....................ADDDEDEDEDREEDDPGGPDA...",
+        "...................ADEDEREEEEREEEEREDEDERI..",
+        "....CC............ARHRHREEEEEEEEEEEEEEEDEEA.",
+        ".....CC...........AHRKKHEEEEEEEEEEEEEEERTEAA",
+        ".....COCC.IH......HKKJKJHTETETETEHHEEEEEAI..",
+        ".....CSSOCKKH....HKKJKJHMLMLMLMLHKKHLLNN....",
+        ".....CSSCCHKH..HHUKJJJHHMMMMMMMMHJKHNN......",
+        ".....CWC...HKHHKRKJJHH..NNNNNNNNNHJH........",
+        ".....CC....HKUKKKJJH.............HKH........",
+        ".....C......HKKKRHH..............HJH.....C..",
+        "............HRKHH.................HJIHHCCC..",
+        ".............HH...................HHHHJJSC..",
+        "......................................CCCC..",
+        "............................................",
+        "............................................",
+    ],
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "..............................IA............",
+        "........................AAIAIADDAAAABB......",
+        ".....................AAADDDDDDDEDDVPGQBI....",
+        "....................AVDVEDEDEDREEDDPGGPDA...",
+        "...................AVDDDREEEEREEEEREDEDERI..",
+        "..................ARDRHREEEEEEEEEEEEEEEEEEA.",
+        "..................AERKUHEEEEEEEEEEEEEEERTEAA",
+        "..................AHKKKKHTETETETEHHEEEETAI..",
+        "..................HKKKKKHLMLMLMLHKKHLLNN....",
+        ".................HKKKKKHMMMMMMMMHJKHNN......",
+        "................IKKKKKH.NNNNNNNNNHJH........",
+        "...............HKKKKKH...........HKH........",
+        "..............HKRKJHH............HJH....CC..",
+        ".............IKKKJH..............HJJIHHCSC..",
+        ".............HJKJJJHHHIH..........HHHHJOOC..",
+        ".............HHHIJJJJJJH..............CCCC..",
+        ".................CHHHHHH....................",
+        "................C...........................",
+    ],
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "..............................IA............",
+        "........................AAIAIADDAAAABB......",
+        ".....................AAADDDDDDDEDDVPGQBI....",
+        "....................ADDDEDEDEDREEDDPGGPDA...",
+        "...................ADEDEREEEEREEEEREDEDERI..",
+        "....CC............ARHRHREEEEEEEEEEEEEEEDEEA.",
+        ".....CC...........AHRKKHEEEEEEEEEEEEEEERTEAA",
+        ".....COCC.IH......HKKJKJHTETETETEHHEEEEEAI..",
+        ".....CSSOCKKH....HKKJKJHMLMLMLMLHKKHLLNN....",
+        ".....CSSCCHKH..HHUKJJJHHMMMMMMMMHJKHNN......",
+        ".....CWC...HKHHKRKJJHH..NNNNNNNNNHJH........",
+        ".....CC....HKUKKKJJH.............HKH........",
+        ".....C......HKKKRHH..............HJH.....C..",
+        "............HRKHH.................HJIHHCCC..",
+        ".............HH...................HHHHJJSC..",
+        "......................................CCCC..",
+        "............................................",
+        "............................................",
+    ],
+]
+icon = [
+    "....EEF.",
+    "S.KEEEEE",
+    ".KKKL...",
+]

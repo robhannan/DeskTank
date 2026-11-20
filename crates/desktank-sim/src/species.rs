@@ -178,6 +178,7 @@ pub struct Icon {
 
 /// One species, validated.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // Independent species traits from the catalogue.
 pub struct Species {
     /// Stable ID.
     pub id: SpeciesId,
@@ -251,6 +252,8 @@ pub struct Species {
     pub wildtype: u8,
     /// Index of the morph the palette adds: the sprite's own colours.
     pub palette_morph: u8,
+    /// Stock successive palette additions in different inherited colours.
+    pub cycle_palette: bool,
     /// Every look: each morph for a male (or either sex), then for a
     /// female if the species is drawn differently by sex. See
     /// [`Species::look`].
@@ -432,6 +435,8 @@ struct GlowDef {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GeneticsDef {
+    #[serde(default)]
+    cycle_palette: bool,
     /// The wildtype morph's name.
     wildtype: String,
     /// The name of the morph the sprite's colours draw (the palette's).
@@ -485,6 +490,18 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/medical_crab.toml"),
     include_str!("../../../assets/species/home_owning_crab.toml"),
     include_str!("../../../assets/species/blinker.toml"),
+    include_str!("../../../assets/species/common_goldfish.toml"),
+    include_str!("../../../assets/species/fancy_goldfish.toml"),
+    include_str!("../../../assets/species/angelfish.toml"),
+    include_str!("../../../assets/species/pea_puffer.toml"),
+    include_str!("../../../assets/species/flowerhorn.toml"),
+    include_str!("../../../assets/species/bristlenose_pleco.toml"),
+    include_str!("../../../assets/species/kuhli_loach.toml"),
+    include_str!("../../../assets/species/mystery_snail.toml"),
+    include_str!("../../../assets/species/ramshorn_snail.toml"),
+    include_str!("../../../assets/species/african_dwarf_frog.toml"),
+    include_str!("../../../assets/species/axolotl.toml"),
+    include_str!("../../../assets/species/common_frog.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -713,6 +730,7 @@ fn validate(
         morphs,
         wildtype,
         palette_morph,
+        cycle_palette: d.genetics.as_ref().is_some_and(|g| g.cycle_palette),
         looks,
         sprite,
         colour,
@@ -1019,8 +1037,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        // Eleven stocked species, the two cheat-only crabs and the blinker.
-        assert_eq!(t.len(), 14);
+        assert_eq!(t.len(), 26);
         for name in [
             "neon_tetra",
             "corydoras",
@@ -1317,12 +1334,12 @@ mod tests {
         }
         assert!(rasbora.size().1 > tetra.size().1, "harlequins are deeper");
         assert!(gourami.size().1 > rasbora.size().1, "gouramis are deeper");
-        // The betta: a 6–6.5 cm body, the largest stocked species, with
-        // flowing fins drawn up to 2 cm past it and the tallest sprite.
+        // The betta: a 6–6.5 cm body with
+        // flowing fins drawn up to 2 cm past it and tall finnage.
         let betta = get("betta");
         assert!((6.0..=6.5).contains(&betta.length_cm));
         assert!((0.5..=2.0).contains(&(drawn(betta) - betta.length_cm)));
-        for s in t.iter().filter(|s| !s.cheat_only && s.name != "betta") {
+        for s in [guppy, tetra, oto, rasbora, gourami] {
             assert!(betta.length_cm > s.length_cm, "{}", s.name);
             assert!(betta.size().1 > s.size().1, "{}", s.name);
         }

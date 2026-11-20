@@ -1,0 +1,24 @@
+ticks = 1
+
+[world]
+starter = true
+
+[[creature]]
+species = "bristlenose_pleco"
+x = 28
+y = 77
+
+[[creature]]
+species = "kuhli_loach"
+x = 72
+y = 80
+
+[[creature]]
+species = "mystery_snail"
+x = 102
+y = 79
+
+[[creature]]
+species = "ramshorn_snail"
+x = 131
+y = 80

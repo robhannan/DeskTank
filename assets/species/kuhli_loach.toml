@@ -1,0 +1,145 @@
+id = 21
+name = "kuhli_loach"
+zone = "bottom"
+depth = [0.72, 1.0]
+min_depth = 12
+length_cm = 10.0
+lifespan_days = 2920
+maturity_days = 540
+temperament = "peaceful"
+speed = 4.0
+max_speed = 12.0
+diet = ["sinking_pellet", "bloodworm"]
+
+
+[breeding]
+mode = "eggs"
+days = 3
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+# Silhouette traced from Wikimedia Commons "Kuhli_loach.JPG" (eel body, brown saddles split by yellow bands, pale belly), shaded in the house style:
+# dark-shade outline, dithered highlight, small glinting eye.
+colours = { A = "#24140e", B = "#1a0e0a", C = "#8a5a10", D = "#6e3a2c", E = "#52281e", F = "#ffd860", G = "#5a3024", H = "#f0c030", I = "#0c1016", J = "#46241a", K = "#e8bca0", L = "#dcae94", M = "#7a5a4a", N = "#8a7a70", O = "#3e2218", P = "#e0b028", Q = "#8a5040", R = "#fff0a0", S = "#ffffff", T = "#764432", U = "#e0ccbc" }
+frames = [
+    [
+        "........................................",
+        "..........A.....BBCB....................",
+        "AABBBBBBBCDBBBCBDEFEBBBCBBBCBBBBBCBBB...",
+        "AGEEEDEDEHEEEEHEEEHEEEEHEEEHEEEEEHEEDIB.",
+        "AGJEEEEEJHJEJKLEJEJEJELHJEJHJEJEJHJEJDB.",
+        "AAMMKLKLMMMMMMMMMMMMMMMMMMMMMMMMMMMMMN..",
+        "....MMMM................................",
+        "........................................",
+    ],
+    [
+        "........................................",
+        ".........AABBB..........................",
+        ".A.BBBBBBFDEDECBBBCCBBBCBBBCBBBBBCBBB...",
+        "AGBEEEEEEHEEEEHEEEHEEEEFEEEHEEEEEHEEDIB.",
+        "AOJEJEJEJKJEJELEJEJEJEEHEEJHJEJKJKLELDB.",
+        "AAAMMMMMMMMMMMMMMMMMMMKLKMMMMMMMMMMMMN..",
+        "......................MMM...............",
+        "........................................",
+    ],
+    [
+        "........................................",
+        "....BBBB.AA.............................",
+        "AABBDEDEBFDBBBCBBBCBBBCCBBBCBBBBBCBBB...",
+        "AOJEEEEEEHEEEEHEEDHDEEEHEEEHEEEEEHEEDIB.",
+        "AGOEJEJEJKLEJEPEEEHEJEJEJEJKLEJKJKLEJDB.",
+        "AAAMMMMMMMMMMMMMKLKLMMMMMMMMMMMMMMMMMN..",
+        "................MMMM....................",
+        "........................................",
+    ],
+    [
+        "........................................",
+        "......................BCB...............",
+        "AABBBBBBBCABBBCBBBCBBBDHDBBCBBBBBCBBB...",
+        "AOJEEEEEEHDDEDHEEEHEEEEHEEEHEEEEEHEEDIB.",
+        "AOAEJEJEJHEEEEPEJEPKJEJEJEJKLEJEJHJEJDB.",
+        ".A.MMMMMMMKLKLMMMMMMMMMMMMMMMMMMMMMMMN..",
+        "..........MMMM..........................",
+        "........................................",
+    ],
+]
+fine_frames = [
+    [
+        "................................................................................",
+        "................................................................................",
+        "................................................................................",
+        "...................AAAA.........BBBBCCCB........................................",
+        ".A...............AAGODQBBBBCCCBBDDDDFFFDBBBBBCCCBBB...............CCCBB.........",
+        ".AAAABBBBBBBBBBBBQFRFDDDDDDFHFEDEDEDHFHDEDEDEFFFDDDBBBCCCBBBBBBCBBFFFDDBBBB.....",
+        ".AGOGEDEDDDDDDDDDEFHFEDEDEDHHHEEEEEEHHHEEEEEEHFHDEDEDEFHFEDEDEDHDEFHFEDEDQQBB...",
+        ".AGOGEEEEDEDEDEDEEHHHEEEEEEHHHEEEEEEHHHEEEEEEHHHEEEEEEHHHEEEEEEHEEHHHEEEEQSQEB..",
+        ".AGGGEEEEEEEEEEEEEHHHEEEEEEHPHJEJEJEJEJEJEJEJHHHEEEEEEHHHEEEEEEHEEHHHEEEEQQQJB..",
+        ".AGGGJEJEEEEEEEEEJHPHJEJELKLLLLLLLLLLLLLLLLLLLKJEJEJEJHPHJEJEJEPEJHPHJEJEJBJB...",
+        ".AOGALLLLKLKLKLKLLLLLLLLLLLMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLLLLLLLLLLLLLMMM.NN...",
+        ".AAA.MMMLLLLLLLLMMMMMMMMMMM..................MMMMMMMMMMMMMMMMMMMMMMMMMM...NN....",
+        "........MMMMMMMM................................................................",
+        "................................................................................",
+        "................................................................................",
+        "................................................................................",
+    ],
+    [
+        "................................................................................",
+        "................................................................................",
+        "...................AAA..........................................................",
+        ".................AAGFQBBBBBC....................................................",
+        ".........BBBBBBBBDRFFDDDDDDFCCBBBBBBCCC..................BBBBBBCBBCCCBBB........",
+        ".AAA.BBBBDDDDDDDEDHFHDEDEDEFHFEDEDDDFFFBBBBBBCCCBBBBBBCCCDDDDDDFDDFFFDEDBBB.....",
+        ".ATGAEDEDEDEDEDEEEHHHEEEEEEHHHEEEEDEFHFEDEDEDFFFDDDEDEFHFEDEDEDHDEFHFEEEDQQBB...",
+        ".AGOGEEEEEEEEEEEEEHHHEEEEEEHHHEEEEEEHHHEEEEEEFHFEDEEEEHHHEEEEEEHEEHHHEEEEQSQEB..",
+        ".AGOGEEEEEEEEEEEJEPHJEJEJEJEPHJEJEEEHHHEEEEEEHHHEEEEEEHHHEEEEEEHEEHHHEJEEQQQJB..",
+        ".AGGGJEJEJEJELKLLLLLLLLLLLLLLLLLLLKJEJEJEJEJEHHHEEEJEJHPHJEJEJKLKLKLKLLLKLBJB...",
+        ".AGGGLLLLLLLLLLMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLKLKLKLLLLLLLLLLLLLLLLLLLLMMMM.NN...",
+        ".AAAAMMMMMMMMMM..................MMMMMMMMMMMLLLLLLLMMMMMMMMMMMMMMMMMMM....NN....",
+        ".A..........................................MMMMMMM.............................",
+        "................................................................................",
+        "................................................................................",
+        "................................................................................",
+    ],
+    [
+        "................................................................................",
+        "................................................................................",
+        "...................AA...........................................................",
+        "........BBBBBBBB.AAOOAA.........................................................",
+        ".AAA.BBBDDDDDDDDBDRFRDQBBBB..................CCCBBBBBBCCCBBBBBBCBBCCCBB.........",
+        ".AGGADEDEDEDEDEDEDHFHDDDDDDCCCBBBBBBCCCBBBBBBFFFDDDDEDHFHDEDEDEFEDFFFDDBBB......",
+        ".AGOGEEEEEEEEEEEEEHHHEDEDEDHFHDEDDDDFFFDDEDEDHFHDEDEEEHHHEEEEEEHEEFHFEDEDQBBB...",
+        ".AGOGEEEEEEEEEEEEEHHHEEEEEEHHHEEEDEDHFHDEEEEEHHHEEEEEEHHHEEEEEEHEEHHHEEEEQSQEB..",
+        ".AGGGEJEJEJEJEJEJEPHPEEEEEEHHHEEEEEEHHHEEEEEEHHHEEEEJEPHPEJEJEJHJEHHHEEEEQQQJB..",
+        ".AGGGLLLLLLLLLLLLLLLLLKJEJEPHPEJEEEEHHHEEJEJEJEJELKLLLLLLLLLLLLLLLKLKLEJEJEJB...",
+        ".AAAAMMMMMMMMMMMMMMMMLLLLLLLLLLLLKLKLKLKLLLLLLLLLLLMMMMMMMMMMMMMMMLLLLLMMMJUN...",
+        ".A...................MMMMMMMMMMMLLLLLLLLMMMMMMMMMMM...............MMMMM...NN....",
+        "................................MMMMMMMM........................................",
+        "................................................................................",
+        "................................................................................",
+        "................................................................................",
+    ],
+    [
+        "................................................................................",
+        "................................................................................",
+        "................................................................................",
+        ".A..................A.......................BCCCBBB.............................",
+        ".AAAABBBBBBBBBB..AAAOAAA.........BBBCCCBBBBBDFFFDDDBBBCCCBBBBBBCBBCCCB..........",
+        ".AGOGDEDEDDDDDDBBQFRFQDQBBBCCCBBBDDDFFFDEDEDEFHFEDEDEDHFHDDDDDDFDDFFFDBBBB......",
+        ".AGOGEEEEEDEDEDEDEFHFDDDDDDFFHDEDEDEFHFEEEEEEHHHEEEEEEHHHEDEDEDHDEFHFEDEDQBBB...",
+        ".AGGGEEEEEEEEEEEEEHHHDEDEDEFHHEEEEEEHHHEEEEEEHHHEEEEEEHHHEEEEEEHEEHHHEEEEQSQEB..",
+        ".AGGGEJEJEEEEEEEEEHHHEEEEEEHHHEEEEEEHHHEJEJEJEJEJEJEJEPHPEEEEEEHEEHHHEEEEQQQJB..",
+        ".AOGALLLLLKJEJEJEJHPHEEEEEEHHPEJEJEJELKLLLLLLLLLLLLLLLLLLLKJEJEJEJHPHJEJEJEJB...",
+        ".AAA.MMMMLLLLLLLLLLLLKLKLKLKLLLLLLLLLLLMMMMMMMMMMMMMMMMMMLLLLLLLLLLLLLLLMMJUN...",
+        ".........MMMMMMMMMMMLLLLLLLLMMMMMMMMMMM..................MMMMMMMMMMMMMMM..NN....",
+        "....................MMMMMMMM....................................................",
+        "................................................................................",
+        "................................................................................",
+        "................................................................................",
+    ],
+]
+icon = [
+    "...G....",
+    "GEHEHEHI",
+    "GKKKKKK.",
+]
