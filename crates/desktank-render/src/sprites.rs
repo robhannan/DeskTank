@@ -484,11 +484,19 @@ mod tests {
     #[test]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn every_creature_has_a_second_frame_origin_at_double_density() {
-        let mut world = world();
+        let mut world = World::new(
+            WorldConfig {
+                width: 192,
+                height: 144,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
         let ids: Vec<_> = world.species().iter().map(|s| s.id).collect();
         for (i, &id) in (0_i64..).zip(&ids) {
             world
-                .add_creature(id, 8 + 12 * (i % 5), 10 + 12 * (i / 5))
+                .add_creature(id, 20 + 36 * (i % 5), 24 + 20 * (i / 5))
                 .unwrap();
         }
         let atlas = Atlas::build(world.species());
