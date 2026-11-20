@@ -298,6 +298,10 @@ pub enum Form {
     /// A creeping rhizome clinging to rock or driftwood that puts up
     /// upright leaves (anubias or java fern type, T6c part 3).
     Epiphyte(EpiphyteForm),
+    /// A loose, round ball of stem cells resting on whatever is below it,
+    /// the whole plant one sinking body the current can nudge along
+    /// (marimo type).
+    Ball(BallForm),
 }
 
 impl Form {
@@ -307,7 +311,7 @@ impl Form {
         match self {
             Self::Stem(f) => Some(&f.substrates),
             Self::Rosette(f) | Self::Carpet(f) => Some(&f.substrates),
-            Self::Mat(_) | Self::Floater(_) | Self::Epiphyte(_) => None,
+            Self::Mat(_) | Self::Floater(_) | Self::Epiphyte(_) | Self::Ball(_) => None,
         }
     }
 
@@ -316,7 +320,9 @@ impl Form {
     pub fn rosette(&self) -> Option<&RosetteForm> {
         match self {
             Self::Rosette(f) | Self::Carpet(f) => Some(f),
-            Self::Stem(_) | Self::Mat(_) | Self::Floater(_) | Self::Epiphyte(_) => None,
+            Self::Stem(_) | Self::Mat(_) | Self::Floater(_) | Self::Epiphyte(_) | Self::Ball(_) => {
+                None
+            }
         }
     }
 
@@ -337,6 +343,38 @@ impl Form {
             _ => None,
         }
     }
+
+    /// The ball parameters of a ball.
+    #[must_use]
+    pub fn ball(&self) -> Option<&BallForm> {
+        match self {
+            Self::Ball(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Whether the whole plant moves as one body (a raft): a floater, held
+    /// up by its floating leaves, or a ball, which sinks.
+    #[must_use]
+    pub fn drifts(&self) -> bool {
+        matches!(self, Self::Floater(_) | Self::Ball(_))
+    }
+}
+
+/// Largest ball radius, in cells.
+pub const MAX_BALL_RADIUS: u8 = 8;
+
+/// Parameters of the ball form (marimo type). A ball starts as one stem
+/// cell where its propagule came to rest and grows into the water around
+/// it, its nearest cells first, keeping within a disc of `radius` cells
+/// about the middle of its bounds; each cell's position is how far out it
+/// grew (0 in the middle). Like a floater it is one body (the world's
+/// rafts), but its cells are denser than water, so it sinks to rest on
+/// what is below it and the current can only nudge it along.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BallForm {
+    /// Largest radius, in cells (1..=[`MAX_BALL_RADIUS`]).
+    pub radius: u8,
 }
 
 /// Longest rhizome an epiphyte creeps, in cells.
@@ -388,6 +426,9 @@ pub struct FloaterForm {
     pub root_length: u8,
 }
 
+/// Widest leaf pad a rosette's blade spreads to each side, in cells.
+pub const MAX_PAD: u8 = 4;
+
 /// Longest blade a carpet grows, in cells: carpets stay low.
 pub const MAX_CARPET_BLADE: u8 = 3;
 /// Most crown cells a rosette spreads along the substrate.
@@ -403,6 +444,17 @@ pub const MAX_CROWN: u8 = 3;
 /// root under the crown on each side, creeps through the top substrate
 /// layer and, `spacing` cells out, roots a child plant (parent id set,
 /// generation + 1) whose crown sits on the substrate above.
+///
+/// With a `pad` (tiger lotus type) the blades are petioles of differing
+/// lengths: each stops at `blade_length` or between about half and all of
+/// it, by plant and the column its tip has reached. Where a petiole stops (at its length, or under the
+/// air or something else) it spreads a broad leaf of leaf cells sideways
+/// along its tip's row, up to `pad` cells each way, at positions
+/// `blade_length + 1` on; at the surface (under the air) the pad is of
+/// floating leaves, which shade the water below. Under water each pad cell
+/// short of its edge (and the petiole's tip) also puts a cell above it, at
+/// [`RosetteForm::pad_top`], so a submerged leaf is two rows deep, its
+/// upper row narrower.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RosetteForm {
     /// Crown cells along the substrate (1 for a carpet).
@@ -421,6 +473,25 @@ pub struct RosetteForm {
     pub spacing: u8,
     /// Substrates it roots in and runners creep through.
     pub substrates: Vec<MaterialId>,
+    /// Cells a petiole's leaf pad spreads to each side (0: plain blades;
+    /// 1..=[`MAX_PAD`]).
+    pub pad: u8,
+}
+
+impl RosetteForm {
+    /// Whether a leaf cell at `position` is part of a leaf pad rather than
+    /// a blade.
+    #[must_use]
+    pub fn is_pad(&self, position: u8) -> bool {
+        self.pad > 0 && position > self.blade_length
+    }
+
+    /// The position of a submerged pad's upper row cells (one past its
+    /// widest).
+    #[must_use]
+    pub fn pad_top(&self) -> u8 {
+        self.blade_length + self.pad + 1
+    }
 }
 
 /// Parameters of the stem form.
@@ -580,11 +651,15 @@ pub enum LeafShape {
     /// A round, glossy pad with a pale vein and a dark, spongy underside
     /// (frogbit type).
     Disc = 9,
+    /// A blade shape for rosettes with leaf pads: a thin petiole up to a
+    /// broad, mottled leaf spread sideways from its tip, lying flat on the
+    /// water where it reaches the surface (tiger lotus type).
+    Lotus = 10,
 }
 
 impl LeafShape {
     /// Every shape, in discriminant order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Lanceolate,
         Self::Needle,
         Self::Round,
@@ -595,13 +670,17 @@ impl LeafShape {
         Self::Pad,
         Self::Lens,
         Self::Disc,
+        Self::Lotus,
     ];
 
     /// Whether it is a blade shape (rosettes and carpets), drawn upright,
     /// rather than a leaf growing sideways from a stem.
     #[must_use]
     pub fn is_blade(self) -> bool {
-        matches!(self, Self::Ribbon | Self::Sword | Self::Grass | Self::Pad)
+        matches!(
+            self,
+            Self::Ribbon | Self::Sword | Self::Grass | Self::Pad | Self::Lotus
+        )
     }
 
     /// Whether it is a floating leaf shape (floaters).
@@ -627,11 +706,20 @@ pub enum StemShape {
     Fuzz = 2,
     /// A mat of layered, downswept fronds (christmas moss type).
     Frond = 3,
+    /// A ball's dense, velvety pile, lit on top and shaded below (marimo
+    /// type).
+    Velvet = 4,
 }
 
 impl StemShape {
     /// Every shape, in discriminant order.
-    pub const ALL: [Self; 4] = [Self::Stalk, Self::Thick, Self::Fuzz, Self::Frond];
+    pub const ALL: [Self; 5] = [
+        Self::Stalk,
+        Self::Thick,
+        Self::Fuzz,
+        Self::Frond,
+        Self::Velvet,
+    ];
 }
 
 /// How a species' root cells are drawn (`[look] root`).
@@ -697,11 +785,11 @@ pub struct PlantSpecies {
 }
 
 impl PlantSpecies {
-    /// Its main colour: the middle leaf shade (stem for a mat).
+    /// Its main colour: the middle leaf shade (stem for a mat or ball).
     #[must_use]
     pub fn colour(&self) -> [u8; 3] {
         let ramp = match self.form {
-            Form::Mat(_) => &self.colours.stem,
+            Form::Mat(_) | Form::Ball(_) => &self.colours.stem,
             Form::Stem(_)
             | Form::Rosette(_)
             | Form::Carpet(_)
@@ -854,6 +942,7 @@ struct SpeciesDef {
     carpet: Option<RosetteDef>,
     floater: Option<FloaterDef>,
     epiphyte: Option<EpiphyteDef>,
+    ball: Option<BallDef>,
     prefer: Preferences,
     growth: GrowthDef,
     hardiness: HardinessDef,
@@ -891,6 +980,13 @@ enum FormName {
     Carpet,
     Floater,
     Epiphyte,
+    Ball,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BallDef {
+    radius: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -948,6 +1044,8 @@ struct RosetteDef {
     root_depth: u8,
     spacing: u8,
     substrates: Vec<String>,
+    #[serde(default)]
+    pad: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -973,7 +1071,8 @@ struct HardinessDef {
 /// a high-light stem plant; then ludwigia, cabomba, bacopa and christmas
 /// moss; T6c's rosettes and carpets: amazon sword, vallisneria, dwarf
 /// hairgrass, Monte Carlo and cryptocoryne; T6c's floaters: duckweed and
-/// Amazon frogbit).
+/// Amazon frogbit; T6c part 3's epiphytes: anubias and java fern; then
+/// issue #45's marimo ball and tiger lotus).
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/hygrophila.toml"),
     include_str!("../../../assets/plants/java_moss.toml"),
@@ -991,6 +1090,8 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/frogbit.toml"),
     include_str!("../../../assets/plants/anubias.toml"),
     include_str!("../../../assets/plants/java_fern.toml"),
+    include_str!("../../../assets/plants/marimo.toml"),
+    include_str!("../../../assets/plants/tiger_lotus.toml"),
 ];
 
 /// All plant species, ordered by ID.
@@ -1103,7 +1204,7 @@ impl PlantSpeciesTable {
 }
 
 /// The error for a species without exactly its form's table.
-const ONE_TABLE: &str = "needs exactly the [stem], [mat], [rosette], [carpet], [floater] or [epiphyte] table its form names";
+const ONE_TABLE: &str = "needs exactly the [stem], [mat], [rosette], [carpet], [floater], [epiphyte] or [ball] table its form names";
 
 #[allow(clippy::too_many_lines)] // one check per property
 fn validate(
@@ -1138,11 +1239,21 @@ fn validate(
         d.carpet.is_some(),
         d.floater.is_some(),
         d.epiphyte.is_some(),
+        d.ball.is_some(),
     ];
     if tables.iter().filter(|&&t| t).count() != 1 {
         return Err(invalid(ONE_TABLE));
     }
     let form = match (d.form, &d.stem, &d.mat) {
+        (FormName::Ball, ..) => {
+            let Some(b) = &d.ball else {
+                return Err(invalid(ONE_TABLE));
+            };
+            if !(1..=MAX_BALL_RADIUS).contains(&b.radius) {
+                return Err(invalid("ball radius must be 1..=8"));
+            }
+            Form::Ball(BallForm { radius: b.radius })
+        }
         (FormName::Epiphyte, ..) => {
             let Some(e) = &d.epiphyte else {
                 return Err(invalid(ONE_TABLE));
@@ -1210,6 +1321,11 @@ fn validate(
             if !(2..=max / 2).contains(&r.spacing) {
                 return Err(invalid("runner spacing must be 2..=31"));
             }
+            if r.pad > 0 && (carpet || r.pad > MAX_PAD || r.blade_length + r.pad >= max) {
+                return Err(invalid(
+                    "pad must be 1..=4, on a rosette, with blade_length + pad < 63",
+                ));
+            }
             let f = RosetteForm {
                 crown,
                 blades: r.blades,
@@ -1218,6 +1334,7 @@ fn validate(
                 root_depth: r.root_depth,
                 spacing: r.spacing,
                 substrates: lookup(&r.substrates)?,
+                pad: r.pad,
             };
             if carpet {
                 Form::Carpet(f)
@@ -1337,6 +1454,7 @@ fn validate(
         Form::Carpet(_) => (LeafShape::Grass, StemShape::Thick),
         Form::Floater(_) => (LeafShape::Lens, StemShape::Stalk),
         Form::Epiphyte(_) => (LeafShape::Sword, StemShape::Thick),
+        Form::Ball(_) => (LeafShape::Lanceolate, StemShape::Velvet),
     };
     let look = Look {
         leaf: d.look.leaf.unwrap_or(default_leaf),
@@ -1344,14 +1462,22 @@ fn validate(
         root: d.look.root.unwrap_or_default(),
     };
     let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
-    if mat_shape != matches!(form, Form::Mat(_)) {
+    if mat_shape != matches!(form, Form::Mat(_))
+        || (look.stem == StemShape::Velvet) != matches!(form, Form::Ball(_))
+    {
         return Err(invalid(
-            "look stem is stalk or thick for a stem, rosette, carpet or epiphyte, fuzz or frond for a mat",
+            "look stem is stalk or thick for a stem, rosette, carpet or epiphyte, fuzz or frond for a mat, velvet for a ball",
+        ));
+    }
+    let pads = form.rosette().is_some_and(|f| f.pad > 0);
+    if (look.leaf == LeafShape::Lotus) != pads {
+        return Err(invalid(
+            "look leaf is lotus exactly for a rosette with leaf pads",
         ));
     }
     if look.leaf.is_blade() != (form.rosette().is_some() || form.epiphyte().is_some()) {
         return Err(invalid(
-            "look leaf is a blade shape (ribbon, sword, grass, pad) exactly for rosettes, carpets and epiphytes",
+            "look leaf is a blade shape (ribbon, sword, grass, pad, lotus) exactly for rosettes, carpets and epiphytes",
         ));
     }
     if look.leaf.is_floating() != form.floater().is_some() {
@@ -1445,7 +1571,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 16);
+        assert_eq!(t.len(), 18);
         let first = t.default_species().unwrap();
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
@@ -1895,6 +2021,114 @@ mod tests {
                 "[mat]\n        on = [\"rock\"]\n        layers = 5",
             );
         invalid(mat);
+    }
+
+    #[test]
+    #[allow(clippy::many_single_char_names)]
+    fn marimo_and_tiger_lotus_load_with_their_care_and_look() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let get = |n: &str| t.get(t.id(n).unwrap()).unwrap();
+        let (marimo, lotus) = (get("marimo"), get("tiger_lotus"));
+        // Marimo: a velvet ball that spreads only by pieces breaking off,
+        // happy in the least light, the slowest grower of all, and hardy.
+        assert_eq!(marimo.form, Form::Ball(BallForm { radius: 4 }));
+        assert!(marimo.form.drifts() && marimo.form.substrates().is_none());
+        assert_eq!(marimo.look.stem, StemShape::Velvet);
+        assert_eq!(
+            marimo.propagules().collect::<Vec<_>>(),
+            [Propagule::Fragments]
+        );
+        assert_eq!(marimo.default_propagule(), Propagule::Fragments);
+        for other in t.iter().filter(|s| s.id != marimo.id) {
+            assert!(marimo.growth.rate < other.growth.rate, "{}", other.name);
+            assert!(
+                marimo.prefer.light.min <= other.prefer.light.min,
+                "{}",
+                other.name
+            );
+        }
+        assert!(marimo.hardiness.tolerance >= get("cryptocoryne").hardiness.tolerance);
+        // A ball's mature size fits within its disc.
+        assert!(marimo.growth.size <= 4 * 4 * 3 + 4 * 4);
+        // Tiger lotus: a rosette whose petioles carry leaf pads, wanting
+        // more light than the low-light rosettes, fast, a root feeder that
+        // spreads by runners and reddens in strong light.
+        let f = lotus.form.rosette().unwrap();
+        assert!(matches!(lotus.form, Form::Rosette(_)));
+        assert_eq!((f.pad, lotus.look.leaf), (4, LeafShape::Lotus));
+        assert!(f.is_pad(f.blade_length + 1) && !f.is_pad(f.blade_length));
+        assert!(f.pad_top() <= MAX_POSITION);
+        assert!(f.blade_length > get("amazon_sword").form.rosette().unwrap().blade_length);
+        assert!(lotus.prefer.light.optimum > get("amazon_sword").prefer.light.optimum);
+        assert!(lotus.prefer.light.optimum > get("cryptocoryne").prefer.light.optimum);
+        assert!(lotus.growth.rate > get("cryptocoryne").growth.rate);
+        assert!(lotus.growth.root_feeder && lotus.colouration.is_some());
+        assert_eq!(lotus.default_propagule(), Propagule::Runners);
+        // Its leaf ramp runs from maroon (the blotches) to green.
+        let red = |c: [u8; 3]| c[0] > c[1] && c[0] > c[2];
+        assert!(red(lotus.colours.leaf[0]));
+        assert!(!red(*lotus.colours.leaf.last().unwrap()));
+    }
+
+    #[test]
+    #[allow(clippy::many_single_char_names)]
+    fn balls_and_leaf_pads_are_checked() {
+        let m = materials();
+        let ball = OK
+            .replace("form = \"stem\"", "form = \"ball\"")
+            .replace("[\"cuttings\"]", "[\"fragments\"]")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6\n        substrates = [\"sand\"]",
+                "[ball]\n        radius = 3",
+            );
+        assert_ne!(ball, OK);
+        let t = PlantSpeciesTable::from_toml_sources(&[&ball], &m).unwrap();
+        let s = t.get(PlantSpeciesId(9)).unwrap();
+        assert_eq!(s.look.stem, StemShape::Velvet, "balls default to velvet");
+        assert_eq!(s.colour(), s.colours.stem[s.colours.stem.len() / 2]);
+        let rosette = OK
+            .replace("form = \"stem\"", "form = \"rosette\"")
+            .replace("[\"cuttings\"]", "[\"runners\"]")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6",
+                "[rosette]\n        crown = 1\n        blades = 3\n        blade_length = 20\n        lean = 5\n        root_depth = 6\n        spacing = 6\n        pad = 2",
+            );
+        let lotus = format!("{rosette}\n[look]\nleaf = \"lotus\"\n");
+        let t = PlantSpeciesTable::from_toml_sources(&[&lotus], &m).unwrap();
+        let f = t
+            .get(PlantSpeciesId(9))
+            .unwrap()
+            .form
+            .rosette()
+            .unwrap()
+            .clone();
+        assert_eq!((f.pad, f.pad_top()), (2, 23));
+        let invalid = |src: String| {
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &m);
+            assert!(matches!(r, Err(PlantSpeciesError::Invalid { .. })), "{r:?}");
+        };
+        // A ball too big or too small, a ball with runners or roots to feed
+        // by, velvet on anything but a ball and a mat shape on a ball.
+        invalid(ball.replace("radius = 3", "radius = 0"));
+        invalid(ball.replace("radius = 3", "radius = 9"));
+        invalid(ball.replace("[\"fragments\"]", "[\"runners\"]"));
+        invalid(ball.replace("cost = 0.01", "cost = 0.01\n        root_feeder = true"));
+        invalid(format!("{OK}\n[look]\nstem = \"velvet\"\n"));
+        invalid(format!("{ball}\n[look]\nstem = \"fuzz\"\n"));
+        // Pads too wide or too long for the position bits, lotus leaves
+        // without pads and pads without lotus leaves.
+        invalid(lotus.replace("pad = 2", "pad = 5"));
+        invalid(lotus.replace("blade_length = 20", "blade_length = 61"));
+        invalid(format!(
+            "{}\n[look]\nleaf = \"lotus\"\n",
+            rosette.replace("\n        pad = 2", "")
+        ));
+        invalid(rosette.clone());
+        assert!(matches!(
+            PlantSpeciesTable::from_toml_sources(&[&ball.replace("[ball]", "[balls]")], &m),
+            Err(PlantSpeciesError::Parse { .. })
+        ));
     }
 
     #[test]

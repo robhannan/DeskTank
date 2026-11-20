@@ -22,9 +22,13 @@
 //!   rests with them a quarter cell proud (floating leaves are 0.75).
 //!   Hanging roots are about as dense as water and take no part in water,
 //!   but weigh their full density in air, so a raft lifted out falls back.
+//!   A ball's (marimo's) cells weigh their density less the fluid's
+//!   everywhere, so it sinks to rest on what is below it.
 //! - **Current.** Its sideways speed is pulled towards the current's mean
 //!   speed over its cells (T5), so it drifts as the floating cells the
-//!   current carries do; with no current it slows to rest.
+//!   current carries do; with no current it slows to rest. A ball grips
+//!   the current more weakly ([`BALL_GRIP`]) and rolls at only a quarter
+//!   of its speed ([`BALL_DRIFT`]): it is nudged along the bottom.
 //! - **Motion.** Speeds are damped in water and capped as a body's are; it
 //!   moves a cell at a time into fluid (water, air, bubbles) or floating
 //!   cells, which go to the cells it leaves, so every cell is conserved
@@ -48,6 +52,11 @@ const DAMP: i64 = 64;
 /// Share of the gap to the current's speed a raft makes up per tick in
 /// water, in 1/256 (about 2 s to reach the current's speed).
 const GRIP: i64 = 24;
+/// A ball's grip on the current: a heavy ball on the bottom lags it (about
+/// 6 s to reach its speed).
+const BALL_GRIP: i64 = 8;
+/// A ball rolls at most at this share of the current's speed, in 1/256.
+const BALL_DRIFT: i64 = 64;
 /// Most cells a raft looks along a row, past other plants, for the fluid
 /// around it.
 const REACH: usize = super::super::LEVEL_REACH;
@@ -161,6 +170,11 @@ impl World {
         let Some(&raft) = self.plants.rafts.get(&id) else {
             return false;
         };
+        let ball = self
+            .plants
+            .species
+            .get(p.species)
+            .is_some_and(|s| s.form.ball().is_some());
         let mut members = self.plant_members(id, self.clip_to_grid(p.bounds));
         if members.is_empty() {
             return false;
@@ -171,7 +185,7 @@ impl World {
             mean,
             target,
             water,
-        } = self.raft_forces(&members, raft.off.1);
+        } = self.raft_forces(&members, raft.off.1, ball);
         let mut raft = raft;
 
         // Forces: weight and buoyancy down, the current across, each
@@ -187,8 +201,15 @@ impl World {
             raft.vel.1 += g;
         }
         raft.vel.1 = damp(raft.vel.1, DAMP * mean, water * 256);
+        // A ball on the bottom only rolls along at a share of it.
+        let target = if ball {
+            target * BALL_DRIFT / 256
+        } else {
+            target
+        };
         let pull = target - raft.vel.0;
-        let dvx = pull - damp(pull, GRIP * mean, water * 256);
+        let grip = if ball { BALL_GRIP } else { GRIP };
+        let dvx = pull - damp(pull, grip * mean, water * 256);
         if dvx != 0 && raft.vel.0 == 0 && !self.raft_free(&members, id, dvx.signum(), 0) {
             raft.off.0 = if dvx > 0 {
                 raft.off.0.min(0)
@@ -247,8 +268,9 @@ impl World {
     }
 
     /// What acts on a raft with cells `members` sitting `off_y` (1/256
-    /// cell) from where it is drawn (see the module docs).
-    fn raft_forces(&self, members: &[usize], off_y: i64) -> Forces {
+    /// cell) from where it is drawn (see the module docs); a `ball`'s cells
+    /// all sink.
+    fn raft_forces(&self, members: &[usize], off_y: i64, ball: bool) -> Forces {
         let water = self
             .plants
             .water
@@ -301,7 +323,11 @@ impl World {
             // leans towards would push it back and forth.
             if let Some(rho) = rho {
                 weight += leaves - n_leaves * rho;
-                weight += (rest - n_rest * rho).max(0) * (water - rho).clamp(0, water) / water;
+                weight += if ball {
+                    rest - n_rest * rho
+                } else {
+                    (rest - n_rest * rho).max(0) * (water - rho).clamp(0, water) / water
+                };
                 fluid += rho * (n_leaves + n_rest);
                 known += n_leaves + n_rest;
             }
@@ -412,8 +438,8 @@ impl World {
     }
 
     /// Restores the rafts from a save, after the plant table: each must
-    /// belong to a floater plant, and a floater plant the save has no raft
-    /// for gets one at rest.
+    /// belong to a floater or ball plant, and one the save has no raft for
+    /// gets one at rest.
     pub(in crate::world) fn load_rafts(&mut self, saved: Vec<v7::Raft>) -> Result<(), SaveError> {
         let species = std::sync::Arc::clone(&self.plants.species);
         let plants = &mut self.plants;
@@ -422,12 +448,12 @@ impl World {
             table
                 .get(&id)
                 .and_then(|p| species.get(p.species))
-                .is_some_and(|s| s.form.floater().is_some())
+                .is_some_and(|s| s.form.drifts())
         };
         for r in saved {
             let invalid = |what: &str| SaveError::Invalid(format!("raft {}: {what}", r.plant));
             if !floater(&plants.table, r.plant) || plants.rafts.contains_key(&r.plant) {
-                return Err(invalid("not a floater plant, or repeated"));
+                return Err(invalid("not a floater or ball plant, or repeated"));
             }
             let near = |(x, y): (i64, i64), limit: i64| x.abs() <= limit && y.abs() <= limit;
             if !(near(r.off, 4 * ONE) && near(r.vel, MAX_SPEED)) {
