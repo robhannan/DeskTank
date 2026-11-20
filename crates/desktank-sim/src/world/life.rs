@@ -492,7 +492,7 @@ impl World {
     }
 
     /// Restores the scheduler and fields from a save, after the cells.
-    pub(super) fn load_life(&mut self, saved: v1::Life) -> Result<(), SaveError> {
+    pub(super) fn load_life(&mut self, mut saved: v1::Life) -> Result<(), SaveError> {
         for (name, lists) in [
             ("living", &saved.living),
             ("device", &saved.devices),
@@ -516,21 +516,39 @@ impl World {
                 }
             }
         }
+        // Older saves indexed fronds as living cells only. Preserve list
+        // order and leave pending edits for the next registry refresh.
+        if let Some(frond) = self.materials.id("floating_leaf") {
+            for (ci, food) in saved.food.iter_mut().enumerate() {
+                let pending = self.chunks[ci].changed_next;
+                let missing = saved.living[ci].iter().copied().filter(|&i| {
+                    let at = i as usize;
+                    self.cells[at].material == frond
+                        && !pending.contains(at % self.width, at / self.width)
+                });
+                let mut indexed = None;
+                for i in missing {
+                    let sorted = indexed.get_or_insert_with(|| {
+                        let mut indices = food.clone();
+                        indices.sort_unstable();
+                        indices
+                    });
+                    if sorted.binary_search(&i).is_err() {
+                        food.push(i);
+                    }
+                }
+            }
+        }
         // The current is a function of the device cells; working it out
         // wakes the fields, so their saved state is restored after.
         let life = &mut self.life;
         for (registry, lists) in [
             (&mut life.living, saved.living),
             (&mut life.devices, saved.devices),
+            (&mut life.food, saved.food),
         ] {
             registry.total = lists.iter().map(Vec::len).sum();
             registry.lists = lists;
-        }
-        // Food search breaks ties by cell index. Rebuild this derived list so
-        // an older tank immediately recognises newly edible materials.
-        for (ci, chunk) in self.chunks.iter().enumerate() {
-            life.food
-                .refresh(ci, chunk.bounds, self.width, &self.cells, &life.flags);
         }
         self.recompute_current();
         let life = &mut self.life;
