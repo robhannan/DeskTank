@@ -13,6 +13,12 @@ use crate::renderer::Renderer;
 use crate::timer::GpuTimer;
 use crate::{Gpu, TankSurface};
 
+/// Frame-rate cap for optional plant sway (SPEC §2.7, T6d).
+pub const SWAY_MAX_FPS: u32 = 10;
+
+/// Minimum interval between sway-only redraws (100 ms = 10 fps).
+const SWAY_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Tank settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TankConfig {
@@ -62,6 +68,16 @@ pub struct Tank {
     creatures_drawn: Option<u64>,
     /// Plants version last drawn (`None` before the first frame).
     plants_drawn: Option<u64>,
+    /// Optional render-only plant sway (SPEC §2.7, T6d); off by default.
+    sway: bool,
+    /// Host is running on battery power: suppresses sway frames.
+    on_battery: bool,
+    /// Host is running as a screensaver: suppresses sway frames.
+    saver_mode: bool,
+    /// Host surface is hidden/paused: suppresses sway frames.
+    hidden: bool,
+    /// Host time of the last frame drawn while sway was active.
+    last_sway_frame: Option<Duration>,
 }
 
 impl Tank {
@@ -85,7 +101,92 @@ impl Tank {
             time_of_day: daylight::NOON,
             creatures_drawn: None,
             plants_drawn: None,
+            sway: false,
+            on_battery: false,
+            saver_mode: false,
+            hidden: false,
+            last_sway_frame: None,
         }
+    }
+
+    /// Turns optional render-only plant sway on or off (SPEC §2.7, T6d).
+    /// Off by default. While active, sway redraws a settled planted tank at
+    /// most [`SWAY_MAX_FPS`] (10 fps), and is automatically disabled on
+    /// battery, in screensaver mode and while hidden.
+    pub fn set_sway(&mut self, enabled: bool) {
+        let was = self.sway_active();
+        self.sway = enabled;
+        if self.sway_active() != was && !self.hidden {
+            self.needs_frame = true;
+            if !self.sway_active() {
+                self.last_sway_frame = None;
+            }
+        }
+    }
+
+    /// Whether the user has enabled plant sway.
+    #[must_use]
+    pub fn sway(&self) -> bool {
+        self.sway
+    }
+
+    /// Tells the tank whether the host is on battery power (disables sway).
+    pub fn set_on_battery(&mut self, on_battery: bool) {
+        let was = self.sway_active();
+        self.on_battery = on_battery;
+        if self.sway_active() != was && !self.hidden {
+            self.needs_frame = true;
+            if !self.sway_active() {
+                self.last_sway_frame = None;
+            }
+        }
+    }
+
+    /// Tells the tank whether the host is a screensaver (disables sway).
+    pub fn set_saver_mode(&mut self, saver_mode: bool) {
+        let was = self.sway_active();
+        self.saver_mode = saver_mode;
+        if self.sway_active() != was && !self.hidden {
+            self.needs_frame = true;
+            if !self.sway_active() {
+                self.last_sway_frame = None;
+            }
+        }
+    }
+
+    /// Tells the tank whether the host surface is hidden (disables sway
+    /// without requesting a frame).
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.hidden = hidden;
+        if hidden {
+            self.last_sway_frame = None;
+        }
+    }
+
+    /// Whether plant sway is currently active (enabled, not on battery, not
+    /// in screensaver mode, not hidden, and the tank has at least one plant).
+    #[must_use]
+    pub fn sway_active(&self) -> bool {
+        self.sway
+            && !self.on_battery
+            && !self.saver_mode
+            && !self.hidden
+            && self.world.plant_count() > 0
+    }
+
+    fn sway_frame_due(&self, now: Duration) -> bool {
+        self.last_sway_frame
+            .is_none_or(|t| now >= t + SWAY_INTERVAL)
+    }
+
+    /// Current sway phase in seconds of world time (deterministic for
+    /// capture; wrapped hourly to keep f32 precision crisp).
+    fn sway_phase(&self) -> f32 {
+        #[allow(clippy::cast_precision_loss)] // < 72_000 ticks, exact in f32
+        let ticks = (self.world.tick_count() % (u64::from(TICKS_PER_SECOND) * 3600)) as f32;
+        #[allow(clippy::cast_precision_loss)] // 20, exact
+        let hz = TICKS_PER_SECOND as f32;
+        ticks / hz
     }
 
     /// Sets the local time of day (minutes after midnight) the tank is lit
@@ -182,14 +283,27 @@ impl Tank {
         for _ in 0..sim_ticks {
             self.step();
         }
-        let wanted = self.frame_wanted();
-        let redraw = wanted && self.pacer.frame_allowed(now);
+        let world_wanted = self.frame_wanted();
+        let sway_on = self.sway_active();
+        let sway_wanted = sway_on && self.sway_frame_due(now);
+        let wanted = world_wanted || sway_wanted;
+        let redraw = !self.hidden && wanted && self.pacer.frame_allowed(now);
         if redraw {
             self.pacer.frame_drawn(now);
+            if sway_on {
+                self.last_sway_frame = Some(now);
+            }
+        }
+        let mut wake_at = self.pacer.wake_at(now, wanted && !redraw);
+        if sway_on
+            && !redraw
+            && let Some(last) = self.last_sway_frame
+        {
+            wake_at = wake_at.min(last + SWAY_INTERVAL);
         }
         FrameRequest {
             redraw,
-            wake_at: self.pacer.wake_at(now, wanted && !redraw),
+            wake_at,
             sim_ticks,
         }
     }
@@ -211,6 +325,7 @@ impl Tank {
     /// [`Tank::tick`] restarts the clock without catching up.
     pub fn pause(&mut self) {
         self.pacer.pause();
+        self.last_sway_frame = None;
     }
 
     /// Asks for a frame even if the world hasn't changed (resize, expose).
@@ -317,6 +432,7 @@ impl Tank {
             self.palette_dirty = true;
         }
         let palette = self.palette_layout(size);
+        let sway = self.sway_active().then(|| self.sway_phase());
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -354,6 +470,7 @@ impl Tank {
             size,
             self.world.surface_row(),
             daylight::tint(self.time_of_day),
+            sway,
             (palette, self.cursor, self.field_overlay),
             self.timer.as_ref(),
         );
@@ -365,5 +482,193 @@ impl Tank {
         if let Some(t) = &self.timer {
             self.gpu_time = t.read(gpu, submission);
         }
+    }
+
+    /// Simulates the state-clearing side of `render_to` for GPU-free pacing
+    /// and frame-count tests.
+    #[cfg(test)]
+    fn mark_drawn(&mut self) {
+        self.dirty.take(|_| {});
+        self.creatures_drawn = Some(self.world.creatures_version());
+        self.plants_drawn = Some(self.world.plants_version());
+        if self.field_overlay.is_some() {
+            self.fields_drawn = self.world.fields_version();
+        }
+        self.needs_frame = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use desktank_sim::{Brush, MaterialTable, Propagule, Rect, WorldConfig};
+
+    /// Builds a settled planted tank (a mature plant on sand/rock with 0
+    /// awake chunks and no excess nutrients to spawn algae).
+    fn settled_planted_tank() -> Tank {
+        let mut world = World::new(
+            WorldConfig {
+                width: 64,
+                height: 48,
+                seed: 7,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let sand = world.materials().id("sand").unwrap();
+        let rock = world.materials().id("rock").unwrap();
+        world
+            .fill_rect(
+                Rect {
+                    x0: 0,
+                    y0: 42,
+                    x1: 64,
+                    y1: 48,
+                },
+                sand,
+                Brush::Replace,
+            )
+            .unwrap();
+        world
+            .fill_rect(
+                Rect {
+                    x0: 28,
+                    y0: 38,
+                    x1: 36,
+                    y1: 42,
+                },
+                rock,
+                Brush::Replace,
+            )
+            .unwrap();
+        for b in world.bodies().map(|b| b.id).collect::<Vec<_>>() {
+            world.set_anchored(b, true);
+        }
+        let moss = world.plant_species().id("java_moss").unwrap();
+        world
+            .paint_plant(32, 37, 0, moss, Propagule::Fragments)
+            .unwrap();
+        // Grow around the small rock until every site is covered and all
+        // chunks sleep.
+        for _ in 0..20 * 600 {
+            world.tick();
+        }
+        assert!(world.plant_count() > 0, "expected a rooted plant");
+        assert_eq!(world.awake_chunks(), 0, "expected a settled tank");
+        let mut tank = Tank::new(world, TankConfig::default());
+        // Anchor clock and draw the initial frame.
+        let req = tank.tick(Duration::ZERO);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        tank
+    }
+
+    /// Steps `tank` at 50 ms intervals for `seconds` starting from `start`,
+    /// returning how many frames `tick` asked to draw.
+    fn count_frames(tank: &mut Tank, start: Duration, seconds: u32) -> u32 {
+        let mut frames = 0;
+        let steps = seconds * TICKS_PER_SECOND;
+        for step in 1..=steps {
+            let now = start + Duration::from_millis(u64::from(step) * 50);
+            let req = tank.tick(now);
+            if req.redraw {
+                tank.mark_drawn();
+                frames += 1;
+            }
+        }
+        frames
+    }
+
+    #[test]
+    fn settled_planted_tank_draws_no_extra_frames_with_sway_off() {
+        let mut tank = settled_planted_tank();
+        assert!(!tank.sway(), "sway must be off by default");
+        assert!(!tank.sway_active());
+        let frames = count_frames(&mut tank, Duration::ZERO, 10);
+        assert_eq!(frames, 0, "settled tank with sway off drew {frames} frames");
+    }
+
+    #[test]
+    fn sway_caps_redraws_at_10_fps_and_disables_on_battery_saver_and_hidden() {
+        let mut tank = settled_planted_tank();
+        tank.set_sway(true);
+        assert!(tank.sway());
+        assert!(tank.sway_active());
+        // Draw the state-change frame at t = 1 s, then measure 10 s.
+        let mut now = Duration::from_secs(1);
+        let req = tank.tick(now);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        let frames = count_frames(&mut tank, now, 10);
+        assert!(frames > 0, "sway should draw frames when active");
+        assert!(
+            frames <= 10 * SWAY_MAX_FPS,
+            "sway drew {frames} frames in 10 s (cap {})",
+            10 * SWAY_MAX_FPS
+        );
+        now += Duration::from_secs(10);
+
+        // On battery: one frame to snap back to rest, then 0 sway frames.
+        tank.set_on_battery(true);
+        assert!(!tank.sway_active());
+        let req = tank.tick(now + Duration::from_millis(50));
+        if req.redraw {
+            tank.mark_drawn();
+        }
+        now += Duration::from_millis(50);
+        assert_eq!(
+            count_frames(&mut tank, now, 5),
+            0,
+            "sway must draw nothing on battery"
+        );
+        now += Duration::from_secs(5);
+        tank.set_on_battery(false);
+
+        // In screensaver mode: 0 sway frames.
+        tank.set_saver_mode(true);
+        assert!(!tank.sway_active());
+        let req = tank.tick(now + Duration::from_millis(50));
+        if req.redraw {
+            tank.mark_drawn();
+        }
+        now += Duration::from_millis(50);
+        assert_eq!(
+            count_frames(&mut tank, now, 5),
+            0,
+            "sway must draw nothing in saver mode"
+        );
+        now += Duration::from_secs(5);
+        tank.set_saver_mode(false);
+
+        // While hidden: 0 sway frames immediately (no rest-snap frame either).
+        tank.set_hidden(true);
+        assert!(!tank.sway_active());
+        assert_eq!(
+            count_frames(&mut tank, now, 5),
+            0,
+            "sway must draw nothing while hidden"
+        );
+    }
+
+    #[test]
+    fn sway_draws_nothing_without_plants() {
+        let world = World::new(
+            WorldConfig {
+                width: 64,
+                height: 48,
+                seed: 7,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let req = tank.tick(Duration::ZERO);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        tank.set_sway(true);
+        assert!(!tank.sway_active());
+        assert_eq!(count_frames(&mut tank, Duration::ZERO, 5), 0);
     }
 }
