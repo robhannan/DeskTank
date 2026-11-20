@@ -1250,7 +1250,7 @@ over the keyguard while charging).
   platform's (the settings screen may use AndroidX Preference). Each class
   owns a `SurfaceView` (or the wallpaper's `SurfaceHolder`) and forwards
   its lifecycle over JNI to `desktank-android`, a Rust `cdylib`
-  (`libdesktank.so`):
+  (`libdesktank_android.so`):
   - `surfaceCreated` / `surfaceChanged` / `surfaceDestroyed`, plus
     `onDreamingStarted` / `onDreamingStopped`, the Activity's
     `onResume` / `onPause` and the wallpaper's `onVisibilityChanged`;
@@ -1265,13 +1265,20 @@ over the keyguard while charging).
   Vulkan 1.1 driver, otherwise OpenGL ES 3.0 through wgpu's GL backend
   (EGL). The renderer already stays within WebGL2 limits (§3.5), which
   GLES 3.0 meets. A setting forces one backend for testing, and a Vulkan
-  device that is lost or fails to create falls back to GLES. 🔍 A0 checks which
-  backend the reference TV device actually gets, and whether its Vulkan
-  driver is usable.
+  device that is lost or fails to create falls back to GLES. Android
+  requires Vulkan 1.1 only of 64-bit devices, and most Google TV devices
+  run a 32-bit userspace (below), so GLES is the expected path on them.
+  *A0:* on the Android TV and Google TV emulators wgpu gets Vulkan
+  (SwiftShader) and, forced, GLES 3.0; both draw. 🔍 Which backend the
+  reference TV device gets, and whether its Vulkan driver is usable, waits
+  for the owner's run on a real device (PROGRESS).
 - **Builds**: `cargo-ndk` builds the `cdylib` for `arm64-v8a`,
-  `armeabi-v7a` (🔍 many TV devices run a 32-bit userspace on a 64-bit
-  CPU) and `x86_64` (the emulator); Gradle packages it. `minSdk` 🔍 is set
-  in A0 (API 26, Android 8, unless a target device needs lower).
+  `armeabi-v7a` (many TV devices run a 32-bit userspace on a 64-bit CPU,
+  including Chromecast with Google TV and the Google TV Streamer; wgpu
+  builds for it) and `x86_64` (the emulator); Gradle packages it, and
+  `./gradlew assembleDebug` runs `cargo-ndk` itself. `minSdk` is API 26
+  (Android 8): every Google TV device ships Android 10 or later, and
+  older Android TV boxes are out of scope (A0).
 - **Grid and scale**: an even scale from 2 to 8 (§2.1, D19), chosen from
   the display's size: at 1080p the default 4× (D1) gives 480×270 cells,
   and at 4K the same tank is drawn at 8×, so a tank looks the same on any
@@ -1296,8 +1303,11 @@ over the keyguard while charging).
   the user grants `WRITE_SECURE_SETTINGS` once over ADB, after which the
   app's settings can set `screensaver_components` itself; the README and
   the settings screen give the one-line command. A launcher with a
-  screensaver override is the other route. A0 checks this still works on
-  a current Google TV build.
+  screensaver override is the other route, though a 2025 Google TV update
+  blocked one such launcher (Projectivy). *A0:* on the Google TV emulator
+  image (Android 16) `adb shell settings put secure screensaver_components`
+  selects the Dream and it runs; 🔍 a current Google TV device is the
+  owner's check (PROGRESS).
 - **Persistence**: one shared tank across the modes (D10): the same
   envelope and payload as §2.6, through `SaveStore` in the app's private
   files directory (`Context.getFilesDir()`, passed in over JNI). Every
@@ -1339,7 +1349,7 @@ crates/
   desktank-android   # Android host (cdylib over JNI): surfaces, render thread, lifecycle,
                      # saves for the Kotlin Dream, Activity and live wallpaper (§3.6).
 android/             # Gradle project: the Kotlin shim (DreamService, Activity,
-                     # WallpaperService, settings) that packages libdesktank.so
+                     # WallpaperService, settings) that packages libdesktank_android.so
 assets/              # materials/*.toml, reactions.toml, plants/*.toml, species/*.toml, sprites (PNG atlases + source files)
 ```
 
