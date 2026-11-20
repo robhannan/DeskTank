@@ -600,6 +600,20 @@ target computes the same bits.
     `skip_breeding_time`.
 - **Names** (D4): none by default. In interact mode, click a creature to
   see its card (species, age, health) and give it a name.
+- *T9 part 3 (names and the inspect card):* a name is optional and
+  user-given; young are born without one. Names are cleaned the same way
+  everywhere (`desktank_sim::clean_name`): control characters dropped,
+  whitespace runs collapsed to one space, trimmed, at most 24 characters
+  (`MAX_NAME_CHARS`); a blank name removes it. Names are saved (format
+  version 6, migrating version 5 creatures unnamed) and hashed only when
+  set, and never change behaviour. The card (`World::creature_card`) shows
+  the name, species, stage, sex, age in days of its life, health, energy,
+  the morph it shows (for species with more than one) and the days a
+  carrying female has to go. The window shows the card in its title bar
+  and `N` opens a name field there for the creature last inspected; the
+  web shows it in its readout with a name field under it (`N` or a click
+  focuses it; owner tab only). A drawn in-tank card comes with the
+  overlay's interact mode (O5), which has no title bar.
 
 ### 2.5 Interaction (D6)
 
@@ -661,7 +675,7 @@ target computes the same bits.
   draw the field. Where it works:
   - **window** and **web**: the host has keyboard focus, so the code is
     typed as is. The window shows the field in its title bar (as it does
-    inspection, until T9's drawn card); the web uses a text input and
+    inspection and naming); the web uses a text input and
     shows the result in the inspect readout. A web viewer tab can't
     cheat.
   - **overlay and wallpaper** (O5): only while interact mode is on, and
@@ -710,7 +724,8 @@ target computes the same bits.
       pregnancy and rest, the egg clutches and the species' morph names in
       version 3; 2.5D depth adds each creature's depth and each corpse's
       band in version 4, D21; a home owning crab's home in version 5,
-      migrating version 4 creatures without one);
+      migrating version 4 creatures without one; each creature's name in
+      version 6, T9 part 3, migrating version 5 creatures unnamed);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -1753,7 +1768,7 @@ Each package depends only on the packages before it.
   renames. A damaged newest save falls back to the next older one before
   a fresh tank. The snapshot stores everything that feeds later ticks, so a
   loaded tank continues tick for tick, not only with the same hash.
-- [ ] **T9 Life cycle.** Eggs and livebearing, growth stages, breeding
+- [x] **T9 Life cycle.** Eggs and livebearing, growth stages, breeding
   rules, colour genetics (inheritance, reversion to wildtype, mutation),
   predation, the death causes available in simple mode (old age,
   starvation, poor water quality; predation eats the prey whole, with no
@@ -1789,6 +1804,16 @@ Each package depends only on the packages before it.
   `crates/desktank-sim/tests/breeding.rs` (including the seeded
   multi-generation test and a predation death), the `breeding` reference
   image; 30 settled fish tick in 7.75 µs (main 7.52 µs).
+  *Part 3 done:* §2.4 *T9 part 3*: optional user-given names, cleaned and
+  capped at 24 characters, saved in format v6 with a v5 migration; the
+  inspect card (`World::creature_card`: name, species, stage, sex, age,
+  health, energy, morph, days left carrying) in the window's title bar
+  with an `N` name field, and in the web readout with a name field; tests
+  in `crates/desktank-sim/tests/names.rs` (the name across save and load,
+  cleaning, no effect on the tank, the card, young born unnamed), the v6
+  fixture, and the web's Rust and Playwright tests (naming, and the name
+  across a reload); 30 settled fish tick in 8.41–8.49 µs (main
+  8.43–8.54 µs, unchanged).
 - [ ] **T10 Catch-up and cross-OS measurement.** Optional catch-up (off
   by default, capped at 24 h), plus `desktank bench` on Windows and Linux
   with measurement recipes in PROGRESS. *Accept:*
