@@ -162,9 +162,14 @@ impl Tank {
     /// Tells the tank whether the host surface is hidden (disables sway
     /// without requesting a frame).
     pub fn set_hidden(&mut self, hidden: bool) {
+        let was = self.sway.hidden();
         self.sway.set_flag(SWAY_HIDDEN, hidden);
         if hidden {
             self.sway.last_frame = None;
+        } else if was && self.sway.enabled() {
+            // The last frame may be swayed and sway may have been turned
+            // off (battery, saver) while hidden: redraw once on return.
+            self.needs_frame = true;
         }
     }
 
@@ -293,8 +298,10 @@ impl Tank {
         let world_wanted = self.frame_wanted();
         let sway_on = self.sway_active();
         let sway_wanted = sway_on && self.sway.frame_due(now);
+        // Hiding gates only sway (via `sway_active`): the host pauses the
+        // tank itself when hidden, and a world change still needs its frame.
         let wanted = world_wanted || sway_wanted;
-        let redraw = !self.sway.hidden() && wanted && self.pacer.frame_allowed(now);
+        let redraw = wanted && self.pacer.frame_allowed(now);
         if redraw {
             self.pacer.frame_drawn(now);
             if sway_on {
@@ -574,10 +581,16 @@ mod tests {
     /// Steps `tank` at 50 ms intervals for `seconds` starting from `start`,
     /// returning how many frames `tick` asked to draw.
     fn count_frames(tank: &mut Tank, start: Duration, seconds: u32) -> u32 {
+        count_frames_every(tank, start, seconds, 50)
+    }
+
+    /// Steps `tank` every `step_ms` for `seconds` starting from `start`,
+    /// returning how many frames `tick` asked to draw.
+    fn count_frames_every(tank: &mut Tank, start: Duration, seconds: u32, step_ms: u64) -> u32 {
         let mut frames = 0;
-        let steps = seconds * TICKS_PER_SECOND;
+        let steps = u64::from(seconds) * 1000 / step_ms;
         for step in 1..=steps {
-            let now = start + Duration::from_millis(u64::from(step) * 50);
+            let now = start + Duration::from_millis(step * step_ms);
             let req = tank.tick(now);
             if req.redraw {
                 tank.mark_drawn();
@@ -607,10 +620,11 @@ mod tests {
         let req = tank.tick(now);
         assert!(req.redraw);
         tank.mark_drawn();
-        let frames = count_frames(&mut tank, now, 10);
-        assert!(frames > 0, "sway should draw frames when active");
+        // Polled every 5 ms (as a host woken early might), sway draws at
+        // its cap and no faster.
+        let frames = count_frames_every(&mut tank, now, 10, 5);
         assert!(
-            frames <= 10 * SWAY_MAX_FPS,
+            (10 * SWAY_MAX_FPS - 2..=10 * SWAY_MAX_FPS).contains(&frames),
             "sway drew {frames} frames in 10 s (cap {})",
             10 * SWAY_MAX_FPS
         );
@@ -647,6 +661,9 @@ mod tests {
         );
         now += Duration::from_secs(5);
         tank.set_saver_mode(false);
+        assert!(tank.sway_active());
+        assert!(tank.tick(now).redraw, "sway resumes out of saver mode");
+        tank.mark_drawn();
 
         // While hidden: 0 sway frames immediately (no rest-snap frame either).
         tank.set_hidden(true);
@@ -656,6 +673,11 @@ mod tests {
             0,
             "sway must draw nothing while hidden"
         );
+        now += Duration::from_secs(5);
+
+        // Shown again: sway resumes at once.
+        tank.set_hidden(false);
+        assert!(tank.tick(now + Duration::from_millis(50)).redraw);
     }
 
     #[test]

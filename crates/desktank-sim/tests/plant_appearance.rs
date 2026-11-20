@@ -160,7 +160,6 @@ fn inject_co2(w: &mut World) {
 /// (a bubble cell that wasn't one the tick before; bubbles rise, so we track
 /// the net new appearances per tick and per 1-second window).
 fn count_pearls(w: &mut World, seconds: u32, refill_co2: bool) -> (usize, usize) {
-    let bubble = w.materials().id("air_bubble").unwrap();
     let mut total = 0usize;
     let mut max_per_sec = 0usize;
     for sec in 0..seconds {
@@ -182,7 +181,6 @@ fn count_pearls(w: &mut World, seconds: u32, refill_co2: bool) -> (usize, usize)
                 spawned <= 1,
                 "more than 1 pearl spawned in a single tick ({spawned})"
             );
-            let _ = bubble;
             this_sec += spawned;
         }
         total += this_sec;

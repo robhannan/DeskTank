@@ -303,7 +303,10 @@ impl Host {
                         size.0,
                         size.1
                     );
-                    self.tank = Some(Tank::new(world, TankConfig::default()));
+                    let mut tank = Tank::new(world, TankConfig::default());
+                    // A Dream is a screensaver: no optional sway (T6d).
+                    tank.set_saver_mode(true);
+                    self.tank = Some(tank);
                 }
                 Err(e) => {
                     log::error!("no tank: {e}");
