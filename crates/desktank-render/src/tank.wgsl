@@ -369,6 +369,77 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
     return base * depth_factor(f32(at.y) + sub_y) * shimmer;
 }
 
+// Sub-cell rows trimmed off the top of an exposed loose-material cell (sand,
+// gravel, aquasoil, detritus) so 4x cells form 1-texel slopes and soft crests
+// instead of 4x4 stair-steps (2x: 1-sub-cell bevels). In quarter rows when
+// `fine`, else in 2x sub rows; 0 when the cell is buried. Callers pass the
+// open-fluid flags they already read above, left and right, so no
+// neighbour is read twice.
+fn loose_top(open_up: bool, open_l: bool, open_r: bool, at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> i32 {
+    if !open_up {
+        return 0;
+    }
+    let sub = quarter / 2;
+    if fine {
+        let px = at.x * 4 + quarter.x;
+        let ripple = i32((hash(vec2<i32>(px, at.y)) & 3u) == 0u);
+        if open_l && open_r {
+            // Peak or stray grain: low rounded mound.
+            let dist = select(1 - quarter.x, quarter.x - 2, quarter.x >= 2);
+            return 1 + dist + ripple;
+        } else if open_l {
+            return 3 - quarter.x;
+        } else if open_r {
+            return quarter.x;
+        }
+        // Flat top: subtle 1-texel ripple.
+        return ripple;
+    }
+    if open_l && open_r {
+        return 1;
+    } else if open_l {
+        return 1 - sub.x;
+    } else if open_r {
+        return sub.x;
+    }
+    return 0;
+}
+
+// `loose_top` for a cell whose caller only read the cell above: the side
+// neighbours are read only when it is open.
+fn loose_top_at(at: vec2<i32>, mat: i32, open_up: bool, quarter: vec2<i32>, fine: bool) -> i32 {
+    if !open_up {
+        return 0;
+    }
+    let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
+    let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
+    return loose_top(true, open_l, open_r, at, quarter, fine);
+}
+
+// Whether the texel at `quarter` falls in a bevelled-off convex corner of a
+// rigid cell (rock, driftwood): a corner is cut when both sides meeting there
+// face open fluid, as a 2-texel chamfer at 4x (1 sub-cell at 2x).
+fn rigid_cut(at: vec2<i32>, mat: i32, quarter: vec2<i32>, fine: bool) -> bool {
+    let q = select(quarter / 2, quarter, fine);
+    let last = select(1, 3, fine);
+    let reach = select(1, 2, fine);
+    let left = q.x < reach;
+    let right = last - q.x < reach;
+    let top = q.y < reach;
+    let bottom = last - q.y < reach;
+    if !(left || right) || !(top || bottom) {
+        return false;
+    }
+    let dx = select(last - q.x, q.x, left);
+    let dy = select(last - q.y, q.y, top);
+    if dx + dy >= reach {
+        return false;
+    }
+    let sx = select(1, -1, left);
+    let sy = select(1, -1, top);
+    return is_open_fluid(at + vec2<i32>(sx, 0), mat) && is_open_fluid(at + vec2<i32>(0, sy), mat);
+}
+
 // The colour of a non-plant cell: at scale 1 a flat palette lookup with
 // whole-cell depth darkening; at scale >= 2 (2x2) and fine scales (4x4),
 // sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
@@ -452,7 +523,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_SAND {
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
+        let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
         let h = hash_grain(p, v);
+        let top_row = loose_top(open_up, open_l, open_r, at, quarter, fine);
+        if select(sub.y, quarter.y, fine) < top_row {
+            return water_bg(at, quarter, fine);
+        }
         let r = h & 31u;
         // Multi-grain quartz palette: warm base, soft tan shadow, bright glint,
         // pale quartz sparkle and occasional dark mineral fleck.
@@ -472,87 +550,129 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         // Subtle horizontal bedding strata.
         let band = (u32(p.y) >> 1u) & 3u;
         k = k * select(1.0, 0.975, band == 0u);
-        // Top-edge water lighting and gentle slope shading.
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        // Top-edge water lighting along the actual exposed contour.
         if open_up {
             if fine {
-                if quarter.y == 0 {
+                let dy = quarter.y - top_row;
+                if dy == 0 {
                     k = k * 1.13;
-                } else if quarter.y == 1 {
+                } else if dy == 1 {
                     k = k * 1.04;
                 } else if quarter.y == 3 {
                     k = k * 0.95;
                 }
             } else {
-                k = k * select(0.96, 1.10, sub.y == 0);
+                k = k * select(0.96, 1.10, sub.y == top_row);
             }
         } else {
             k = k * 0.96;
         }
-        if select(sub.x == 0, quarter.x == 0, fine) && is_open_fluid(at + vec2<i32>(-1, 0), mat) {
+        if select(sub.x == 0, quarter.x == 0, fine) && open_l {
             k = k * 1.07;
-        } else if select(sub.x == 1, quarter.x == 3, fine) && is_open_fluid(at + vec2<i32>(1, 0), mat) {
+        } else if select(sub.x == 1, quarter.x == 3, fine) && open_r {
             k = k * 0.93;
         }
         return clamp(base * tint * k, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     if style == STYLE_GRAVEL {
-        // Staggered rounded river pebbles (5x4 texels at 4x, 3x2 at 2x) so
-        // stones interlock organically instead of forming a cell grid.
+        // Whole rounded river pebbles laid out per cell from its variant (so
+        // moving gravel carries them): mostly one stone filling the cell, else
+        // a stone beside a dark gap row or column, flipped at random so gaps
+        // don't line up. Each stone's top follows the trimmed contour
+        // (`loose_top`), so a sloped or rippled surface shows lit, rounded
+        // stones rather than sliced ones.
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        let top_row = loose_top_at(at, mat, open_up, quarter, fine);
+        let q = select(sub, quarter, fine);
+        if q.y < top_row {
+            return water_bg(at, quarter, fine);
+        }
+        // Cell-constant layout bits (glue bit dropped so gluing keeps the look).
+        let cv = hash(vec2<i32>(i32(v >> 1u), 0x4b1d));
+        let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
+        let spek = (hash_grain(p, v) & 7u) == 0u;
         var k: f32;
         var warm: vec3<f32>;
         if fine {
-            let ry = p.y / 4;
-            let shift = (ry & 1) * 2 + i32(hash(vec2<i32>(0, ry)) & 1u);
-            let sx = p.x + shift;
-            let rx = sx / 5;
-            let lx = sx - rx * 5;
-            let ly = p.y - ry * 4;
-            let ph = hash(vec2<i32>(rx, ry));
-            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
+            let fx = select(q.x, 3 - q.x, ((cv >> 8u) & 1u) != 0u);
+            // Stone box (x0, y0, x1, y1) within the cell, or none (gap).
+            var b = vec4<i32>(0, 0, 3, 3);
+            switch cv & 7u {
+                case 4u: {
+                    // A wide stone over a gap row.
+                    b = vec4<i32>(0, 0, 3, 2);
+                }
+                case 5u: {
+                    // A tall stone beside a gap column.
+                    b = vec4<i32>(0, 0, 2, 3);
+                }
+                case 6u: {
+                    // A wide stone under a gap row.
+                    b = vec4<i32>(0, 1, 3, 3);
+                }
+                default: {
+                    // One stone filling the cell.
+                }
+            }
+            let inside_b = fx >= b.x && fx <= b.z && q.y >= b.y && q.y <= b.w;
+            // The stone's visible top in this column: its own top or the
+            // trimmed contour, whichever is lower.
+            let top = max(b.y, top_row);
+            if !inside_b {
+                // Dark grit between stones.
+                k = select(0.64, 0.70, spek) + cell_n;
+                warm = vec3<f32>(0.97, 0.98, 1.02);
+            } else {
+                let ph = hash(vec2<i32>(i32(cv >> 3u), 1));
+                k = 0.92 + f32(ph & 7u) * 0.04 + cell_n;
+                let tone = (ph >> 3u) & 3u;
+                warm = vec3<f32>(0.96, 0.99, 1.04);
+                if tone == 1u {
+                    warm = vec3<f32>(1.06, 1.00, 0.91);
+                } else if tone == 2u {
+                    warm = vec3<f32>(1.02, 1.00, 0.97);
+                }
+                let left = fx == b.x;
+                let right = fx == b.z;
+                let crown = q.y == top;
+                let bottom = q.y == b.w;
+                if right && bottom {
+                    k = k * 0.62;
+                } else if (left || right) && (crown || bottom) {
+                    // Rounded corners, nearly as dark as the gaps.
+                    k = k * select(0.68, 0.74, crown);
+                } else if bottom || right {
+                    k = k * 0.86;
+                } else if crown && fx == b.x + 1 {
+                    // Specular glint near the top-left.
+                    k = k * 1.18;
+                } else if (crown && fx == b.x + 2) || (q.y == top + 1 && fx == b.x + 1) {
+                    k = k * 1.08;
+                } else if spek {
+                    k = k * 0.95;
+                }
+                if crown && open_up {
+                    // Lit by the water above along the exposed contour.
+                    k = k * 1.06;
+                }
+            }
+        } else {
+            // 2x: one stone per cell, lit top-left and shadowed bottom-right;
+            // one cell in four leaves its bottom-right as a dark gap.
+            let ph = hash(vec2<i32>(i32(cv >> 3u), 0));
             k = 0.88 + f32(ph & 7u) * 0.032 + cell_n;
             warm = select(
                 vec3<f32>(0.96, 0.99, 1.04),
                 vec3<f32>(1.05, 1.00, 0.93),
                 ((ph >> 3u) & 1u) != 0u,
             );
-            let corner = (lx == 0 || lx == 4) && (ly == 0 || ly == 3);
-            let crown = (ly == 1 && (lx == 1 || lx == 2)) || (ly == 0 && lx == 2);
-            let rim = lx == 4 || ly == 3;
-            let spek = (hash(p) & 7u) == 0u;
-            if corner {
-                k = k * select(0.78, 0.72, lx == 4 && ly == 3);
-            } else if crown {
-                k = k * select(1.11, 1.17, lx == 1 && ly == 1);
-            } else if rim {
-                k = k * 0.87;
-            } else if spek {
-                k = k * 0.94;
-            }
-            if open_up && quarter.y == 0 {
-                k = k * 1.11;
-            }
-        } else {
-            let ry = p.y / 2;
-            let sx = p.x + (ry & 1);
-            let rx = sx / 3;
-            let lx = sx - rx * 3;
-            let ly = p.y - ry * 2;
-            let ph = hash(vec2<i32>(rx, ry));
-            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
-            k = 0.89 + f32(ph & 7u) * 0.030 + cell_n;
-            warm = select(
-                vec3<f32>(0.96, 0.99, 1.04),
-                vec3<f32>(1.05, 1.00, 0.93),
-                ((ph >> 3u) & 1u) != 0u,
-            );
-            let tl = lx == 0 && ly == 0;
-            let br = lx == 2 && ly == 1;
-            k = k * select(select(1.0, 0.82, br), 1.12, tl);
-            if open_up && sub.y == 0 {
-                k = k * 1.09;
+            let flip = (cv & 4u) != 0u;
+            let lx = select(q.x, 1 - q.x, flip);
+            if q.y == top_row {
+                k = k * select(1.08, 1.14, open_up && lx == 0);
+            } else if lx == 1 && q.y == 1 {
+                k = k * select(0.84, 0.66, (cv & 3u) == 0u);
             }
         }
         if !open_up {
@@ -565,6 +685,10 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         // Staggered dark rounded matte soil pellets (3x3 texels at 4x,
         // offset 2x2 at 2x): smaller than gravel pebbles, breaking the cell grid.
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        let top_row = loose_top_at(at, mat, open_up, quarter, fine);
+        if select(sub.y, quarter.y, fine) < top_row {
+            return water_bg(at, quarter, fine);
+        }
         var k: f32;
         if fine {
             let ry = p.y / 3;
@@ -585,7 +709,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
             } else if lx == 2 || ly == 2 {
                 k = k * 0.85;
             }
-            if open_up && quarter.y == 0 {
+            if open_up && quarter.y == top_row {
                 k = k * 1.15;
             }
         } else {
@@ -600,7 +724,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
             let tl = lx == 0 && ly == 0;
             let br = lx == 1 && ly == 1;
             k = k * select(select(0.99, 0.82, br), 1.11, tl);
-            if open_up && sub.y == 0 {
+            if open_up && sub.y == top_row {
                 k = k * 1.11;
             }
         }
@@ -611,6 +735,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_ROCK {
+        if rigid_cut(at, mat, quarter, fine) {
+            return water_bg(at, quarter, fine);
+        }
         // World-space faceted stone strata + fine mineral grain.
         let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
         let grain = hash(p);
@@ -652,6 +779,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_DRIFTWOOD {
+        if rigid_cut(at, mat, quarter, fine) {
+            return water_bg(at, quarter, fine);
+        }
         // Flowing horizontal wood grain fibres with gentle organic wave.
         let wave = i32(hash(vec2<i32>(p.x / 6, p.y / 5)) & 3u) - 1;
         let row = u32(p.y + wave + 1024);
@@ -785,7 +915,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let water_up = is_water(at + vec2<i32>(0, -1));
         let h = hash_grain(p, v);
-        if fine && water_up && quarter.y == 0 && (h & 3u) == 0u {
+        // Detritus trims only under water (in air it is a resting heap).
+        if water_up && select(sub.y, quarter.y, fine) < loose_top_at(at, mat, open_up, quarter, fine) {
             return water_bg(at, quarter, fine);
         }
         let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);
