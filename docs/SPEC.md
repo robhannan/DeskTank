@@ -2148,7 +2148,7 @@ Each package depends only on the packages before it.
   (`steal: true`), and an owner epoch checked inside each write keeps a
   stolen owner from writing. Native import and export are `desktank import FILE` and
   `desktank export FILE` (§4.3).)*
-- [ ] **WB4 Installable PWA** (after WB3). Manifest, placeholder icons and
+- [x] **WB4 Installable PWA** (after WB3). Manifest, placeholder icons and
   a service worker, with paths relative to the `/DeskTank/` subpath
   (§3.5). *Accept:* a Playwright test checks the manifest (name, icons,
   `start_url` and `scope` of `./`) and an active service worker; after
