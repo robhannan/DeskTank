@@ -135,12 +135,6 @@ fn colouration_steps_the_plants_version_then_settles() {
     assert!(bumps <= 2, "{bumps} bumps in 120 s near the target");
 }
 
-/// Counts `air_bubble` cells currently in the world.
-fn air_bubbles(w: &World) -> usize {
-    let bubble = w.materials().id("air_bubble").unwrap();
-    w.cells().iter().filter(|c| c.material == bubble).count()
-}
-
 /// Injects CO₂ bubbles near the bed so they dissolve into the CO₂ field
 /// without creating any `air_bubble` cells.
 fn inject_co2(w: &mut World) {
@@ -156,69 +150,26 @@ fn inject_co2(w: &mut World) {
     }
 }
 
-/// Runs `seconds` of world time, counting every newly spawned `air_bubble`
-/// (a bubble cell that wasn't one the tick before; bubbles rise, so we track
-/// the net new appearances per tick and per 1-second window).
-fn count_pearls(w: &mut World, seconds: u32, refill_co2: bool) -> (usize, usize) {
-    let mut total = 0usize;
-    let mut max_per_sec = 0usize;
+/// Runs `seconds` of world time, counting pearls exactly (from the world's
+/// diagnostic counter): the total and the most in any one second. Asserts at
+/// most one pearl per tick.
+fn count_pearls(w: &mut World, seconds: u32, refill_co2: bool) -> (u64, u64) {
+    let mut total = 0;
+    let mut max_per_sec = 0;
     for sec in 0..seconds {
         if refill_co2 && sec % 5 == 0 {
             inject_co2(w);
         }
-        let mut this_sec = 0usize;
+        let start = w.pearls_released();
         for _ in 0..TICKS_PER_SECOND {
-            let before = air_bubbles(w);
+            let before = w.pearls_released();
             w.tick();
-            // Bubbles can only be created by pearling here (no bubbler in
-            // the tank); bubbles popping at the surface only decrease the
-            // count. Checking cells right above leaves catches every new
-            // pearl even on a tick when an older bubble pops.
-            let after = air_bubbles(w);
-            let spawned = after.saturating_sub(before);
-            // Also verify no more than 1 pearl can spawn in a single tick.
             assert!(
-                spawned <= 1,
-                "more than 1 pearl spawned in a single tick ({spawned})"
+                w.pearls_released() - before <= 1,
+                "more than 1 pearl in a tick"
             );
-            this_sec += spawned;
         }
-        total += this_sec;
-        max_per_sec = max_per_sec.max(this_sec);
-    }
-    (total, max_per_sec)
-}
-
-/// Counts exact newly-created `air_bubble` cells directly above leaf cells
-/// over `seconds` (immune to simultaneous surface pops).
-fn count_exact_pearls(w: &mut World, seconds: u32, refill_co2: bool) -> (usize, usize) {
-    let bubble = w.materials().id("air_bubble").unwrap();
-    let leaf = w.materials().id("leaf").unwrap();
-    let width = w.width();
-    let mut total = 0usize;
-    let mut max_per_sec = 0usize;
-    for sec in 0..seconds {
-        if refill_co2 && sec % 5 == 0 {
-            inject_co2(w);
-        }
-        let mut this_sec = 0usize;
-        for _ in 0..TICKS_PER_SECOND {
-            let prev: Vec<bool> = w.cells().iter().map(|c| c.material == bubble).collect();
-            w.tick();
-            let cells = w.cells();
-            let mut spawned = 0usize;
-            for (i, c) in cells.iter().enumerate() {
-                if c.material == bubble
-                    && !prev[i]
-                    && i + width < cells.len()
-                    && cells[i + width].material == leaf
-                {
-                    spawned += 1;
-                }
-            }
-            assert!(spawned <= 1, "at most 1 pearl per tick, got {spawned}");
-            this_sec += spawned;
-        }
+        let this_sec = w.pearls_released() - start;
         total += this_sec;
         max_per_sec = max_per_sec.max(this_sec);
     }
@@ -236,7 +187,7 @@ fn pearling_appears_only_above_light_and_co2_thresholds() {
     // 1. Strong light, NO CO₂: zero pearls.
     let mut no_co2 = lit_no_co2.clone();
     assert!(no_co2.field(FieldKind::Co2).at_cell(30, 20) < PEARL_CO2);
-    let (pearls_no_co2, _) = count_exact_pearls(&mut no_co2, 20, false);
+    let (pearls_no_co2, _) = count_pearls(&mut no_co2, 20, false);
     assert_eq!(pearls_no_co2, 0, "pearled without CO₂");
 
     // 2. Strong light + high CO₂: pearls appear.
@@ -245,13 +196,13 @@ fn pearling_appears_only_above_light_and_co2_thresholds() {
     run(&mut with_co2, 4);
     assert!(with_co2.field(FieldKind::Light).at_cell(30, 20) >= PEARL_LIGHT);
     assert!(with_co2.field(FieldKind::Co2).at_cell(30, 20) >= PEARL_CO2);
-    let (pearls_lit, max_per_sec) = count_exact_pearls(&mut with_co2, 25, true);
+    let (pearls_lit, max_per_sec) = count_pearls(&mut with_co2, 25, true);
     assert!(
         pearls_lit > 0,
         "expected pearling under strong light and high CO₂"
     );
     assert!(
-        max_per_sec <= PEARL_MAX_PER_SECOND as usize,
+        max_per_sec <= u64::from(PEARL_MAX_PER_SECOND),
         "exceeded cap: {max_per_sec} > {PEARL_MAX_PER_SECOND}"
     );
 
@@ -280,7 +231,7 @@ fn pearling_appears_only_above_light_and_co2_thresholds() {
         "light under lid should be below PEARL_LIGHT"
     );
     assert!(shaded.field(FieldKind::Co2).at_cell(30, 20) >= PEARL_CO2);
-    let (pearls_shaded, _) = count_exact_pearls(&mut shaded, 20, true);
+    let (pearls_shaded, _) = count_pearls(&mut shaded, 20, true);
     assert_eq!(pearls_shaded, 0, "pearled in dim light");
 }
 
@@ -356,9 +307,27 @@ fn pearling_stops_on_unhealthy_plants() {
     .unwrap();
     inject_co2(&mut w);
     run(&mut w, 2);
-    assert!(w.plants().all(|p| p.health < PEARL_HEALTH));
-    let (pearls, _) = count_exact_pearls(&mut w, 3, false);
-    assert_eq!(pearls, 0, "unhealthy plants should not pearl");
+    // Light and CO₂ are over their thresholds at the plant's upper leaves
+    // (rows 21–23), so only health holds it back.
+    assert!(w.field(FieldKind::Light).at_cell(48, 22) >= PEARL_LIGHT);
+    assert!(w.field(FieldKind::Co2).at_cell(48, 22) >= PEARL_CO2);
+    // Tick while every plant stays below PEARL_HEALTH (it recovers in the
+    // light): none of those ticks may pearl.
+    let mut ticks = 0;
+    while ticks < 3 * TICKS_PER_SECOND {
+        let before = w.pearls_released();
+        w.tick();
+        if !w.plants().all(|p| p.health < PEARL_HEALTH) {
+            break;
+        }
+        assert_eq!(w.pearls_released(), before, "an unhealthy plant pearled");
+        ticks += 1;
+    }
+    assert!(
+        ticks >= TICKS_PER_SECOND,
+        "only {ticks} ticks before health recovered"
+    );
+    assert!(w.field(FieldKind::Co2).at_cell(48, 22) >= PEARL_CO2);
 }
 
 #[test]
@@ -387,7 +356,7 @@ fn pearling_stays_within_cap_and_is_save_deterministic() {
     assert_eq!(max_per_sec, max_per_sec2);
     assert!(total > 0, "dense lit CO₂ tank should pearl");
     assert!(
-        max_per_sec <= PEARL_MAX_PER_SECOND as usize,
+        max_per_sec <= u64::from(PEARL_MAX_PER_SECOND),
         "pearling rate {max_per_sec}/s exceeded cap {PEARL_MAX_PER_SECOND}/s"
     );
 }

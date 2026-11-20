@@ -192,13 +192,14 @@ impl Tank {
     }
 
     /// Current sway phase in seconds of world time (deterministic for
-    /// capture; wrapped hourly to keep f32 precision crisp).
+    /// capture), wrapped at 20π s, the common period of both waves in
+    /// `sway_dx` (`tank.wgsl`), so f32 stays precise and the wrap is seamless.
     fn sway_phase(&self) -> f32 {
-        #[allow(clippy::cast_precision_loss)] // < 72_000 ticks, exact in f32
-        let ticks = (self.world.tick_count() % (u64::from(TICKS_PER_SECOND) * 3600)) as f32;
-        #[allow(clippy::cast_precision_loss)] // 20, exact
-        let hz = TICKS_PER_SECOND as f32;
-        ticks / hz
+        #[allow(clippy::cast_precision_loss)] // exact below 2^53 ticks
+        let seconds = self.world.tick_count() as f64 / f64::from(TICKS_PER_SECOND);
+        #[allow(clippy::cast_possible_truncation)] // < 63, fits f32
+        let phase = seconds.rem_euclid(20.0 * std::f64::consts::PI) as f32;
+        phase
     }
 
     /// Sets the local time of day (minutes after midnight) the tank is lit
@@ -309,8 +310,12 @@ impl Tank {
             }
         }
         let mut wake_at = self.pacer.wake_at(now, wanted && !redraw);
+        // Wake for the next sway frame if it isn't due yet; a due frame held
+        // back by the frame cap is already in the pacer's wake time (and its
+        // sway deadline may be in the past, which would spin the host).
         if sway_on
             && !redraw
+            && !sway_wanted
             && let Some(last) = self.sway.last_frame
         {
             wake_at = wake_at.min(last + SWAY_INTERVAL);
@@ -592,6 +597,11 @@ mod tests {
         for step in 1..=steps {
             let now = start + Duration::from_millis(step * step_ms);
             let req = tank.tick(now);
+            assert!(
+                req.wake_at > now,
+                "wake_at {:?} not after {now:?}",
+                req.wake_at
+            );
             if req.redraw {
                 tank.mark_drawn();
                 frames += 1;
@@ -678,6 +688,28 @@ mod tests {
         // Shown again: sway resumes at once.
         tank.set_hidden(false);
         assert!(tank.tick(now + Duration::from_millis(50)).redraw);
+    }
+
+    #[test]
+    fn sway_under_a_lower_frame_cap_never_wakes_in_the_past() {
+        let mut tank = settled_planted_tank();
+        tank.set_max_fps(5);
+        tank.set_sway(true);
+        // `count_frames_every` asserts every wake time is in the future.
+        let frames = count_frames_every(&mut tank, Duration::from_secs(1), 10, 5);
+        assert!(
+            (48..=51).contains(&frames),
+            "{frames} frames in 10 s at a 5 fps cap"
+        );
+    }
+
+    #[test]
+    fn sway_phase_wraps_seamlessly() {
+        let period = 20.0 * std::f32::consts::PI;
+        for phase in [0.0_f32, 0.3, 1.7] {
+            let wave = |t: f32| (t * 1.6).sin() * 0.65 + (t * 0.9).sin() * 0.35;
+            assert!((wave(phase) - wave(phase + period)).abs() < 1e-3);
+        }
     }
 
     #[test]

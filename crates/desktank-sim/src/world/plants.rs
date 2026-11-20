@@ -266,6 +266,9 @@ pub(super) struct Plants {
     /// (reset at the start of every tick; caps pearling to
     /// [`PEARL_MAX_PER_SECOND`] bubbles/s with no persistent state).
     pub(super) pearled_this_tick: bool,
+    /// Pearling bubbles released since this world was built or loaded (a
+    /// diagnostic counter, not saved and not part of the state hash).
+    pearls: u64,
 }
 
 impl Plants {
@@ -312,6 +315,7 @@ impl Plants {
             keep_falling: keep_per_tick(MAT_FALLING),
             keep_pearl: keep_per_tick(PEARL_RATE),
             pearled_this_tick: false,
+            pearls: 0,
         })
     }
 
@@ -470,6 +474,13 @@ impl World {
 
     fn band_mix(&self, id: u16, key: u64) -> u64 {
         splitmix64(self.seed ^ splitmix64((u64::from(id) << 40) ^ key))
+    }
+
+    /// Pearling bubbles released since this world was built or loaded (a
+    /// diagnostic counter: not saved and not part of the state hash).
+    #[must_use]
+    pub fn pearls_released(&self) -> u64 {
+        self.plants.pearls
     }
 
     /// Number of plants.
@@ -1156,6 +1167,7 @@ impl World {
         {
             self.write_cell(x, y - 1, bubble, &mut None);
             self.plants.pearled_this_tick = true;
+            self.plants.pearls += 1;
         }
     }
 
