@@ -57,8 +57,9 @@ pub fn plant_position(variant: u8) -> u8 {
 
 /// The generic plant part materials shared by every species (SPEC §2.7).
 /// A rosette's or carpet's blades are leaf cells (their shape comes from
-/// the species' `[look] leaf`), so blades cost no material id; T6c's later
-/// parts add rhizomes and floating leaves.
+/// the species' `[look] leaf`), so blades cost no material id; a floater's
+/// leaves are their own, light part (T6c part 2); T6c part 3 adds
+/// rhizomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Part {
     /// Grows down and sideways through the substrate.
@@ -72,6 +73,10 @@ pub enum Part {
     /// Creeps through the top two layers of the substrate from a crown and
     /// roots a new plant at its tip (T6c).
     Runner,
+    /// A floater's leaf (T6c part 2): lighter than water, so it holds the
+    /// plant up at the surface, and nearly opaque, so it shades what is
+    /// below.
+    Float,
 }
 
 /// Slots in a plant's part counts: roots (runners count with them),
@@ -80,7 +85,13 @@ pub const COUNTED_PARTS: usize = 3;
 
 impl Part {
     /// Every part, in discriminant order.
-    pub const ALL: [Self; 4] = [Self::Root, Self::Stem, Self::Leaf, Self::Runner];
+    pub const ALL: [Self; 5] = [
+        Self::Root,
+        Self::Stem,
+        Self::Leaf,
+        Self::Runner,
+        Self::Float,
+    ];
 
     /// The part's material name.
     #[must_use]
@@ -90,6 +101,7 @@ impl Part {
             Self::Stem => "stem",
             Self::Leaf => "leaf",
             Self::Runner => "runner",
+            Self::Float => "floating_leaf",
         }
     }
 
@@ -100,21 +112,22 @@ impl Part {
     }
 
     /// Its slot in a plant's part counts ([`COUNTED_PARTS`]): runners are
-    /// counted with roots, as the parts below ground, so the counts (and
-    /// the save format) keep three slots.
+    /// counted with roots, as the parts below ground, and floating leaves
+    /// with leaves, so the counts (and the save format) keep three slots.
     #[must_use]
     pub fn count_slot(self) -> usize {
         match self {
             Self::Runner => Self::Root.index(),
+            Self::Float => Self::Leaf.index(),
             p => p.index(),
         }
     }
 
     /// Whether it samples light (stems and leaves; roots and runners are in
-    /// the substrate).
+    /// the substrate, or hang in the water under a floater).
     #[must_use]
     pub fn sees_light(self) -> bool {
-        matches!(self, Self::Stem | Self::Leaf)
+        matches!(self, Self::Stem | Self::Leaf | Self::Float)
     }
 }
 
@@ -257,7 +270,7 @@ impl Preferences {
 }
 
 /// How a species grows: a small growth program in Rust, parametrised by the
-/// TOML (SPEC §2.7 *Growth forms*). T6c adds floaters and epiphytes next.
+/// TOML (SPEC §2.7 *Growth forms*). T6c part 3 adds epiphytes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Form {
     /// An upright stem with leaves at nodes and roots in the substrate.
@@ -271,6 +284,10 @@ pub enum Form {
     /// cells of the substrate) joined by short runners (dwarf hairgrass
     /// type).
     Carpet(RosetteForm),
+    /// Leaves floating in the top water row with roots hanging below, the
+    /// whole plant one buoyant body that drifts with the current, budding
+    /// new plants beside it (duckweed or frogbit type, T6c part 2).
+    Floater(FloaterForm),
 }
 
 impl Form {
@@ -280,7 +297,7 @@ impl Form {
         match self {
             Self::Stem(f) => Some(&f.substrates),
             Self::Rosette(f) | Self::Carpet(f) => Some(&f.substrates),
-            Self::Mat(_) => None,
+            Self::Mat(_) | Self::Floater(_) => None,
         }
     }
 
@@ -289,9 +306,42 @@ impl Form {
     pub fn rosette(&self) -> Option<&RosetteForm> {
         match self {
             Self::Rosette(f) | Self::Carpet(f) => Some(f),
-            Self::Stem(_) | Self::Mat(_) => None,
+            Self::Stem(_) | Self::Mat(_) | Self::Floater(_) => None,
         }
     }
+
+    /// The floater parameters of a floater.
+    #[must_use]
+    pub fn floater(&self) -> Option<&FloaterForm> {
+        match self {
+            Self::Floater(f) => Some(f),
+            _ => None,
+        }
+    }
+}
+
+/// Most floating leaves one floater spreads to.
+pub const MAX_FRONDS: u8 = 8;
+/// Longest root a floater hangs, in cells.
+pub const MAX_HANGING_ROOT: u8 = 32;
+
+/// Parameters of the floater form (T6c part 2). Floating leaves (the
+/// [`Part::Float`] material) spread sideways along the top water row, under
+/// the air, from where the plant started, up to `fronds` cells; `roots`
+/// strands hang from them, each up to `root_length` cells. Once it has all
+/// its fronds (or reached its mature size) it buds: a new plant (parent id
+/// set, generation + 1) starts as one floating leaf in the water beside an
+/// end frond. The whole plant moves as one buoyant body (the world's
+/// floater rafts), so it rests at the surface and drifts with the current.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FloaterForm {
+    /// Floating leaf cells, side by side (1..=[`MAX_FRONDS`]).
+    pub fronds: u8,
+    /// Root strands hanging from the fronds, a cell apart (1..=`fronds`
+    /// / 2, rounded up).
+    pub roots: u8,
+    /// Longest root, in cells (1..=[`MAX_HANGING_ROOT`]).
+    pub root_length: u8,
 }
 
 /// Longest blade a carpet grows, in cells: carpets stay low.
@@ -393,6 +443,8 @@ pub struct Propagation {
     pub fragments: bool,
     /// Sends out runners that root new plants (rosettes and carpets).
     pub runners: bool,
+    /// Buds new plants beside it (floaters).
+    pub buds: bool,
 }
 
 /// Colour ramps per part, dark to light (sRGB). The renderer shades each
@@ -439,11 +491,17 @@ pub enum LeafShape {
     /// A tiny round leaf on a short stalk, the tip cell a full pad (Monte
     /// Carlo type).
     Pad = 7,
+    /// Floating leaf shapes, for floaters (T6c part 2), drawn lying on the
+    /// water: small flat ovals side by side, lit on top (duckweed type).
+    Lens = 8,
+    /// A round, glossy pad with a pale vein and a dark, spongy underside
+    /// (frogbit type).
+    Disc = 9,
 }
 
 impl LeafShape {
     /// Every shape, in discriminant order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Lanceolate,
         Self::Needle,
         Self::Round,
@@ -452,13 +510,21 @@ impl LeafShape {
         Self::Sword,
         Self::Grass,
         Self::Pad,
+        Self::Lens,
+        Self::Disc,
     ];
 
     /// Whether it is a blade shape (rosettes and carpets), drawn upright,
     /// rather than a leaf growing sideways from a stem.
     #[must_use]
     pub fn is_blade(self) -> bool {
-        self as u8 >= Self::Ribbon as u8
+        matches!(self, Self::Ribbon | Self::Sword | Self::Grass | Self::Pad)
+    }
+
+    /// Whether it is a floating leaf shape (floaters).
+    #[must_use]
+    pub fn is_floating(self) -> bool {
+        matches!(self, Self::Lens | Self::Disc)
     }
 }
 
@@ -549,7 +615,9 @@ impl PlantSpecies {
     pub fn colour(&self) -> [u8; 3] {
         let ramp = match self.form {
             Form::Mat(_) => &self.colours.stem,
-            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) => &self.colours.leaf,
+            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) | Form::Floater(_) => {
+                &self.colours.leaf
+            }
         };
         ramp.get(ramp.len() / 2)
             .copied()
@@ -565,6 +633,7 @@ impl PlantSpecies {
             Propagule::Cuttings => p.cuttings,
             Propagule::Fragments => p.fragments,
             Propagule::Runners => p.runners,
+            Propagule::Buds => p.buds,
         }
     }
 
@@ -602,11 +671,22 @@ pub enum Propagule {
     /// it is a plantlet taken off a runner: the `cutting` material, which
     /// roots like one.
     Runners,
+    /// Buds: the species buds new plants as it grows (floaters, T6c part
+    /// 2). Poured, it is a budded-off plantlet: the `cutting` material,
+    /// which in open water turns into a floating leaf that rises to the
+    /// surface.
+    Buds,
 }
 
 impl Propagule {
     /// Every propagule, in the order hosts list them.
-    pub const ALL: [Self; 4] = [Self::Seeds, Self::Cuttings, Self::Fragments, Self::Runners];
+    pub const ALL: [Self; 5] = [
+        Self::Seeds,
+        Self::Cuttings,
+        Self::Fragments,
+        Self::Runners,
+        Self::Buds,
+    ];
 
     /// Its name, as a species' `propagation` list and scripts spell it.
     #[must_use]
@@ -616,6 +696,7 @@ impl Propagule {
             Self::Cuttings => "cuttings",
             Self::Fragments => "fragments",
             Self::Runners => "runners",
+            Self::Buds => "buds",
         }
     }
 
@@ -630,7 +711,7 @@ impl Propagule {
     pub fn material_name(self) -> &'static str {
         match self {
             Self::Seeds => "seed",
-            Self::Cuttings | Self::Fragments | Self::Runners => "cutting",
+            Self::Cuttings | Self::Fragments | Self::Runners | Self::Buds => "cutting",
         }
     }
 }
@@ -682,6 +763,7 @@ struct SpeciesDef {
     mat: Option<MatDef>,
     rosette: Option<RosetteDef>,
     carpet: Option<RosetteDef>,
+    floater: Option<FloaterDef>,
     prefer: Preferences,
     growth: GrowthDef,
     hardiness: HardinessDef,
@@ -706,6 +788,15 @@ enum FormName {
     Mat,
     Rosette,
     Carpet,
+    Floater,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FloaterDef {
+    fronds: u8,
+    roots: u8,
+    root_length: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -760,7 +851,8 @@ struct HardinessDef {
 /// The plant species embedded in the binary (T6b: T6's plant and moss, and
 /// a high-light stem plant; then ludwigia, cabomba, bacopa and christmas
 /// moss; T6c's rosettes and carpets: amazon sword, vallisneria, dwarf
-/// hairgrass, Monte Carlo and cryptocoryne).
+/// hairgrass, Monte Carlo and cryptocoryne; T6c's floaters: duckweed and
+/// Amazon frogbit).
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/hygrophila.toml"),
     include_str!("../../../assets/plants/java_moss.toml"),
@@ -774,6 +866,8 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/dwarf_hairgrass.toml"),
     include_str!("../../../assets/plants/monte_carlo.toml"),
     include_str!("../../../assets/plants/cryptocoryne.toml"),
+    include_str!("../../../assets/plants/duckweed.toml"),
+    include_str!("../../../assets/plants/frogbit.toml"),
 ];
 
 /// All plant species, ordered by ID.
@@ -885,6 +979,10 @@ impl PlantSpeciesTable {
     }
 }
 
+/// The error for a species without exactly its form's table.
+const ONE_TABLE: &str =
+    "needs exactly the [stem], [mat], [rosette], [carpet] or [floater] table its form names";
+
 #[allow(clippy::too_many_lines)] // one check per property
 fn validate(
     d: &SpeciesDef,
@@ -916,19 +1014,34 @@ fn validate(
         d.mat.is_some(),
         d.rosette.is_some(),
         d.carpet.is_some(),
+        d.floater.is_some(),
     ];
     if tables.iter().filter(|&&t| t).count() != 1 {
-        return Err(invalid(
-            "needs exactly the [stem], [mat], [rosette] or [carpet] table its form names",
-        ));
+        return Err(invalid(ONE_TABLE));
     }
     let form = match (d.form, &d.stem, &d.mat) {
+        (FormName::Floater, ..) => {
+            let Some(f) = &d.floater else {
+                return Err(invalid(ONE_TABLE));
+            };
+            if !(1..=MAX_FRONDS).contains(&f.fronds)
+                || !(1..=f.fronds.div_ceil(2)).contains(&f.roots)
+                || !(1..=MAX_HANGING_ROOT).contains(&f.root_length)
+            {
+                return Err(invalid(
+                    "floater fronds must be 1..=8, roots 1..=(fronds + 1) / 2 and root_length 1..=32",
+                ));
+            }
+            Form::Floater(FloaterForm {
+                fronds: f.fronds,
+                roots: f.roots,
+                root_length: f.root_length,
+            })
+        }
         (FormName::Rosette | FormName::Carpet, ..) => {
             let carpet = d.form == FormName::Carpet;
             let Some(r) = (if carpet { &d.carpet } else { &d.rosette }) else {
-                return Err(invalid(
-                    "needs exactly the [stem], [mat], [rosette] or [carpet] table its form names",
-                ));
+                return Err(invalid(ONE_TABLE));
             };
             let max = MAX_POSITION;
             let crown = match (carpet, r.crown) {
@@ -987,11 +1100,7 @@ fn validate(
             })
         }
         (FormName::Mat, None, Some(m)) => Form::Mat(MatForm { on: lookup(&m.on)? }),
-        _ => {
-            return Err(invalid(
-                "needs exactly the [stem] or [mat] table its form names",
-            ));
-        }
+        _ => return Err(invalid(ONE_TABLE)),
     };
     for f in Factor::ALL {
         let r = d.prefer.range(f);
@@ -1029,6 +1138,7 @@ fn validate(
             Propagule::Cuttings => propagation.cuttings = true,
             Propagule::Fragments => propagation.fragments = true,
             Propagule::Runners => propagation.runners = true,
+            Propagule::Buds => propagation.buds = true,
         }
     }
     if propagation == Propagation::default() {
@@ -1036,6 +1146,9 @@ fn validate(
     }
     if propagation.runners && form.rosette().is_none() {
         return Err(invalid("only rosettes and carpets spread by runners"));
+    }
+    if propagation.buds != form.floater().is_some() {
+        return Err(invalid("floaters, and only floaters, spread by buds"));
     }
     if g.root_feeder && form.substrates().is_none() {
         return Err(invalid("only a plant that roots can be a root feeder"));
@@ -1065,6 +1178,7 @@ fn validate(
         Form::Mat(_) => (LeafShape::Lanceolate, StemShape::Fuzz),
         Form::Rosette(_) => (LeafShape::Ribbon, StemShape::Thick),
         Form::Carpet(_) => (LeafShape::Grass, StemShape::Thick),
+        Form::Floater(_) => (LeafShape::Lens, StemShape::Stalk),
     };
     let look = Look {
         leaf: d.look.leaf.unwrap_or(default_leaf),
@@ -1080,6 +1194,11 @@ fn validate(
     if look.leaf.is_blade() != form.rosette().is_some() {
         return Err(invalid(
             "look leaf is a blade shape (ribbon, sword, grass, pad) exactly for rosettes and carpets",
+        ));
+    }
+    if look.leaf.is_floating() != form.floater().is_some() {
+        return Err(invalid(
+            "look leaf is a floating shape (lens, disc) exactly for floaters",
         ));
     }
     Ok(PlantSpecies {
@@ -1148,7 +1267,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 12);
+        assert_eq!(t.len(), 14);
         let first = t.default_species().unwrap();
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
@@ -1462,6 +1581,49 @@ mod tests {
         invalid(format!(
             "{rosette}\n[stem]\nheight = 2\ninternode = 2\nleaf_length = 1\nroot_depth = 1\nsubstrates = []\n"
         ));
+    }
+
+    #[test]
+    fn floaters_load_and_their_definitions_are_checked() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        for (name, leaf) in [("duckweed", LeafShape::Lens), ("frogbit", LeafShape::Disc)] {
+            let s = t.get(t.id(name).unwrap()).unwrap();
+            let f = s.form.floater().unwrap();
+            assert!(f.roots <= f.fronds.div_ceil(2), "{name}: strands fit");
+            assert!(s.growth.size >= u32::from(f.fronds), "{name}: buds at size");
+            assert_eq!(s.look.leaf, leaf);
+            assert_eq!(
+                s.propagules().collect::<Vec<_>>(),
+                [Propagule::Fragments, Propagule::Buds]
+            );
+            assert!(s.form.substrates().is_none(), "{name} doesn't root");
+        }
+        let floater = OK
+            .replace("form = \"stem\"", "form = \"floater\"")
+            .replace("[\"cuttings\"]", "[\"buds\"]")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6\n        substrates = [\"sand\"]",
+                "[floater]\n        fronds = 3\n        roots = 2\n        root_length = 4",
+            );
+        assert_ne!(floater, OK);
+        let t = PlantSpeciesTable::from_toml_sources(&[&floater], &m).unwrap();
+        let s = t.get(PlantSpeciesId(9)).unwrap();
+        assert_eq!(s.look.leaf, LeafShape::Lens, "floaters default to lenses");
+        assert_eq!(s.default_propagule(), Propagule::Buds);
+        let invalid = |src: String| {
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &m);
+            assert!(matches!(r, Err(PlantSpeciesError::Invalid { .. })), "{r:?}");
+        };
+        // Strands a cell apart, frond and root limits, buds only (and
+        // always) for floaters, floating shapes only for floaters.
+        invalid(floater.replace("roots = 2", "roots = 3"));
+        invalid(floater.replace("fronds = 3", "fronds = 9"));
+        invalid(floater.replace("root_length = 4", "root_length = 33"));
+        invalid(floater.replace("[\"buds\"]", "[\"cuttings\"]"));
+        invalid(OK.replace("[\"cuttings\"]", "[\"cuttings\", \"buds\"]"));
+        invalid(format!("{floater}\n[look]\nleaf = \"round\"\n"));
+        invalid(format!("{OK}\n[look]\nleaf = \"disc\"\n"));
     }
 
     #[test]

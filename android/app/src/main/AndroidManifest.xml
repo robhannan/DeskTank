@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- TV first, phones too (D22): neither a TV nor a touchscreen is required.
+    <!-- TV first, phones too (D23): neither a TV nor a touchscreen is required.
          Declaring leanback makes the app installable from TV stores later; it
          has no launcher activity yet (that is A3). -->
     <uses-feature

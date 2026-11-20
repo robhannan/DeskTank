@@ -169,13 +169,24 @@ fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
     down(&mut t, PRIMARY, 90, 30);
     t.pointer_up(PRIMARY);
     assert_eq!(t.material_count("cutting"), 1);
+    // Floaters spread by fragments and buds (T6c part 2); a poured bud is
+    // a plantlet too.
+    let duckweed = t
+        .plant_species()
+        .iter()
+        .position(|s| s.starts_with("duckweed "))
+        .unwrap();
+    t.set_plant_species(u32::try_from(duckweed).unwrap());
+    assert_eq!(t.plant_propagules(), ["fragments", "buds"]);
+    assert!(t.set_plant_propagule("buds"));
+    assert_eq!(t.plant_propagule(), "buds");
 }
 
 #[test]
 fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
     let mut t = tank();
     let species = t.plant_species();
-    assert_eq!(species.len(), 12);
+    assert_eq!(species.len(), 14);
     assert!(species[0].starts_with("hygrophila "));
     for name in [
         "ludwigia",
@@ -187,6 +198,8 @@ fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
         "dwarf_hairgrass",
         "monte_carlo",
         "cryptocoryne",
+        "duckweed",
+        "frogbit",
     ] {
         let entry = format!("{name} ");
         assert!(species.iter().any(|s| s.starts_with(&entry)), "{name}");

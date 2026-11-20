@@ -1,5 +1,5 @@
 //! DeskTank Android host: `libdesktank_android.so`, driven over JNI by the Kotlin
-//! shim in `android/` (SPEC §3.6, D22).
+//! shim in `android/` (SPEC §3.6, D23).
 //!
 //! The shim's `DreamService` owns a `SurfaceView` and forwards its surface
 //! callbacks and the Dream's start and stop here. This crate turns the

@@ -579,9 +579,11 @@ impl World {
             }
         }
         // Rigid bodies first: whole objects, one cell per tick. Then the
-        // plants edits cut or added to.
+        // plants edits cut or added to, and the floaters, buoyant bodies of
+        // plant cells (T6c part 2).
         self.update_bodies();
         self.tidy_plants();
+        self.update_rafts();
         // Even ticks sweep rows left to right, odd ticks right to left.
         let rightward = self.tick.is_multiple_of(2);
         // Falling materials: bottom-up, so a column falls together.
