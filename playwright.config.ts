@@ -12,7 +12,7 @@ export default defineConfig({
   // One worker on CI. The runner has no GPU, so every page draws on
   // SwiftShader in the CPU; with two workers each one's frames hold the
   // other's timers back by up to 400 ms, enough to miss the real-time
-  // budgets some tests check (Take over within 1 s, SPEC §3.5).
+  // budgets some tests check (Take over's steal after 1 s, SPEC §3.5).
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [["list"], ["github"]] : "list",
   use: {
