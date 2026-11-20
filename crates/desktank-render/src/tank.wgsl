@@ -202,7 +202,6 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         vec2<i32>(3),
     );
     var rgb = vec3<f32>(0.0);
-    var ground_at = at;
     var ground_texel = texel;
     var need_ground = true;
     var plant_rgb = vec3<f32>(0.0);
@@ -217,7 +216,6 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         } else {
             let nbr = behind_cell(at, quarter);
             if nbr.x >= 0 {
-                ground_at = nbr;
                 ground_texel = textureLoad(cells, nbr, 0);
                 plant_rgb = pt.rgb;
                 plant_alpha = pt.a;
@@ -229,7 +227,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         }
     }
     if need_ground {
-        let bg = ground(ground_at, ground_texel, quarter);
+        let bg = ground(at, ground_texel, quarter);
         rgb = mix(bg, plant_rgb, plant_alpha);
     }
     rgb = rgb * view.daylight.rgb;
@@ -653,10 +651,10 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_BUBBLE {
-        let same_u = same_mat(at + vec2<i32>(0, -1), mat);
-        let same_d = same_mat(at + vec2<i32>(0, 1), mat);
-        let same_l = same_mat(at + vec2<i32>(-1, 0), mat);
-        let same_r = same_mat(at + vec2<i32>(1, 0), mat);
+        let same_u = style_at(at + vec2<i32>(0, -1)) == STYLE_BUBBLE;
+        let same_d = style_at(at + vec2<i32>(0, 1)) == STYLE_BUBBLE;
+        let same_l = style_at(at + vec2<i32>(-1, 0)) == STYLE_BUBBLE;
+        let same_r = style_at(at + vec2<i32>(1, 0)) == STYLE_BUBBLE;
         let isolated = !same_u && !same_d && !same_l && !same_r;
         let bg = water_bg(at, quarter, fine);
         if isolated {
@@ -738,8 +736,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
 
     if style == STYLE_DETRITUS {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1));
+        let water_up = is_water(at + vec2<i32>(0, -1));
         let h = hash_grain(p, v);
-        if fine && open_up && quarter.y == 0 && (h & 3u) == 0u {
+        if fine && water_up && quarter.y == 0 && (h & 3u) == 0u {
             return water_bg(at, quarter, fine);
         }
         let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);

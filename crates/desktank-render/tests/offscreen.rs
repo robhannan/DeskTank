@@ -125,6 +125,39 @@ fn draws_cells_scaled_and_letterboxed() {
 }
 
 #[test]
+fn scale_one_keeps_flat_cells_and_depth_tints_water() {
+    let Some(gpu) = gpu() else { return };
+    let materials = MaterialTable::builtin().unwrap();
+    let rock = materials.id("rock").unwrap();
+    let rock_colour = materials.get(rock).unwrap().colour;
+    let config = WorldConfig {
+        width: 16,
+        height: 8,
+        seed: 1,
+        water_level: 0.75,
+    };
+    let mut world = World::new(config, materials).unwrap();
+    world.set_cell(3, 5, rock).unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    let img = tank.capture(&gpu, (16, 8)).unwrap();
+    let at = |x: u32, y: u32| -> [u8; 3] {
+        let i = ((y * 16 + x) * 4) as usize;
+        [img[i], img[i + 1], img[i + 2]]
+    };
+    // Rock stays near its flat palette shade.
+    let r = at(3, 5);
+    for (got, base) in r.iter().zip(rock_colour) {
+        assert!(got.abs_diff(base) <= 20, "rock {r:?} vs {rock_colour:?}");
+    }
+    // Air at row 0 is lighter than water, and deep water darkens with depth.
+    let air = at(10, 0);
+    let top_water = at(10, 2);
+    let deep_water = at(10, 7);
+    assert!(air[0] > top_water[0] && air[2] > top_water[2]);
+    assert!(top_water[2] > deep_water[2]);
+}
+
+#[test]
 fn srgb_targets_show_the_same_colours() {
     let Some(gpu) = gpu() else { return };
     let materials = MaterialTable::builtin().unwrap();
