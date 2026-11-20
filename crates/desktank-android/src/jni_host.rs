@@ -25,6 +25,9 @@ const TAG: &str = "DeskTank";
 /// System property that forces a backend (`vulkan` or `gl`) for testing.
 const BACKEND_PROPERTY: &str = "debug.desktank.backend";
 
+/// Tries to present a frame this many times per draw before giving up.
+const DRAW_ATTEMPTS: usize = 3;
+
 static HOST: Mutex<Option<Host>> = Mutex::new(None);
 
 /// The Android display, for [`wgpu::InstanceDescriptor::display`]: wgpu 30
@@ -168,23 +171,37 @@ impl Host {
         let (Some(surface), Some((_, gpu))) = (&self.surface, &self.gpu) else {
             return;
         };
-        match surface.clear(gpu, clear_colour(self.water, surface.format())) {
-            Ok(true) => {
-                if let Some(created) = self.created_at.take() {
-                    let (w, h) = surface.size();
-                    log(
-                        Priority::Info,
-                        &format!(
-                            "first frame {w}x{h} {:?} {} ms after surfaceCreated",
-                            surface.format(),
-                            created.elapsed().as_millis()
-                        ),
-                    );
+        let colour = clear_colour(self.water, surface.format());
+        // An outdated or lost surface is reconfigured and skipped; the A0
+        // skeleton draws only on callbacks, so retry it here (bounded) rather
+        // than leave the Dream blank until the next one.
+        for _ in 0..DRAW_ATTEMPTS {
+            match surface.clear(gpu, colour) {
+                Ok(true) => {
+                    if let Some(created) = self.created_at.take() {
+                        let (w, h) = surface.size();
+                        log(
+                            Priority::Info,
+                            &format!(
+                                "first frame {w}x{h} {:?} {} ms after surfaceCreated",
+                                surface.format(),
+                                created.elapsed().as_millis()
+                            ),
+                        );
+                    }
+                    return;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    log(Priority::Error, &format!("clear failed: {e}"));
+                    return;
                 }
             }
-            Ok(false) => {}
-            Err(e) => log(Priority::Error, &format!("clear failed: {e}")),
         }
+        log(
+            Priority::Error,
+            &format!("no frame after {DRAW_ATTEMPTS} attempts (surface outdated, lost or busy)"),
+        );
     }
 }
 
