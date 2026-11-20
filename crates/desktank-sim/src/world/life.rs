@@ -492,7 +492,7 @@ impl World {
     }
 
     /// Restores the scheduler and fields from a save, after the cells.
-    pub(super) fn load_life(&mut self, saved: v1::Life) -> Result<(), SaveError> {
+    pub(super) fn load_life(&mut self, mut saved: v1::Life) -> Result<(), SaveError> {
         for (name, lists) in [
             ("living", &saved.living),
             ("device", &saved.devices),
@@ -512,6 +512,29 @@ impl World {
                         return Err(SaveError::Invalid(format!(
                             "{name} cell {i} listed in chunk {ci}"
                         )));
+                    }
+                }
+            }
+        }
+        // Older saves indexed fronds as living cells only. Preserve list
+        // order and leave pending edits for the next registry refresh.
+        if let Some(frond) = self.materials.id("floating_leaf") {
+            for (ci, food) in saved.food.iter_mut().enumerate() {
+                let pending = self.chunks[ci].changed_next;
+                let missing = saved.living[ci].iter().copied().filter(|&i| {
+                    let at = i as usize;
+                    self.cells[at].material == frond
+                        && !pending.contains(at % self.width, at / self.width)
+                });
+                let mut indexed = None;
+                for i in missing {
+                    let sorted = indexed.get_or_insert_with(|| {
+                        let mut indices = food.clone();
+                        indices.sort_unstable();
+                        indices
+                    });
+                    if sorted.binary_search(&i).is_err() {
+                        food.push(i);
                     }
                 }
             }

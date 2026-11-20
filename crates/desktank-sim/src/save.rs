@@ -314,6 +314,33 @@ mod tests {
     }
 
     #[test]
+    fn old_food_lists_gain_settled_fronds() {
+        let mut world = World::new(
+            crate::WorldConfig::default(),
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let frond = world.materials().id("floating_leaf").unwrap();
+        world
+            .paint(
+                20,
+                i64::try_from(world.surface_row()).unwrap(),
+                0,
+                frond,
+                crate::Brush::Replace,
+            )
+            .unwrap();
+        for _ in 0..20 {
+            world.tick();
+        }
+        let mut saved = world.to_v7();
+        assert_eq!(saved.life.food.iter().map(Vec::len).sum::<usize>(), 1);
+        saved.life.food.iter_mut().for_each(Vec::clear);
+        let restored = World::from_v7(saved, MaterialTable::builtin().unwrap()).unwrap();
+        assert_eq!(restored.to_v7().life.food, world.to_v7().life.food);
+    }
+
+    #[test]
     fn rejects_snapshots_that_dont_fit() {
         let mut world = World::new(
             crate::WorldConfig {

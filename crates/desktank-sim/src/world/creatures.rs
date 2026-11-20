@@ -1346,6 +1346,12 @@ impl World {
         i64::from(body_top - rise) >= to_i64(top) * i64::from(ONE)
     }
 
+    fn edible_cell(&self, k: &Kind, index: usize) -> bool {
+        let cell = self.cells[index];
+        k.edible[usize::from(cell.material.0)]
+            && (self.plants.part(cell.material).is_none() || self.palatable_plant(cell.state))
+    }
+
     /// Keeps `c` heading for food while hungry: a new search when its food
     /// has gone, and every [`SEARCH_EVERY`] ticks for something closer.
     fn choose_food(&self, k: &Kind, c: &mut Creature, hungry: bool) {
@@ -1353,9 +1359,7 @@ impl World {
             c.food = None;
             return;
         }
-        let lost = c
-            .food
-            .is_some_and(|i| !k.edible[usize::from(self.cells[i as usize].material.0)]);
+        let lost = c.food.is_some_and(|i| !self.edible_cell(k, i as usize));
         if lost || (self.tick + u64::from(c.id.0)).is_multiple_of(SEARCH_EVERY) {
             c.food = self.nearest_food(k, c);
         }
@@ -1515,13 +1519,16 @@ impl World {
         };
         for y in reach.y0..reach.y1 {
             for x in reach.x0..reach.x1 {
-                let m = self.cells[y * self.width + x].material;
-                if k.edible[usize::from(m.0)] {
+                if self.edible_cell(k, y * self.width + x) {
                     let to = if y < self.surface_row {
                         self.creatures.air
                     } else {
                         self.creatures.water
                     };
+                    let cell = self.cells[y * self.width + x];
+                    if self.plants.part(cell.material).is_some() {
+                        self.graze_plant(cell.state);
+                    }
                     self.write_cell(x, y, to, &mut None);
                     c.satiety = c.satiety.saturating_add(BITE).min(FULL);
                     c.energy = c.energy.saturating_add(BITE_ENERGY).min(ENERGY_RESERVE);
@@ -1559,8 +1566,7 @@ impl World {
                 if Some(i) == c.ignore {
                     continue;
                 }
-                let m = self.cells[i as usize].material;
-                if !k.edible[usize::from(m.0)] {
+                if !self.edible_cell(k, i as usize) {
                     continue;
                 }
                 let (fx, fy) = (
