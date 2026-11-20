@@ -1005,7 +1005,7 @@ stays a material film, not individuals.
     `light`, `nutrient`) sets a target from the mean light and nutrient
     at each plant update (rising over 0.25 above `light`, and from
     `nutrient` down to half of it), and the plant's colouration moves
-    towards it at 1/120 per second, so sampling noise doesn't flicker it.
+    towards it at 1/120 per second (holding within a tint step of a target inside (0, 1)), so sampling noise doesn't flicker it.
     It is saved (format version 8) and hashed when non-zero. Rotala
     (light 0.65, nutrient 0.8: an aquasoil tank's 0.4 is lean for it)
     turns pink-red near the surface and stays green when fertilised;

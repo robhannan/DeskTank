@@ -322,6 +322,51 @@ mod tests {
     }
 
     #[test]
+    fn rejects_bad_plant_colours() {
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 64,
+                height: 32,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let soil = world.materials().id("aquasoil").unwrap();
+        let bed = crate::Rect {
+            x0: 0,
+            y0: 26,
+            x1: 64,
+            y1: 32,
+        };
+        world.fill_rect(bed, soil, crate::Brush::Replace).unwrap();
+        let rotala = world.plant_species().id("rotala").unwrap();
+        world
+            .paint_plant(32, 24, 0, rotala, crate::Propagule::Cuttings)
+            .unwrap();
+        for _ in 0..200 {
+            world.tick();
+        }
+        let id = world.plants().next().unwrap().id.0;
+        let mut good = world.to_v8();
+        let colour = |plant, colour| v8::PlantColour { plant, colour };
+        good.colours = vec![colour(id, 0.5)];
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let loaded = load(good.clone()).unwrap();
+        assert!((loaded.plants().next().unwrap().colour - 0.5).abs() < f32::EPSILON);
+        for bad in [
+            vec![colour(id, 1.5)],
+            vec![colour(id, f32::NAN)],
+            vec![colour(id + 100, 0.5)],
+            vec![colour(id, 0.5), colour(id, 0.25)],
+        ] {
+            let mut s = good.clone();
+            s.colours = bad;
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))));
+        }
+    }
+
+    #[test]
     fn rejects_snapshots_that_dont_fit() {
         let mut world = World::new(
             crate::WorldConfig {

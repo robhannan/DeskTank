@@ -654,12 +654,18 @@ impl World {
         &mut self,
         saved: &[v8::PlantColour],
     ) -> Result<(), SaveError> {
+        let mut last = None;
         for c in saved {
             let invalid =
                 |what: &str| SaveError::Invalid(format!("plant {} colour: {what}", c.plant));
             if !(0.0..=1.0).contains(&c.colour) {
                 return Err(invalid("not within 0..=1"));
             }
+            // Saved in id order, each plant once.
+            if last.is_some_and(|l| l >= c.plant) {
+                return Err(invalid("out of order or repeated"));
+            }
+            last = Some(c.plant);
             let p = self
                 .plants
                 .table
@@ -1297,8 +1303,15 @@ impl World {
         p.counts = [0; 3];
         p.limit = limit;
         let target = s.colouration.map_or(0.0, |c| c.target(means[0], means[1]));
-        let reach = COLOUR_PER_SECOND * dt;
-        p.colour = (p.colour + (target - p.colour).clamp(-reach, reach)).clamp(0.0, 1.0);
+        // Within a tint step of a target inside (0, 1) it holds, so noise in
+        // the samples doesn't flip it across a step (and ask for a frame)
+        // at every update; it always settles fully at 0 or 1.
+        let gap = target - p.colour;
+        let ends = target <= 0.0 || target >= 1.0;
+        if ends || gap.abs() >= 1.0 / TINT_STEPS {
+            let reach = COLOUR_PER_SECOND * dt;
+            p.colour = (p.colour + gap.clamp(-reach, reach)).clamp(0.0, 1.0);
+        }
         if response > 0.0 {
             p.stress = 0.0;
             p.health = (p.health + h.recovery * dt).min(1.0);

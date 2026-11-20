@@ -79,9 +79,12 @@ fn rotala_colours_in_strong_light_with_lean_water() {
 
 #[test]
 fn rich_water_keeps_rotala_green() {
-    let mut w = shallow(8);
+    let mut w = shallow(1);
     run(&mut w, 180);
     let rotala = plant(&w, "rotala");
+    // It grew as well as in lean water (so it is lit enough to colour)...
+    assert!(rotala.health > 0.9 && rotala.size() > 30, "{rotala:?}");
+    // ...but rich water keeps it green.
     assert!(rotala.colour < 0.1, "rotala colour {}", rotala.colour);
 }
 
@@ -101,12 +104,33 @@ fn colouration_is_saved_and_steps_the_plants_version() {
         loaded.tick();
     }
     assert_eq!(loaded.state_hash(), w.state_hash());
-    // A settled, colouring tank asks for a new plant texture at most at
-    // each tint step of each plant, not every update.
-    let start = w.plants_version();
+}
+
+/// Colouring asks for a new plant texture (and a frame) at its tint steps,
+/// and once a plant is within a step of its target, no more.
+#[test]
+fn colouration_steps_the_plants_version_then_settles() {
+    let mut w = shallow(0);
+    run(&mut w, 30);
+    let (start, from) = (w.plants_version(), plant(&w, "rotala").colour);
     run(&mut w, 60);
+    let to = plant(&w, "rotala").colour;
     let bumps = w.plants_version() - start;
-    // In 60 s colouring moves at most 0.5 (16 of the 32 steps); the rest
-    // is room for health steps and new plants.
-    assert!(bumps <= 20, "{bumps} version bumps in 60 s");
+    let steps = u64::from(desktank_sim::tint_step(to) - desktank_sim::tint_step(from));
+    assert!(steps >= 4, "{from} -> {to}");
+    // One update can cross two steps (it moves up to 5/120), so at least a
+    // bump per two steps, and no more than one per step (growth and health
+    // add a few).
+    assert!(
+        bumps * 2 >= steps && bumps <= steps + 8,
+        "{bumps} bumps for {steps} steps"
+    );
+    // Near its target it holds within a step, so sampling noise doesn't
+    // flip it across one at every update (24 updates in 120 s): at most
+    // the odd step as the plant grows into more light.
+    run(&mut w, 600);
+    let start = w.plants_version();
+    run(&mut w, 120);
+    let bumps = w.plants_version() - start;
+    assert!(bumps <= 2, "{bumps} bumps in 120 s near the target");
 }
