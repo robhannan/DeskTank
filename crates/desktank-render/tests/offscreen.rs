@@ -102,17 +102,23 @@ fn draws_cells_scaled_and_letterboxed() {
     for (got, want) in backdrop.iter().zip([5u8, 10, 18]) {
         assert!(got.abs_diff(want) <= 1, "backdrop {backdrop:?}");
     }
-    // The rock cell covers pixels 20..24 × 20..24, in one of its shades.
-    let r = px(&img, 21, 22);
-    for (got, base) in r.iter().zip(rock_colour) {
-        assert!(got.abs_diff(base) <= 16, "rock {r:?} vs {rock_colour:?}");
-    }
-    // Its 4×4 block is uniform (nearest, integer scale).
+    // The rock cell covers pixels 20..24 × 20..24, shaded at 4×4 sub-cell
+    // resolution (top edge lit, bottom edge shadowed, every pixel near rock).
     for y in 20..24 {
         for x in 20..24 {
-            assert_eq!(px(&img, x, y), r);
+            let p = px(&img, x, y);
+            for (got, base) in p.iter().zip(rock_colour) {
+                assert!(
+                    got.abs_diff(base) <= 32,
+                    "rock ({x},{y}) {p:?} vs {rock_colour:?}"
+                );
+            }
         }
     }
+    assert!(
+        px(&img, 21, 20)[0] > px(&img, 21, 23)[0],
+        "rock top bevel should be brighter than bottom edge"
+    );
     // Water around it is blue.
     let [wr, _, wb] = px(&img, 9, 1);
     assert!(wb > wr);

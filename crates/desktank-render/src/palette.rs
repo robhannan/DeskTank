@@ -3,10 +3,87 @@
 //! from their species instead (`plants.rs`, T6d), so their columns only
 //! hold the material colour.
 
-use desktank_sim::{GLUED_VARIANT_BIT, MaterialTable, MovementClass};
+use desktank_sim::{GLUED_VARIANT_BIT, Material, MaterialTable, MovementClass};
 
 /// Table side: one column per material ID, one row per variant byte.
 pub const SIDE: usize = 256;
+
+/// How the fragment shader textures a non-plant material at scale ≥ 2,
+/// stored in the palette texture's alpha byte (`tank.wgsl` `STYLE_*`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroundStyle {
+    /// Generic cell (food, devices, propagules, eggs): fine sub-cell grain.
+    Default = 0,
+    /// Water: sub-cell depth gradient, subtle shimmer and surface meniscus.
+    Water = 1,
+    /// Air: clean backdrop with subtle sub-cell grain and gentle sky lift.
+    Air = 2,
+    /// Liquid fertiliser: depth-tinted liquid with wispy plume variation.
+    Fertiliser = 3,
+    /// Sand: fine multi-grain quartz texture with top-edge water lighting.
+    Sand = 4,
+    /// Gravel: rounded pebbles with per-stone variation and dark crevices.
+    Gravel = 5,
+    /// Aquasoil: dark rounded matte soil pellets with top-edge lighting.
+    Aquasoil = 6,
+    /// Rock: faceted stone strata, fine grain and edge bevels (keeps glue tint).
+    Rock = 7,
+    /// Driftwood: flowing wood grain fibres and bark edges (keeps glue tint).
+    Driftwood = 8,
+    /// Air and CO₂ bubbles: rounded translucent droplet with specular glint.
+    Bubble = 9,
+    /// Algae: fine mottled organic film that frays into water.
+    Algae = 10,
+    /// Detritus, dead plant matter and waste: fine organic mulm specks.
+    Detritus = 11,
+}
+
+impl GroundStyle {
+    /// Every style with its WGSL constant name (checked by `renderer.rs`).
+    #[cfg(test)]
+    pub const ALL: [(&'static str, Self); 12] = [
+        ("STYLE_DEFAULT", Self::Default),
+        ("STYLE_WATER", Self::Water),
+        ("STYLE_AIR", Self::Air),
+        ("STYLE_FERTILISER", Self::Fertiliser),
+        ("STYLE_SAND", Self::Sand),
+        ("STYLE_GRAVEL", Self::Gravel),
+        ("STYLE_AQUASOIL", Self::Aquasoil),
+        ("STYLE_ROCK", Self::Rock),
+        ("STYLE_DRIFTWOOD", Self::Driftwood),
+        ("STYLE_BUBBLE", Self::Bubble),
+        ("STYLE_ALGAE", Self::Algae),
+        ("STYLE_DETRITUS", Self::Detritus),
+    ];
+
+    /// Picks the sub-cell style for `m`.
+    #[must_use]
+    pub fn for_material(m: &Material) -> Self {
+        match m.name.as_str() {
+            "water" => Self::Water,
+            "air" => Self::Air,
+            "liquid_fertiliser" => Self::Fertiliser,
+            "sand" => Self::Sand,
+            "gravel" => Self::Gravel,
+            "aquasoil" => Self::Aquasoil,
+            "rock" => Self::Rock,
+            "driftwood" => Self::Driftwood,
+            "air_bubble" | "co2_bubble" => Self::Bubble,
+            "algae" => Self::Algae,
+            "detritus" | "dead_plant" | "waste" => Self::Detritus,
+            _ if m.class == MovementClass::Liquid && m.density >= DEPTH_TINT_DENSITY => Self::Water,
+            _ => Self::Default,
+        }
+    }
+
+    /// Whether this style darkens with depth below the water surface.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn is_depth_tinted(self) -> bool {
+        matches!(self, Self::Water | Self::Fertiliser)
+    }
+}
 
 /// Brightness of each shade relative to the material colour, in 1/256. A
 /// cell picks one from its variant byte: mostly the base, sometimes a darker
@@ -37,19 +114,19 @@ pub fn shade(variant: u8) -> usize {
     }
 }
 
-/// Builds the RGBA table, row-major with rows = variants. Alpha is 255 for
-/// materials that darken with depth and 0 otherwise (the shader's flag;
-/// output is opaque). Rigid materials shade odd variants (glued bodies)
-/// with an amber tint.
+/// Builds the RGBA table, row-major with rows = variants. Alpha holds the
+/// material's [`GroundStyle`] discriminant (the shader's flag; output is
+/// opaque). Rigid materials shade odd variants (glued bodies) with an amber
+/// tint.
 #[must_use]
 pub fn build(materials: &MaterialTable) -> Vec<u8> {
     let mut columns = [[UNKNOWN; 4]; SIDE];
-    let mut tinted = [false; SIDE];
+    let mut styles = [GroundStyle::Default; SIDE];
     let mut rigid = [false; SIDE];
     for m in materials.iter() {
         let i = usize::from(m.id.0);
         columns[i] = SHADES.map(|k| m.colour.map(|c| scale(c, k)));
-        tinted[i] = m.class == MovementClass::Liquid && m.density >= DEPTH_TINT_DENSITY;
+        styles[i] = GroundStyle::for_material(m);
         rigid[i] = m.class == MovementClass::Rigid;
     }
     let mut out = vec![0; SIDE * SIDE * 4];
@@ -64,7 +141,7 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
                 rgb = glue(rgb);
             }
             let [r, g, b] = rgb;
-            let flag = if tinted[material] { 255 } else { 0 };
+            let flag = styles[material] as u8;
             px.copy_from_slice(&[r, g, b, flag]);
         }
     }
@@ -100,7 +177,7 @@ mod tests {
         let sand = mats.get(mats.id("sand").unwrap()).unwrap();
         let [r, g, b, a] = texel(&table, sand.id.0, 0);
         assert_eq!([r, g, b], sand.colour);
-        assert_eq!(a, 0);
+        assert_eq!(a, GroundStyle::Sand as u8);
     }
 
     #[test]
@@ -137,9 +214,39 @@ mod tests {
         let mats = MaterialTable::builtin().unwrap();
         let table = build(&mats);
         for m in mats.iter() {
-            let tinted = texel(&table, m.id.0, 0)[3] == 255;
+            let style = GroundStyle::for_material(m);
+            assert_eq!(texel(&table, m.id.0, 0)[3], style as u8, "{}", m.name);
             let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
-            assert_eq!(tinted, dense, "{}", m.name);
+            assert_eq!(style.is_depth_tinted(), dense, "{}", m.name);
+        }
+    }
+
+    #[test]
+    fn ground_styles_match_expected_materials() {
+        let mats = MaterialTable::builtin().unwrap();
+        let table = build(&mats);
+        let expected = [
+            ("water", GroundStyle::Water),
+            ("air", GroundStyle::Air),
+            ("liquid_fertiliser", GroundStyle::Fertiliser),
+            ("sand", GroundStyle::Sand),
+            ("gravel", GroundStyle::Gravel),
+            ("aquasoil", GroundStyle::Aquasoil),
+            ("rock", GroundStyle::Rock),
+            ("driftwood", GroundStyle::Driftwood),
+            ("air_bubble", GroundStyle::Bubble),
+            ("co2_bubble", GroundStyle::Bubble),
+            ("algae", GroundStyle::Algae),
+            ("detritus", GroundStyle::Detritus),
+            ("dead_plant", GroundStyle::Detritus),
+            ("waste", GroundStyle::Detritus),
+            ("flake_food", GroundStyle::Default),
+            ("bubbler", GroundStyle::Default),
+        ];
+        for (name, style) in expected {
+            let id = mats.id(name).unwrap().0;
+            assert_eq!(texel(&table, id, 0)[3], style as u8, "{name}");
+            assert_eq!(texel(&table, id, 1)[3], style as u8, "{name} (glued)");
         }
     }
 
