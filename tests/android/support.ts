@@ -60,9 +60,9 @@ export function appFatals(crash: string, main: string): string[] {
       if (next.slice(0, end === -1 ? next.length : end).some((l) => ours.test(l))) {
         found.push(line, ...next.slice(0, 5));
       }
-    } else if (line.includes(`>>> ${PACKAGE} <<<`) || (/Fatal signal/.test(line) && line.includes(PACKAGE))) {
-      // A native crash's tombstone header, or libc's line naming our process
-      // (a release build aborts on a panic).
+    } else if (line.includes(`>>> ${PACKAGE} <<<`)) {
+      // A native crash's tombstone header (a release build aborts on a
+      // panic; libc's own "Fatal signal" line truncates the process name).
       found.push(line);
     } else if (/ E DeskTank\s*: panic: /.test(line)) {
       // The host's panic hook (crates/desktank-android).

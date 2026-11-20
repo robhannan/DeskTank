@@ -29,6 +29,18 @@ async function logcat(): Promise<{ crash: string; main: string }> {
   };
 }
 
+async function waitForFirstFrame(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { crash, main } = await logcat();
+    const fatals = appFatals(crash, main);
+    if (fatals.length > 0) throw new Error(`the app crashed before its first frame:\n${fatals.join("\n")}`);
+    if (/ I DeskTank\s*: first frame /.test(main)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`no first frame within ${timeoutMs / 1000} s`);
+}
+
 async function expectNoFatals(): Promise<void> {
   const { crash, main } = await logcat();
   expect(appFatals(crash, main)).toEqual([]);
@@ -59,11 +71,9 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
   // `cmd dreams start-dreaming` (PROGRESS, A0).
   await shell("service", "call", "dreams", "1");
   await expect.poll(currentDream, { timeout: 30_000 }).toBe(DREAM_FULL);
-  await expect
-    .poll(async () => (await adb("logcat", "-d", "-s", "DeskTank")).includes("first frame"), {
-      timeout: 120_000,
-    })
-    .toBe(true);
+  // The first draw compiles the pipelines (seconds on a device). Fail at
+  // once, with the lines, if the app crashes meanwhile.
+  await waitForFirstFrame(120_000);
 
   // The tank is drawn: mostly water, with sand along the bottom. The Dream
   // window fades in over what was on screen, so poll until the frame
