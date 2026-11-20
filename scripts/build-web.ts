@@ -12,6 +12,7 @@
 // Needs the wasm32-unknown-unknown target (added here if missing) and the
 // wasm-bindgen CLI at exactly the version in Cargo.lock:
 //   cargo install --locked wasm-bindgen-cli --version <version>
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { $, cd, fs, glob, path, which, echo, chalk } from "zx";
 
@@ -67,8 +68,23 @@ await fs.copy(bindgen, path.join(site, "pkg"), { filter: (src: string) => !src.e
 // own tsc, so the script also works outside `pnpm build:web`.
 await $`${path.join(root, "node_modules", ".bin", "tsc")} -p web/tsconfig.json`;
 await fs.copy(path.join(root, "web"), site, {
-  filter: (src: string) => !src.endsWith(".ts") && path.basename(src) !== "tsconfig.json",
+  filter: (src: string) => !src.endsWith(".ts") && path.basename(src) !== "tsconfig.json" && path.basename(src) !== "worker",
 });
+
+// Stamp the service worker with the deployable files and their contents.
+// Including the worker logic gives each changed build its own cache.
+await $`${path.join(root, "node_modules", ".bin", "tsc")} -p web/worker/tsconfig.json`;
+const workerPath = path.join(site, "sw.js");
+const worker = await fs.readFile(workerPath, "utf8");
+const files = (await glob("**/*", { cwd: site, onlyFiles: true })).sort()
+  .filter((file) => file !== "sw.js" && !file.endsWith(".map"));
+const hash = createHash("sha256").update(worker);
+for (const file of files) {
+  const bytes = await fs.readFile(path.join(site, file));
+  hash.update(JSON.stringify([file, bytes.length])).update(bytes);
+}
+await fs.writeFile(workerPath,
+  `const BUILD_HASH = ${JSON.stringify(hash.digest("hex"))};\nconst ASSETS = ${JSON.stringify(files)};\n${worker}`);
 
 // Transfer size (SPEC §6.1): every file as a browser would fetch it, gzipped
 // at the highest level (a static host's on-the-fly gzip is at most this good).
