@@ -76,7 +76,8 @@ pub struct Renderer {
     plants: wgpu::Texture,
     plant_tints: PlantTints,
     /// Material ids of the root, stem and leaf parts and of water, then of
-    /// the runner part, for the shader's plant shapes (-1 if missing).
+    /// the runner and floating leaf parts, for the shader's plant shapes
+    /// (-1 if missing).
     plant_parts: [f32; 8],
     /// Uniform bytes last written.
     view: Vec<u8>,
@@ -96,8 +97,8 @@ impl Renderer {
         let plants = create_plants(gpu, &plant_tints);
         let species = create_species(gpu, world);
         let material = |name: &str| world.materials().id(name).map_or(-1.0, |m| f32::from(m.0));
-        let [root, stem, leaf, runner] = Part::ALL.map(|p| material(p.material_name()));
-        let plant_parts = [root, stem, leaf, material("water"), runner, 0.0, 0.0, 0.0];
+        let [root, stem, leaf, runner, float] = Part::ALL.map(|p| material(p.material_name()));
+        let plant_parts = [root, stem, leaf, material("water"), runner, float, 0.0, 0.0];
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
         let atlas = Atlas::build(world.species());

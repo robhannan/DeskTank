@@ -54,7 +54,8 @@ struct View {
     // Material ids of the plant parts root (x), stem (y) and leaf (z), and
     // of water (w); -1 if missing.
     plant_parts: vec4<f32>,
-    // Material id of the runner part (x; -1 if missing).
+    // Material ids of the runner (x) and floating leaf (y) parts; -1 if
+    // missing.
     plant_parts2: vec4<f32>,
 };
 
@@ -91,6 +92,7 @@ const PART_ROOT: i32 = 0;
 const PART_STEM: i32 = 1;
 const PART_LEAF: i32 = 2;
 const PART_RUNNER: i32 = 3;
+const PART_FLOAT: i32 = 4;
 // Species texture layout (plants.rs).
 const RAMP: i32 = 8;
 const SHAPES_COLUMN: i32 = 24;
@@ -104,6 +106,8 @@ const LEAF_RIBBON: i32 = 4;
 const LEAF_SWORD: i32 = 5;
 const LEAF_GRASS: i32 = 6;
 const LEAF_PAD: i32 = 7;
+const LEAF_LENS: i32 = 8;
+const LEAF_DISC: i32 = 9;
 const STEM_STALK: i32 = 0;
 const STEM_THICK: i32 = 1;
 const STEM_FUZZ: i32 = 2;
@@ -229,6 +233,9 @@ fn part_of(t: vec4<f32>) -> i32 {
     }
     if m == view.plant_parts2.x {
         return PART_RUNNER;
+    }
+    if m == view.plant_parts2.y {
+        return PART_FLOAT;
     }
     return -1;
 }
@@ -425,6 +432,40 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                 covered = quarter.x >= left_edge && quarter.x <= left_edge + width;
                 step = step - select(0, 1, face) + select(0, 1, wide)
                     + select(-1, 1, quarter.x == left_edge);
+            }
+        }
+    } else if part == PART_FLOAT {
+        // A floating leaf (T6c part 2) lying on the water line, lit on top,
+        // rounded where the row of leaves ends.
+        let left = kin(at, vec2<i32>(-1, 0), me).x == PART_FLOAT;
+        let right = kin(at, vec2<i32>(1, 0), me).x == PART_FLOAT;
+        let end = select(!right, !left, sub.x == 0);
+        let disc = shapes.x == LEAF_DISC;
+        step += 2 + select(-1, 1, top) + select(0, 1, (hash(at) & 3u) == 0u);
+        if disc {
+            // A round pad over a dark, spongy underside.
+            covered = !(top && end);
+            step -= select(0, 2, !top);
+        } else {
+            // A small flat frond, its lower edge rounded at the ends.
+            covered = top || !end;
+        }
+        if fine {
+            let edge = (quarter.x == 0 && !left) || (quarter.x == 3 && !right);
+            if disc {
+                // A glossy pad: a lit rim, a pale vein, a dark spongy
+                // underside, rounded at both ends.
+                covered = !(edge && (quarter.y == 0 || quarter.y == 3));
+                step = step + select(0, 1, quarter.y == 0) - select(0, 3, quarter.y == 3)
+                    + select(0, 2, quarter.y == 1 && quarter.x == 1);
+            } else {
+                // A flat oval frond three quarters thick, tapered at its
+                // ends, the water showing under it but for the root's
+                // stalk.
+                let stalk = quarter.y == 3 && (quarter.x == 1 || quarter.x == 2)
+                    && kin(at, vec2<i32>(0, 1), me).x == PART_ROOT;
+                covered = (quarter.y <= 2 && !(edge && quarter.y != 1)) || stalk;
+                step += select(0, 1, quarter.y == 0) - select(0, 1, quarter.y == 2) - select(0, 2, stalk);
             }
         }
     } else if part == PART_RUNNER {
@@ -647,8 +688,9 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
         }
     }
     let tint = plant.rgb;
-    // Runners are drawn from the stem's ramp.
-    let ramp = select(part, PART_STEM, part == PART_RUNNER);
+    // Runners are drawn from the stem's ramp, floating leaves from the
+    // leaf's.
+    let ramp = select(select(part, PART_STEM, part == PART_RUNNER), PART_LEAF, part == PART_FLOAT);
     if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
         let rgb = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;

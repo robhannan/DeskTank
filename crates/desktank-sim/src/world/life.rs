@@ -1016,10 +1016,28 @@ impl World {
                 life.current_blocks.push(b);
             }
         }
-        // A resting field may now be carried by the new current.
+        // A resting field may now be carried by the new current, and a
+        // resting floater set drifting (T6c part 2).
         life.nutrient.wake();
         life.co2.wake();
         life.version += 1;
+        self.wake_rafts();
+    }
+
+    /// The sideways current at cell `(x, y)`, in cells per second (+ =
+    /// rightwards; 0 outside the grid or with no current).
+    pub(super) fn current_at_cell(&self, x: usize, y: usize) -> f32 {
+        let life = &self.life;
+        if life.current_blocks.is_empty() {
+            return 0.0;
+        }
+        let fw = life.light.width();
+        let (fx, fy) = (x / FIELD_SCALE, y / FIELD_SCALE);
+        if fx < fw && fy < life.light.height() {
+            life.current[fy * fw + fx]
+        } else {
+            0.0
+        }
     }
 
     /// Moves floating and liquid cells along the current: each one swaps

@@ -34,7 +34,7 @@ It can run as any combination of four desktop **display modes**, in a browser ta
 | **Screensaver** | A full-screen tank when the machine is idle. |
 | **Lock screen** | The tank on the lock screen, as far as each OS allows (§3.4). |
 | **Web** | The same tank, full-page in a browser tab on desktop or mobile, hosted on GitHub Pages (§3.5, D15). |
-| **Android** | The same tank as the screensaver (a Dream) on Android TV and phones, then as an app and a live wallpaper (§3.6, D22). |
+| **Android** | The same tank as the screensaver (a Dream) on Android TV and phones, then as an app and a live wallpaper (§3.6, D23). |
 
 ### Principles
 
@@ -65,7 +65,7 @@ It can run as any combination of four desktop **display modes**, in a browser ta
 ### Non-goals (v1)
 
 - A native iOS app. iPhones and iPads are covered by the web version
-  (D15). Android has a native host, led by its screensaver (D22).
+  (D15). Android has a native host, led by its screensaver (D23).
 - 3D rendering. The tank is drawn as a 2D picture; discrete depth bands
   for movement, collision and occlusion are in scope (D21).
 - Online features, accounts or telemetry.
@@ -734,6 +734,9 @@ target computes the same bits.
       band in version 4, D21; a home owning crab's home in version 5,
       migrating version 4 creatures without one; each creature's name in
       version 6, T9 part 3, migrating version 5 creatures unnamed);
+    - each floater's raft, its motion as a buoyant body (offset,
+      velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
+      tank had no floaters and migrates with none);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -829,7 +832,8 @@ stays a material film, not individuals.
     splits a body: at the next tick, the piece still joined to the base
     keeps the id, and each other 4-connected piece becomes a new plant of
     the same species (a fragment, parent id set) if the species
-    propagates by fragments and the piece holds a stem or rhizome;
+    propagates by fragments and the piece holds a stem or rhizome (or a
+    floater's floating leaf, which floats on as a buoyant body, D22);
     otherwise it becomes dead plant matter. A fragment drifts or sinks
     like a cutting until it roots.
   - **Health and death.** Health falls while the plant's conditions are
@@ -883,8 +887,35 @@ stays a material film, not individuals.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.
-    Whether floaters hold to the surface by a rule or as buoyant bodies is
-    settled in T6c.
+    *T6c part 2 (D22):* a floater is a **buoyant body**, not a cell rule.
+    `[floater]` sets `fronds` (floating leaf cells side by side, at most
+    8), `roots` (hanging strands) and `root_length` (at most 32 cells).
+    Its leaves are the `floating_leaf` part material (density 0.75,
+    opacity 0.95), grown only into water open to the air above, so they
+    keep to the top water row; roots hang straight down through water.
+    The plant table owns the plant (species, health, part counts, growth,
+    cutting, death); a **raft** beside the table, by plant id, holds only
+    its motion (sub-cell offset and velocity, as a rigid body's, D17,
+    T4c). Each tick, with the rigid bodies, an awake raft feels its
+    leaves' buoyancy against the fluid beside each row, is pulled towards
+    the current's mean speed over its cells, and moves a cell at a time
+    into fluid or floating cells (which take the cells it leaves), stopped
+    by grains, solids, bodies, other plants and the glass; it sleeps at
+    rest and wakes when it grows, is cut, work reaches its chunks or the
+    current changes. Because the raft holds no reference shape, growth on
+    the moving plant needs no re-anchoring: the next step works on
+    whatever cells it has. Once it has its fronds (or its mature size) it
+    **buds** a new plant (one floating leaf beside an end frond; parent id
+    set, generation + 1, moving as its parent does), never past the plant
+    cap. A floater lies in one depth band (D21), from its plant id, so
+    fish pass under it in the other bands. Tools: a scoop or cut splits
+    it as any plant (a piece holding a floating leaf lives on as a
+    fragment with its own raft, moving as its parent did, and a floater
+    left with no floating leaf dies); the net takes
+    only creatures. Duckweed (*Lemna minor*) and Amazon frogbit
+    (*Limnobium laevigatum*) ship (ids 13, 14). Rafts are saved (format
+    version 7) and hashed with the plant table, so a saved tank drifts on
+    exactly.
   - **Epiphyte and mat:** attaches to rock, driftwood or glued bodies by
     a creeping rhizome with leaves (anubias type) or as a mat (moss), and
     falls off when nothing holds it. Whether a plant on a moving body
@@ -962,7 +993,7 @@ stays a material film, not individuals.
 | Lock screen | ⚠️ saver shown while locked | ⚠️ static snapshot image only 🔍 | ⚠️ via saver | ⚠️ `ext-session-lock-v1` (stretch) |
 | Interact (modifier key) | ✅ modifier polling 🔍 | ✅ | ✅ | ⚠️ tray toggle or compositor key binding to the CLI |
 
-Android (§3.6, D22): screensaver ✅ as a Dream (⚠️ Google TV hides
+Android (§3.6, D23): screensaver ✅ as a Dream (⚠️ Google TV hides
 third-party screensavers from its picker 🔍); wallpaper ✅ as a live
 wallpaper on phones and tablets; window ✅ as an app; overlay and lock
 screen ❌.
@@ -1197,7 +1228,7 @@ modes; it is a "window mode" in a page.
   worker cache is versioned by build hash and old caches are deleted on
   activate.
 
-### 3.6 Android (D22)
+### 3.6 Android (D23)
 
 Android is a native target, led by the screensaver: Android TV first,
 phones and tablets second. It uses the same simulation, renderer and save
@@ -1458,7 +1489,7 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 | Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable; `Cargo.lock` committed |
 | GPU | `wgpu` 30 | Metal, DX12 and Vulkan natively; WebGPU with a WebGL2 fallback on the web; offscreen rendering for capture and tests |
 | Web | `wasm-bindgen`, `web-sys`, `js-sys` | wasm-bindgen CLI pinned to the crate version; built by `scripts/build-web.ts` |
-| Android | `jni`, `ndk` (`NativeWindow`), `cargo-ndk`; Gradle with the Android Gradle Plugin and Kotlin | Kotlin only for the platform classes Rust can't provide (D22); versions pinned in the Gradle version catalogue |
+| Android | `jni`, `ndk` (`NativeWindow`), `cargo-ndk`; Gradle with the Android Gradle Plugin and Kotlin | Kotlin only for the platform classes Rust can't provide (D23); versions pinned in the Gradle version catalogue |
 | Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit minor and major updates (0.x minors are breaking) until we choose to upgrade |
 | Wayland | `smithay-client-toolkit` 0.21 + `calloop` | Layer-shell and idle-notify |
 | macOS FFI | `objc2` 0.6 + `objc2-app-kit` / `objc2-screen-saver` | |
@@ -1605,7 +1636,7 @@ the app; there is no full-screen check or interact modifier.
   - Homebrew (where the cask can strip quarantine) and winget soften
     this.
   - Signing can be added later without changing the pipeline shape.
-  - Android (D22): every APK must be signed to install, so releases are
+  - Android (D23): every APK must be signed to install, so releases are
     signed with a self-generated release key held as a CI secret (PR
     builds use a debug key). Sideloading needs "install unknown apps"
     for the browser or file manager; the README covers it, and
@@ -1827,6 +1858,12 @@ Each package depends only on the packages before it.
   Carlo; reference images `plant_rosettes` and `plant_carpets`; runners
   root children with the parent id set; `settled_500_plants` grows every
   form so far in 11.5 µs.
+  *Part 2 done:* floaters as buoyant bodies (D22, §2.7
+  [Growth forms](#growth-forms)), the `floating_leaf` part, budding, and
+  duckweed and frogbit; reference image `plant_floaters`; floaters rest
+  in the top water row, drift with the current, shade the water below
+  (light under a frogbit strip about 58% of the open water's) and bud
+  children with the parent id set within the cap; save format version 7.
 - [ ] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night
@@ -2154,7 +2191,7 @@ Each package depends only on the packages before it.
   `start_url` and `scope` of `./`) and an active service worker; after
   `context.setOffline(true)`, a reload loads the page and it runs.
 
-### MA — Android (D22)
+### MA — Android (D23)
 
 - [ ] **A0 Android spike and skeleton** (findings in PROGRESS). A Kotlin
   `DreamService` hands its surface to a minimal `desktank-android`
@@ -2277,14 +2314,15 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D12 | **Water level configurable**; species declare depth and surface needs. |
 | D13 | **Colour genetics**: offspring inherit morphs; mixed lines revert to wildtype (e.g. neocaridina). |
 | D14 | **No code signing** for now. |
-| D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal (revised by D22 for Android). |
+| D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal (revised by D23 for Android). |
 | D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
 | D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole, can topple and can embed in loose substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
 | D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. Occlusion (part 2, 2026-11-20) needs no second grid pass or depth buffer: the grid is drawn once, sprites follow back to front, and each sprite fragment checks the cell under it in a per-cell band texture, dropping itself where a plant cell in a nearer band covers that texel (its shape is evaluated as the grid shader does). One grid pass and one sprite draw per frame, whatever the number of creatures or bands; per-band plant layers would cost up to eight grid passes, and splitting the grid in two works for one depth only. A subtle depth cue fades creatures and plant cells towards the water colour with depth. |
-| D22 | **Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal. |
+| D22 | **Floaters are buoyant bodies** (2026-11-20). A floating plant (duckweed, frogbit) is held at the surface and carried by the current as one object, built on the rigid-body motion (D17, T4c), not by a cell rule that pins floating leaves to the top water row. The plant table stays its owner (species, health, growth, budding, cutting, death); a per-plant raft holds only its motion (sub-cell offset and velocity), so cells growing onto it or cut from it need no re-anchoring. A rule would have kept leaves at the surface but let a plant's roots and leaves part when the current carried some cells and not others; as a body the whole plant moves together, rests by its leaves' buoyancy, falls back when lifted out, and stops at the glass. Rafts are saved (format version 7) and hashed. Epiphytes on moving bodies are settled with T6c part 3. |
+| D23 | **Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
@@ -2296,4 +2334,4 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
    direction yet. A placeholder icon will be used.
 3. **Google Play.** Whether to publish on Google Play (a developer
    account, the TV app review, a privacy policy) or stay with sideloaded
-   APKs (D22). Deferred until A5.
+   APKs (D23). Deferred until A5.
