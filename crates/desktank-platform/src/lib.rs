@@ -8,6 +8,7 @@
 // needs a `// SAFETY:` comment (SPEC §4.1).
 #![allow(unsafe_code)]
 
+mod power;
 mod stats;
 mod store;
 
@@ -18,6 +19,7 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+pub use power::{PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSignals, PowerSource};
 pub use stats::{ProcessStats, process_stats};
 pub use store::{KEEP, Loaded, SaveStore, data_dir};
 
