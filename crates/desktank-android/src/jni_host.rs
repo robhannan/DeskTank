@@ -3,8 +3,9 @@
 //!
 //! Every callback arrives on the app's main thread and only posts a command
 //! to the render thread, which owns the GPU device, the surfaces and the
-//! tank. `surfaceDestroyed` alone waits for its command, so the surface is
-//! gone before the callback returns. The render thread sleeps in a channel
+//! tank. `surfaceDestroyed` alone waits for its command (up to
+//! [`DESTROY_WAIT`]), so the surface is normally gone before the callback
+//! returns; a first draw still compiling its pipelines can outlast the wait. The render thread sleeps in a channel
 //! receive: with no Dream drawing it blocks until the next callback, and
 //! while one draws it wakes only when the tank's pacer asks (the 20 Hz
 //! simulation tick, frames capped at 30 fps).
@@ -98,8 +99,6 @@ struct DreamSurface {
     surface: TankSurface,
     /// When the surface was created, until its first frame is logged.
     created_at: Option<Instant>,
-    /// A draw on it has failed and been logged; later failures aren't.
-    failed: bool,
 }
 
 /// The render thread's state.
@@ -204,7 +203,6 @@ impl Host {
                     DreamSurface {
                         surface,
                         created_at: Some(created_at),
-                        failed: false,
                     },
                 );
             }
@@ -275,16 +273,22 @@ impl Host {
     /// Advances and draws the active Dream's tank, if a Dream is drawing.
     /// Returns when to call again, or `None` to idle until a callback.
     fn frame(&mut self) -> Option<Duration> {
-        let Some((dream, size)) = self.dreams.active() else {
-            // Not visible: world time stops (SPEC §6.2) and nothing runs.
+        let wake_at = self.draw_active();
+        if wake_at.is_none() {
+            // Nothing drawing: world time stops (SPEC §6.2) and nothing runs.
             if let Some(tank) = &mut self.tank {
                 tank.pause();
             }
             self.drawn = None;
-            return None;
-        };
-        // No device or no surface means creating them failed (logged);
-        // nothing can draw until the next surface.
+        }
+        wake_at
+    }
+
+    /// [`Host::frame`]'s work while a Dream can draw; `None` if none can.
+    fn draw_active(&mut self) -> Option<Duration> {
+        let (dream, size) = self.dreams.active()?;
+        // No device or no surface means creating them failed (logged), or a
+        // draw failed; nothing can draw until the next surface.
         let (_, gpu) = self.gpu.as_ref()?;
         let s = self.surfaces.get_mut(&dream)?;
         if self.tank.is_none() {
@@ -334,10 +338,11 @@ impl Host {
                 // next tick tries again.
                 Ok(false) => {}
                 Err(e) => {
-                    if !s.failed {
-                        s.failed = true;
-                        log::error!("draw failed: {e}");
-                    }
+                    // A validation error, not a transient: drop the surface
+                    // rather than retry it every tick.
+                    log::error!("draw failed, dropping the surface: {e}");
+                    self.surfaces.remove(&dream);
+                    return None;
                 }
             }
         }
