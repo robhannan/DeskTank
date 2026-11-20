@@ -636,7 +636,7 @@ mod saves {
     }
 
     /// The native T8 fixture (`desktank-sim`'s `busy` scene, seed 1, 1200
-    /// ticks) and its state hash; `tests/web/saves.spec.mjs` imports the
+    /// ticks) and its state hash; `tests/web/saves.spec.ts` imports the
     /// same file on the web and checks the same hash.
     const NATIVE_FIXTURE: &str = "../desktank-sim/tests/fixtures/v1.dtank";
     const NATIVE_HASH: &str = "0b5b1fa4ab04c681";

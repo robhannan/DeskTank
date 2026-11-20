@@ -2,7 +2,7 @@
 //!
 //! A [`wasm-bindgen`](https://docs.rs/wasm-bindgen) wrapper that drives the
 //! loop-agnostic [`desktank_render::Tank`] on a page's canvas. The page
-//! (`web/main.js`) owns the `requestAnimationFrame` loop, the DOM controls,
+//! (`web/main.ts`) owns the `requestAnimationFrame` loop, the DOM controls,
 //! gesture recognition (touch), visibility and battery signals; this crate
 //! owns the world, the pacing (a fixed 20 Hz tick, frames capped at 30 fps and
 //! drawn only when something changed), the interact tools and the GPU:
