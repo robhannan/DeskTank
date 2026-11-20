@@ -723,7 +723,8 @@ fn bodies_in_disc(world: &World, c: (i64, i64), radius: u32) -> Vec<BodyId> {
 }
 
 /// Erases a disc like [`World::paint`]'s: air above the water line and
-/// water below, cell by cell.
+/// water below, cell by cell, then carves the disc's round edge into the
+/// rigid cells left around it ([`World::carve`]).
 fn scoop(world: &mut World, c: (i64, i64), radius: u32) -> usize {
     let table = world.materials();
     let (Some(air), Some(water)) = (table.id("air"), table.id("water")) else {
@@ -749,6 +750,7 @@ fn scoop(world: &mut World, c: (i64, i64), radius: u32) -> usize {
             }
         }
     }
+    world.carve(c.0, c.1, radius);
     changed
 }
 

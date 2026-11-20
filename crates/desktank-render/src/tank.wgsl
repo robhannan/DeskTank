@@ -3,7 +3,8 @@
 // palette, darkens water with depth and tints by the time of day. Plant
 // cells (T6b, T6d) are drawn from their species instead, at two texels per
 // cell side like the sprites, or four at scales divisible by four: the
-// cell's state bytes are its plant id, whose texel in the plant texture
+// cell's state bytes are its plant id (a rigid cell's are its sub-cell
+// outline mask instead, see `outline_of`), whose texel in the plant texture
 // holds its health, colouration and species id; the species texture holds
 // the colour ramps, part shapes and colouration colour. A plant shifts
 // towards its colouration colour (strong light, lean water), pales,
@@ -416,28 +417,101 @@ fn loose_top_at(at: vec2<i32>, mat: i32, open_up: bool, quarter: vec2<i32>, fine
     return loose_top(true, open_l, open_r, at, quarter, fine);
 }
 
-// Whether the texel at `quarter` falls in a bevelled-off convex corner of a
-// rigid cell (rock, driftwood): a corner is cut when both sides meeting there
-// face open fluid, as a 2-texel chamfer at 4x (1 sub-cell at 2x).
-fn rigid_cut(at: vec2<i32>, mat: i32, quarter: vec2<i32>, fine: bool) -> bool {
-    let q = select(quarter / 2, quarter, fine);
-    let last = select(1, 3, fine);
-    let reach = select(1, 2, fine);
-    let left = q.x < reach;
-    let right = last - q.x < reach;
-    let top = q.y < reach;
-    let bottom = last - q.y < reach;
-    if !(left || right) || !(top || bottom) {
-        return false;
+// A rigid cell's (rock, driftwood) sub-cell outline: bit `qy * 4 + qx` per
+// quarter, 0xffff when whole. The renderer packs it into the state bytes in
+// place of the body id (grid.rs `pack`, the sim's `world::hardscape`).
+fn outline_of(t: vec4<f32>) -> u32 {
+    return u32(round(t.b * 255.0)) | (u32(round(t.a * 255.0)) << 8u);
+}
+
+// The outline of neighbour `at` if it holds rigid material `mat`, else 0.
+fn outline_at(at: vec2<i32>, mat: i32) -> u32 {
+    if !inside(at) {
+        return 0u;
     }
-    let dx = select(last - q.x, q.x, left);
-    let dy = select(last - q.y, q.y, top);
-    if dx + dy >= reach {
-        return false;
+    let t = textureLoad(cells, at, 0);
+    if i32(round(t.r * 255.0)) != mat {
+        return 0u;
     }
-    let sx = select(1, -1, left);
-    let sy = select(1, -1, top);
-    return is_open_fluid(at + vec2<i32>(sx, 0), mat) && is_open_fluid(at + vec2<i32>(0, sy), mat);
+    return outline_of(t);
+}
+
+fn quarter_set(m: u32, q: vec2<i32>) -> bool {
+    return ((m >> u32(q.y * 4 + q.x)) & 1u) != 0u;
+}
+
+// Bits set in a 16-bit mask (portable: GLSL ES 3.00 lacks bitCount).
+fn ones16(m: u32) -> i32 {
+    var v = m - ((m >> 1u) & 0x5555u);
+    v = (v & 0x3333u) + ((v >> 2u) & 0x3333u);
+    v = (v + (v >> 4u)) & 0x0f0fu;
+    return i32((v + (v >> 8u)) & 0x1fu);
+}
+
+// Whether the rigid texel at `quarter` of a partial cell (outline `own`) is
+// drawn: its quarter is covered (at 2x, at least two of its sub-cell's four),
+// or the side(s) the outline is cut back from face no open fluid (so a round
+// stone bedded in sand stays square against the sand rather than showing
+// water). The cut faces the half of the cell with fewer covered quarters,
+// up or down and left or right; a balanced axis checks the texel's own half.
+fn rigid_drawn(at: vec2<i32>, mat: i32, own: u32, quarter: vec2<i32>, fine: bool) -> bool {
+    var covered = quarter_set(own, quarter);
+    if !fine {
+        let b = (quarter / 2) * 2;
+        let n = u32(quarter_set(own, b)) + u32(quarter_set(own, b + vec2<i32>(1, 0)))
+            + u32(quarter_set(own, b + vec2<i32>(0, 1))) + u32(quarter_set(own, b + vec2<i32>(1, 1)));
+        covered = n >= 2u;
+    }
+    if covered {
+        return true;
+    }
+    let tb = ones16(own & 0x00ffu) - ones16(own & 0xff00u);
+    let lr = ones16(own & 0x3333u) - ones16(own & 0xccccu);
+    let sy = select(select(1, -1, tb < 0), select(1, -1, quarter.y < 2), tb == 0);
+    let sx = select(select(1, -1, lr < 0), select(1, -1, quarter.x < 2), lr == 0);
+    return !is_open_fluid(at + vec2<i32>(sx, 0), mat) && !is_open_fluid(at + vec2<i32>(0, sy), mat);
+}
+
+// Whether quarter `q` (up to two quarters outside the cell on one axis) is
+// covered, given the cell's outline `own` and those of the neighbours above,
+// below, left and right (only the ones `q` can reach are read).
+fn rigid_cover(own: u32, n: vec4<u32>, q: vec2<i32>) -> bool {
+    if q.y < 0 {
+        return quarter_set(n.x, q + vec2<i32>(0, 4));
+    }
+    if q.y > 3 {
+        return quarter_set(n.y, q - vec2<i32>(0, 4));
+    }
+    if q.x < 0 {
+        return quarter_set(n.z, q + vec2<i32>(4, 0));
+    }
+    if q.x > 3 {
+        return quarter_set(n.w, q - vec2<i32>(4, 0));
+    }
+    return quarter_set(own, q);
+}
+
+// At 4x, how far the texel at `q` is from the rigid outline's edge above,
+// below, left and right: 1 on the edge, 2 one texel in, 3 farther. Reads at
+// most the neighbour above or below and the one to the side at the cell's
+// edge, as the cell-edge bevels did.
+fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
+    var n = vec4<u32>(0xffffu);
+    if q.y < 2 {
+        n.x = outline_at(at + vec2<i32>(0, -1), mat);
+    } else {
+        n.y = outline_at(at + vec2<i32>(0, 1), mat);
+    }
+    if q.x == 0 {
+        n.z = outline_at(at + vec2<i32>(-1, 0), mat);
+    } else if q.x == 3 {
+        n.w = outline_at(at + vec2<i32>(1, 0), mat);
+    }
+    let up = select(select(3, 2, !rigid_cover(own, n, q + vec2<i32>(0, -2))), 1, !rigid_cover(own, n, q + vec2<i32>(0, -1)));
+    let down = select(select(3, 2, !rigid_cover(own, n, q + vec2<i32>(0, 2))), 1, !rigid_cover(own, n, q + vec2<i32>(0, 1)));
+    let left = select(3, 1, !rigid_cover(own, n, q + vec2<i32>(-1, 0)));
+    let right = select(3, 1, !rigid_cover(own, n, q + vec2<i32>(1, 0)));
+    return vec4<i32>(up, down, left, right);
 }
 
 // The colour of a non-plant cell: at scale 1 a flat palette lookup with
@@ -735,7 +809,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_ROCK {
-        if rigid_cut(at, mat, quarter, fine) {
+        // Sub-cell outline: round brushes draw round stones.
+        let own = outline_of(t);
+        if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
             return water_bg(at, quarter, fine);
         }
         // World-space faceted stone strata + fine mineral grain.
@@ -749,16 +825,18 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         }
         // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
         if fine {
-            if quarter.y <= 1 && !same_mat(at + vec2<i32>(0, -1), mat) {
-                k = k * select(1.06, 1.15, quarter.y == 0);
+            // Bevels along the outline: lit top, shadowed underside.
+            let e = rigid_edges(at, mat, own, quarter);
+            if e.x <= 2 {
+                k = k * select(1.06, 1.15, e.x == 1);
             }
-            if quarter.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
+            if e.z == 1 {
                 k = k * 1.08;
             }
-            if quarter.y >= 2 && !same_mat(at + vec2<i32>(0, 1), mat) {
-                k = k * select(0.92, 0.82, quarter.y == 3);
+            if e.y <= 2 {
+                k = k * select(0.92, 0.82, e.y == 1);
             }
-            if quarter.x == 3 && !same_mat(at + vec2<i32>(1, 0), mat) {
+            if e.w == 1 {
                 k = k * 0.88;
             }
         } else {
@@ -779,7 +857,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_DRIFTWOOD {
-        if rigid_cut(at, mat, quarter, fine) {
+        let own = outline_of(t);
+        if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
             return water_bg(at, quarter, fine);
         }
         // Flowing horizontal wood grain fibres with gentle organic wave.
@@ -800,15 +879,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         k = k * (1.0 + (f32(fibre & 7u) - 3.5) * 0.015);
         // Bark top highlight, deep underside shadow, slightly darker ends.
         if fine {
-            if quarter.y <= 1 && !same_mat(at + vec2<i32>(0, -1), mat) {
-                k = k * select(1.05, 1.14, quarter.y == 0);
+            let e = rigid_edges(at, mat, own, quarter);
+            if e.x <= 2 {
+                k = k * select(1.05, 1.14, e.x == 1);
             }
-            if quarter.y >= 2 && !same_mat(at + vec2<i32>(0, 1), mat) {
-                k = k * select(0.90, 0.78, quarter.y == 3);
+            if e.y <= 2 {
+                k = k * select(0.90, 0.78, e.y == 1);
             }
-            if (quarter.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat))
-                || (quarter.x == 3 && !same_mat(at + vec2<i32>(1, 0), mat))
-            {
+            if e.z == 1 || e.w == 1 {
                 k = k * 0.88;
             }
         } else {
