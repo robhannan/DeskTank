@@ -630,6 +630,7 @@ impl World {
                     && q.band().abs_diff(p.band()) <= BAND_REACH
                     && !reach.intersect(self.creature_body(q)).is_empty()
                     && !self.creature_in_cover(q)
+                    && self.sunk_depth(q) == 0
             });
             let Some(j) = prey else {
                 continue;

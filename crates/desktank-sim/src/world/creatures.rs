@@ -32,7 +32,9 @@
 //!   the band it died in.
 //! - **Walkers** keep to the substrate, stepping up one-row ledges; a
 //!   species with `hop_every` (shrimp) kicks off it now and then and sinks
-//!   back a few cells on.
+//!   back a few cells on. Bottom dwellers that can swim but would rather
+//!   not (`swim_every`) take a short swim now and then, and burrowers
+//!   (`burrow_every`) dig into loose substrate: see [`bottom`].
 //! - **Attachment.** A surface crawler turns in quarter turns so its foot
 //!   (the sprite's bottom row) rests on the face it holds: the floor
 //!   upright, a wall on its side, a ceiling upside down. Its body box turns
@@ -51,6 +53,7 @@
 //! - **Names** and the inspect card are in [`naming`].
 //! - **Hunting, fleeing to cover and territory** are in [`pursuit`].
 
+mod bottom;
 mod breeding;
 mod habits;
 mod lifecycle;
@@ -478,6 +481,10 @@ struct Kind {
     homebody: bool,
     /// Its territory's radius in cells (0: it keeps none).
     territory: i32,
+    /// Ticks between a bottom dweller's chances to swim (0: it can't), and
+    /// to burrow (0: it doesn't); see [`bottom`].
+    swim_every: u64,
+    burrow_every: u64,
 }
 
 /// The creatures in a world and the per-species and per-material lookups
@@ -497,6 +504,8 @@ pub(super) struct Creatures {
     kinds: Vec<Option<Kind>>,
     /// Per material: a creature's body may overlap it.
     swim: Vec<bool>,
+    /// Per material: loose substrate a burrower digs into.
+    loose: Vec<bool>,
     water: MaterialId,
     air: MaterialId,
     detritus: Option<MaterialId>,
@@ -535,7 +544,9 @@ impl Creatures {
         air: MaterialId,
     ) -> Self {
         let mut swim = vec![false; 256];
+        let mut loose = vec![false; 256];
         for m in materials.iter() {
+            loose[usize::from(m.id.0)] = bottom::is_loose(m.class, m.palette);
             swim[usize::from(m.id.0)] = match m.class {
                 MovementClass::Liquid => m.density >= WATER_DENSITY,
                 MovementClass::Buoyant => true,
@@ -543,6 +554,13 @@ impl Creatures {
             };
         }
         let mut kinds = vec![None; 256];
+        // Validated to at most 600 s.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let ticks = |every: Option<f32>| {
+            every.map_or(0, |e| {
+                (f64::from(e) * f64::from(TICKS_PER_SECOND)).round() as u64
+            })
+        };
         for s in species.iter() {
             let (w, h) = s.size();
             let per_tick = |cells_per_s: f32| {
@@ -601,6 +619,8 @@ impl Creatures {
                 territory: s
                     .territory_cm
                     .map_or(0, |t| (t * crate::species::CELLS_PER_CM).round() as i32),
+                swim_every: ticks(s.swim_every),
+                burrow_every: ticks(s.burrow_every),
             });
         }
         Self {
@@ -612,6 +632,7 @@ impl Creatures {
             next_id: 1,
             kinds,
             swim,
+            loose,
             water,
             air,
             detritus: materials.id("detritus"),
@@ -1338,6 +1359,12 @@ impl World {
         if c.held_until >= self.tick {
             return false;
         }
+        // A burrower in the bed digs, holds or digs out, and does nothing
+        // else (see `bottom`).
+        if k.burrow_every > 0 && self.burrow(&k, c, c.hungry()) {
+            c.satiety = c.satiety.saturating_sub(1);
+            return (c.x, c.y) != (before.0, before.1);
+        }
         // The world moved something solid into it: shift to a free band
         // where it is, or hop out.
         if !self.fits(&k, c.turn, c.x, c.y, c.band()) {
@@ -1356,7 +1383,13 @@ impl World {
         let hungry = c.hungry();
         self.habits(&k, c, &mut rng);
         self.shift_depth(&k, c);
+        let swim = self.swim(&k, c).filter(|_| c.food.is_none() && c.fear == 0);
         if k.zone == Zone::Surfaces {
+            if let Some(swim) = swim
+                && self.swim_step(&k, c, swim)
+            {
+                return (c.x, c.y, c.facing_left, c.turn) != before;
+            }
             self.crawl(&k, c);
             if hungry && self.anything_to_eat(&k) {
                 self.eat(&k, c);
@@ -1367,6 +1400,15 @@ impl World {
         self.choose_food(&k, c, hungry);
 
         let (tx, ty, speed) = self.steering_target(&k, c, &mut rng);
+        // A walker's swim takes over from wandering, not from food or
+        // fright.
+        if let Some(swim) = swim.filter(|_| c.food.is_none() && c.fear == 0) {
+            self.swim_step(&k, c, swim);
+            if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
+                c.food = None;
+            }
+            return (c.x, c.y, c.facing_left, c.turn) != before;
+        }
         steer(&k, c, tx, ty, speed, speed > k.cruise);
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.

@@ -443,8 +443,9 @@ impl World {
         Corpse {
             species: c.species,
             cause,
+            // A burrower that dies in the bed is left lying on it.
             x: c.x,
-            y: c.y,
+            y: c.y - self.sunk_depth(c),
             w: u8::try_from(w).unwrap_or(1),
             h: u8::try_from(h).unwrap_or(1),
             facing_left: c.facing_left,

@@ -41,7 +41,7 @@ const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
 /// mirror and quarter turns clockwise (2), the frame's size in texels (2),
 /// the look: 0 alive, 1 elder, 2 dead, then how far a corpse has rotted
-/// (2), the fine frame's atlas origin (2), or -1 for a body drawn
+/// or, alive, 1 for a burrower (2), the fine frame's atlas origin (2), or -1 for a body drawn
 /// smaller than its frame, the depth in bands (1, D21), and the night glow
 /// (4): its colour (sRGB-encoded) and strength times the pulse, 0 for none.
 pub const INSTANCE_FLOATS: usize = 19;
@@ -60,6 +60,9 @@ pub const LOOK_ALIVE: f32 = 0.0;
 pub const LOOK_ELDER: f32 = 1.0;
 /// A corpse.
 pub const LOOK_DEAD: f32 = 2.0;
+/// The look's second float for a living burrower (a corpse's is how far it
+/// has rotted): hidden where loose substrate covers it.
+pub const LOOK_BURROWER: f32 = 1.0;
 
 /// Where one look's frames sit in the atlas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,6 +234,10 @@ impl Atlas {
                 look: [look, 0.0],
                 depth: c.depth(),
                 glow,
+                burrower: world
+                    .species()
+                    .get(c.species())
+                    .is_some_and(|s| s.burrow_every.is_some()),
             });
         }
         for c in world.corpses() {
@@ -255,6 +262,7 @@ impl Atlas {
                 depth: f32::from(c.band()),
                 // The dead don't glow.
                 glow: [0.0; 4],
+                burrower: false,
             });
         }
         // Stable, so equal depths keep the world's order.
@@ -285,6 +293,9 @@ pub struct Sprite {
     depth: f32,
     /// Night glow colour and strength (0 for none).
     glow: [f32; 4],
+    /// A burrower: the shader hides it wherever loose substrate covers it
+    /// (its look's second float is 1).
+    burrower: bool,
 }
 
 impl Sprite {
@@ -316,7 +327,11 @@ impl Sprite {
             f(self.frame.0),
             f(self.frame.1),
             self.look[0],
-            self.look[1],
+            if self.burrower {
+                LOOK_BURROWER
+            } else {
+                self.look[1]
+            },
             fine[0],
             fine[1],
             self.depth,
@@ -614,6 +629,24 @@ mod tests {
         atlas.instances(&w, &mut Vec::new(), &mut out);
         let dead = instance_at(&out, w.corpses()[0].centre());
         assert_eq!(dead[15..19], [0.0; 4]);
+    }
+
+    #[test]
+    fn only_burrowers_are_hidden_by_the_substrate() {
+        let mut w = world();
+        let atlas = Atlas::build(w.species());
+        let loach = w.species().id("kuhli_loach").unwrap();
+        let cory = w.species().id("corydoras").unwrap();
+        w.add_creature(loach, 20, 30).unwrap();
+        w.add_creature(cory, 45, 30).unwrap();
+        let mut out = Vec::new();
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 2);
+        let (l, c) = (
+            instance_at(&out, w.creatures()[0].centre()),
+            instance_at(&out, w.creatures()[1].centre()),
+        );
+        assert_eq!(l[10..12], [LOOK_ALIVE, LOOK_BURROWER]);
+        assert_eq!(c[10..12], [LOOK_ALIVE, 0.0]);
     }
 
     #[test]

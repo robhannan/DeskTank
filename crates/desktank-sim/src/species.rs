@@ -55,6 +55,11 @@ pub const MAX_LIFESPAN_DAYS: u32 = 7300;
 pub const MAX_MORPHS: usize = 8;
 /// Most young in one brood or clutch.
 pub const MAX_BROOD: u8 = 16;
+/// Shortest `swim_every` a species may give, in seconds (over twice a
+/// swim, so a bottom dweller spends most of its time on the bottom).
+pub const MIN_SWIM_EVERY: f32 = 10.0;
+/// Shortest `burrow_every` a species may give, in seconds (twice a burrow).
+pub const MIN_BURROW_EVERY: f32 = 32.0;
 
 /// The part of the tank a species lives in (SPEC §2.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -215,6 +220,14 @@ pub struct Species {
     /// Seconds between a bottom walker's hops off the substrate (shrimp),
     /// or `None` if it never hops.
     pub hop_every: Option<f32>,
+    /// Seconds between a bottom dweller's chances to swim (`None`: it can't
+    /// swim, like a snail). A bottom walker or surface crawler that can
+    /// swim but would rather not (shrimp, plecos, loaches) lifts off at
+    /// one chance in two, swims a short way and settles again.
+    pub swim_every: Option<f32>,
+    /// Seconds between a bottom walker's chances to burrow into loose
+    /// substrate (`None`: it never burrows; the kuhli loach does).
+    pub burrow_every: Option<f32>,
     /// Real-world lifespan in days (1..=[`MAX_LIFESPAN_DAYS`]), on the life
     /// clock (SPEC §2.4, T9: a day per `LIFE_DAY_SECONDS` of world time).
     /// Each creature's own lifespan is within ±10% of it.
@@ -378,6 +391,10 @@ struct SpeciesDef {
     reach: u8,
     #[serde(default)]
     hop_every: Option<f32>,
+    #[serde(default)]
+    swim_every: Option<f32>,
+    #[serde(default)]
+    burrow_every: Option<f32>,
     lifespan_days: u32,
     maturity_days: u32,
     #[serde(default)]
@@ -636,6 +653,24 @@ fn validate(
             return Err(invalid("hop_every must be 1..=600 seconds"));
         }
     }
+    if let Some(every) = d.swim_every {
+        if !matches!(d.zone, Zone::Bottom | Zone::Surfaces) {
+            return Err(invalid(
+                "only bottom walkers and surface crawlers swim now and then",
+            ));
+        }
+        if !(every.is_finite() && (MIN_SWIM_EVERY..=600.0).contains(&every)) {
+            return Err(invalid("swim_every must be 10..=600 seconds"));
+        }
+    }
+    if let Some(every) = d.burrow_every {
+        if d.zone != Zone::Bottom {
+            return Err(invalid("only bottom walkers burrow"));
+        }
+        if !(every.is_finite() && (MIN_BURROW_EVERY..=600.0).contains(&every)) {
+            return Err(invalid("burrow_every must be 32..=600 seconds"));
+        }
+    }
     if !(1..=MAX_LIFESPAN_DAYS).contains(&d.lifespan_days)
         || d.maturity_days == 0
         || d.maturity_days >= d.lifespan_days
@@ -717,6 +752,8 @@ fn validate(
         length_cm: d.length_cm,
         reach: d.reach,
         hop_every: d.hop_every,
+        swim_every: d.swim_every,
+        burrow_every: d.burrow_every,
         lifespan_days: d.lifespan_days,
         maturity_days: d.maturity_days,
         waste_every: d.waste_every,
@@ -1715,6 +1752,49 @@ mod tests {
         // Every built-in species uses every band.
         for s in SpeciesTable::builtin_for(&m).unwrap().iter() {
             assert_eq!(s.bands, [0, DEPTH_BANDS - 1], "{}", s.name);
+        }
+    }
+
+    #[test]
+    fn rejects_bad_swims_and_burrows() {
+        let m = materials();
+        let bad = |from: &str, to: &str| {
+            let src = OK.replace(from, to);
+            assert_ne!(src, OK, "{from:?} not in the template");
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        let walker = |extra: &str| {
+            let src = OK
+                .replace("zone = \"mid\"", "zone = \"bottom\"")
+                .replace("min_depth = 10", &format!("min_depth = 10\n{extra}"));
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        // Only bottom dwellers swim now and then, every 10..=600 s, and only
+        // walkers burrow, every 32..=600 s.
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nswim_every = 20.0"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(walker("swim_every = 20.0\nburrow_every = 40.0").is_ok());
+        let crawler = OK
+            .replace("zone = \"mid\"", "zone = \"surfaces\"")
+            .replace("min_depth = 10", "min_depth = 10\nswim_every = 20.0");
+        assert!(SpeciesTable::from_toml_sources(&[&crawler], &m).is_ok());
+        assert!(matches!(
+            SpeciesTable::from_toml_sources(&[&crawler.replace("swim_every", "burrow_every")], &m),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        for extra in [
+            "swim_every = 9.0",
+            "swim_every = 601.0",
+            "swim_every = nan",
+            "burrow_every = 31.0",
+            "burrow_every = inf",
+        ] {
+            assert!(
+                matches!(walker(extra), Err(SpeciesError::Invalid { .. })),
+                "{extra}"
+            );
         }
     }
 

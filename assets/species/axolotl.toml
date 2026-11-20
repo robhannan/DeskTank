@@ -9,6 +9,8 @@ maturity_days = 365
 temperament = "peaceful"
 speed = 2.0
 max_speed = 8.0
+# Would rather stay on the bottom, but lifts off for a short swim now and then.
+swim_every = 90.0
 diet = ["bloodworm", "sinking_pellet"]
 prey_cm = 3.5
 

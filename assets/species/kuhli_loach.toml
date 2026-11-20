@@ -9,6 +9,10 @@ maturity_days = 540
 temperament = "peaceful"
 speed = 4.0
 max_speed = 12.0
+# Would rather stay on the bottom, but lifts off for a short swim now and then.
+swim_every = 50.0
+# Digs into sand, gravel or soil (never rock) now and then and comes back out.
+burrow_every = 45.0
 diet = ["sinking_pellet", "bloodworm"]
 
 

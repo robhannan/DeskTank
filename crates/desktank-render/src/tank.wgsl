@@ -1937,6 +1937,29 @@ fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
     return plant_texel(src_at, src_t, src_part, src_quarter, band).a > 0.5;
 }
 
+// Whether loose substrate (sand, gravel, aquasoil) covers the pixel at
+// `pos`: a burrower in the bed shows only where the ground drawn there is
+// open, so the cell's trimmed top (`loose_top`) shows it too.
+fn hidden_by_substrate(pos: vec2<f32>) -> bool {
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return false;
+    }
+    let at = vec2<i32>(cell);
+    let t = textureLoad(cells, at, 0);
+    let style = style_of(t);
+    if style != STYLE_SAND && style != STYLE_GRAVEL && style != STYLE_AQUASOIL {
+        return false;
+    }
+    let mat = i32(round(t.r * 255.0));
+    let quarter = vec2<i32>(floor(fract(grid_pos) * 4.0));
+    let fine = fine_scale();
+    let open_up = is_open_fluid(at - vec2<i32>(0, 1), mat);
+    let trim = loose_top_at(at, mat, open_up, quarter, fine);
+    return select(quarter.y / 2, quarter.y, fine) >= trim;
+}
+
 // The atlas texel at `p` within `frame` (transparent outside it).
 fn frame_texel(frame: vec4<f32>, p: vec2<f32>) -> vec4<f32> {
     if any(p < vec2<f32>(0.0)) || any(p >= frame.zw) {
@@ -2014,7 +2037,8 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
         }
         return vec4<f32>(out(v.glow.rgb).rgb, a);
     }
-    if hidden_by_plant(v.pos.xy, v.depth) {
+    if hidden_by_plant(v.pos.xy, v.depth)
+        || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;
     }
     var rgb = t.rgb;
