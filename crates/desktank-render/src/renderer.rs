@@ -379,7 +379,7 @@ impl Renderer {
             hud.into_iter()
                 .chain(cursor)
                 .chain(daylight)
-                .chain([1.0])
+                .chain([desktank_sim::daylight::darkness(daylight)])
                 .chain(target)
                 .chain(self.plant_parts)
         };
@@ -790,11 +790,20 @@ fn create_pipelines(
     let fine = grid("tank", &[]);
     let coarse = grid("tank (coarse plants)", coarse_plants);
     // Per instance: top-left cell, size, atlas origin, mirror and turn,
-    // frame size, look and fine atlas origin (vec2 each), then depth.
+    // frame size, look and fine atlas origin (vec2 each), then depth and
+    // the night glow (vec4).
     let attributes = wgpu::vertex_attr_array![
         0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2,
-        4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32
+        4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32,
+        8 => Float32x4
     ];
+    // Sprites blend only a glow's halo (alpha below 1); every other sprite
+    // fragment is opaque or discarded, so it draws as without blending.
+    let sprite_targets = [Some(wgpu::ColorTargetState {
+        format,
+        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
     let sprites = |label, constants: &[(&str, f64)]| {
         d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -812,7 +821,6 @@ fn create_pipelines(
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            // Transparent texels are discarded: no blending needed.
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_sprite"),
@@ -820,7 +828,7 @@ fn create_pipelines(
                     constants,
                     ..Default::default()
                 },
-                targets: &targets,
+                targets: &sprite_targets,
             }),
             multiview_mask: None,
             cache: None,
@@ -855,5 +863,18 @@ mod tests {
             desktank_sim::DEPTH_BANDS - 1
         );
         assert!(include_str!("tank.wgsl").contains(&back), "{back}");
+    }
+
+    #[test]
+    fn the_shader_knows_the_glow_alphas() {
+        let wgsl = include_str!("tank.wgsl");
+        for (name, alpha) in [
+            ("ALPHA_EYE", crate::sprites::ALPHA_EYE),
+            ("ALPHA_UNLIT", crate::sprites::ALPHA_UNLIT),
+        ] {
+            let line = format!("const {name}: f32 = {alpha}.0;");
+            assert!(wgsl.contains(&line), "{line}");
+        }
+        assert!(wgsl.contains("@location(8) glow: vec4<f32>"));
     }
 }

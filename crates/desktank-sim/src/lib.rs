@@ -35,7 +35,8 @@ pub use plants::{
 };
 pub use script::{Player, Script, ScriptError};
 pub use species::{
-    Breeding, BreedingMode, Look, Species, SpeciesError, SpeciesId, SpeciesTable, TEXELS_PER_CELL,
+    Breeding, BreedingMode, Glow, Look, Species, SpeciesError, SpeciesId, SpeciesTable,
+    TEXELS_PER_CELL,
 };
 pub use world::{
     BAND_REACH, BITE_ENERGY, BREED_CHECK_SECONDS, BodyId, BodyInfo, Brush, CHUNK_SIZE,

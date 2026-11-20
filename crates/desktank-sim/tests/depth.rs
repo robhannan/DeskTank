@@ -183,6 +183,15 @@ fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
         .map(|s| s.id)
         .collect();
     for (k, &s) in swimmers.iter().enumerate() {
+        // One blinker (30×22 cells), wherever it fits among the plants;
+        // three of the rest.
+        if w.species().get(s).unwrap().name == "blinker" {
+            let spot = (15..150)
+                .step_by(5)
+                .find(|&x| w.add_creature(s, x, 40).is_ok());
+            assert!(spot.is_some(), "no room for {s:?}");
+            continue;
+        }
         for j in 0..3_i64 {
             let x = 15 + j * 50 + i64::try_from(k).unwrap() * 4;
             w.add_creature(s, x, 50).unwrap();

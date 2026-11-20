@@ -226,3 +226,12 @@ fn breeding_scene_matches_reference_at_scale_4() {
 fn depth_scene_matches_reference_at_scale_4() {
     check_named("depth", "depth_x4", None, SIZE_X4);
 }
+
+/// The cheat-only blinker at scale 4, drawn from its four-texel art: by
+/// day, and at midnight with its green night glow (rim, eye whites and a
+/// soft halo), against `blinker_x4.png` and `blinker_x4_0000.png`.
+#[test]
+fn blinker_scene_matches_reference_by_day_and_night() {
+    check_named("blinker", "blinker_x4", None, SIZE_X4);
+    check_named("blinker", "blinker_x4_0000", Some("00:00"), SIZE_X4);
+}

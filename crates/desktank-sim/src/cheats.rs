@@ -11,11 +11,12 @@
 //! hosts with keyboard focus (the window, the web) use [`Konami::new`].
 //!
 //! Cheats are harmless shortcuts to things the tools can already do (feed,
-//! stock, change the water), plus two easter eggs: the phrases `why not?`
+//! stock, change the water), plus three easter eggs: the phrases `why not?`
 //! and `home owner!` each add one of the cheat-only crabs
-//! ([`MEDICAL_CRAB`], [`HOME_OWNING_CRAB`]), which the palette and `spawn`
-//! don't offer. An unknown or malformed line returns a [`CheatError`] for
-//! the host to show, and never panics.
+//! ([`MEDICAL_CRAB`], [`HOME_OWNING_CRAB`]) and `radiation leak` a
+//! three-eyed [`BLINKER`], which the palette and `spawn` don't offer. An
+//! unknown or malformed line returns a [`CheatError`] for the host to
+//! show, and never panics.
 
 use crate::{Brush, MaterialId, World, WorldError};
 
@@ -146,6 +147,10 @@ pub const MEDICAL_CRAB: &str = "medical_crab";
 /// which plants a carpet patch at a home it picks.
 pub const HOME_OWNING_CRAB: &str = "home_owning_crab";
 
+/// The species `radiation leak` adds: a big three-eyed mutant fish that
+/// glows at night.
+pub const BLINKER: &str = "blinker";
+
 /// Why a cheat line didn't run.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum CheatError {
@@ -245,6 +250,12 @@ pub const CHEATS: &[Cheat] = &[
         usage: "",
         help: "add a home owning crab, which plants a lawn at its home",
         run: |world, _| spawn_one(world, HOME_OWNING_CRAB),
+    },
+    Cheat {
+        name: "radiation leak",
+        usage: "",
+        help: "add a blinker, a three-eyed fish that glows at night",
+        run: |world, _| spawn_one(world, BLINKER),
     },
 ];
 
@@ -354,13 +365,22 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
     add(world, species, count, &name)
 }
 
-/// Adds one creature of the species named `name` (a cheat-only crab).
+/// Adds one creature of the species named `name` (a cheat-only species).
 fn spawn_one(world: &mut World, name: &str) -> Result<CheatOutcome, CheatError> {
     let species = world
         .species()
         .id(name)
         .ok_or_else(|| CheatError::Usage(format!("this tank has no {name}")))?;
-    add(world, species, 1, name)
+    match add(world, species, 1, name) {
+        // Too shallow for a big creature (the blinker): say why.
+        Err(CheatError::World(WorldError::NoRoom)) => match world.unmet_need(species) {
+            Some(crate::UnmetNeed::Depth { needs, has }) => Err(CheatError::Usage(format!(
+                "a {name} needs {needs} rows of water; this tank has {has}"
+            ))),
+            _ => Err(WorldError::NoRoom.into()),
+        },
+        done => done,
+    }
 }
 
 /// Adds `count` creatures of `species` (named `name` in the message),
