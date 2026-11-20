@@ -24,9 +24,10 @@ evidence() {
   tee -a "$out/steps.txt" < "$out/logcat-$1.txt"
 }
 stop() {
-  run adb shell cmd dreams stop-dreaming
-  run adb shell input keyevent KEYCODE_HOME
-  sleep 2
+  # IDreamManager.awaken(); a key press would also end it.
+  run adb shell service call dreams 2
+  sleep 3
+  dreaming
 }
 
 run adb shell getprop ro.build.fingerprint
@@ -44,59 +45,38 @@ run adb shell settings get secure screensaver_components
 run adb shell cmd dreams help
 adb shell dumpsys dreams > "$out/dumpsys-dreams-before.txt" 2>&1
 
-log "method 1 (shell user): service call dreams 1 (IDreamManager.dream)"
+log "method 1 (shell user): service call dreams 1 (IDreamManager.dream), default backends"
 adb logcat -c
 run adb shell service call dreams 1
 sleep 8
-evidence 1-service-call
+evidence 1-default
 stop
 
-log "method 2 (shell user): idle timeout with screensaver_activate_on_sleep"
-run adb shell settings put secure screensaver_activate_on_sleep 1
-run adb shell settings put system screen_off_timeout 15000
-run adb shell input keyevent KEYCODE_WAKEUP
-adb logcat -c
-sleep 30
-evidence 2-idle-timeout
-stop
-run adb shell settings put system screen_off_timeout 1800000
-
-log "method 3 (shell user): cmd dreams start-dreaming"
-adb logcat -c
-run adb shell cmd dreams start-dreaming
-sleep 8
-evidence 3-cmd-dreams-shell
-stop
-
-log "method 4: adb root, then cmd dreams start-dreaming"
-run adb root
-sleep 5
-run adb wait-for-device
-run adb shell id
-adb logcat -c
-run adb shell cmd dreams start-dreaming
-sleep 8
-evidence 4-cmd-dreams-root
-stop
-
-log "method 5: GLES forced (debug.desktank.backend=gl), cmd dreams (root)"
+log "method 2: GLES forced (debug.desktank.backend=gl)"
 run adb shell am force-stop "$pkg"
 run adb shell setprop debug.desktank.backend gl
 adb logcat -c
-run adb shell cmd dreams start-dreaming
+run adb shell service call dreams 1
 sleep 8
-evidence 5-gles
+evidence 2-gles
 stop
 
-log "method 6: Vulkan forced (debug.desktank.backend=vulkan), cmd dreams (root)"
+log "method 3: Vulkan forced (debug.desktank.backend=vulkan)"
 run adb shell am force-stop "$pkg"
 run adb shell setprop debug.desktank.backend vulkan
 adb logcat -c
-run adb shell cmd dreams start-dreaming
+run adb shell service call dreams 1
 sleep 8
-evidence 6-vulkan
+evidence 3-vulkan
 stop
 run adb shell setprop debug.desktank.backend ""
+
+log "second Dream in the same process (device kept)"
+adb logcat -c
+run adb shell service call dreams 1
+sleep 8
+evidence 4-again
+stop
 
 log "after stopping: process state"
 run adb shell pidof "$pkg"
