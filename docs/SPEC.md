@@ -2093,7 +2093,8 @@ Each package depends only on the packages before it.
   - a GIF is in the PR.
 
   *Done:* Species TOML selects the movement and diet. Tetras follow the oldest
-  unheld schoolmate and separate from close neighbours. Corydoras follow
+  unheld schoolmate, each in a drifting slot of its own around it at its
+  own pace, and separate from close neighbours. Corydoras follow
   one-cell substrate steps. Nerites trace submerged contours, including the
   underside of rock, turning in quarter turns so the foot rests on the face
   they hold (at outside corners, held only diagonally, they keep their turn

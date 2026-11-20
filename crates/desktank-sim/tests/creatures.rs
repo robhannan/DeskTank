@@ -1144,3 +1144,122 @@ fn guppy_bites_a_live_frond_and_damages_its_plant() {
     }
     panic!("guppy never ate the floating leaves");
 }
+
+/// The shape and motion of a school over a run, after it has settled.
+struct SchoolShape {
+    /// Ticks the school met the SPEC spacing limit (≤ 3 body lengths).
+    close: u32,
+    ticks: u32,
+    /// Mean of the school's major over minor axis (from the covariance of
+    /// its positions): 1 for a round blob.
+    elongation: f32,
+    /// Mean polarisation, |mean unit heading| of the moving fish: 1 when
+    /// every fish heads exactly the same way on a tick.
+    polarisation: f32,
+    /// Mean distance, in body lengths, each fish's place in the school
+    /// (its offset from the centroid) moves over 10 s.
+    reshuffle: f32,
+}
+
+fn school_shape(seed: u64, name: &str, fish: i64) -> SchoolShape {
+    let mut w = world(320, 120, seed);
+    let s = species(&w, name);
+    let length = w.species().get(s).unwrap().size().0 as f32;
+    for i in 0..fish {
+        w.add_creature(s, 15 + 290 * i / fish, 45 + (i % 3) * 14)
+            .unwrap();
+    }
+    run(&mut w, 1_000);
+    let centres =
+        |w: &World| -> Vec<(f32, f32)> { w.creatures().iter().map(Creature::centre).collect() };
+    let offsets = |p: &[(f32, f32)]| {
+        let n = p.len() as f32;
+        let (mx, my) = p
+            .iter()
+            .fold((0.0, 0.0), |(a, b), &(x, y)| (a + x / n, b + y / n));
+        p.iter().map(|&(x, y)| (x - mx, y - my)).collect::<Vec<_>>()
+    };
+    let ticks = 6_000;
+    let (mut close, mut elongation, mut polarisation, mut polarised) = (0, 0.0, 0.0, 0);
+    let (mut reshuffle, mut shuffles) = (0.0, 0);
+    let mut before = centres(&w);
+    let mut place = offsets(&before);
+    for t in 1..=ticks {
+        w.tick();
+        let now = centres(&w);
+        close += u32::from(mean_nearest_mate(&w, s) <= 3.0 * length);
+        let d = offsets(&now);
+        let n = d.len() as f32;
+        let (sxx, syy, sxy) = d.iter().fold((0.0, 0.0, 0.0), |(a, b, c), &(x, y)| {
+            (a + x * x / n, b + y * y / n, c + x * y / n)
+        });
+        let (mean, root) = (
+            f32::midpoint(sxx, syy),
+            (((sxx - syy) / 2.0).powi(2) + sxy * sxy).sqrt(),
+        );
+        elongation += ((mean + root) / (mean - root).max(1e-3)).sqrt().min(20.0);
+        let heads: Vec<_> = now
+            .iter()
+            .zip(&before)
+            .map(|(a, b)| (a.0 - b.0, a.1 - b.1))
+            .filter(|v| v.0.hypot(v.1) > 1e-3)
+            .map(|v| {
+                let m = v.0.hypot(v.1);
+                (v.0 / m, v.1 / m)
+            })
+            .collect();
+        if heads.len() >= 2 {
+            let m = heads.len() as f32;
+            let (hx, hy) = heads
+                .iter()
+                .fold((0.0, 0.0), |(a, b), h| (a + h.0 / m, b + h.1 / m));
+            polarisation += hx.hypot(hy);
+            polarised += 1;
+        }
+        if t % (10 * TICKS_PER_SECOND) == 0 {
+            reshuffle += d
+                .iter()
+                .zip(&place)
+                .map(|(a, b)| (a.0 - b.0).hypot(a.1 - b.1))
+                .sum::<f32>()
+                / n
+                / length;
+            shuffles += 1;
+            place = d;
+        }
+        before = now;
+    }
+    SchoolShape {
+        close,
+        ticks,
+        elongation: elongation / ticks as f32,
+        polarisation: polarisation / polarised.max(1) as f32,
+        reshuffle: reshuffle / shuffles as f32,
+    }
+}
+
+/// A settled school stretches along the way it swims, its fish head
+/// roughly but not exactly the same way, and they change places.
+#[test]
+fn schools_are_loose_irregular_and_out_of_step() {
+    for (seed, name) in [
+        (4, "neon_tetra"),
+        (77, "neon_tetra"),
+        (9, "harlequin_rasbora"),
+    ] {
+        let s = school_shape(seed, name, 10);
+        eprintln!(
+            "seed {seed} {name}: close {}/{}, elongation {:.2}, polarisation {:.3}, reshuffle {:.2} lengths",
+            s.close, s.ticks, s.elongation, s.polarisation, s.reshuffle
+        );
+        // Still a school: close (SPEC T7) and heading broadly one way.
+        assert!(s.close * 10 >= s.ticks * 9, "school broke up");
+        assert!(s.polarisation >= 0.4, "fish swim every which way");
+        // But not a round blob in lockstep that never changes (on the
+        // old steering: elongation 1.19–1.20, polarisation 0.998 and
+        // places moving 0.01–0.02 body lengths in 10 s).
+        assert!(s.elongation >= 1.6, "a round school");
+        assert!(s.polarisation <= 0.9, "fish swim in lockstep");
+        assert!(s.reshuffle >= 1.0, "fish keep their places");
+    }
+}
