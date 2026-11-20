@@ -277,12 +277,17 @@ fn same_mat(at: vec2<i32>, mat: i32) -> bool {
 }
 
 // Whether `at` is an open fluid (water, air, liquid fertiliser or bubble), so
-// light reaches an adjacent substrate or hardscape face.
-fn is_open_fluid(at: vec2<i32>) -> bool {
+// light reaches an adjacent substrate or hardscape face. Skips the palette read
+// when the neighbour holds the caller's own non-fluid material `self_mat`.
+fn is_open_fluid(at: vec2<i32>, self_mat: i32) -> bool {
     if !inside(at) {
         return false;
     }
-    let s = style_of(textureLoad(cells, at, 0));
+    let nt = textureLoad(cells, at, 0);
+    if i32(round(nt.r * 255.0)) == self_mat {
+        return false;
+    }
+    let s = style_of(nt);
     return s == STYLE_WATER || s == STYLE_AIR || s == STYLE_FERTILISER || s == STYLE_BUBBLE;
 }
 
@@ -354,26 +359,31 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
             let plume = 1.0 + (f32(h & 15u) - 7.5) * 0.008;
             rgb = base * d * plume;
         }
-        // Crisp water-surface highlight where water meets air.
-        if style_at(at + vec2<i32>(0, -1)) == STYLE_AIR {
-            let ripple = hash(vec2<i32>(p.x / 2, at.y)) & 3u;
-            let surface_tint = vec3<f32>(0.72, 0.90, 0.98);
-            if fine {
-                if quarter.y == 0 {
-                    let k = select(0.32, 0.42, ripple == 0u);
-                    rgb = mix(rgb, surface_tint, k);
-                } else if quarter.y == 1 {
-                    let k = select(0.10, 0.16, ripple < 2u);
-                    rgb = mix(rgb, surface_tint, k);
-                } else if quarter.y == 2 {
-                    rgb = mix(rgb, surface_tint, 0.04);
-                }
-            } else {
-                if sub.y == 0 {
-                    let k = select(0.24, 0.34, ripple == 0u);
-                    rgb = mix(rgb, surface_tint, k);
+        // Crisp water-surface highlight where water meets air. Skip the
+        // neighbour palette lookup when the cell above is the same material
+        // (nearly all water cells) or on the bottom fine row.
+        if at.y > 0 && (!fine || quarter.y < 3) {
+            let above = textureLoad(cells, at + vec2<i32>(0, -1), 0);
+            if i32(round(above.r * 255.0)) != mat && style_of(above) == STYLE_AIR {
+                let ripple = hash(vec2<i32>(p.x / 2, at.y)) & 3u;
+                let surface_tint = vec3<f32>(0.72, 0.90, 0.98);
+                if fine {
+                    if quarter.y == 0 {
+                        let k = select(0.32, 0.42, ripple == 0u);
+                        rgb = mix(rgb, surface_tint, k);
+                    } else if quarter.y == 1 {
+                        let k = select(0.10, 0.16, ripple < 2u);
+                        rgb = mix(rgb, surface_tint, k);
+                    } else if quarter.y == 2 {
+                        rgb = mix(rgb, surface_tint, 0.04);
+                    }
                 } else {
-                    rgb = mix(rgb, surface_tint, 0.06);
+                    if sub.y == 0 {
+                        let k = select(0.24, 0.34, ripple == 0u);
+                        rgb = mix(rgb, surface_tint, k);
+                    } else {
+                        rgb = mix(rgb, surface_tint, 0.06);
+                    }
                 }
             }
         }
@@ -412,7 +422,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         let band = (u32(p.y) >> 1u) & 3u;
         k = k * select(1.0, 0.975, band == 0u);
         // Top-edge water lighting and gentle slope shading.
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1));
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         if open_up {
             if fine {
                 if quarter.y == 0 {
@@ -428,11 +438,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         } else {
             k = k * 0.96;
         }
-        let open_l = is_open_fluid(at + vec2<i32>(-1, 0));
-        let open_r = is_open_fluid(at + vec2<i32>(1, 0));
-        if open_l && select(sub.x == 0, quarter.x == 0, fine) {
+        if select(sub.x == 0, quarter.x == 0, fine) && is_open_fluid(at + vec2<i32>(-1, 0), mat) {
             k = k * 1.07;
-        } else if open_r && select(sub.x == 1, quarter.x == 3, fine) {
+        } else if select(sub.x == 1, quarter.x == 3, fine) && is_open_fluid(at + vec2<i32>(1, 0), mat) {
             k = k * 0.93;
         }
         return clamp(base * tint * k, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -441,7 +449,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     if style == STYLE_GRAVEL {
         // Staggered rounded river pebbles (5x4 texels at 4x, 3x2 at 2x) so
         // stones interlock organically instead of forming a cell grid.
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1));
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         var k: f32;
         var warm: vec3<f32>;
         if fine {
@@ -505,7 +513,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     if style == STYLE_AQUASOIL {
         // Staggered dark rounded matte soil pellets (3x3 texels at 4x,
         // offset 2x2 at 2x): smaller than gravel pebbles, breaking the cell grid.
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1));
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         var k: f32;
         if fine {
             let ry = p.y / 3;
@@ -552,10 +560,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_ROCK {
-        let same_u = same_mat(at + vec2<i32>(0, -1), mat);
-        let same_d = same_mat(at + vec2<i32>(0, 1), mat);
-        let same_l = same_mat(at + vec2<i32>(-1, 0), mat);
-        let same_r = same_mat(at + vec2<i32>(1, 0), mat);
         // World-space faceted stone strata + fine mineral grain.
         let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
         let grain = hash(p);
@@ -565,35 +569,31 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         if ((facet >> 4u) & 15u) == 0u && ((grain >> 3u) & 3u) == 0u {
             k = k * 0.86;
         }
-        // Crisp edge bevels on exposed faces.
+        // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
         if fine {
-            if !same_u && quarter.y == 0 {
-                k = k * 1.15;
-            } else if !same_u && quarter.y == 1 {
-                k = k * 1.06;
+            if quarter.y <= 1 && !same_mat(at + vec2<i32>(0, -1), mat) {
+                k = k * select(1.06, 1.15, quarter.y == 0);
             }
-            if !same_l && quarter.x == 0 {
+            if quarter.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
                 k = k * 1.08;
             }
-            if !same_d && quarter.y == 3 {
-                k = k * 0.82;
-            } else if !same_d && quarter.y == 2 {
-                k = k * 0.92;
+            if quarter.y >= 2 && !same_mat(at + vec2<i32>(0, 1), mat) {
+                k = k * select(0.92, 0.82, quarter.y == 3);
             }
-            if !same_r && quarter.x == 3 {
+            if quarter.x == 3 && !same_mat(at + vec2<i32>(1, 0), mat) {
                 k = k * 0.88;
             }
         } else {
-            if !same_u && sub.y == 0 {
+            if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
                 k = k * 1.12;
             }
-            if !same_l && sub.x == 0 {
+            if sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
                 k = k * 1.06;
             }
-            if !same_d && sub.y == 1 {
+            if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
                 k = k * 0.86;
             }
-            if !same_r && sub.x == 1 {
+            if sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat) {
                 k = k * 0.90;
             }
         }
@@ -601,10 +601,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_DRIFTWOOD {
-        let same_u = same_mat(at + vec2<i32>(0, -1), mat);
-        let same_d = same_mat(at + vec2<i32>(0, 1), mat);
-        let same_l = same_mat(at + vec2<i32>(-1, 0), mat);
-        let same_r = same_mat(at + vec2<i32>(1, 0), mat);
         // Flowing horizontal wood grain fibres with gentle organic wave.
         let wave = i32(hash(vec2<i32>(p.x / 6, p.y / 5)) & 3u) - 1;
         let row = u32(p.y + wave + 1024);
@@ -623,27 +619,27 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         k = k * (1.0 + (f32(fibre & 7u) - 3.5) * 0.015);
         // Bark top highlight, deep underside shadow, slightly darker ends.
         if fine {
-            if !same_u && quarter.y == 0 {
-                k = k * 1.14;
-            } else if !same_u && quarter.y == 1 {
-                k = k * 1.05;
+            if quarter.y <= 1 && !same_mat(at + vec2<i32>(0, -1), mat) {
+                k = k * select(1.05, 1.14, quarter.y == 0);
             }
-            if !same_d && quarter.y == 3 {
-                k = k * 0.78;
-            } else if !same_d && quarter.y == 2 {
-                k = k * 0.90;
+            if quarter.y >= 2 && !same_mat(at + vec2<i32>(0, 1), mat) {
+                k = k * select(0.90, 0.78, quarter.y == 3);
             }
-            if (!same_l && quarter.x == 0) || (!same_r && quarter.x == 3) {
+            if (quarter.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat))
+                || (quarter.x == 3 && !same_mat(at + vec2<i32>(1, 0), mat))
+            {
                 k = k * 0.88;
             }
         } else {
-            if !same_u && sub.y == 0 {
+            if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
                 k = k * 1.10;
             }
-            if !same_d && sub.y == 1 {
+            if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
                 k = k * 0.82;
             }
-            if (!same_l && sub.x == 0) || (!same_r && sub.x == 1) {
+            if (sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat))
+                || (sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat))
+            {
                 k = k * 0.90;
             }
         }
@@ -735,7 +731,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_DETRITUS {
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1));
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let water_up = is_water(at + vec2<i32>(0, -1));
         let h = hash_grain(p, v);
         if fine && water_up && quarter.y == 0 && (h & 3u) == 0u {
@@ -748,9 +744,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     // STYLE_DEFAULT: clean sub-cell grain with gentle top/bottom edge cues.
     let h = hash_grain(p, v);
     var k = 1.0 + (f32(h & 7u) - 3.5) * 0.015;
-    if is_open_fluid(at + vec2<i32>(0, -1)) && select(sub.y == 0, quarter.y == 0, fine) {
+    if select(sub.y == 0, quarter.y == 0, fine) && is_open_fluid(at + vec2<i32>(0, -1), mat) {
         k = k * 1.07;
-    } else if is_open_fluid(at + vec2<i32>(0, 1)) && select(sub.y == 1, quarter.y == 3, fine) {
+    } else if select(sub.y == 1, quarter.y == 3, fine) && is_open_fluid(at + vec2<i32>(0, 1), mat) {
         k = k * 0.93;
     }
     return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
