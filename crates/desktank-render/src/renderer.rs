@@ -97,8 +97,18 @@ impl Renderer {
         let plants = create_plants(gpu, &plant_tints);
         let species = create_species(gpu, world);
         let material = |name: &str| world.materials().id(name).map_or(-1.0, |m| f32::from(m.0));
-        let [root, stem, leaf, runner, float] = Part::ALL.map(|p| material(p.material_name()));
-        let plant_parts = [root, stem, leaf, material("water"), runner, float, 0.0, 0.0];
+        let [root, stem, leaf, runner, float, rhizome] =
+            Part::ALL.map(|p| material(p.material_name()));
+        let plant_parts = [
+            root,
+            stem,
+            leaf,
+            material("water"),
+            runner,
+            float,
+            rhizome,
+            0.0,
+        ];
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
         let atlas = Atlas::build(world.species());

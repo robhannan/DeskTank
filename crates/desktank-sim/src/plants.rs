@@ -56,10 +56,10 @@ pub fn plant_position(variant: u8) -> u8 {
 }
 
 /// The generic plant part materials shared by every species (SPEC §2.7).
-/// A rosette's or carpet's blades are leaf cells (their shape comes from
-/// the species' `[look] leaf`), so blades cost no material id; a floater's
-/// leaves are their own, light part (T6c part 2); T6c part 3 adds
-/// rhizomes.
+/// A rosette's or carpet's blades and an epiphyte's leaves are leaf cells
+/// (their shape comes from the species' `[look] leaf`), so blades cost no
+/// material id; a floater's leaves are their own, light part (T6c part 2);
+/// epiphytes creep by a `rhizome` (T6c part 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Part {
     /// Grows down and sideways through the substrate.
@@ -67,8 +67,8 @@ pub enum Part {
     /// The upright stem; a rosette's or carpet's crown; also the cells of a
     /// mat (moss).
     Stem,
-    /// Grows sideways from stem nodes; a rosette's or carpet's blades grow
-    /// up from the crown.
+    /// Grows sideways from stem nodes; a rosette's, carpet's or epiphyte's
+    /// blades grow up from the crown or rhizome.
     Leaf,
     /// Creeps through the top two layers of the substrate from a crown and
     /// roots a new plant at its tip (T6c).
@@ -77,20 +77,25 @@ pub enum Part {
     /// plant up at the surface, and nearly opaque, so it shades what is
     /// below.
     Float,
+    /// A creeping rhizome that clings to rock or driftwood and puts up
+    /// epiphyte leaves (T6c part 3).
+    Rhizome,
 }
 
 /// Slots in a plant's part counts: roots (runners count with them),
-/// stems and leaves.
+/// stems (rhizomes count with them) and leaves (floating leaves count with
+/// them).
 pub const COUNTED_PARTS: usize = 3;
 
 impl Part {
     /// Every part, in discriminant order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Root,
         Self::Stem,
         Self::Leaf,
         Self::Runner,
         Self::Float,
+        Self::Rhizome,
     ];
 
     /// The part's material name.
@@ -102,6 +107,7 @@ impl Part {
             Self::Leaf => "leaf",
             Self::Runner => "runner",
             Self::Float => "floating_leaf",
+            Self::Rhizome => "rhizome",
         }
     }
 
@@ -112,22 +118,23 @@ impl Part {
     }
 
     /// Its slot in a plant's part counts ([`COUNTED_PARTS`]): runners are
-    /// counted with roots, as the parts below ground, and floating leaves
-    /// with leaves, so the counts (and the save format) keep three slots.
+    /// counted with roots, rhizomes with stems and floating leaves with
+    /// leaves, so the counts (and the save format) keep three slots.
     #[must_use]
     pub fn count_slot(self) -> usize {
         match self {
             Self::Runner => Self::Root.index(),
+            Self::Rhizome => Self::Stem.index(),
             Self::Float => Self::Leaf.index(),
             p => p.index(),
         }
     }
 
-    /// Whether it samples light (stems and leaves; roots and runners are in
-    /// the substrate, or hang in the water under a floater).
+    /// Whether it samples light (stems, rhizomes and leaves; roots and
+    /// runners are in the substrate, or hang in the water under a floater).
     #[must_use]
     pub fn sees_light(self) -> bool {
-        matches!(self, Self::Stem | Self::Leaf | Self::Float)
+        matches!(self, Self::Stem | Self::Leaf | Self::Float | Self::Rhizome)
     }
 }
 
@@ -270,7 +277,7 @@ impl Preferences {
 }
 
 /// How a species grows: a small growth program in Rust, parametrised by the
-/// TOML (SPEC §2.7 *Growth forms*). T6c part 3 adds epiphytes.
+/// TOML (SPEC §2.7 *Growth forms*).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Form {
     /// An upright stem with leaves at nodes and roots in the substrate.
@@ -288,6 +295,9 @@ pub enum Form {
     /// whole plant one buoyant body that drifts with the current, budding
     /// new plants beside it (duckweed or frogbit type, T6c part 2).
     Floater(FloaterForm),
+    /// A creeping rhizome clinging to rock or driftwood that puts up
+    /// upright leaves (anubias or java fern type, T6c part 3).
+    Epiphyte(EpiphyteForm),
 }
 
 impl Form {
@@ -297,7 +307,7 @@ impl Form {
         match self {
             Self::Stem(f) => Some(&f.substrates),
             Self::Rosette(f) | Self::Carpet(f) => Some(&f.substrates),
-            Self::Mat(_) | Self::Floater(_) => None,
+            Self::Mat(_) | Self::Floater(_) | Self::Epiphyte(_) => None,
         }
     }
 
@@ -306,7 +316,7 @@ impl Form {
     pub fn rosette(&self) -> Option<&RosetteForm> {
         match self {
             Self::Rosette(f) | Self::Carpet(f) => Some(f),
-            Self::Stem(_) | Self::Mat(_) | Self::Floater(_) => None,
+            Self::Stem(_) | Self::Mat(_) | Self::Floater(_) | Self::Epiphyte(_) => None,
         }
     }
 
@@ -318,6 +328,40 @@ impl Form {
             _ => None,
         }
     }
+
+    /// The epiphyte parameters of an epiphyte.
+    #[must_use]
+    pub fn epiphyte(&self) -> Option<&EpiphyteForm> {
+        match self {
+            Self::Epiphyte(f) => Some(f),
+            _ => None,
+        }
+    }
+}
+
+/// Longest rhizome an epiphyte creeps, in cells.
+pub const MAX_RHIZOME: u8 = 32;
+/// Thickest mat, in layers of cells off what it clings to.
+pub const MAX_MAT_LAYERS: u8 = 4;
+
+/// Parameters of the epiphyte form (T6c part 3). A creeping rhizome
+/// ([`Part::Rhizome`]) clings to rock or driftwood, putting up leaves
+/// ([`Part::Leaf`] with a blade shape) every `spacing` rhizome cells; when
+/// what holds the rhizome is gone, the rhizome falls off and any leaf piece
+/// left without a rhizome dies.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EpiphyteForm {
+    /// Materials the rhizome clings to.
+    pub on: Vec<MaterialId>,
+    /// Longest rhizome, in cells (1..=[`MAX_RHIZOME`]).
+    pub rhizome_length: u8,
+    /// Rhizome cells between leaves (≥ 1).
+    pub spacing: u8,
+    /// Longest leaf, in cells (1..=[`MAX_POSITION`]).
+    pub leaf_length: u8,
+    /// Cells of leaf between two outward steps away from the base (0:
+    /// upright).
+    pub lean: u8,
 }
 
 /// Most floating leaves one floater spreads to.
@@ -391,6 +435,9 @@ pub struct StemForm {
     pub leaf_length: u8,
     /// Deepest root, in cells from where it started.
     pub root_depth: u8,
+    /// Share of stem nodes that put out a side shoot (0.0..=1.0, T6c part
+    /// 3).
+    pub branching: f32,
     /// Substrates a seed or cutting roots in and roots grow through.
     pub substrates: Vec<MaterialId>,
 }
@@ -398,9 +445,14 @@ pub struct StemForm {
 /// Parameters of the mat form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatForm {
-    /// Materials it clings to; each mat cell must touch one, or it falls
-    /// off as dead plant matter.
+    /// Materials it clings to; layer-0 cells must touch one, and outer
+    /// layers (up to `layers` cells thick) must touch a nearer layer, or
+    /// they fall off as dead plant matter.
     pub on: Vec<MaterialId>,
+    /// Layers of cells the mat builds up off what it clings to
+    /// (1..=[`MAX_MAT_LAYERS`]; 1 for a flat mat like java moss, 3 for
+    /// layered christmas moss).
+    pub layers: u8,
 }
 
 /// Growth speed and size.
@@ -615,9 +667,11 @@ impl PlantSpecies {
     pub fn colour(&self) -> [u8; 3] {
         let ramp = match self.form {
             Form::Mat(_) => &self.colours.stem,
-            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) | Form::Floater(_) => {
-                &self.colours.leaf
-            }
+            Form::Stem(_)
+            | Form::Rosette(_)
+            | Form::Carpet(_)
+            | Form::Floater(_)
+            | Form::Epiphyte(_) => &self.colours.leaf,
         };
         ramp.get(ramp.len() / 2)
             .copied()
@@ -764,6 +818,7 @@ struct SpeciesDef {
     rosette: Option<RosetteDef>,
     carpet: Option<RosetteDef>,
     floater: Option<FloaterDef>,
+    epiphyte: Option<EpiphyteDef>,
     prefer: Preferences,
     growth: GrowthDef,
     hardiness: HardinessDef,
@@ -789,6 +844,18 @@ enum FormName {
     Rosette,
     Carpet,
     Floater,
+    Epiphyte,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EpiphyteDef {
+    on: Vec<String>,
+    rhizome_length: u8,
+    spacing: u8,
+    leaf_length: u8,
+    #[serde(default)]
+    lean: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -806,13 +873,21 @@ struct StemDef {
     internode: u8,
     leaf_length: u8,
     root_depth: u8,
+    #[serde(default)]
+    branching: f32,
     substrates: Vec<String>,
+}
+
+fn default_one() -> u8 {
+    1
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MatDef {
     on: Vec<String>,
+    #[serde(default = "default_one")]
+    layers: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -868,6 +943,8 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/plants/cryptocoryne.toml"),
     include_str!("../../../assets/plants/duckweed.toml"),
     include_str!("../../../assets/plants/frogbit.toml"),
+    include_str!("../../../assets/plants/anubias.toml"),
+    include_str!("../../../assets/plants/java_fern.toml"),
 ];
 
 /// All plant species, ordered by ID.
@@ -980,8 +1057,7 @@ impl PlantSpeciesTable {
 }
 
 /// The error for a species without exactly its form's table.
-const ONE_TABLE: &str =
-    "needs exactly the [stem], [mat], [rosette], [carpet] or [floater] table its form names";
+const ONE_TABLE: &str = "needs exactly the [stem], [mat], [rosette], [carpet], [floater] or [epiphyte] table its form names";
 
 #[allow(clippy::too_many_lines)] // one check per property
 fn validate(
@@ -1015,11 +1091,34 @@ fn validate(
         d.rosette.is_some(),
         d.carpet.is_some(),
         d.floater.is_some(),
+        d.epiphyte.is_some(),
     ];
     if tables.iter().filter(|&&t| t).count() != 1 {
         return Err(invalid(ONE_TABLE));
     }
     let form = match (d.form, &d.stem, &d.mat) {
+        (FormName::Epiphyte, ..) => {
+            let Some(e) = &d.epiphyte else {
+                return Err(invalid(ONE_TABLE));
+            };
+            let max = MAX_POSITION;
+            if !(1..=MAX_RHIZOME).contains(&e.rhizome_length)
+                || !(1..=MAX_RHIZOME).contains(&e.spacing)
+                || !(1..=max).contains(&e.leaf_length)
+                || e.lean > max
+            {
+                return Err(invalid(
+                    "epiphyte rhizome_length and spacing must be 1..=32, leaf_length 1..=63 and lean 0..=63",
+                ));
+            }
+            Form::Epiphyte(EpiphyteForm {
+                on: lookup(&e.on)?,
+                rhizome_length: e.rhizome_length,
+                spacing: e.spacing,
+                leaf_length: e.leaf_length,
+                lean: e.lean,
+            })
+        }
         (FormName::Floater, ..) => {
             let Some(f) = &d.floater else {
                 return Err(invalid(ONE_TABLE));
@@ -1091,15 +1190,27 @@ fn validate(
                     "stem height, leaf_length and root_depth must be 1..=63 and internode 2..=63",
                 ));
             }
+            if !(s.branching.is_finite() && (0.0..=1.0).contains(&s.branching)) {
+                return Err(invalid("stem branching must be within 0..=1"));
+            }
             Form::Stem(StemForm {
                 height: s.height,
                 internode: s.internode,
                 leaf_length: s.leaf_length,
                 root_depth: s.root_depth,
+                branching: s.branching,
                 substrates: lookup(&s.substrates)?,
             })
         }
-        (FormName::Mat, None, Some(m)) => Form::Mat(MatForm { on: lookup(&m.on)? }),
+        (FormName::Mat, None, Some(m)) => {
+            if !(1..=MAX_MAT_LAYERS).contains(&m.layers) {
+                return Err(invalid("mat layers must be 1..=4"));
+            }
+            Form::Mat(MatForm {
+                on: lookup(&m.on)?,
+                layers: m.layers,
+            })
+        }
         _ => return Err(invalid(ONE_TABLE)),
     };
     for f in Factor::ALL {
@@ -1179,6 +1290,7 @@ fn validate(
         Form::Rosette(_) => (LeafShape::Ribbon, StemShape::Thick),
         Form::Carpet(_) => (LeafShape::Grass, StemShape::Thick),
         Form::Floater(_) => (LeafShape::Lens, StemShape::Stalk),
+        Form::Epiphyte(_) => (LeafShape::Sword, StemShape::Thick),
     };
     let look = Look {
         leaf: d.look.leaf.unwrap_or(default_leaf),
@@ -1188,12 +1300,12 @@ fn validate(
     let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
     if mat_shape != matches!(form, Form::Mat(_)) {
         return Err(invalid(
-            "look stem is stalk or thick for a stem, rosette or carpet, fuzz or frond for a mat",
+            "look stem is stalk or thick for a stem, rosette, carpet or epiphyte, fuzz or frond for a mat",
         ));
     }
-    if look.leaf.is_blade() != form.rosette().is_some() {
+    if look.leaf.is_blade() != (form.rosette().is_some() || form.epiphyte().is_some()) {
         return Err(invalid(
-            "look leaf is a blade shape (ribbon, sword, grass, pad) exactly for rosettes and carpets",
+            "look leaf is a blade shape (ribbon, sword, grass, pad) exactly for rosettes, carpets and epiphytes",
         ));
     }
     if look.leaf.is_floating() != form.floater().is_some() {
@@ -1267,7 +1379,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 14);
+        assert_eq!(t.len(), 16);
         let first = t.default_species().unwrap();
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
@@ -1624,6 +1736,57 @@ mod tests {
         invalid(OK.replace("[\"cuttings\"]", "[\"cuttings\", \"buds\"]"));
         invalid(format!("{floater}\n[look]\nleaf = \"round\"\n"));
         invalid(format!("{OK}\n[look]\nleaf = \"disc\"\n"));
+    }
+
+    #[test]
+    fn epiphytes_layered_mats_and_branching_are_checked() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        for (name, leaf) in [("anubias", LeafShape::Pad), ("java_fern", LeafShape::Sword)] {
+            let s = t.get(t.id(name).unwrap()).unwrap();
+            let e = s.form.epiphyte().unwrap();
+            assert!(!e.on.is_empty(), "{name} clings to rock/wood");
+            assert!(e.rhizome_length > 0 && e.leaf_length > 0);
+            assert_eq!(s.look.leaf, leaf);
+            assert_eq!(s.propagules().collect::<Vec<_>>(), [Propagule::Fragments]);
+            assert!(s.form.substrates().is_none(), "{name} doesn't root");
+        }
+        let java_moss = t.get(t.id("java_moss").unwrap()).unwrap();
+        let xmas_moss = t.get(t.id("christmas_moss").unwrap()).unwrap();
+        assert!(matches!(&java_moss.form, Form::Mat(f) if f.layers == 1));
+        assert!(matches!(&xmas_moss.form, Form::Mat(f) if f.layers == 3));
+        let rotala = t.get(t.id("rotala").unwrap()).unwrap();
+        assert!(matches!(&rotala.form, Form::Stem(f) if f.branching > 0.0));
+
+        let epi = OK
+            .replace("form = \"stem\"", "form = \"epiphyte\"")
+            .replace("[\"cuttings\"]", "[\"fragments\"]")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6\n        substrates = [\"sand\"]",
+                "[epiphyte]\n        on = [\"rock\"]\n        rhizome_length = 10\n        spacing = 2\n        leaf_length = 6\n        lean = 4",
+            );
+        let t = PlantSpeciesTable::from_toml_sources(&[&epi], &m).unwrap();
+        let s = t.get(PlantSpeciesId(9)).unwrap();
+        assert_eq!(s.look.leaf, LeafShape::Sword, "epiphytes default to sword");
+        assert_eq!(s.look.stem, StemShape::Thick);
+
+        let invalid = |src: String| {
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &m);
+            assert!(matches!(r, Err(PlantSpeciesError::Invalid { .. })), "{r:?}");
+        };
+        invalid(epi.replace("rhizome_length = 10", "rhizome_length = 33"));
+        invalid(epi.replace("spacing = 2", "spacing = 0"));
+        invalid(epi.replace("leaf_length = 6", "leaf_length = 64"));
+        invalid(format!("{epi}\n[look]\nleaf = \"round\"\n"));
+        invalid(format!("{epi}\n[look]\nstem = \"fuzz\"\n"));
+        invalid(OK.replace("height = 20", "height = 20\n        branching = 1.5"));
+        let mat = OK
+            .replace("form = \"stem\"", "form = \"mat\"")
+            .replace(
+                "[stem]\n        height = 20\n        internode = 2\n        leaf_length = 3\n        root_depth = 6\n        substrates = [\"sand\"]",
+                "[mat]\n        on = [\"rock\"]\n        layers = 5",
+            );
+        invalid(mat);
     }
 
     #[test]

@@ -160,12 +160,12 @@ pub fn species_image(table: &PlantSpeciesTable) -> Vec<u8> {
 /// One species' row of the species texture.
 fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     let mut row = [0; SPECIES_WIDTH * 4];
-    // Runners and floating leaves have no ramps of their own: the shader
-    // draws them from the stem's and the leaf's.
+    // Runners, rhizomes and floating leaves have no ramps of their own: the
+    // shader draws them from the stem's and the leaf's.
     for part in [Part::Root, Part::Stem, Part::Leaf] {
         let ramp = match part {
             Part::Root => &s.colours.root,
-            Part::Stem | Part::Runner => &s.colours.stem,
+            Part::Stem | Part::Runner | Part::Rhizome => &s.colours.stem,
             Part::Leaf | Part::Float => &s.colours.leaf,
         };
         for (k, shade) in resample(ramp).into_iter().enumerate() {
@@ -176,13 +176,15 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     let look = s.look;
     let at = SHAPES_COLUMN * 4;
     row[at..at + 4].copy_from_slice(&[look.leaf as u8, look.stem as u8, look.root as u8, 0]);
-    // A rosette's or carpet's blades shade by length, as stems by height.
+    // A rosette's, carpet's or epiphyte's blades shade by length, as stems
+    // by height.
     let sizes = match &s.form {
         Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
         Form::Rosette(f) | Form::Carpet(f) => [f.blade_length, f.root_depth, f.blade_length, 0],
         Form::Mat(_) => [0; 4],
         // A floater's roots shade by length; its fronds by how far out.
         Form::Floater(f) => [f.fronds, f.root_length, f.fronds, 0],
+        Form::Epiphyte(f) => [f.leaf_length, f.rhizome_length, f.leaf_length, 0],
     };
     let at = SIZES_COLUMN * 4;
     row[at..at + 4].copy_from_slice(&sizes);

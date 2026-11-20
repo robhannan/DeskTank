@@ -53,8 +53,8 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    COUNTED_PARTS, Factor, FloaterForm, Form, Limit, Part, PlantSpecies, PlantSpeciesId,
-    PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
+    COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, Limit, Part, PlantSpecies,
+    PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
 };
 use crate::rng::splitmix64;
 use crate::save::{SaveError, v1};
@@ -104,6 +104,17 @@ const RUNNER_WEIGHT: u32 = 2;
 const FROND_WEIGHT: u32 = 3;
 const HANGING_ROOT_WEIGHT: u32 = 2;
 const BUD_WEIGHT: u32 = 1;
+/// Epiphyte growth weights per site (T6c part 3): rhizome creeping along
+/// rock/wood and leaves rising from it.
+const RHIZOME_WEIGHT: u32 = 3;
+const EPIPHYTE_LEAF_WEIGHT: u32 = 6;
+/// Layered mat growth weights: spreading over what it clings to beats
+/// building up outer layers.
+const MAT_BASE_WEIGHT: u32 = 3;
+const MAT_LAYER_WEIGHT: u32 = 1;
+/// Chance per maturity cycle (~35 s when topped out, or 5 s at `growth.size`)
+/// that a healthy plant of a seeding species drops a seed into adjacent water.
+const SEED_DROP_CHANCE: f64 = 0.05;
 
 /// A plant's id, as stored in its cells' `state` (never 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -202,9 +213,9 @@ pub(super) struct Plants {
     rafts: BTreeMap<u16, Raft>,
     /// Per material id: 1 + the part index, or 0.
     part_of: Vec<u8>,
-    /// Material per part, in [`Part::ALL`] order (runners and floating
-    /// leaves are optional).
-    parts: [Option<MaterialId>; 5],
+    /// Material per part, in [`Part::ALL`] order (runners, floating leaves
+    /// and rhizomes are optional).
+    parts: [Option<MaterialId>; 6],
     seed: Option<MaterialId>,
     cutting: Option<MaterialId>,
     dead: Option<MaterialId>,
@@ -412,7 +423,7 @@ impl World {
             Some(Form::Stem(_)) => Shape::Stem {
                 base_x: p.map_or(0, |p| p.base % self.width),
             },
-            Some(Form::Rosette(_) | Form::Carpet(_)) => Shape::Blades,
+            Some(Form::Rosette(_) | Form::Carpet(_) | Form::Epiphyte(_)) => Shape::Blades,
             Some(Form::Mat(_)) => Shape::Mat,
             Some(Form::Floater(_)) | None => Shape::Plain,
         };
@@ -646,12 +657,13 @@ impl World {
             Some(id) if self.plants.table.contains_key(&id) => id,
             _ => {
                 // A floating leaf starts a floater (the first floater
-                // species); any other part the default species.
+                // species); a rhizome starts an epiphyte; any other part
+                // the default species.
                 let species = &self.plants.species;
-                let pick = if part == Part::Float {
-                    species.iter().find(|s| s.form.floater().is_some())
-                } else {
-                    species.default_species()
+                let pick = match part {
+                    Part::Float => species.iter().find(|s| s.form.floater().is_some()),
+                    Part::Rhizome => species.iter().find(|s| s.form.epiphyte().is_some()),
+                    _ => species.default_species(),
                 };
                 let Some(species) = pick.map(|s| s.id) else {
                     return 0;
@@ -780,24 +792,38 @@ impl World {
             .species
             .get(species)
             .is_some_and(|s| s.form.floater().is_some());
+        let epiphyte = self
+            .plants
+            .species
+            .get(species)
+            .is_some_and(|s| s.form.epiphyte().is_some());
         // A floater lives on only in a piece with a floating leaf to hold
-        // it up: hanging roots alone neither float nor grow.
+        // it up; an epiphyte only in a piece with a rhizome.
         let float = self.plants.material(Part::Float);
-        let floats = |piece: &[usize]| {
-            piece
-                .iter()
-                .any(|&i| float.is_some() && Some(self.cells[i].material) == float)
+        let rhizome = self.plants.material(Part::Rhizome);
+        let viable = |piece: &[usize]| {
+            if floater {
+                piece
+                    .iter()
+                    .any(|&i| float.is_some() && Some(self.cells[i].material) == float)
+            } else if epiphyte {
+                piece
+                    .iter()
+                    .any(|&i| rhizome.is_some() && Some(self.cells[i].material) == rhizome)
+            } else {
+                true
+            }
         };
         let keeper = pieces
             .iter()
-            .position(|piece| piece.binary_search(&base).is_ok() && (!floater || floats(piece)))
+            .position(|piece| piece.binary_search(&base).is_ok() && viable(piece))
             .or_else(|| {
-                floater
-                    .then(|| pieces.iter().position(|piece| floats(piece)))
+                (floater || epiphyte)
+                    .then(|| pieces.iter().position(|piece| viable(piece)))
                     .flatten()
             })
             .unwrap_or(0);
-        if floater && !floats(&pieces[keeper]) {
+        if (floater || epiphyte) && !viable(&pieces[keeper]) {
             self.kill_plant(id);
             return;
         }
@@ -810,13 +836,20 @@ impl World {
             if k == keeper {
                 continue;
             }
-            // A piece lives on if it holds a stem, or a floating leaf to
-            // hold it up.
-            let lives = [Part::Stem, Part::Float].map(|p| self.plants.material(p));
-            let has_stem = piece
+            // A piece lives on if it holds the core part for its form: a
+            // floating leaf for a floater, a rhizome for an epiphyte, or a
+            // stem for the rest.
+            let core = if floater {
+                float
+            } else if epiphyte {
+                rhizome
+            } else {
+                self.plants.material(Part::Stem)
+            };
+            let has_core = piece
                 .iter()
-                .any(|&i| lives.contains(&Some(self.cells[i].material)));
-            let new = if fragments && has_stem {
+                .any(|&i| core.is_some() && Some(self.cells[i].material) == core);
+            let new = if fragments && has_core {
                 self.new_plant(species, self.piece_base(piece), Some(id))
             } else {
                 0
@@ -868,14 +901,20 @@ impl World {
     }
 
     /// Where a piece grows from: its lowest stem cell, else its first
-    /// floating leaf, else its first cell.
+    /// rhizome or floating leaf, else its first cell.
     fn piece_base(&self, piece: &[usize]) -> usize {
         let stem = self.plants.material(Part::Stem);
+        let rhizome = self.plants.material(Part::Rhizome);
         let float = self.plants.material(Part::Float);
         piece
             .iter()
             .rev()
             .find(|&&i| Some(self.cells[i].material) == stem)
+            .or_else(|| {
+                piece
+                    .iter()
+                    .find(|&&i| rhizome.is_some() && Some(self.cells[i].material) == rhizome)
+            })
             .or_else(|| {
                 piece
                     .iter()
@@ -966,9 +1005,14 @@ impl World {
         let (x, y) = (i % self.width, i / self.width);
         let species = Arc::clone(&self.plants.species);
         let s = species.get(p.species);
-        if let Some(Form::Mat(mat)) = s.map(|s| &s.form)
-            && !self.touches_any(i, &mat.on)
-        {
+        let unanchored = match s.map(|s| &s.form) {
+            Some(Form::Mat(mat)) => {
+                !self.mat_supported(i, cell.state, plant_position(cell.variant), &mat.on)
+            }
+            Some(Form::Epiphyte(e)) if part == Part::Rhizome => !self.touches_any(i, &e.on),
+            _ => false,
+        };
+        if unanchored {
             if self.life.chance(1.0 - powu(self.plants.keep_falling, k))
                 && let Some(dead) = self.plants.dead
             {
@@ -1009,6 +1053,9 @@ impl World {
         let below = self.at(x, y, 0, 1);
         let ready = match (&s.form, s.form.substrates()) {
             (Form::Mat(m), _) => self.touches_any(i, &m.on),
+            (Form::Epiphyte(e), _) => {
+                self.plants.material(Part::Rhizome).is_some() && self.touches_any(i, &e.on)
+            }
             // A floater's plantlet opens in open water (water above it)
             // and rises to the surface.
             (Form::Floater(_), _) => {
@@ -1052,6 +1099,7 @@ impl World {
             }
             Form::Mat(_) => self.put_part(i, Part::Stem, id, 0),
             Form::Floater(_) => self.put_part(i, Part::Float, id, 0),
+            Form::Epiphyte(_) => self.put_part(i, Part::Rhizome, id, 1),
         }
         true
     }
@@ -1075,6 +1123,24 @@ impl World {
         DIRS.iter().any(|&(dx, dy)| {
             self.at(x, y, dx, dy)
                 .is_some_and(|j| materials.contains(&self.cells[j].material))
+        })
+    }
+
+    /// Whether a mat cell of plant `id` at `i` (layer `pos`) is held up:
+    /// directly touching one of `on`, or for outer layers (`pos > 0`)
+    /// touching a cell of the same plant in a nearer layer.
+    fn mat_supported(&self, i: usize, id: u16, pos: u8, on: &[MaterialId]) -> bool {
+        if self.touches_any(i, on) {
+            return true;
+        }
+        if pos == 0 {
+            return false;
+        }
+        let (x, y) = (i % self.width, i / self.width);
+        DIRS.iter().any(|&(dx, dy)| {
+            self.at(x, y, dx, dy).is_some_and(|j| {
+                self.is_plant_member(j, id) && plant_position(self.cells[j].variant) < pos
+            })
         })
     }
 
@@ -1126,6 +1192,7 @@ impl World {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // samples, health, seeding and growth
     fn update_plant(&mut self, id: u16) {
         let species = Arc::clone(&self.plants.species);
         let tick = self.tick;
@@ -1207,6 +1274,9 @@ impl World {
         let mature = size >= s.growth.size;
         let spreads = (s.propagation.runners && s.form.rosette().is_some()) || s.propagation.buds;
         if mature && !spreads {
+            if s.propagation.seeds && health >= 0.8 && response > 0.0 {
+                self.maybe_drop_seed(id, s.id, s.growth.cost);
+            }
             return;
         }
         p.energy = (p.energy + s.growth.rate / 60.0 * response * dt).min(MAX_ENERGY);
@@ -1230,6 +1300,14 @@ impl World {
                 p.idle = BLOCKED_UPDATES;
             }
         }
+        if grown == 0
+            && size >= s.growth.size / 2
+            && s.propagation.seeds
+            && health >= 0.8
+            && response > 0.0
+        {
+            self.maybe_drop_seed(id, s.id, s.growth.cost);
+        }
     }
 
     /// Grows up to `want` cells of plant `id` where its form allows (only
@@ -1248,6 +1326,7 @@ impl World {
                 self.rosette_sites(id, p.base, f, s.propagation.runners, &members)
             }
             Form::Floater(f) => self.floater_sites(id, p.base, f, spread_only, &members),
+            Form::Epiphyte(f) => self.epiphyte_sites(id, p.base, f, &members),
         };
         if spread_only {
             sites.retain(|s| s.part == Part::Runner || s.bud);
@@ -1290,38 +1369,187 @@ impl World {
         grown
     }
 
-    /// Where a stem-form plant can grow: up from the top of its stem, a
-    /// leaf out from each node or leaf tip, a root on from each root tip.
-    #[allow(clippy::many_single_char_names)] // cell maths
+    /// Occasionally drops one seed of `species` into an open water cell
+    /// beside plant `id`'s upper half (SPEC §2.7 *Propagation*), unless the
+    /// patch is already crowded with plants of the same species.
+    fn maybe_drop_seed(&mut self, id: u16, species: PlantSpeciesId, cost: f32) {
+        if self.plants.table.len() >= self.plants.cap || !self.life.chance(SEED_DROP_CHANCE) {
+            return;
+        }
+        let Some(seed) = self.plants.seed else {
+            return;
+        };
+        let Some(water) = self.plants.water else {
+            return;
+        };
+        let Some(p) = self.plants.table.get(&id) else {
+            return;
+        };
+        let bx = p.base % self.width;
+        let neighbours = self
+            .plants
+            .table
+            .iter()
+            .filter(|&(&oid, o)| {
+                oid != id && o.species == species && (o.base % self.width).abs_diff(bx) <= 16
+            })
+            .count();
+        if neighbours >= 1 {
+            return;
+        }
+        let bounds = self.clip_to_grid(p.bounds);
+        let mid_y = usize::midpoint(bounds.y0, bounds.y1);
+        let members = self.plant_members(id, bounds);
+        let mut spots = Vec::new();
+        for &i in &members {
+            let (x, y) = (i % self.width, i / self.width);
+            if y > mid_y {
+                continue;
+            }
+            for &(dx, dy) in &DIRS {
+                if let Some(j) = self.at(x, y, dx, dy)
+                    && self.cells[j].material == water
+                {
+                    spots.push(j);
+                }
+            }
+        }
+        if spots.is_empty() {
+            return;
+        }
+        let at = spots[self.life.rng.next_u32() as usize % spots.len()];
+        let (x, y) = (at % self.width, at / self.width);
+        self.cells[at] = Cell {
+            material: seed,
+            variant: variant(self.seed, self.tick, at),
+            state: u16::from(species.0),
+        };
+        self.mark_changed(x, y);
+        self.life
+            .field_mut(FieldKind::Nutrient)
+            .add_at_cell(x, y, -cost);
+        self.life.version += 1;
+    }
+
+    /// Where a stem-form plant can grow: up from every stem tip (and
+    /// trailing sideways along the top water row once it hits air), a leaf
+    /// or side shoot out from each node, a leaf on from its tip, and a root
+    /// on from each root tip.
+    #[allow(clippy::many_single_char_names, clippy::too_many_lines)] // cell maths
     fn stem_sites(&self, id: u16, base: usize, s: &PlantSpecies, members: &[usize]) -> Vec<Site> {
         let Form::Stem(f) = &s.form else {
             return Vec::new();
         };
         let water = self.plants.water;
         let is_water = |j: usize| Some(self.cells[j].material) == water;
-        let base_x = base % self.width;
+        let is_air_like = |j: usize| {
+            let m = self.cells[j].material;
+            Some(m) != water && self.is_fluid(m)
+        };
+        let stem_mat = self.plants.material(Part::Stem);
+        let is_own_stem = |j: usize| {
+            let c = self.cells[j];
+            Some(c.material) == stem_mat && c.state == id
+        };
         let mut sites = Vec::new();
-        let mut top: Option<(usize, u8)> = None;
         for &i in members {
             let c = self.cells[i];
             let (x, y) = (i % self.width, i / self.width);
             let pos = plant_position(c.variant);
             match self.plants.part(c.material) {
                 Some(Part::Stem) => {
-                    if top.is_none_or(|(t, _)| i < t) {
-                        top = Some((i, pos));
+                    let above = self.at(x, y, 0, -1);
+                    let below = self.at(x, y, 0, 1);
+                    let left = self.at(x, y, -1, 0);
+                    let right = self.at(x, y, 1, 0);
+                    let stem_above = above.is_some_and(is_own_stem);
+                    let stem_below = below.is_some_and(is_own_stem);
+                    let stem_left = left.is_some_and(is_own_stem);
+                    let stem_right = right.is_some_and(is_own_stem);
+                    if pos < f.height {
+                        // Grow straight up from a stem tip if water is above
+                        // and no other stem cell of this plant touches it
+                        // (so a 1-cell branch stub steps out a second cell
+                        // before rising).
+                        if let Some(j) = above
+                            && is_water(j)
+                            && self.lone_part(j, i, id, Part::Stem)
+                        {
+                            sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
+                        } else if above.is_some_and(is_air_like) {
+                            // Topped out at the surface: trail sideways along
+                            // the top water row.
+                            for dx in [-1, 1] {
+                                if let Some(j) = self.at(x, y, dx, 0)
+                                    && is_water(j)
+                                    && self
+                                        .at(j % self.width, j / self.width, 0, -1)
+                                        .is_some_and(is_air_like)
+                                    && self.lone_part(j, i, id, Part::Stem)
+                                {
+                                    sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
+                                }
+                            }
+                        } else if f.branching > 0.0
+                            && !stem_above
+                            && !stem_below
+                            && (stem_left != stem_right)
+                        {
+                            // A 1-cell horizontal branch stub: step one more
+                            // cell away from the parent stem so the rising
+                            // shoot keeps a 1-cell gap from it.
+                            let dx = if stem_left { 1 } else { -1 };
+                            if let Some(j) = self.at(x, y, dx, 0)
+                                && is_water(j)
+                                && self.lone_part(j, i, id, Part::Stem)
+                            {
+                                sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
+                            }
+                        }
                     }
-                    if pos >= f.internode && pos.is_multiple_of(f.internode) {
+                    // Nodes on upright stem cells put out opposite leaves,
+                    // or a side shoot with probability `f.branching`.
+                    let upright = stem_below || stem_above || i == base;
+                    if upright && pos >= f.internode && pos.is_multiple_of(f.internode) {
                         for dx in [-1, 1] {
-                            if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j)) {
+                            let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j)) else {
+                                continue;
+                            };
+                            let branch = f.branching > 0.0
+                                && stem_above
+                                && pos.saturating_add(3) < f.height
+                                && self.lone_part(j, i, id, Part::Stem)
+                                && self.at(x, y, dx * 2, 0).is_some_and(is_water)
+                                && self.at(x, y, dx * 2, -1).is_some_and(is_water)
+                                && !self.at(x, y, dx * 2, 1).is_some_and(is_own_stem)
+                                && !self.at(x, y, dx * 3, 0).is_some_and(is_own_stem)
+                                && self.branch_node(id, i, dx > 0, f.branching);
+                            if branch {
+                                sites.push(Site::new(j, Part::Stem, pos + 1, LEAF_WEIGHT));
+                            } else if !self
+                                .at(j % self.width, j / self.width, 0, 1)
+                                .is_some_and(is_own_stem)
+                            {
                                 sites.push(Site::new(j, Part::Leaf, 1, LEAF_WEIGHT));
                             }
                         }
                     }
                 }
-                Some(Part::Leaf) if pos < f.leaf_length && x != base_x => {
-                    let dx = if x < base_x { -1 } else { 1 };
-                    if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j)) {
+                Some(Part::Leaf) if pos < f.leaf_length => {
+                    let from_left = self.at(x, y, -1, 0).is_some_and(|l| {
+                        let lc = self.cells[l];
+                        lc.state == id
+                            && ((pos == 1 && self.plants.part(lc.material) == Some(Part::Stem))
+                                || (pos > 1
+                                    && self.plants.part(lc.material) == Some(Part::Leaf)
+                                    && plant_position(lc.variant) == pos - 1))
+                    });
+                    let dx = if from_left { 1 } else { -1 };
+                    if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
+                        && !self
+                            .at(j % self.width, j / self.width, 0, 1)
+                            .is_some_and(is_own_stem)
+                    {
                         sites.push(Site::new(j, Part::Leaf, pos + 1, LEAF_WEIGHT));
                     }
                 }
@@ -1340,29 +1568,40 @@ impl World {
                 _ => {}
             }
         }
-        if let Some((t, pos)) = top
-            && pos < f.height
-            && let Some(j) = self.at(t % self.width, t / self.width, 0, -1)
-            && is_water(j)
-        {
-            sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
-        }
         sites.sort_unstable_by_key(|s| s.at);
         sites.dedup_by_key(|s| s.at);
         sites
     }
 
-    /// Whether a root growing from `from` into `j` would touch no other
-    /// root of plant `id` (T6's `alone`, by plant id).
-    fn lone_root(&self, j: usize, from: usize, id: u16) -> bool {
-        let root = self.plants.material(Part::Root);
+    /// Deterministic per-node branching decision: each node side of plant
+    /// `id` at cell `i` is either a branching site (with probability
+    /// `branching`) or a leaf site, so repeated updates never turn every
+    /// node into a branch.
+    fn branch_node(&self, id: u16, i: usize, right: bool, branching: f32) -> bool {
+        let key = (u64::from(id) << 33) | ((i as u64) << 1) | u64::from(right);
+        let h = splitmix64(self.seed ^ splitmix64(key));
+        #[allow(clippy::cast_precision_loss)] // 24 bits fit f32
+        let u = (h >> 40) as f32 / (1u32 << 24) as f32;
+        u < branching
+    }
+
+    /// Whether growing `part` from `from` into `j` would touch no other
+    /// cell of `part` belonging to plant `id`.
+    fn lone_part(&self, j: usize, from: usize, id: u16, part: Part) -> bool {
+        let mat = self.plants.material(part);
         let (x, y) = (j % self.width, j / self.width);
         DIRS.iter().all(|&(dx, dy)| {
             self.at(x, y, dx, dy).is_none_or(|e| {
                 let c = self.cells[e];
-                e == from || Some(c.material) != root || c.state != id
+                e == from || Some(c.material) != mat || c.state != id
             })
         })
+    }
+
+    /// Whether a root growing from `from` into `j` would touch no other
+    /// root of plant `id` (T6's `alone`, by plant id).
+    fn lone_root(&self, j: usize, from: usize, id: u16) -> bool {
+        self.lone_part(j, from, id, Part::Root)
     }
 
     /// Where a rosette or carpet can grow (see [`RosetteForm`]): the crown
@@ -1683,8 +1922,74 @@ impl World {
         true
     }
 
+    /// Where an epiphyte can grow (see [`EpiphyteForm`]): its rhizome
+    /// creeps into water cells touching what it clings to (staying a single
+    /// strand via [`Self::lone_part`]), puts up a leaf every `spacing`
+    /// rhizome cells, and each leaf grows upward (leaning outward from the
+    /// base every `lean` cells).
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn epiphyte_sites(
+        &self,
+        id: u16,
+        base: usize,
+        f: &EpiphyteForm,
+        members: &[usize],
+    ) -> Vec<Site> {
+        let water = self.plants.water;
+        let is_water = |j: usize| Some(self.cells[j].material) == water;
+        let bx = base % self.width;
+        let mut sites = Vec::new();
+        for &i in members {
+            let c = self.cells[i];
+            let (x, y) = (i % self.width, i / self.width);
+            let pos = plant_position(c.variant);
+            match self.plants.part(c.material) {
+                Some(Part::Rhizome) => {
+                    if pos < f.rhizome_length {
+                        for &(dx, dy) in &DIRS {
+                            if let Some(j) = self.at(x, y, dx, dy)
+                                && is_water(j)
+                                && self.touches_any(j, &f.on)
+                                && self.lone_part(j, i, id, Part::Rhizome)
+                            {
+                                sites.push(Site::new(j, Part::Rhizome, pos + 1, RHIZOME_WEIGHT));
+                            }
+                        }
+                    }
+                    if (pos == 1 || pos.is_multiple_of(f.spacing))
+                        && let Some(j) = self.at(x, y, 0, -1)
+                        && is_water(j)
+                    {
+                        sites.push(Site::new(j, Part::Leaf, 1, EPIPHYTE_LEAF_WEIGHT));
+                    }
+                }
+                Some(Part::Leaf) if pos < f.leaf_length => {
+                    let dir = match x.cmp(&bx) {
+                        core::cmp::Ordering::Less => -1,
+                        core::cmp::Ordering::Equal => 0,
+                        core::cmp::Ordering::Greater => 1,
+                    };
+                    let lean = usize::from(f.lean).max(3);
+                    let out = f.lean > 0
+                        && dir != 0
+                        && pos >= 2
+                        && usize::from(pos - 2).is_multiple_of(lean);
+                    let (dx, dy) = if out { (dir, 0) } else { (0, -1) };
+                    if let Some(j) = self.at(x, y, dx, dy).filter(|&j| is_water(j)) {
+                        sites.push(Site::new(j, Part::Leaf, pos + 1, BLADE_WEIGHT));
+                    }
+                }
+                _ => {}
+            }
+        }
+        sites.sort_unstable_by_key(|s| s.at);
+        sites.dedup_by_key(|s| s.at);
+        sites
+    }
+
     /// Where a mat can grow: water next to its cells that touches what it
-    /// clings to.
+    /// clings to (layer 0), or an outer layer (`pos + 1 < layers`) off a
+    /// nearer layer.
     fn mat_sites(&self, s: &PlantSpecies, members: &[usize]) -> Vec<Site> {
         let Form::Mat(m) = &s.form else {
             return Vec::new();
@@ -1693,12 +1998,16 @@ impl World {
         let mut sites = Vec::new();
         for &i in members {
             let (x, y) = (i % self.width, i / self.width);
+            let pos = plant_position(self.cells[i].variant);
             for &(dx, dy) in &DIRS {
                 if let Some(j) = self.at(x, y, dx, dy)
                     && Some(self.cells[j].material) == water
-                    && self.touches_any(j, &m.on)
                 {
-                    sites.push(Site::new(j, Part::Stem, 0, 1));
+                    if self.touches_any(j, &m.on) {
+                        sites.push(Site::new(j, Part::Stem, 0, MAT_BASE_WEIGHT));
+                    } else if pos + 1 < m.layers {
+                        sites.push(Site::new(j, Part::Stem, pos + 1, MAT_LAYER_WEIGHT));
+                    }
                 }
             }
         }
@@ -1734,7 +2043,7 @@ impl World {
             .plants
             .species
             .get(p.species)
-            .is_some_and(|s| s.form.rosette().is_some());
+            .is_some_and(|s| s.form.rosette().is_some() || s.form.epiphyte().is_some());
         if blades {
             // Blades die back from their tips, so no blade is cut off.
             leaves.sort_unstable_by_key(|&i| {

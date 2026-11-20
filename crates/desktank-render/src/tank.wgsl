@@ -93,6 +93,7 @@ const PART_STEM: i32 = 1;
 const PART_LEAF: i32 = 2;
 const PART_RUNNER: i32 = 3;
 const PART_FLOAT: i32 = 4;
+const PART_RHIZOME: i32 = 5;
 // Species texture layout (plants.rs).
 const RAMP: i32 = 8;
 const SHAPES_COLUMN: i32 = 24;
@@ -236,6 +237,9 @@ fn part_of(t: vec4<f32>) -> i32 {
     }
     if m == view.plant_parts2.y {
         return PART_FLOAT;
+    }
+    if m == view.plant_parts2.z {
+        return PART_RHIZOME;
     }
     return -1;
 }
@@ -468,6 +472,27 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                 step += select(0, 1, quarter.y == 0) - select(0, 1, quarter.y == 2) - select(0, 2, stalk);
             }
         }
+    } else if part == PART_RHIZOME {
+        // A creeping epiphyte rhizome hugging rock or wood: thick, slightly
+        // rounded along its run, darker underneath, with tiny gripping
+        // rootlets at 4x.
+        let up = kin(at, vec2<i32>(0, -1), me).x >= 0;
+        let down = kin(at, vec2<i32>(0, 1), me).x == PART_RHIZOME;
+        let left = kin(at, vec2<i32>(-1, 0), me).x == PART_RHIZOME;
+        let right = kin(at, vec2<i32>(1, 0), me).x == PART_RHIZOME;
+        let end_l = !left && !up && !down;
+        let end_r = !right && !up && !down;
+        covered = !(top && ((end_l && sub.x == 0) || (end_r && sub.x == 1)));
+        step += 2 + select(-1, 1, top) + select(0, 1, up);
+        if fine {
+            let rootlet = !down && ((hash(at) & 1u) == 0u) && quarter.y == 3
+                && (quarter.x == 1 || quarter.x == 2);
+            let body = (quarter.y >= 1 && quarter.y <= 2)
+                || (up && quarter.y == 0 && (quarter.x == 1 || quarter.x == 2))
+                || (down && quarter.y == 3 && (quarter.x == 1 || quarter.x == 2));
+            covered = body || rootlet;
+            step += select(0, 1, quarter.y == 1) - select(0, 2, rootlet);
+        }
     } else if part == PART_RUNNER {
         // A stolon along the top of its cell, joining runner cells above or
         // below where it climbs or drops, lighter where it pokes out.
@@ -616,20 +641,30 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
         } else {
             let left = kin(at, vec2<i32>(-1, 0), me);
             let right = kin(at, vec2<i32>(1, 0), me);
+            let up_stem = kin(at, vec2<i32>(0, -1), me).x == PART_STEM;
+            let down_stem = kin(at, vec2<i32>(0, 1), me).x == PART_STEM;
+            let horiz = (left.x == PART_STEM || right.x == PART_STEM) && !up_stem && !down_stem;
             let node = left.x == PART_LEAF || right.x == PART_LEAF;
-            let tip = kin(at, vec2<i32>(0, -1), me).x != PART_STEM;
+            let tip = !up_stem && (!horiz || (left.x == PART_STEM && right.x != PART_STEM) || (right.x == PART_STEM && left.x != PART_STEM));
             step += 1 + i32(round(f32(pos) / max(sizes.x, 1.0) * 5.0)) - select(0, 1, node) + select(0, 2, tip);
             if shape == STEM_THICK {
                 if fine {
                     // A round stem, brightest left of centre and darkest on
                     // the right, a dark joint line at each node and a
                     // rounded growing tip.
-                    let shoulder = tip && quarter.y == 0 && (quarter.x == 0 || quarter.x == 3);
+                    let shoulder = tip && !horiz && quarter.y == 0 && (quarter.x == 0 || quarter.x == 3);
                     covered = !shoulder;
                     step += select(0, 1, quarter.x == 1) - select(0, 1, quarter.x == 3)
                         - select(0, 1, node && quarter.y == 3);
                 } else {
                     step -= select(0, 1, sub.x == 1);
+                }
+            } else if horiz {
+                // Horizontal branch arm or surface-trailing stem.
+                covered = top;
+                if fine {
+                    covered = quarter.y == 1 || quarter.y == 2;
+                    step += select(-1, 2, quarter.y == 1);
                 }
             } else {
                 // Stalk: one texel wide, full at nodes and the growing tip.
@@ -688,9 +723,13 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
         }
     }
     let tint = plant.rgb;
-    // Runners are drawn from the stem's ramp, floating leaves from the
-    // leaf's.
-    let ramp = select(select(part, PART_STEM, part == PART_RUNNER), PART_LEAF, part == PART_FLOAT);
+    // Runners and rhizomes are drawn from the stem's ramp, floating leaves
+    // from the leaf's.
+    let ramp = select(
+        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME),
+        PART_LEAF,
+        part == PART_FLOAT,
+    );
     if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
         let rgb = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
