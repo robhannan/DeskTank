@@ -9,20 +9,34 @@
 // menu, the settings panel (localStorage), visibility, battery and
 // device/context loss.
 //
-// Saves (WB3): the tank is saved to IndexedDB (store.js) in the native
+// Saves (WB3): the tank is saved to IndexedDB (store.ts) in the native
 // app's format when the page is hidden, on pagehide, every 5 minutes and
 // after a reset or import; a reload opens the newest save at its own grid
 // size, letterboxed. Only the tab holding the tank's Web Lock
-// (ownership.js) simulates and writes; another tab shows "open in another
+// (ownership.ts) simulates and writes; another tab shows "open in another
 // tab" with Take over. Export and Import move save files to and from the
 // desktop app (`desktank export` / `desktank import`).
 //
 // URL parameters: ?backend=webgpu|webgl2 forces a backend; ?bench records
 // rAF callback times in window.desktank.rafTimes and drawn-frame times in
-// window.desktank.frameTimes (scripts/bench-web.mjs).
+// window.desktank.frameTimes (scripts/bench-web.ts).
 import init, { Graphics, WebTank, brushRange, gridFor } from "./pkg/desktank_web.js";
-import { Ownership } from "./ownership.js";
-import { claim, openStore, readSaves, writeSave } from "./store.js";
+import type { Hooks, Settings } from "./hooks.js";
+import type { Save } from "./store.ts";
+import { Ownership } from "./ownership.ts";
+import { claim, openStore, readSaves, writeSave } from "./store.ts";
+
+// The Battery Status API (Chromium only), which TypeScript's DOM types lack.
+interface BatteryManager extends EventTarget {
+  readonly charging: boolean;
+}
+declare global {
+  interface Navigator {
+    getBattery?(): Promise<BatteryManager>;
+  }
+}
+
+type Point = [x: number, y: number];
 
 const FPS_AC = 30;
 const FPS_BATTERY = 15;
@@ -44,7 +58,7 @@ const INSPECT_SHOW_MS = 5000;
 
 // Display labels for palette entries (the entries come from the sim; an
 // unlisted name falls back to its humanised form).
-const LABELS = {
+const LABELS: Record<string, string> = {
   air_bubble: "Bubbles",
   flake_food: "Flakes",
   sinking_pellet: "Pellets",
@@ -55,7 +69,7 @@ const LABELS = {
   monte_carlo: "Monte Carlo",
 };
 // What holds a plant back, by `Limit::key` (the inspect card).
-const LIMITS = {
+const LIMITS: Record<string, string> = {
   none: "growing well",
   "light-low": "light too low",
   "light-high": "light too strong",
@@ -72,7 +86,7 @@ const TANK = "main";
 const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
-const DEFAULTS = Object.freeze({
+const DEFAULTS: Readonly<Settings> = Object.freeze({
   scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, stats: true, seed: 1, radius: 3,
 });
 
@@ -80,29 +94,30 @@ const params = new URLSearchParams(location.search);
 const wantBackend = params.get("backend") ?? "auto";
 const bench = params.has("bench");
 
-const $ = (id) => document.getElementById(id);
-const canvas = $("tank");
+// The page's elements are all in index.html, so a lookup never misses.
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const canvas = $<HTMLCanvasElement>("tank");
 const statusEl = $("status");
 const statsEl = $("stats");
 const inspectEl = $("inspect");
-const cheatForm = $("cheat");
-const cheatInput = $("cheat-input");
-const cheatOut = $("cheat-out");
-const nameForm = $("name");
-const nameInput = $("name-input");
-const nameOut = $("name-out");
-const playBtn = $("play");
-const stepBtn = $("step");
-const seedInput = $("seed");
-const brushInput = $("brush");
+const cheatForm = $<HTMLFormElement>("cheat");
+const cheatInput = $<HTMLInputElement>("cheat-input");
+const cheatOut = $<HTMLOutputElement>("cheat-out");
+const nameForm = $<HTMLFormElement>("name");
+const nameInput = $<HTMLInputElement>("name-input");
+const nameOut = $<HTMLOutputElement>("name-out");
+const playBtn = $<HTMLButtonElement>("play");
+const stepBtn = $<HTMLButtonElement>("step");
+const seedInput = $<HTMLInputElement>("seed");
+const brushInput = $<HTMLInputElement>("brush");
 const paletteEl = $("palette");
 const groupsEl = $("groups");
-const plantPickEl = $("plant-species");
-const propagulePickEl = $("plant-propagule");
+const plantPickEl = $<HTMLSelectElement>("plant-species");
+const propagulePickEl = $<HTMLSelectElement>("plant-propagule");
 
 let settings = loadSettings();
-let tank;
-let openGroup; // name of the palette group shown
+let tank: WebTank; // set by main() before anything uses it
+let openGroup: string | undefined; // name of the palette group shown
 let backend = "";
 let adapter = "";
 let rafId = 0;
@@ -117,12 +132,18 @@ let frames = 0;
 let fps = 0;
 let fpsSince = 0;
 let inspectTimer = 0;
-let inspected = null; // the creature inspect last showed: { id, parts, name }
+// The creature inspect last showed: its inspect line's parts and its name.
+interface Inspected {
+  id: number;
+  parts: string[];
+  name: string;
+}
+let inspected: Inspected | null = null;
 let wheelRest = 0;
-let db = null; // IndexedDB, or null where there is none
-let ownership = null;
+let db: IDBDatabase | null = null; // IndexedDB, or null where there is none
+let ownership: Ownership | null = null;
 let owner = false; // this tab simulates and saves the tank
-let epoch = null; // this owner's claim (store.js); writes need it
+let epoch: number | null = null; // this owner's claim (store.ts); writes need it
 let handingOver = false;
 let started = false; // the first tank is open
 let nextAutosave = Infinity;
@@ -131,8 +152,8 @@ let lastSaved = 0; // Date.now() of the last save written or loaded
 let persistAsked = false;
 let noticeTimer = 0;
 
-// Test and benchmark hooks (tests/web/).
-const hooks = {
+// Test and benchmark hooks (tests/web/, hooks.d.ts).
+const hooks: Hooks = {
   frameTimes: [],
   rafTimes: [],
   get tank() {
@@ -142,7 +163,7 @@ const hooks = {
     return backend;
   },
   // [scale, columns, rows] of the current tank in the current canvas.
-  get grid() {
+  get grid(): [number, number, number] {
     return tank && [tank.cellScale(), tank.width(), tank.height()];
   },
   get owner() {
@@ -155,10 +176,11 @@ const hooks = {
   // A write with that epoch, bypassing the owner check (a stale owner).
   async lateWrite() {
     try {
+      if (!db) return "no database";
       await writeSave(db, TANK, tank.exportSave(), tank.tickCount(), hooks.lastEpoch);
       return "written";
     } catch (err) {
-      return err.message;
+      return (err as Error).message;
     }
   },
   writes: 0, // saves this tab wrote
@@ -176,19 +198,21 @@ window.desktank = hooks;
 
 // --- Settings (localStorage) ---------------------------------------------
 
-function loadSettings() {
-  let saved = {};
+function loadSettings(): Settings {
+  // Whatever was stored: each field is checked below.
+  let saved: Record<string, unknown> = {};
   try {
     saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") ?? {};
   } catch {
     // Private mode, blocked storage or a corrupt value: use the defaults.
   }
-  const int = (v, lo, hi, d) => (Number.isInteger(v) && v >= lo && v <= hi ? v : d);
+  const int = (v: unknown, lo: number, hi: number, d: number) =>
+    typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi ? v : d;
   return {
     // Even scales only (or 1): an odd one saved by an older version rounds down.
     scale: ((s) => (s > 1 ? s & ~1 : s))(int(saved.scale, 0, 8, DEFAULTS.scale)),
-    fps: ["auto", "30", "15"].includes(saved.fps) ? saved.fps : DEFAULTS.fps,
-    field: FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
+    fps: typeof saved.fps === "string" && ["auto", "30", "15"].includes(saved.fps) ? saved.fps : DEFAULTS.fps,
+    field: typeof saved.field === "string" && FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
     avoidCursor: saved.avoidCursor === true,
     easyMode: saved.easyMode === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
@@ -205,7 +229,7 @@ function saveSettings() {
   }
 }
 
-function update(changes) {
+function update(changes: Partial<Settings>) {
   settings = { ...settings, ...changes };
   saveSettings();
   showSettings();
@@ -213,15 +237,15 @@ function update(changes) {
 
 // Mirrors the settings into the panel's fields and applies the cheap ones.
 function showSettings() {
-  $("set-scale").value = String(settings.scale);
-  $("set-fps").value = settings.fps;
-  $("set-field").value = settings.field;
-  $("set-avoid-cursor").checked = settings.avoidCursor;
-  $("set-easy-mode").checked = settings.easyMode;
-  $("set-stats").checked = settings.stats;
-  seedInput.value = settings.seed;
-  brushInput.value = settings.radius;
-  $("brush-out").value = settings.radius;
+  $<HTMLSelectElement>("set-scale").value = String(settings.scale);
+  $<HTMLSelectElement>("set-fps").value = settings.fps;
+  $<HTMLSelectElement>("set-field").value = settings.field;
+  $<HTMLInputElement>("set-avoid-cursor").checked = settings.avoidCursor;
+  $<HTMLInputElement>("set-easy-mode").checked = settings.easyMode;
+  $<HTMLInputElement>("set-stats").checked = settings.stats;
+  seedInput.value = String(settings.seed);
+  brushInput.value = String(settings.radius);
+  $<HTMLOutputElement>("brush-out").value = String(settings.radius);
   statsEl.hidden = !settings.stats;
   if (tank) {
     tank.setMaxFps(maxFps());
@@ -239,19 +263,19 @@ function maxFps() {
 
 // --- Tank and graphics -------------------------------------------------------
 
-function showError(message) {
+function showError(message: string) {
   statusEl.textContent = message;
   statusEl.hidden = false;
 }
 
 // Canvas size in device pixels, from its CSS box.
-function canvasPixels() {
+function canvasPixels(): Point {
   const r = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   return [Math.max(1, Math.round(r.width * dpr)), Math.max(1, Math.round(r.height * dpr))];
 }
 
-function setCanvasSize([w, h]) {
+function setCanvasSize([w, h]: Point) {
   if (canvas.width !== w) canvas.width = w;
   if (canvas.height !== h) canvas.height = h;
   tank?.resize(w, h);
@@ -259,7 +283,7 @@ function setCanvasSize([w, h]) {
 }
 
 // Swaps in a new tank; the caller attaches graphics to it.
-function replaceTank(next) {
+function replaceTank(next: WebTank) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
   // It keeps the plant species and propagule picks too.
@@ -276,7 +300,7 @@ function replaceTank(next) {
 // Opens graphics and attaches them to the current tank. An open that a
 // context loss overtook is discarded and retried once the context is back;
 // returns false if the context is lost now (the restore event reattaches).
-async function attachGraphics() {
+async function attachGraphics(): Promise<boolean> {
   for (;;) {
     if (contextLost) return false;
     const losses = lossCount;
@@ -293,13 +317,13 @@ async function attachGraphics() {
 }
 
 // A new tank for the current canvas, cell scale setting and seed.
-function newTank() {
+function newTank(): WebTank {
   const [w, h] = sizeCanvas();
   const [, cols, rows] = gridFor(w, h, settings.scale);
   return new WebTank(cols, rows, settings.seed, w, h);
 }
 
-function sizeCanvas() {
+function sizeCanvas(): Point {
   const [w, h] = canvasPixels();
   canvas.width = w;
   canvas.height = h;
@@ -307,7 +331,7 @@ function sizeCanvas() {
 }
 
 // Swaps in `next` as the shown tank and reopens the graphics for it.
-async function showTank(next) {
+async function showTank(next: WebTank) {
   endGestures();
   // Graphics belong to the old tank; reopen them for the new one.
   replaceTank(next);
@@ -327,7 +351,7 @@ async function reset() {
 // --- Saves and ownership -----------------------------------------------------
 
 // Shows a short message under the menu.
-function notice(message) {
+function notice(message: string) {
   const el = $("notice");
   el.textContent = message;
   el.hidden = false;
@@ -346,14 +370,14 @@ function showSaved() {
 
 // Saves the tank to IndexedDB if this tab owns it and it changed (or
 // `force`). Returns the write's promise (true once written).
-function persist(why, force = false) {
+function persist(why: string, force = false): Promise<boolean> {
   if (!owner || epoch === null || !db || !tank) return Promise.resolve(false);
   nextAutosave = performance.now() + AUTOSAVE_MS;
   if (!force && !saveFailed && !tank.saveNeeded()) return hooks.saving;
   const bytes = tank.save();
   const tick = tank.tickCount();
   hooks.writes++;
-  let write;
+  let write: Promise<void>;
   try {
     write = writeSave(db, TANK, bytes, tick, epoch);
   } catch (err) {
@@ -392,9 +416,9 @@ function askPersist() {
 // The newest save that opens, as a tank for the current canvas, or null.
 // Saves that don't open are logged and skipped, never deleted (one may be
 // from a newer build); pruning drops them once newer saves replace them.
-async function loadNewest() {
+async function loadNewest(): Promise<WebTank | null> {
   if (!db) return null;
-  let saves = [];
+  let saves: Save[] = [];
   try {
     saves = await readSaves(db, TANK);
   } catch (err) {
@@ -470,10 +494,10 @@ function showOwnership() {
   $("elsewhere-text").textContent = handingOver
     ? "Handing the tank over to another tab…"
     : "DeskTank is open in another tab. This one shows its last save and won't change it.";
-  $("take-over").disabled = handingOver;
+  $<HTMLButtonElement>("take-over").disabled = handingOver;
   document.body.dataset.owner = String(owner);
   // A viewer's controls are inert: nothing it does would be saved.
-  for (const el of document.querySelectorAll("[data-owner-only]")) el.inert = !active;
+  for (const el of document.querySelectorAll<HTMLElement>("[data-owner-only]")) el.inert = !active;
   if (!active) {
     closeCheat();
     closeName();
@@ -482,16 +506,17 @@ function showOwnership() {
 
 function takeOver() {
   hooks.takeOverAt = performance.now();
-  $("take-over").disabled = true;
+  $<HTMLButtonElement>("take-over").disabled = true;
   $("elsewhere-text").textContent = "Taking over…";
-  ownership.takeOver();
+  ownership?.takeOver();
 }
 
 function exportSave() {
   const bytes = tank.exportSave();
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+  // wasm-bindgen copies the bytes out of wasm memory into a fresh ArrayBuffer.
+  a.href = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: "application/octet-stream" }));
   a.download = `desktank-${stamp}.dtank`;
   document.body.append(a);
   a.click();
@@ -501,7 +526,7 @@ function exportSave() {
 
 // Opens a save file (from Export, or a desktop `.dtank`) at its own grid
 // size, keeping play/pause, and saves it as this browser's tank.
-async function importSave(file) {
+async function importSave(file: File | undefined) {
   if (!owner || !file) return;
   let next;
   try {
@@ -523,7 +548,7 @@ async function importSave(file) {
 
 // Loads a `desktank capture` script (TOML) at a fixed canvas size, paused,
 // for the render comparison test.
-async function loadScene(toml, sceneSeed, width, height) {
+async function loadScene(toml: string, sceneSeed: number, width: number, height: number) {
   // Pinned to the viewport's top-left at whole pixels, so a screenshot of
   // it is exactly the drawn frame.
   const dpr = window.devicePixelRatio || 1;
@@ -561,7 +586,7 @@ function updateStats() {
 
 // One callback: the tank decides whether a tick or a frame is due, and when
 // it next needs us.
-function loop(now) {
+function loop(now: number) {
   rafId = 0;
   if (hidden || !tank) return;
   if (now >= nextAutosave) persist("autosave");
@@ -603,7 +628,7 @@ function kick() {
 // Sleeps on a timer and then runs the loop directly (not through rAF, whose
 // vsync timestamp can fall just before the tick and cost a second wake-up).
 // Drawing outside rAF is fine: the canvas presents at the next composite.
-function sleepUntil(t) {
+function sleepUntil(t: number) {
   clearTimeout(timerId);
   timerId = setTimeout(() => {
     timerId = 0;
@@ -635,7 +660,7 @@ async function recover(lost = true) {
   kick();
 }
 
-function setRunning(on) {
+function setRunning(on: boolean) {
   // Only the owner simulates.
   on &&= owner;
   tank.setRunning(on);
@@ -653,7 +678,7 @@ function step() {
 
 // --- Palette -----------------------------------------------------------------
 
-function label(name) {
+function label(name: string) {
   return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replaceAll("_", " ");
 }
 
@@ -704,9 +729,9 @@ function pickPropagule() {
 function choosePlantSlot() {
   const slot = tank.palette().findIndex((e) => e.startsWith("plant "));
   const colour = tank.paletteColours()[slot];
-  const button = paletteEl.children[slot];
+  const button = swatch(slot);
   if (button) {
-    button.firstElementChild?.style.setProperty("--c", colour);
+    (button.firstElementChild as HTMLElement | null)?.style.setProperty("--c", colour);
     openGroup = button.dataset.group;
     choose(slot);
   }
@@ -719,7 +744,8 @@ function choosePlantSlot() {
 function buildPalette() {
   const entries = tank.palette();
   const colours = tank.paletteColours();
-  const groups = tank.paletteGroups().map((g) => g.split(" "));
+  // "name label" per entry: the group's name and its tab's text.
+  const groups = tank.paletteGroups().map((g) => g.split(" ") as [name: string, text: string]);
   const tabs = [...new Map(groups).entries()];
   groupsEl.replaceChildren(
     ...tabs.map(([name, text]) => {
@@ -761,44 +787,48 @@ function buildPalette() {
   showSelection();
 }
 
-function choose(i, focus = false) {
+function choose(i: number, focus = false) {
   tank.select(i);
   showSelection(focus);
   kick();
 }
 
 // Shows group `name`'s items (the selection stays as it is).
-function showGroup(name, focus = false) {
+function showGroup(name: string | undefined, focus = false) {
   openGroup = name;
   showSelection();
   if (focus) $(`group-${name}`)?.focus();
 }
 
 // Opens the group `steps` after (or before) the open one, wrapping.
-function stepGroup(steps, focus = false) {
-  const tabs = [...groupsEl.children];
+function stepGroup(steps: number, focus = false) {
+  const tabs = groupTabs();
   const at = tabs.findIndex((t) => t.dataset.group === openGroup);
   const n = tabs.length;
   showGroup(tabs[(((at + steps) % n) + n) % n].dataset.group, focus);
 }
 
 // The open group's buttons.
-const openItems = () => [...paletteEl.children].filter((b) => !b.hidden);
+// The group tabs and the palette's swatches, all buttons (buildPalette).
+const groupTabs = () => [...groupsEl.children] as HTMLButtonElement[];
+const swatches = () => [...paletteEl.children] as HTMLButtonElement[];
+const swatch = (i: number) => paletteEl.children[i] as HTMLButtonElement | undefined;
+const openItems = () => swatches().filter((b) => !b.hidden);
 
 // Roving tabindex: one tab and one radio are in the tab order, the open
 // tab and the checked radio (or, if the selection is in a closed group,
 // the open group's first).
 function showSelection(focus = false) {
   const selected = tank.selected();
-  const holder = paletteEl.children[selected]?.dataset.group;
-  for (const t of groupsEl.children) {
+  const holder = swatch(selected)?.dataset.group;
+  for (const t of groupTabs()) {
     const open = t.dataset.group === openGroup;
     t.setAttribute("aria-selected", String(open));
     t.tabIndex = open ? 0 : -1;
     t.toggleAttribute("data-holds", !open && t.dataset.group === holder);
   }
   $("palette-panel").setAttribute("aria-labelledby", `group-${openGroup}`);
-  [...paletteEl.children].forEach((b, i) => {
+  swatches().forEach((b, i) => {
     const on = i === selected;
     b.hidden = b.dataset.group !== openGroup;
     b.setAttribute("aria-checked", String(on));
@@ -810,21 +840,22 @@ function showSelection(focus = false) {
 }
 
 // Selects slot `n` of the open group, if it has one.
-function chooseSlot(n, focus = false) {
+function chooseSlot(n: number, focus = false) {
   const b = openItems()[n];
-  if (b) choose([...paletteEl.children].indexOf(b), focus);
+  if (b) choose(swatches().indexOf(b), focus);
 }
 
 // Arrow keys: within the tabs, open the next or previous group; within the
 // radio group, select the next or previous item of the open group. Home and
 // End jump to the first and last.
-function arrowStep(e, at, n) {
-  return { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: n - 1 }[e.key];
+function arrowStep(e: KeyboardEvent, at: number, n: number): number | undefined {
+  const steps: Record<string, number> = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: n - 1 };
+  return steps[e.key];
 }
 
-function groupKeys(e) {
-  const tabs = [...groupsEl.children];
-  const next = arrowStep(e, Math.max(0, tabs.indexOf(document.activeElement)), tabs.length);
+function groupKeys(e: KeyboardEvent) {
+  const tabs = groupTabs();
+  const next = arrowStep(e, Math.max(0, tabs.indexOf(document.activeElement as HTMLButtonElement)), tabs.length);
   if (next === undefined) return;
   e.preventDefault();
   e.stopPropagation();
@@ -832,10 +863,10 @@ function groupKeys(e) {
   showGroup(tabs[(next + n) % n].dataset.group, true);
 }
 
-function paletteKeys(e) {
+function paletteKeys(e: KeyboardEvent) {
   const items = openItems();
   const n = items.length;
-  const next = arrowStep(e, Math.max(0, items.indexOf(document.activeElement)), n);
+  const next = arrowStep(e, Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement)), n);
   if (next === undefined || !n) return;
   e.preventDefault();
   e.stopPropagation();
@@ -844,14 +875,14 @@ function paletteKeys(e) {
 
 // --- Input -------------------------------------------------------------------
 
-function canvasPoint(e) {
+function canvasPoint(e: PointerEvent): Point {
   const rect = canvas.getBoundingClientRect();
   return [((e.clientX - rect.left) / rect.width) * canvas.width, ((e.clientY - rect.top) / rect.height) * canvas.height];
 }
 
 // Shows a line in the inspect readout for a few seconds (longer while its
 // name field is in use).
-function flash(text) {
+function flash(text: string) {
   inspectEl.textContent = text;
   inspectEl.hidden = false;
   clearTimeout(inspectTimer);
@@ -875,7 +906,7 @@ function closeName() {
   if (document.activeElement === nameInput) nameInput.blur();
 }
 
-function runName(e) {
+function runName(e: SubmitEvent) {
   e.preventDefault();
   if (!owner || handingOver || !inspected) return closeName();
   try {
@@ -891,7 +922,7 @@ function runName(e) {
 }
 
 // A creature's card, from its inspect line's parts and its name.
-function creatureText({ parts, name }) {
+function creatureText({ parts, name }: Inspected) {
   const [species, id, over, x, y, stage, age, health, energy, sex, morph, carrying] = parts;
   const days = Number(age);
   const old = days === 0 ? "under a day old" : `${days} day${days === 1 ? "" : "s"} old`;
@@ -919,7 +950,7 @@ function closeCheat() {
   if (document.activeElement === cheatInput) cheatInput.blur();
 }
 
-function runCheat(e) {
+function runCheat(e: SubmitEvent) {
   e.preventDefault();
   if (!owner || handingOver) return closeCheat();
   try {
@@ -971,8 +1002,14 @@ function after() {
   kick();
 }
 
+interface PointerHandler {
+  down(e: PointerEvent): void;
+  move(e: PointerEvent): void;
+  up(e: PointerEvent): void;
+}
+
 // Mouse and pen: buttons map straight onto the tools.
-const mouse = {
+const mouse: PointerHandler = {
   down(e) {
     const button = e.button === 2 ? SECONDARY : e.button === 0 ? PRIMARY : -1;
     if (button < 0) return;
@@ -991,20 +1028,26 @@ const mouse = {
 // scoops, long-press inspects. A finger only starts a stroke once it moves
 // past the slop, so a long-press or a second finger doesn't pour first; a
 // quick tap uses the tool once.
-const touches = new Map(); // pointerId -> [x, y] canvas px
-let gesture = null; // { mode: "pending" | "stroke" | "scoop" | "done", id, start, timer }
+const touches = new Map<number, Point>(); // pointerId -> [x, y] canvas px
+interface Gesture {
+  mode: "pending" | "stroke" | "scoop" | "done";
+  id: number; // the first finger's pointerId
+  start: Point;
+  timer: number;
+}
+let gesture: Gesture | null = null;
 
-function midpoint() {
+function midpoint(): Point {
   const [a, b] = [...touches.values()];
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 }
 
-const touch = {
+const touch: PointerHandler = {
   down(e) {
     canvas.setPointerCapture(e.pointerId);
     touches.set(e.pointerId, canvasPoint(e));
     if (touches.size === 1) {
-      const start = touches.get(e.pointerId);
+      const start = touches.get(e.pointerId)!;
       gesture = {
         mode: "pending",
         id: e.pointerId,
@@ -1067,7 +1110,7 @@ const touch = {
   },
 };
 
-const handler = (e) => (e.pointerType === "touch" ? touch : mouse);
+const handler = (e: PointerEvent) => (e.pointerType === "touch" ? touch : mouse);
 
 function endGestures() {
   if (gesture) clearTimeout(gesture.timer);
@@ -1086,7 +1129,7 @@ function wireInput() {
     handler(e).move(e);
     after();
   });
-  const up = (e) => {
+  const up = (e: PointerEvent) => {
     handler(e).up(e);
     after();
   };
@@ -1143,10 +1186,10 @@ function wireInput() {
   brushInput.addEventListener("input", () => update({ radius: Number(brushInput.value) }));
   wireSettings(resetOrShow);
   $("export").addEventListener("click", exportSave);
-  const importFile = $("import-file");
+  const importFile = $<HTMLInputElement>("import-file");
   $("import").addEventListener("click", () => importFile.click());
   importFile.addEventListener("change", () => {
-    const [file] = importFile.files;
+    const file = importFile.files?.[0];
     importFile.value = "";
     importSave(file).catch((err) => showError(String(err)));
   });
@@ -1193,7 +1236,8 @@ function wireInput() {
       // G opens the next group, Shift+G the previous (as in desktank window;
       // Shift, not the letter's case, so Caps Lock doesn't flip it). Focus
       // in the palette moves to the new tab, as its radio may be hidden.
-      const inPalette = paletteEl.contains(e.target) || groupsEl.contains(e.target);
+      const target = e.target as Node | null;
+      const inPalette = paletteEl.contains(target) || groupsEl.contains(target);
       stepGroup(e.shiftKey ? -1 : 1, inPalette);
     } else if (/^[0-9]$/.test(e.key)) {
       // 1–9 are the open group's first nine slots, 0 the tenth.
@@ -1202,23 +1246,26 @@ function wireInput() {
   });
 }
 
-function wireSettings(resetTank) {
+function wireSettings(resetTank: () => void) {
   const toggle = $("settings-toggle");
   toggle.addEventListener("click", () => {
     const open = toggle.getAttribute("aria-expanded") !== "true";
     toggle.setAttribute("aria-expanded", String(open));
     $("settings").hidden = !open;
   });
+  // The settings' <select>s and checkboxes.
+  const valueOf = (e: Event) => (e.target as HTMLSelectElement).value;
+  const checkedOf = (e: Event) => (e.target as HTMLInputElement).checked;
   $("set-scale").addEventListener("change", (e) => {
-    update({ scale: Number(e.target.value) });
+    update({ scale: Number(valueOf(e)) });
     resetTank();
   });
-  $("set-fps").addEventListener("change", (e) => update({ fps: e.target.value }));
-  $("set-field").addEventListener("change", (e) => update({ field: e.target.value }));
-  $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: e.target.checked }));
-  $("set-easy-mode").addEventListener("change", (e) => update({ easyMode: e.target.checked }));
+  $("set-fps").addEventListener("change", (e) => update({ fps: valueOf(e) }));
+  $("set-field").addEventListener("change", (e) => update({ field: valueOf(e) }));
+  $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: checkedOf(e) }));
+  $("set-easy-mode").addEventListener("change", (e) => update({ easyMode: checkedOf(e) }));
   $("set-stats").addEventListener("change", (e) => {
-    update({ stats: e.target.checked });
+    update({ stats: checkedOf(e) });
     updateStats();
   });
   seedInput.addEventListener("change", () => {
@@ -1288,8 +1335,8 @@ async function main() {
     return;
   }
   const [rMin, rMax] = brushRange();
-  brushInput.min = rMin;
-  brushInput.max = rMax;
+  brushInput.min = String(rMin);
+  brushInput.max = String(rMax);
   db = await openStore();
   // Without Web Locks (very old browsers) the tab owns the tank alone.
   if (navigator.locks && typeof BroadcastChannel !== "undefined") {

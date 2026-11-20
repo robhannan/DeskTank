@@ -1,12 +1,12 @@
 // Cheats: the Konami code opens the cheat field, Enter runs a cheat, an
 // unknown one says so and leaves the field open, and Escape closes it.
-import { expect, test } from "@playwright/test";
-import { openPaused, watchErrors } from "./support.mjs";
+import { expect, type Page, test } from "@playwright/test";
+import { openPaused, watchErrors } from "./support.ts";
 
 const KONAMI = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
-const creatures = (page) => page.evaluate(() => window.desktank.tank.creatures());
+const creatures = (page: Page) => page.evaluate(() => window.desktank.tank.creatures());
 
-async function konami(page) {
+async function konami(page: Page) {
   // Keys go to the page, not a form control.
   await page.locator("h1").click();
   for (const key of KONAMI) await page.keyboard.press(key);

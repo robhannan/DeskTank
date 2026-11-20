@@ -1,0 +1,29 @@
+// Type-checks the Node side: the build and bench scripts (scripts/, run by
+// Node's type stripping), the Playwright tests and config. The page (web/)
+// has its own web/tsconfig.json, without Node's types; `pnpm typecheck`
+// checks both. Both read wasm-bindgen's declarations, which the build
+// writes to target/web-bindgen/pkg/: run `pnpm build:web` once first.
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2024", "dom"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    // Node runs the scripts by stripping types: only erasable syntax, type
+    // imports marked as such, and relative imports with their .ts extension.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    // web/ imports ./pkg/desktank_web.js, which is wasm-bindgen output.
+    "rootDirs": ["web", "target/web-bindgen"],
+    "skipLibCheck": true
+  },
+  // web/hooks.d.ts types window.desktank for the tests.
+  "include": ["scripts/*.ts", "tests/web/*.ts", "playwright.config.ts", "web/hooks.d.ts"]
+}

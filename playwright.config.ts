@@ -20,7 +20,7 @@ export default defineConfig({
   },
   projects: [{ name: "chromium" }],
   webServer: {
-    command: `node scripts/serve-web.mjs ${PORT}`,
+    command: `node scripts/serve-web.ts ${PORT}`,
     url: `http://127.0.0.1:${PORT}/`,
     reuseExistingServer: !process.env.CI,
   },

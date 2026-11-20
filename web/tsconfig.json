@@ -1,0 +1,17 @@
+// Emits the page's TypeScript as readable ES modules into target/site/ (run
+// by scripts/build-web.ts): types stripped, comments kept, .ts imports
+// rewritten to .js, with source maps. A type error fails the build.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": false,
+    "noEmitOnError": true,
+    "rootDir": ".",
+    "outDir": "../target/site",
+    "sourceMap": true,
+    "inlineSources": true,
+    "rootDirs": [".", "../target/web-bindgen"]
+  },
+  "include": ["*.ts"]
+}

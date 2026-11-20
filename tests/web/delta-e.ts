@@ -2,8 +2,10 @@
 // comparison (crates/desktank/tests/support/mod.rs), so the web is judged by
 // the same SPEC §7 tolerance as native captures.
 
-export function srgbToLab([r, g, b]) {
-  const lin = (c) => {
+export type Triple = [number, number, number];
+
+export function srgbToLab([r, g, b]: Triple): Triple {
+  const lin = (c: number) => {
     c /= 255;
     return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   };
@@ -11,28 +13,28 @@ export function srgbToLab([r, g, b]) {
   const x = (0.4124564 * lr + 0.3575761 * lg + 0.1804375 * lb) / 0.95047;
   const y = 0.2126729 * lr + 0.7151522 * lg + 0.072175 * lb;
   const z = (0.0193339 * lr + 0.119192 * lg + 0.9503041 * lb) / 1.08883;
-  const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116);
+  const f = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116);
   const [fx, fy, fz] = [f(x), f(y), f(z)];
   return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
 }
 
-const deg = (r) => (r * 180) / Math.PI;
-const rad = (d) => (d * Math.PI) / 180;
-const rem360 = (v) => ((v % 360) + 360) % 360;
+const deg = (r: number) => (r * 180) / Math.PI;
+const rad = (d: number) => (d * Math.PI) / 180;
+const rem360 = (v: number) => ((v % 360) + 360) % 360;
 
-export function deltaE2000([l1, a1, b1], [l2, a2, b2]) {
+export function deltaE2000([l1, a1, b1]: Triple, [l2, a2, b2]: Triple): number {
   const c1 = Math.hypot(a1, b1);
   const c2 = Math.hypot(a2, b2);
   const cBar7 = ((c1 + c2) / 2) ** 7;
   const g = 0.5 * (1 - Math.sqrt(cBar7 / (cBar7 + 25 ** 7)));
   const [a1p, a2p] = [(1 + g) * a1, (1 + g) * a2];
   const [c1p, c2p] = [Math.hypot(a1p, b1), Math.hypot(a2p, b2)];
-  const hue = (b, a) => (a === 0 && b === 0 ? 0 : rem360(deg(Math.atan2(b, a))));
+  const hue = (b: number, a: number) => (a === 0 && b === 0 ? 0 : rem360(deg(Math.atan2(b, a))));
   const [h1p, h2p] = [hue(b1, a1p), hue(b2, a2p)];
 
   const dl = l2 - l1;
   const dc = c2p - c1p;
-  let dh;
+  let dh: number;
   if (c1p * c2p === 0) dh = 0;
   else if (Math.abs(h2p - h1p) <= 180) dh = h2p - h1p;
   else if (h2p <= h1p) dh = h2p - h1p + 360;
@@ -41,7 +43,7 @@ export function deltaE2000([l1, a1, b1], [l2, a2, b2]) {
 
   const lbar = (l1 + l2) / 2;
   const cbar = (c1p + c2p) / 2;
-  let hbar;
+  let hbar: number;
   if (c1p * c2p === 0) hbar = h1p + h2p;
   else if (Math.abs(h1p - h2p) <= 180) hbar = (h1p + h2p) / 2;
   else if (h1p + h2p < 360) hbar = (h1p + h2p + 360) / 2;
@@ -64,7 +66,7 @@ export function deltaE2000([l1, a1, b1], [l2, a2, b2]) {
 }
 
 // Compares RGBA8 images pixel by pixel (alpha ignored).
-export function compare(a, b, threshold) {
+export function compare(a: ArrayLike<number>, b: ArrayLike<number>, threshold: number) {
   if (a.length !== b.length) throw new Error("image sizes differ");
   const diff = { over: 0, total: a.length / 4, max: 0 };
   for (let i = 0; i < a.length; i += 4) {
