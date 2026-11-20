@@ -483,6 +483,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktank-android"
+version = "0.1.0"
+dependencies = [
+ "android_system_properties",
+ "desktank-render",
+ "desktank-sim",
+ "jni",
+ "ndk",
+ "ndk-sys",
+ "pollster",
+]
+
+[[package]]
 name = "desktank-platform"
 version = "0.1.0"
 dependencies = [
