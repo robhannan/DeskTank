@@ -40,6 +40,8 @@
 //!   creature state (hashed); swimmers and walkers stay upright.
 //! - **Randomness** comes from a PCG stream per creature per tick, derived
 //!   from `(seed, tick, creature id)`, so it never depends on update order.
+//!   Each creature's own **quirks** (speed, mood, restlessness, favourite
+//!   depth, breathing and hopping rhythm, boldness) are in [`quirks`].
 //! - **Cost.** Creatures are updated every tick, after the cells, and wake
 //!   a chunk only when they eat (SPEC §2.1). Food is found through a
 //!   registry of food cells kept like the living lists, not by scanning.
@@ -57,6 +59,7 @@ mod lifecycle;
 mod naming;
 pub mod pursuit;
 mod quirks;
+use quirks::{Quirks, salt};
 mod school;
 mod steering;
 
@@ -155,6 +158,10 @@ const TURN_SPEED: i32 = 12;
 /// Ticks a hopping walker kicks upwards for, at its top speed; it then
 /// drifts back down at its cruising speed.
 const HOP_TICKS: u64 = 8;
+/// Ticks between an air-breather's breaths, and of its skim at the
+/// surface after one (each creature's own within its quirks).
+const BETWEEN_BREATHS: u64 = 20 * TICKS_PER_SECOND as u64;
+const SKIM: u64 = 3 * TICKS_PER_SECOND as u64;
 
 /// Where a crawler's foot points for each quarter turn clockwise: down,
 /// left, up, right (one clockwise turn maps `(x, y)` to `(-y, x)`, as y
@@ -804,7 +811,13 @@ impl World {
             facing_left: self.creatures.next_id % 2 == 1,
             turn: 0,
             held_until: 0,
-            next_breath: self.tick + u64::from(self.creatures.next_id % 20),
+            next_breath: self.tick
+                + Quirks::of(self.seed, CreatureId(self.creatures.next_id), self.tick).scale(
+                    salt::BREATH_PHASE,
+                    0,
+                    50,
+                    BETWEEN_BREATHS,
+                ),
             eaten: 0,
             age,
             growth,
@@ -1311,6 +1324,7 @@ impl World {
         let Some(k) = self.grown_kind(c) else {
             return false;
         };
+        let k = self.quirks(c).own_kind(k);
         let before = (c.x, c.y, c.facing_left, c.turn);
         if c.held_until >= self.tick {
             return false;
@@ -1403,7 +1417,12 @@ impl World {
         if k.hop_every == 0 {
             return false;
         }
-        let phase = (self.tick + u64::from(c.id.0) * 7919) % k.hop_every;
+        // Its own rhythm, 80–125% of its species'.
+        let every = self
+            .quirks(c)
+            .scale(salt::HOP, 80, 125, k.hop_every)
+            .max(HOP_TICKS + 1);
+        let phase = (self.tick + u64::from(c.id.0) * 7919) % every;
         if phase >= HOP_TICKS {
             return false;
         }
@@ -1683,10 +1702,24 @@ impl World {
             }
             _ => (y0, y1),
         };
+        // Every other swimmer's target is near its favourite depth: a
+        // fifth of the rows either side of its own spot in the range.
+        let q = self.quirks(c);
+        let (y0, y1) = if k.zone != Zone::Bottom && rng.next_u32().is_multiple_of(2) {
+            let favourite =
+                y0 + (y1 - y0) * i64::try_from(q.percent(salt::DEPTH, 0, 100)).unwrap_or(50) / 100;
+            let reach = (y1 - y0) / 5;
+            ((favourite - reach).max(y0), (favourite + reach + 1).min(y1))
+        } else {
+            (y0, y1)
+        };
         let y = span(y0, y1, rng);
         (c.tx, c.ty) = (centre_of(x), centre_of(y));
+        // A restless one keeps a target 50% as long as a placid one, and
+        // never past the range.
         let (lo, hi) = RETARGET_TICKS;
-        c.retarget = lo + rng.next_u32() % (hi - lo);
+        let linger = u32::try_from(q.percent(salt::RESTLESS, 50, 100)).unwrap_or(100);
+        c.retarget = lo + rng.next_u32() % (hi - lo) * linger / 100;
         // Every other target or so, a new band too.
         let (front, back) = k.bands;
         let pick = rng.next_u32();
@@ -1935,9 +1968,10 @@ mod tests {
             .collect();
         let nerite = w.species().id("nerite").unwrap();
         let snail = w.add_creature(nerite, 60, 70).unwrap();
-        let start = w.creature(snail).unwrap().band();
+        let mut band = w.creature(snail).unwrap().band();
         let mut seen = [false; DEPTH_BANDS as usize];
         for _ in 0..4000 {
+            let before = w.creature(snail).unwrap().clone();
             w.tick();
             for &id in &ids {
                 let c = w.creature(id).unwrap();
@@ -1945,8 +1979,16 @@ mod tests {
                 assert!((2.0..=3.0).contains(&c.depth()), "depth {}", c.depth());
                 seen[usize::from(c.band())] = true;
             }
-            // A crawler keeps its band.
-            assert_eq!(w.creature(snail).unwrap().band(), start);
+            // A crawler keeps its band, unless a growing plant buries it.
+            let now = w.creature(snail).unwrap().band();
+            if now != band {
+                let k = w.grown_kind(&before).unwrap();
+                assert!(
+                    !w.fits(&k, before.turn, before.x, before.y, band),
+                    "left band {band} for {now} unburied"
+                );
+                band = now;
+            }
         }
         assert!(seen[2] && seen[3], "they wander between their bands");
     }

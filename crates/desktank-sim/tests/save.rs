@@ -659,12 +659,14 @@ fn a_version_9_fixture_loads() {
     };
     assert!(w.creatures().iter().any(|c| c.quarry().is_some()));
     assert!(w.creatures().iter().any(|c| c.fear() > 0));
-    // Version 10 migrates its rigid cells whole: the tank that wrote it
-    // has round outlines on its poured stones, which change no physics,
-    // so it hunts on exactly as that tank does.
-    let mut fresh = hunting();
-    assert_eq!(pursuit(&w), pursuit(&fresh));
+    // Version 10 migrates its rigid cells whole. Creature quirks (since
+    // version 10) changed how this tank plays on, so it is no longer
+    // compared with a fresh one (the version 10 fixture is): instead it
+    // carries on exactly as its own re-save does.
     assert!((0..w.width() * w.height()).all(|i| w.rigid_mask(i).is_none_or(|m| m == FULL_MASK)));
+    let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(fresh.state_hash(), w.state_hash());
+    assert_eq!(pursuit(&w), pursuit(&fresh));
     for _ in 0..400 {
         w.tick();
         fresh.tick();

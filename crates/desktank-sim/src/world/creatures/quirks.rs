@@ -16,7 +16,7 @@
 //! never depend on update order or on any other creature. Each use has its
 //! own salt in [`salt`], so traits are independent of one another.
 
-use super::{CreatureId, ONE};
+use super::{Creature, CreatureId, Kind, ONE, World};
 use crate::rng::splitmix64;
 
 /// One salt per quirk, so no two are correlated.
@@ -41,7 +41,11 @@ pub(super) mod salt {
     pub const BOLD: u64 = 0x5500;
     pub const PERSIST: u64 = 0x5501;
     pub const PATIENCE: u64 = 0x5502;
+    pub const BREATH_PHASE: u64 = 0x5302;
 }
+
+/// Period of a creature's mood (how brisk it feels), in ticks.
+const MOOD_TICKS: (u64, u64) = (80, 240);
 
 /// One creature's quirks on one tick.
 #[derive(Clone, Copy)]
@@ -70,6 +74,24 @@ impl Quirks {
         v * self.percent(salt, lo, hi) / 100
     }
 
+    /// A tick count `v` scaled by [`Quirks::percent`], at most `100%` of
+    /// `v` when `hi <= 100` (so saved counters stay in range).
+    pub(super) fn ticks(self, salt: u64, lo: u64, hi: u64, v: u16) -> u16 {
+        u16::try_from(self.scale(salt, lo, hi, u64::from(v))).unwrap_or(v)
+    }
+
+    /// Its species' movement numbers `k` with its own speed (85–115%) and
+    /// a mood that drifts its cruise ±10% over 4–12 s; top speed stays
+    /// under a cell per tick, as validated speeds are.
+    pub(super) fn own_kind(self, mut k: Kind) -> Kind {
+        let speed = i32::try_from(self.percent(salt::SPEED, 85, 115)).unwrap_or(100);
+        k.top = (k.top * speed / 100).clamp(1, ONE - 1);
+        let mood = self.noise(salt::MOOD, MOOD_TICKS);
+        k.cruise = (k.cruise * speed / 100 * (10 * ONE + mood) / (10 * ONE)).clamp(1, k.top);
+        k.accel = (k.top / 6).max(2);
+        k
+    }
+
     /// A mood: smooth noise in `-ONE..ONE` with a period of its own drawn
     /// from `periods` (ticks, `lo < hi`) and a phase of its own.
     pub(super) fn noise(self, salt: u64, periods: (u64, u64)) -> i32 {
@@ -88,6 +110,13 @@ impl Quirks {
         let s = s * s * (3 * one - 2 * s) / (one * one);
         let (a, b) = (value(cell), value(cell + 1));
         i32::try_from(a + (b - a) * s / one).unwrap_or(0)
+    }
+}
+
+impl World {
+    /// `c`'s quirks this tick.
+    pub(super) fn quirks(&self, c: &Creature) -> Quirks {
+        Quirks::of(self.seed, c.id, self.tick)
     }
 }
 
@@ -147,6 +176,49 @@ mod tests {
         for id in 1..50 {
             let old = splitmix64(7 ^ splitmix64(u64::from(id) ^ 0x6c69_6665)) % 21;
             assert_eq!(q(id, 0).percent(salt::LIFESPAN, 90, 110), 90 + old);
+        }
+    }
+
+    #[test]
+    fn noise_and_traits_are_pinned() {
+        // Pinned, so every platform (and wasm32) quirks alike, and a change
+        // to the hash shows up here first.
+        let got: Vec<i64> = [(1, 0), (2, 500), (3, 12_345)]
+            .into_iter()
+            .flat_map(|(id, t)| {
+                let q = q(id, t);
+                [
+                    i64::from(q.noise(salt::SLOT_ALONG, (200, 480))),
+                    i64::from(q.noise(salt::MOOD, MOOD_TICKS)),
+                    i64::try_from(q.percent(salt::SPEED, 85, 115)).unwrap(),
+                ]
+            })
+            .collect();
+        assert_eq!(got, PINNED);
+    }
+
+    const PINNED: [i64; 9] = [106, 16, 111, -36, 203, 105, 66, -40, 97];
+
+    #[test]
+    fn own_speeds_stay_under_a_cell_a_tick_and_ticks_under_their_cap() {
+        let mut k = *crate::World::new(
+            crate::WorldConfig::default(),
+            crate::MaterialTable::builtin().unwrap(),
+        )
+        .unwrap()
+        .creatures
+        .kinds
+        .iter()
+        .flatten()
+        .next()
+        .unwrap();
+        (k.cruise, k.top) = (100, 204); // 16 cells a second, the most allowed
+        for id in 1..300 {
+            for t in [0, 777, 5_000] {
+                let own = q(id, t).own_kind(k);
+                assert!(own.top < ONE && own.cruise <= own.top && own.cruise >= 1);
+                assert!(q(id, t).ticks(salt::BOLD, 60, 100, 60) <= 60);
+            }
         }
     }
 }

@@ -2,10 +2,10 @@
 
 use rand_pcg::Pcg32;
 
-use super::quirks::Quirks;
+use super::quirks::{Quirks, salt};
 
 use super::{
-    Creature, FEET, Kind, ONE, REACHED, TICKS_PER_SECOND, World, Zone, body, centre_of, dist,
+    BETWEEN_BREATHS, Creature, FEET, Kind, ONE, REACHED, SKIM, World, Zone, body, centre_of, dist,
     extent, school, to_i64,
 };
 
@@ -177,15 +177,18 @@ impl World {
     }
 
     fn air_target(&self, k: &Kind, c: &mut Creature) -> Option<(i32, i32, i32)> {
-        const BETWEEN_BREATHS: u64 = 20 * TICKS_PER_SECOND as u64;
-        const SKIM: u64 = 3 * TICKS_PER_SECOND as u64;
+        // Its own rhythm: 80–125% of the time between breaths, and a skim
+        // of 2–4 s.
+        let q = self.quirks(c);
+        let between = q.scale(salt::BREATH, 80, 125, BETWEEN_BREATHS);
+        let skim = q.scale(salt::SKIM, 67, 133, SKIM);
         if self.tick >= c.next_breath {
             let b = self.creature_body(c);
             if b.y0 > 0
                 && (b.x0..b.x1)
                     .any(|x| self.cells[(b.y0 - 1) * self.width + x].material == self.creatures.air)
             {
-                c.next_breath = self.tick + BETWEEN_BREATHS;
+                c.next_breath = self.tick + between;
             } else {
                 // Rise vertically, moving sideways under ledges until
                 // there is open water overhead.
@@ -197,7 +200,7 @@ impl World {
                 return Some((tx, c.y - 8 * ONE, k.top));
             }
         }
-        if c.next_breath.saturating_sub(self.tick) > BETWEEN_BREATHS - SKIM {
+        if c.next_breath.saturating_sub(self.tick) > between - skim {
             // Skim the interface for floating food before diving again.
             let tx = c
                 .food
