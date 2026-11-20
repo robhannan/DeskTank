@@ -348,3 +348,15 @@ fn floater_growth_is_deterministic() {
     };
     assert_eq!(grow(), grow());
 }
+
+#[test]
+fn guppies_leave_frogbit_intact() {
+    let mut w = tank(7);
+    bud(&mut w, "frogbit", 40, 5);
+    let fish = w
+        .add_creature(w.species().id("guppy").unwrap(), 40, 12)
+        .unwrap();
+    run(&mut w, 200);
+    assert_eq!(w.creature(fish).unwrap().eaten(), 0);
+    assert!(w.plants().any(|p| p.species == species(&w, "frogbit")));
+}

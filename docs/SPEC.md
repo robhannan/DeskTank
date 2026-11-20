@@ -841,7 +841,8 @@ stays a material film, not individuals.
     outside its ranges and recovers inside them. Low health drops the
     oldest leaves first, then the whole plant becomes dead plant matter;
     old age only if the species has a lifespan. Grazing (T7) removes
-    cells and costs health.
+    cells and costs health. Hungry guppies seek palatable floating leaves (duckweed).
+    Each bite removes one floating leaf and costs its plant 0.05 health.
   - **Cap.** A plant population cap per tank, set from measurement in
     T6b, alongside the creature cap (T9). *T6b:* 2048 plants
     (`MAX_PLANTS`, `World::set_plant_cap`); at the cap seeds and
