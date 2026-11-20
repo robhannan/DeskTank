@@ -727,6 +727,8 @@ impl World {
                     self.mark_changed(x, y);
                     return;
                 }
+                // A filter jet deflects a rising bubble: with probability
+                // speed / 20 per tick it steps up and downstream instead.
                 let current = self.current_at_cell(x, y);
                 if current != 0.0 {
                     let dx = if current > 0.0 { 1 } else { -1 };
