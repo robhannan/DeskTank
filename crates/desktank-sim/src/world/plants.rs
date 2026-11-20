@@ -57,7 +57,7 @@ use crate::plants::{
     PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
 };
 use crate::rng::splitmix64;
-use crate::save::{SaveError, v1};
+use crate::save::{SaveError, v1, v8};
 
 /// Most plants a tank holds by default (SPEC §2.7 *Cap*), set from
 /// measurement in T6b: a settled tank with 528 plants ticks in about
@@ -147,6 +147,10 @@ pub struct PlantInfo {
     pub generation: u16,
     /// What held it back most at its last update.
     pub limit: Limit,
+    /// How far (0–1) it has turned its species' colouration colour (T6d):
+    /// it moves towards what the light and nutrient at its updates call
+    /// for, at [`COLOUR_PER_SECOND`].
+    pub colour: f32,
 }
 
 impl PlantInfo {
@@ -175,6 +179,8 @@ pub(super) struct Plant {
     /// Seconds spent outside its ranges.
     stress: f32,
     limit: Limit,
+    /// Colouration, 0–1 (T6d).
+    colour: f32,
     // Bookkeeping, rebuilt on load.
     last_update: u64,
     /// Sums of light, nutrient and CO₂ samples since the last update, and
@@ -187,20 +193,29 @@ pub(super) struct Plant {
     idle: u8,
 }
 
-/// Health steps that change a plant's tint: a declining plant asks for a
-/// new tint (and a frame) every 1/32 of health, not every 1/255.
-const TINT_STEPS: f32 = 32.0;
+/// Health and colouration steps that change a plant's look: a declining
+/// or colouring plant asks for a new plant texel (and a frame) every 1/32,
+/// not every 1/255.
+pub const TINT_STEPS: f32 = 32.0;
+
+/// How fast a plant's colouration follows its light and nutrient, per
+/// second of world time: two minutes from green to fully coloured, so the
+/// noise in its samples doesn't flicker it.
+pub const COLOUR_PER_SECOND: f32 = 1.0 / 120.0;
 
 impl Plant {
-    fn tint_key(&self) -> u8 {
-        tint_step(self.health)
+    fn tint_key(&self) -> (u8, u8) {
+        (tint_step(self.health), tint_step(self.colour))
     }
 }
 
-/// The health step the tint follows.
+/// The step (0..=[`TINT_STEPS`]) a 0–1 value is drawn at: the renderer
+/// draws a plant's health and colouration at these steps, and the plants
+/// version changes when one does.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped
-fn tint_step(health: f32) -> u8 {
-    (health.clamp(0.0, 1.0) * TINT_STEPS).round() as u8
+#[must_use]
+pub fn tint_step(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * TINT_STEPS).round() as u8
 }
 
 /// Plant state owned by the world.
@@ -529,6 +544,7 @@ impl World {
             parent: (p.parent != 0).then_some(PlantId(p.parent)),
             generation: p.generation,
             limit: p.limit,
+            colour: p.colour,
         }
     }
 
@@ -601,6 +617,7 @@ impl World {
                     generation: p.generation,
                     stress: p.stress,
                     limit: limit_from_v1(p.limit),
+                    colour: 0.0,
                     last_update: p.last_update,
                     sums: p.sums,
                     counts: p.counts,
@@ -619,6 +636,40 @@ impl World {
         Ok(())
     }
 
+    /// The colouration of every plant that has any (format version 8).
+    pub(super) fn save_plant_colours(&self) -> Vec<v8::PlantColour> {
+        self.plants
+            .table
+            .iter()
+            .filter(|(_, p)| p.colour > 0.0)
+            .map(|(&plant, p)| v8::PlantColour {
+                plant,
+                colour: p.colour,
+            })
+            .collect()
+    }
+
+    /// Restores the plants' colouration, after [`World::load_plants`].
+    pub(super) fn load_plant_colours(
+        &mut self,
+        saved: &[v8::PlantColour],
+    ) -> Result<(), SaveError> {
+        for c in saved {
+            let invalid =
+                |what: &str| SaveError::Invalid(format!("plant {} colour: {what}", c.plant));
+            if !(0.0..=1.0).contains(&c.colour) {
+                return Err(invalid("not within 0..=1"));
+            }
+            let p = self
+                .plants
+                .table
+                .get_mut(&c.plant)
+                .ok_or_else(|| invalid("no such plant"))?;
+            p.colour = c.colour;
+        }
+        Ok(())
+    }
+
     pub(super) fn hash_plants(&self, h: &mut Fnv64) {
         for (&id, p) in &self.plants.table {
             h.write(&id.to_le_bytes());
@@ -626,6 +677,10 @@ impl World {
             h.write(&p.born.to_le_bytes());
             for v in [p.health, p.energy, p.stress] {
                 h.write(&v.to_bits().to_le_bytes());
+            }
+            // An uncoloured plant hashes as before format version 8.
+            if p.colour != 0.0 {
+                h.write(&p.colour.to_bits().to_le_bytes());
             }
             for n in p.parts {
                 h.write(&n.to_le_bytes());
@@ -691,10 +746,11 @@ impl World {
         if plants.table.len() >= plants.cap.min(usize::from(u16::MAX)) {
             return 0;
         }
-        let (health, stress, generation) = parent
+        // A fragment keeps its parent's health and colouration.
+        let (health, stress, generation, colour) = parent
             .and_then(|id| plants.table.get(&id))
-            .map_or((1.0, 0.0, 0), |p| {
-                (p.health, p.stress, p.generation.saturating_add(1))
+            .map_or((1.0, 0.0, 0, 0.0), |p| {
+                (p.health, p.stress, p.generation.saturating_add(1), p.colour)
             });
         for _ in 0..u16::MAX {
             let id = plants.next_id;
@@ -712,6 +768,7 @@ impl World {
                     generation,
                     stress,
                     limit: Limit::None,
+                    colour,
                     last_update: self.tick,
                     sums: [0.0; 3],
                     counts: [0; 3],
@@ -1239,6 +1296,9 @@ impl World {
         p.sums = [0.0; 3];
         p.counts = [0; 3];
         p.limit = limit;
+        let target = s.colouration.map_or(0.0, |c| c.target(means[0], means[1]));
+        let reach = COLOUR_PER_SECOND * dt;
+        p.colour = (p.colour + (target - p.colour).clamp(-reach, reach)).clamp(0.0, 1.0);
         if response > 0.0 {
             p.stress = 0.0;
             p.health = (p.health + h.recovery * dt).min(1.0);

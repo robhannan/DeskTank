@@ -515,6 +515,37 @@ pub struct Ramps {
 /// Most shades in one ramp.
 pub const MAX_RAMP: usize = 8;
 
+/// How far the mean light must rise above a species' colouration `light`
+/// for the full colour (T6d).
+pub const COLOURATION_LIGHT_SPAN: f32 = 0.25;
+
+/// A species' colouration in strong light with low nutrients (rotala type,
+/// SPEC §2.7 *Appearance*, T6d; `[colouration]` in its TOML): its leaves
+/// and, less, its stems shift towards `colour`, the new growth most.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Colouration {
+    /// The shade it turns (sRGB); each ramp shade keeps its lightness.
+    pub colour: [u8; 3],
+    /// Mean light above which it starts to colour; it colours fully at
+    /// [`COLOURATION_LIGHT_SPAN`] above.
+    pub light: f32,
+    /// Mean nutrient below which it starts to colour; it colours fully at
+    /// half of it.
+    pub nutrient: f32,
+}
+
+impl Colouration {
+    /// How strongly (0–1) a plant colours at mean `light` and `nutrient`:
+    /// the product of how far light is above its threshold and nutrient
+    /// below its.
+    #[must_use]
+    pub fn target(&self, light: f32, nutrient: f32) -> f32 {
+        let lit = ((light - self.light) / COLOURATION_LIGHT_SPAN).clamp(0.0, 1.0);
+        let lean = ((self.nutrient - nutrient) / (self.nutrient * 0.5)).clamp(0.0, 1.0);
+        lit * lean
+    }
+}
+
 /// How a species' leaves are drawn at two texels per cell side (T6d,
 /// `[look] leaf` in its TOML). The discriminant is what the shader reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
@@ -659,6 +690,8 @@ pub struct PlantSpecies {
     pub colours: Ramps,
     /// Drawn shapes.
     pub look: Look,
+    /// Colouration in strong light with low nutrients, if it colours.
+    pub colouration: Option<Colouration>,
 }
 
 impl PlantSpecies {
@@ -826,6 +859,15 @@ struct SpeciesDef {
     colours: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     look: LookDef,
+    colouration: Option<ColourationDef>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColourationDef {
+    colour: String,
+    light: f32,
+    nutrient: f32,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1313,6 +1355,24 @@ fn validate(
             "look leaf is a floating shape (lens, disc) exactly for floaters",
         ));
     }
+    let colouration = match &d.colouration {
+        None => None,
+        Some(c) => {
+            let colour = parse_colour(&c.colour)
+                .ok_or_else(|| invalid("colouration colour must be \"#rrggbb\""))?;
+            let ok = |v: f32, max: f32| v.is_finite() && v > 0.0 && v <= max;
+            if !ok(c.light, 4.0) || !ok(c.nutrient, 8.0) {
+                return Err(invalid(
+                    "colouration light must be within (0, 4] and nutrient within (0, 8]",
+                ));
+            }
+            Some(Colouration {
+                colour,
+                light: c.light,
+                nutrient: c.nutrient,
+            })
+        }
+    };
     Ok(PlantSpecies {
         id: PlantSpeciesId(d.id),
         name: d.name.clone(),
@@ -1334,6 +1394,7 @@ fn validate(
         propagation,
         colours: Ramps { root, stem, leaf },
         look,
+        colouration,
     })
 }
 
@@ -1478,6 +1539,48 @@ mod tests {
             PlantSpeciesTable::from_toml_sources(&[OK, OK], &m),
             Err(PlantSpeciesError::BadId(9))
         ));
+    }
+
+    #[test]
+    fn colouration_is_read_and_checked() {
+        let m = materials();
+        let with = |c: &str| {
+            let src = format!("{OK}\n[colouration]\n{c}\n");
+            PlantSpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        let t = with("colour = \"#e0566a\"\nlight = 0.6\nnutrient = 0.8").unwrap();
+        let s = t.get(PlantSpeciesId(9)).unwrap();
+        let c = s.colouration.unwrap();
+        assert_eq!(c.colour, [0xe0, 0x56, 0x6a]);
+        // None in dim light or rich water; full in strong light with water
+        // at half the nutrient threshold or leaner.
+        assert!(c.target(0.5, 0.0).abs() < f32::EPSILON);
+        assert!(c.target(1.0, 0.9).abs() < f32::EPSILON);
+        assert!((c.target(0.6 + COLOURATION_LIGHT_SPAN, 0.4) - 1.0).abs() < 1e-6);
+        assert!((c.target(2.0, 0.0) - 1.0).abs() < 1e-6);
+        let half = c.target(0.6 + COLOURATION_LIGHT_SPAN / 2.0, 0.2);
+        assert!((half - 0.5).abs() < 1e-5, "{half}");
+        // Optional: the template has none.
+        let plain = PlantSpeciesTable::from_toml_sources(&[OK], &m).unwrap();
+        assert!(plain.get(PlantSpeciesId(9)).unwrap().colouration.is_none());
+        for bad in [
+            "colour = \"red\"\nlight = 0.6\nnutrient = 0.8",
+            "colour = \"#e0566a\"\nlight = 0.0\nnutrient = 0.8",
+            "colour = \"#e0566a\"\nlight = 0.6\nnutrient = -1.0",
+        ] {
+            assert!(
+                matches!(with(bad), Err(PlantSpeciesError::Invalid { .. })),
+                "{bad}"
+            );
+        }
+        assert!(matches!(
+            with("colour = \"#e0566a\"\nlight = 0.6"),
+            Err(PlantSpeciesError::Parse { .. })
+        ));
+        // Rotala and ludwigia colour; hygrophila doesn't.
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let colours = |n: &str| t.get(t.id(n).unwrap()).unwrap().colouration.is_some();
+        assert!(colours("rotala") && colours("ludwigia") && !colours("hygrophila"));
     }
 
     #[test]
