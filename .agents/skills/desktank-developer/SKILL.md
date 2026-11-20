@@ -78,9 +78,12 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 
 ## Pull request
 
-- Always use `env -u GITHUB_TOKEN gh …`, so an ambient token for another
-  account is never used. If that is refused (seen with an emoji in the
-  title), run `GITHUB_TOKEN= gh …` instead.
+- In T3 Code, when `pull_request_*` MCP tools (`pull_request_create`,
+  `pull_request_read`, `pull_request_respond`, `ci_logs`, `ci_rerun`) are
+  available, use them instead of `gh`. Otherwise, always use
+  `env -u GITHUB_TOKEN gh …`, so an ambient token for another account is
+  never used. If that is refused (seen with an emoji in the title), run
+  `GITHUB_TOKEN= gh …` instead.
 - Write the PR body to a new file with a name unique to this PR, never a
   shared path such as the session scratchpad's `body.md`. Use
   `mkdir -p target/pr-bodies` and `target/pr-bodies/<branch with / replaced
@@ -108,7 +111,11 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 
 ## Review
 
-1. Spawn the named `desktank-reviewer` subagent for an adversarial review. Give it the diff command
+1. Run an adversarial review on a lower-cost model: in T3 Code (when
+   `delegate_task` is available), call `delegate_task` with
+   `role: "review"` and a lower-cost model from `orchestrator_capabilities`
+   (e.g. `gemini-3.8-flash` or `claude-haiku-5-5`); outside T3 Code, spawn
+   the named `desktank-reviewer` subagent. Give it the diff command
    (`git diff origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
    include the reviewer model selected for this run in the brief. Have the reviewer
@@ -120,15 +127,17 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    ```
 
    Replace `<model>` with the model that performed the review (for example, `GPT-6 Luna`,
-   `Gemini Flash` or `Claude Haiku 5.5`). Use the actual model if the host selected a fallback.
+   `Gemini 3.8 Flash` or `Claude Haiku 5.5`). Use the actual model if the host selected a fallback.
    Follow the tag with a blank line, a bold heading, then
    findings ranked most severe first (severity, file:line, scenario, fix).
    Ask it to label each finding **in scope** (a defect in this PR's
    changes) or **out of scope** (pre-existing, new feature, or a
    nice-to-have).
-   It must post with `GITHUB_TOKEN= gh pr comment <n> --body-file <file>`
-   and must not modify, commit or push anything. If nested spawning is unavailable, ask the orchestrator to spawn
-   the named reviewer with the same brief. Report any unavailable review.
+   It must post with `pull_request_respond` (in T3 Code) or
+   `GITHUB_TOKEN= gh pr comment <n> --body-file <file>` (outside T3 Code)
+   and must not modify, commit or push anything. If nested spawning or
+   delegation is unavailable, ask the orchestrator to run the reviewer
+   with the same brief. Report any unavailable review.
 2. Verify each finding against the code before acting; reviewers can be
    wrong.
 3. **Keep the PR's scope fixed.** Review fixes are only for defects in
@@ -157,9 +166,12 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
 
 ## CI and hand-off
 
-- CI runs on macOS, Windows and Linux. Wait for the run on your latest
-  commit with a background poll of
-  `env -u GITHUB_TOKEN gh run list --branch <branch>` /
+- CI runs on macOS, Windows and Linux. In T3 Code, when
+  `watch_pull_request` is available (and you are not a delegated child),
+  call `watch_pull_request` (`until: "checks"`) and end your turn to wake
+  on completion, then call `unwatch_pull_request` before handback.
+  Otherwise, wait for the run on your latest commit with a background poll
+  of `env -u GITHUB_TOKEN gh run list --branch <branch>` /
   `gh api repos/robhannan/DeskTank/actions/runs/<id>/jobs`. Transient
   `Server Error` responses are noise. Fix any failures, on every platform.
 - Before debugging a CI failure in code, rule out infrastructure: check

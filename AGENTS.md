@@ -11,7 +11,7 @@ resource budgets, work packages with acceptance criteria).
 - Build/test: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`.
 - Keep the simulation/rendering core OS-agnostic; platform code lives behind `cfg(target_os = …)` boundaries.
 - Minimal resource use is a core requirement: no uncapped redraws; pause when hidden.
-- For features and fixes, invoke the named `desktank-developer` agent, which follows the shared workflow (`.agents/skills/desktank-developer/SKILL.md`): one PR per increment, never commit to `main`.
+- For features and fixes, follow the shared developer workflow (`.agents/skills/desktank-developer/SKILL.md`): one PR per increment, never commit to `main`. In T3 Code (when `delegate_task` is available), delegate with `delegate_task` (`role: "implementation"`, pointing the child at `SKILL.md`) so the child inherits full workspace and PR permissions instead of hitting Antigravity's native subagent command prompts; outside T3 Code, invoke the named `desktank-developer` subagent.
 - Toolchain: pinned exactly in `rust-toolchain.toml`; that version is the MSRV (`rust-version` in the root `Cargo.toml`). Bump both together.
 - `Cargo.lock` is committed (binary project); CI builds with `--locked`.
 - `desktank-sim` and `desktank-render` use `#![forbid(unsafe_code)]`. The workspace denies `unsafe_code`; only `desktank-platform`, `desktank-saver-mac` and `desktank-android` allow it, at FFI (JNI/NDK) boundaries with `// SAFETY:` comments.
