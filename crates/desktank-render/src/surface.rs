@@ -4,7 +4,7 @@
 
 use thiserror::Error;
 
-use crate::Gpu;
+use crate::{DrawError, Gpu};
 
 /// Error configuring a surface.
 #[derive(Debug, Error)]
@@ -89,6 +89,69 @@ impl TankSurface {
     #[must_use]
     pub fn format(&self) -> wgpu::TextureFormat {
         self.config.format
+    }
+
+    /// Fills the surface with one colour and presents it (a host's
+    /// placeholder frame, e.g. the Android skeleton's). `colour` is in the
+    /// surface format's space: linear for an sRGB format. Returns whether a
+    /// frame was presented; a lost, outdated or busy surface skips it, as
+    /// [`crate::Tank::draw`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the surface texture fails validation.
+    pub fn clear(&self, gpu: &Gpu, colour: wgpu::Color) -> Result<bool, DrawError> {
+        let Some((frame, suboptimal)) = self.acquire(gpu)? else {
+            return Ok(false);
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("clear"),
+            });
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(colour),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        gpu.queue.submit([encoder.finish()]);
+        gpu.queue.present(frame);
+        if suboptimal {
+            self.reconfigure(gpu);
+        }
+        Ok(true)
+    }
+
+    /// The next frame to draw into and whether the surface wants
+    /// reconfiguring after it is presented, or `None` to skip this frame
+    /// (timeout, occluded, or outdated or lost and now reconfigured).
+    pub(crate) fn acquire(
+        &self,
+        gpu: &Gpu,
+    ) -> Result<Option<(wgpu::SurfaceTexture, bool)>, DrawError> {
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f) => Ok(Some((f, false))),
+            wgpu::CurrentSurfaceTexture::Suboptimal(f) => Ok(Some((f, true))),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                Ok(None)
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.reconfigure(gpu);
+                Ok(None)
+            }
+            wgpu::CurrentSurfaceTexture::Validation => Err(DrawError::Validation),
+        }
     }
 
     pub(crate) fn reconfigure(&self, gpu: &Gpu) {

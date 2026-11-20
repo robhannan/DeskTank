@@ -18,7 +18,7 @@ desktank-platform = { path = "crates/desktank-platform" }
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
 
 [workspace.lints.rust]
-# Platform/FFI crates (desktank-platform, desktank-saver-mac) override this with
+# Platform/FFI crates (desktank-platform, desktank-saver-mac, desktank-android) override this with
 # `#![allow(unsafe_code)]`; desktank-sim and desktank-render use `#![forbid(unsafe_code)]`.
 unsafe_code = "deny"
 missing_docs = "warn"
