@@ -24,7 +24,7 @@ const TARGET = "wasm32-unknown-unknown";
 const site = path.join(root, "target", "site");
 const wasmIn = path.join(root, "target", TARGET, "release", "desktank_web.wasm");
 // wasm-bindgen's output with its TypeScript declarations, which web/main.ts
-// is checked against (tsconfig.json's rootDirs); only the glue and the wasm
+// is checked against (web/tsconfig.json's rootDirs); only the glue and the wasm
 // are shipped.
 const bindgen = path.join(root, "target", "web-bindgen", "pkg");
 
@@ -63,8 +63,9 @@ if (await which("wasm-opt", { nothrow: true })) {
 }
 
 await fs.copy(bindgen, path.join(site, "pkg"), { filter: (src: string) => !src.endsWith(".d.ts") });
-// The page's TypeScript becomes .js beside the static files.
-await $`tsc -p web/tsconfig.json`;
+// The page's TypeScript becomes .js beside the static files. The project's
+// own tsc, so the script also works outside `pnpm build:web`.
+await $`${path.join(root, "node_modules", ".bin", "tsc")} -p web/tsconfig.json`;
 await fs.copy(path.join(root, "web"), site, {
   filter: (src: string) => !src.endsWith(".ts") && path.basename(src) !== "tsconfig.json",
 });

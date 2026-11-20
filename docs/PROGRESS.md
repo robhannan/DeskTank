@@ -154,6 +154,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Crabs: a species key that is off by default (`waste_every`, `eats_corpses`, `home_carpet`, `cheat_only`) keeps every existing tank, hash and reference image as it was; per-creature state that only some species use is hashed only when set, so the pinned v2 to v4 fixture hashes didn't move.
 ## Next increments
 
+- TypeScript: CI runs Node 24 only, while `engines` allows 22.18+ (the first 22.x with type stripping on by default); add a Node 22 job if the minimum matters (PR #50 review).
 - Blinker: graze live plants (leaves and stems) like a goldfish; its diet leaves live plant parts out for now. It eats creatures up to 1.5 cm, so adult cherry shrimp (2.5 cm) are safe though real goldfish eat them. Glow follows the base sprite colours: a morph recolouring the `eyes` or `unlit` keys wouldn't be marked (only the blinker glows, with one morph). The halo is drawn at whichever frame density the scale picks, so at scales not divisible by four it is 1.5 cells wide rather than 0.75.
 
 - D21: schoolers could share the lead's band, so a school isn't split by a plant in front of half of it; a depth cue by scale (smaller towards the back) is not done, as it would break the shared 2 cells per cm.
