@@ -56,6 +56,7 @@ mod habits;
 mod lifecycle;
 mod naming;
 pub mod pursuit;
+mod quirks;
 mod school;
 mod steering;
 

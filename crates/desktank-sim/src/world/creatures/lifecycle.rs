@@ -24,12 +24,12 @@
 //!   detritus cell every [`ROT_EVERY_SECONDS`] into the water they cover,
 //!   fading as they go, until a third of their cells have become detritus.
 
+use super::quirks::{Quirks, salt};
 use super::{Creature, CreatureId, Kind, ONE, World, body_box};
 use crate::TICKS_PER_SECOND;
 use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::MaterialId;
-use crate::rng::splitmix64;
 use crate::species::SpeciesId;
 
 /// World seconds per day of a creature's life (10 minutes): a 5-year neon
@@ -368,9 +368,9 @@ impl World {
     }
 
     fn lifespan_of(&self, k: &Kind, id: CreatureId) -> u32 {
-        let spread = splitmix64(self.seed ^ splitmix64(u64::from(id.0) ^ 0x6c69_6665)) % 21;
+        let q = Quirks::of(self.seed, id, self.tick);
         // Lifespans are at most 7300 days: well inside u32 at ±10%.
-        u32::try_from(u64::from(k.lifespan) * (90 + spread) / 100).unwrap_or(u32::MAX)
+        u32::try_from(q.scale(salt::LIFESPAN, 90, 110, u64::from(k.lifespan))).unwrap_or(u32::MAX)
     }
 
     /// One tick of `c`'s life, before it moves: it ages, burns energy and
