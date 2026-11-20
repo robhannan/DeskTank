@@ -66,7 +66,7 @@ pub fn stock(world: &mut World, count: usize, seed: u64) -> Result<usize, WorldE
     let species: Vec<_> = world
         .species()
         .iter()
-        .filter(|s| s.zone != Zone::Surfaces && !s.cheat_only)
+        .filter(|s| s.zone != Zone::Surfaces && s.stocked())
         .map(|s| s.id)
         .collect();
     if species.is_empty() {
@@ -142,14 +142,14 @@ mod tests {
         let stocked = world
             .species()
             .iter()
-            .filter(|s| s.zone != Zone::Surfaces && !s.cheat_only)
+            .filter(|s| s.zone != Zone::Surfaces && s.stocked())
             .count();
         // Round robin: every swimmer and walker gets 30 / n, the first
         // 30 % n one more; crawlers none.
         for (i, s) in world
             .species()
             .iter()
-            .filter(|s| s.zone != Zone::Surfaces && !s.cheat_only)
+            .filter(|s| s.zone != Zone::Surfaces && s.stocked())
             .enumerate()
         {
             let n = world

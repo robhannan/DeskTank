@@ -843,7 +843,7 @@ impl ApplicationHandler for App {
                     if set != cap {
                         eprintln!(
                             "desktank window: the tank holds {} creatures, so its cap is {set}, not {cap}",
-                            world.creatures().len()
+                            world.stock_count()
                         );
                     }
                 }

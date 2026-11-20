@@ -347,13 +347,13 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
     let Some(species) = world
         .species()
         .iter()
-        .find(|s| s.name == name && !s.cheat_only)
+        .find(|s| s.name == name && s.stocked())
         .map(|s| s.id)
     else {
         let names: Vec<&str> = world
             .species()
             .iter()
-            .filter(|s| !s.cheat_only)
+            .filter(|s| s.stocked())
             .map(|s| s.name.as_str())
             .collect();
         return Err(CheatError::Usage(format!(

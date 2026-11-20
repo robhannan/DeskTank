@@ -278,8 +278,9 @@ impl Tools {
     /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
     /// inspect and glue; each material group lists the materials naming it,
     /// by ID (the plants group starts with the plants slot); then the
-    /// placeables whose material `world` has, and its
-    /// species by ID (but the cheat-only ones).
+    /// placeables whose material `world` has, and its stocked species by
+    /// ID ([`crate::Species::stocked`]). Live food species follow the food
+    /// materials in the Food group, where a click adds a pinch.
     #[must_use]
     pub fn palette_groups(world: &World) -> Vec<(PaletteGroup, Vec<PaletteItem>)> {
         let table = world.materials();
@@ -295,11 +296,12 @@ impl Tools {
                         .filter(|p| table.id(p.material_name()).is_some())
                         .map(|p| PaletteItem::Tool(Tool::Place(p)))
                         .collect(),
-                    // Cheat-only species come from their cheats.
+                    // Cheat-only species come from their cheats, live
+                    // food from the Food group.
                     PaletteGroup::Creatures => world
                         .species()
                         .iter()
-                        .filter(|s| !s.cheat_only)
+                        .filter(|s| s.stocked())
                         .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
                         .collect(),
                     // The plants slot (if `world` has plant species and
@@ -317,6 +319,19 @@ impl Tools {
                             )
                             .collect()
                     }
+                    // Live food follows the food materials, a pinch a click.
+                    PaletteGroup::Food => table
+                        .iter()
+                        .filter(|m| m.palette == Some(group))
+                        .map(|m| PaletteItem::Material(m.id))
+                        .chain(
+                            world
+                                .species()
+                                .iter()
+                                .filter(|s| s.live_food)
+                                .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id))),
+                        )
+                        .collect(),
                     _ => table
                         .iter()
                         .filter(|m| m.palette == Some(group))
@@ -1097,12 +1112,29 @@ mod tests {
             names(PaletteGroup::Devices),
             ["Place(Bubbler)", "Place(FilterOutlet)"]
         );
-        // Every species, nerites included, has a slot in Creatures, but
-        // the cheat-only crabs and blinker, which come from their cheats.
+        // Live food follows the food materials in Food.
+        assert_eq!(
+            names(PaletteGroup::Food),
+            [
+                "flake_food",
+                "sinking_pellet",
+                "bloodworm",
+                "algae_wafer",
+                "root_tab",
+                "liquid_fertiliser",
+                &format!(
+                    "AddCreature({:?})",
+                    w.species().id("live_bloodworm").unwrap()
+                ),
+            ]
+        );
+        // Every stocked species, nerites included, has a slot in Creatures:
+        // not the cheat-only crabs and blinker, which come from their
+        // cheats, nor live food.
         let creatures: Vec<_> = w
             .species()
             .iter()
-            .filter(|s| !s.cheat_only)
+            .filter(|s| s.stocked())
             .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
             .collect();
         assert!(w.species().iter().any(|s| s.name == "nerite"));

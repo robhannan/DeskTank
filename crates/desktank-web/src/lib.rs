@@ -342,7 +342,20 @@ impl WebTank {
             .world()
             .species()
             .iter()
-            .filter(|s| !s.cheat_only)
+            .filter(|s| s.stocked())
+            .map(|s| s.name.clone())
+            .collect()
+    }
+
+    /// The names of the live foods the Food group offers, ordered by ID.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = liveFoods))]
+    #[must_use]
+    pub fn live_foods(&self) -> Vec<String> {
+        self.tank
+            .world()
+            .species()
+            .iter()
+            .filter(|s| s.live_food)
             .map(|s| s.name.clone())
             .collect()
     }
@@ -957,14 +970,19 @@ impl WebTank {
                 table.get(m).map_or_else(String::new, |m| m.name.clone()),
             ),
             PaletteItem::Tool(Tool::Place(p)) => ("device", p.material_name().to_owned()),
-            PaletteItem::Tool(Tool::AddCreature(s)) => (
-                "creature",
-                self.tank
-                    .world()
-                    .species()
-                    .get(s)
-                    .map_or_else(String::new, |s| s.name.clone()),
-            ),
+            PaletteItem::Tool(Tool::AddCreature(s)) => {
+                let species = self.tank.world().species().get(s);
+                (
+                    // Live food is poured from the Food group, a pinch a
+                    // click.
+                    if species.is_some_and(|s| s.live_food) {
+                        "live_food"
+                    } else {
+                        "creature"
+                    },
+                    species.map_or_else(String::new, |s| s.name.clone()),
+                )
+            }
             PaletteItem::Tool(Tool::Plant) => ("plant", "plants".to_owned()),
             PaletteItem::Tool(t) => (
                 "tool",
