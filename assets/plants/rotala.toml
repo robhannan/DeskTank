@@ -11,6 +11,7 @@ height = 48
 internode = 2
 leaf_length = 3
 root_depth = 8
+branching = 0.2
 substrates = ["sand", "gravel", "aquasoil"]
 
 [prefer]

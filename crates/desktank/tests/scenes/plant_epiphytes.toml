@@ -1,0 +1,88 @@
+# Epiphytes, layered mats and branching/trailing stems (T6c part 3):
+# anubias on glued rock, java fern on glued driftwood, layered christmas
+# moss on glued rock, and branching rotala plus surface-trailing cabomba,
+# grown for 15 minutes.
+ticks = 21600
+
+[world]
+water_level = 0.62
+
+[[pour]]
+repeat = 42
+x = 0
+y = 96
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+# Rock on the left for anubias.
+[[pour]]
+repeat = 4
+x = 18
+y = 74
+dx = 5
+radius = 6
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 24
+y = 64
+radius = 0
+plant = "anubias"
+
+# Driftwood in the centre-left for java fern.
+[[pour]]
+repeat = 5
+x = 52
+y = 70
+dx = 5
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 62
+y = 60
+radius = 0
+plant = "java_fern"
+
+# Rock in the centre-right for layered christmas moss.
+[[pour]]
+repeat = 3
+x = 92
+y = 74
+dx = 5
+radius = 6
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 97
+y = 64
+radius = 1
+plant = "christmas_moss"
+
+# Branching rotala and surface-trailing cabomba on the right.
+[[pour]]
+x = 122
+y = 44
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 144
+y = 84
+radius = 1
+material = "root_tab"
+brush = "replace"
+
+[[pour]]
+x = 144
+y = 44
+radius = 0
+plant = "cabomba"

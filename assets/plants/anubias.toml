@@ -1,0 +1,42 @@
+# Anubias (Anubias barteri var. nana): a slow, hardy, low-light epiphyte
+# whose thick rhizome creeps over rock and driftwood, putting up short,
+# broad waxy dark-green leaves. Cuttings of the rhizome grow on as new
+# plants; it falls off if what holds it is gone.
+id = 15
+name = "anubias"
+description = "A slow, hardy low-light epiphyte with broad dark-green leaves on a creeping rhizome."
+form = "epiphyte"
+propagation = ["fragments"]
+
+[epiphyte]
+on = ["rock", "driftwood"]
+rhizome_length = 14
+spacing = 2
+leaf_length = 5
+lean = 4
+
+[prefer]
+light = { min = 0.01, optimum = 0.25, max = 1.0 }
+nutrient = { min = -0.1, optimum = 0.3, max = 3.0 }
+co2 = { min = -1.0, optimum = 0.8, max = 4.0 }
+
+[growth]
+rate = 8.0
+size = 90
+cost = 0.008
+
+[hardiness]
+tolerance = 45.0
+decline = 0.006
+recovery = 0.015
+
+# Deep, waxy forest green leaves over a dark olive rhizome.
+[colours]
+root = ["#3d4a2c", "#52623c"]
+stem = ["#1e4020", "#29522a", "#356634", "#447a42"]
+leaf = ["#16421d", "#1e5226", "#266430", "#30783c", "#3e8e4a", "#52a65e"]
+
+[look]
+leaf = "pad"
+stem = "thick"
+root = "strand"

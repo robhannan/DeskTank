@@ -1,0 +1,41 @@
+# Java fern (Microsorum pteropus): a hardy, low-light epiphyte on rock and
+# driftwood whose dark creeping rhizome puts up tall, pointed lance-shaped
+# fronds. Cut pieces of the rhizome live on as fragments.
+id = 16
+name = "java_fern"
+description = "A hardy epiphyte on rock and wood with tall, pointed lance-shaped fronds."
+form = "epiphyte"
+propagation = ["fragments"]
+
+[epiphyte]
+on = ["rock", "driftwood"]
+rhizome_length = 16
+spacing = 2
+leaf_length = 16
+lean = 6
+
+[prefer]
+light = { min = 0.015, optimum = 0.3, max = 1.2 }
+nutrient = { min = -0.1, optimum = 0.35, max = 3.0 }
+co2 = { min = -1.0, optimum = 0.8, max = 4.0 }
+
+[growth]
+rate = 12.0
+size = 160
+cost = 0.008
+
+[hardiness]
+tolerance = 35.0
+decline = 0.008
+recovery = 0.018
+
+# Rich fern-green fronds with paler growing tips over a dark brown-green rhizome.
+[colours]
+root = ["#363024", "#4a4232"]
+stem = ["#2d3b1e", "#3b4c26", "#4a5e30", "#5b723b"]
+leaf = ["#29541c", "#386b24", "#48842e", "#5b9e3a", "#72b84a", "#8fd060"]
+
+[look]
+leaf = "sword"
+stem = "stalk"
+root = "strand"

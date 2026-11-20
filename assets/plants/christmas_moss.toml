@@ -9,6 +9,7 @@ propagation = ["fragments"]
 
 [mat]
 on = ["rock", "driftwood"]
+layers = 3
 
 [prefer]
 light = { min = 0.03, optimum = 0.4, max = 1.5 }

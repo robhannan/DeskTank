@@ -253,6 +253,9 @@ fn scooping_through_a_stem_makes_a_fragment_or_dead_plant_matter_by_species() {
 /// chunk sleeps.
 fn grown_and_asleep(seed: u64) -> World {
     let mut w = bedded(120, 12, seed);
+    // Keep a single plant so spontaneous seeding doesn't sprout a second one
+    // while testing single-plant starvation and oldest-leaf drop.
+    w.set_plant_cap(1);
     let hyg = species(&w, "hygrophila");
     w.paint_plant(80, 20, 0, hyg, Propagule::Cuttings).unwrap();
     run(&mut w, 30 * MINUTE);
