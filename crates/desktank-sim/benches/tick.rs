@@ -14,21 +14,35 @@ use std::hint::black_box;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use desktank_sim::{Brush, MaterialTable, Placeable, Propagule, Rect, World, WorldConfig};
 
-/// The default 640×360 tank with a sand column covering 20% of the grid
-/// (160×288 cells) dropped into the middle, above 72 rows of water.
-fn heavy_pour() -> World {
+/// A `width`×`height` tank with a sand column covering 20% of the grid
+/// dropped into the middle, above 20% water.
+fn heavy_pour_sized(width: usize, height: usize) -> World {
     let t = MaterialTable::builtin().expect("builtin materials");
     let sand = t.id("sand").expect("sand");
-    let mut w = World::new(WorldConfig::default(), t).expect("world");
+    let config = WorldConfig {
+        width,
+        height,
+        ..WorldConfig::default()
+    };
+    let mut w = World::new(config, t).expect("world");
+    let col_w = width / 4;
+    let col_h = height * 4 / 5;
+    let x0 = (width - col_w) / 2;
     let column = Rect {
-        x0: 240,
+        x0,
         y0: 0,
-        x1: 400,
-        y1: 288,
+        x1: x0 + col_w,
+        y1: col_h,
     };
     assert_eq!(column.area() * 5, w.width() * w.height());
     w.fill_rect(column, sand, Brush::Replace).expect("pour");
     w
+}
+
+/// The default 640×360 tank with a sand column covering 20% of the grid
+/// (160×288 cells) dropped into the middle, above 72 rows of water.
+fn heavy_pour() -> World {
+    heavy_pour_sized(640, 360)
 }
 
 fn settled_living() -> World {
@@ -257,7 +271,8 @@ fn add_thirty(w: &mut World, names: &[&str]) {
         let (top, bottom) = w.zone_rows(kind).expect("zone");
         let row = i64::try_from(usize::midpoint(top, bottom)).expect("row");
         let _ = w.add_creature(kind, column, row);
-        column = (column + 23) % 630;
+        let span = i64::try_from(w.width().saturating_sub(10)).expect("span");
+        column = (column + 23) % span.max(1);
     }
 }
 
@@ -309,6 +324,37 @@ fn bench_floaters(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::
     g.bench_function("drifting_floaters", |b| {
         b.iter_batched_ref(|| drifting.clone(), World::tick, BatchSize::LargeInput);
     });
+}
+
+/// 2× simulation grid (1280×720 at 1440p): 4× the cells of 640×360.
+fn bench_hires_grid(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
+    for (name, ticks) in [
+        ("heavy_pour_1280x720_t10", 10),
+        ("heavy_pour_1280x720_t60", 60),
+    ] {
+        let start = advance(heavy_pour_sized(1280, 720), ticks);
+        g.bench_function(name, |b| {
+            b.iter_batched_ref(|| start.clone(), World::tick, BatchSize::LargeInput);
+        });
+    }
+    let mut settled_2x = heavy_pour_sized(1280, 720);
+    while {
+        settled_2x.tick();
+        settled_2x.awake_chunks() > 0
+    } {}
+    g.bench_function("settled_1280x720", |b| {
+        b.iter(|| black_box(&mut settled_2x).tick());
+    });
+    let mut fish_2x = settled_2x.clone();
+    add_thirty(&mut fish_2x, &["neon_tetra", "corydoras", "betta"]);
+    fish_2x.set_creature_cap(30);
+    let mut fish_2x = advance(fish_2x, 200);
+    let mut since_fed_2x = 0_u32;
+    g.bench_function("settled_with_fish_1280x720", |b| {
+        b.iter(|| tick_fed(&mut fish_2x, &mut since_fed_2x));
+    });
+    assert_eq!(fish_2x.creatures().len(), 30, "every fish lived");
+    assert_eq!(fish_2x.awake_chunks(), 0, "swimming wakes no chunk");
 }
 
 fn bench_tick(c: &mut Criterion) {
@@ -418,6 +464,7 @@ fn bench_tick(c: &mut Criterion) {
     g.bench_function("plants_with_fish", |b| {
         b.iter(|| tick_fed(&mut among, &mut since_fed));
     });
+    bench_hires_grid(&mut g);
     g.finish();
 }
 

@@ -89,7 +89,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fineGrid: false, fps: "auto", field: "", avoidCursor: false, easyMode: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -213,6 +213,7 @@ function loadSettings(): Settings {
   return {
     // Even scales only (or 1): an odd one saved by an older version rounds down.
     scale: ((s) => (s > 1 ? s & ~1 : s))(int(saved.scale, 0, 8, DEFAULTS.scale)),
+    fineGrid: saved.fineGrid === true,
     fps: typeof saved.fps === "string" && ["auto", "30", "15"].includes(saved.fps) ? saved.fps : DEFAULTS.fps,
     field: typeof saved.field === "string" && FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
     avoidCursor: saved.avoidCursor === true,
@@ -240,6 +241,9 @@ function update(changes: Partial<Settings>) {
 // Mirrors the settings into the panel's fields and applies the cheap ones.
 function showSettings() {
   $<HTMLSelectElement>("set-scale").value = String(settings.scale);
+  const fineEl = $<HTMLInputElement>("set-fine-grid");
+  fineEl.checked = settings.fineGrid;
+  fineEl.disabled = settings.scale !== 0;
   $<HTMLSelectElement>("set-fps").value = settings.fps;
   $<HTMLSelectElement>("set-field").value = settings.field;
   $<HTMLInputElement>("set-avoid-cursor").checked = settings.avoidCursor;
@@ -321,7 +325,7 @@ async function attachGraphics(): Promise<boolean> {
 // A new tank for the current canvas, cell scale setting and seed.
 function newTank(): WebTank {
   const [w, h] = sizeCanvas();
-  const [, cols, rows] = gridFor(w, h, settings.scale);
+  const [, cols, rows] = gridFor(w, h, settings.scale, settings.fineGrid);
   return new WebTank(cols, rows, settings.seed, w, h);
 }
 
@@ -1274,6 +1278,10 @@ function wireSettings(resetTank: () => void) {
     update({ scale: Number(valueOf(e)) });
     resetTank();
   });
+  $("set-fine-grid").addEventListener("change", (e) => {
+    update({ fineGrid: checkedOf(e) });
+    resetTank();
+  });
   $("set-fps").addEventListener("change", (e) => update({ fps: valueOf(e) }));
   $("set-field").addEventListener("change", (e) => update({ field: valueOf(e) }));
   $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: checkedOf(e) }));
@@ -1288,7 +1296,10 @@ function wireSettings(resetTank: () => void) {
     resetTank();
   });
   $("set-defaults").addEventListener("click", () => {
-    const rescale = settings.scale !== DEFAULTS.scale || settings.seed !== DEFAULTS.seed;
+    const rescale =
+      settings.scale !== DEFAULTS.scale
+      || settings.fineGrid !== DEFAULTS.fineGrid
+      || settings.seed !== DEFAULTS.seed;
     update({ ...DEFAULTS });
     if (rescale) resetTank();
   });

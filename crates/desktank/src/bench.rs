@@ -1,7 +1,8 @@
 //! `desktank bench`: a scripted scenario with performance numbers
 //! (SPEC §6.1). A seeded sand pour into the starter scene, then the tank
-//! settles; rendering goes to an offscreen 2560×1440 target at the default
-//! 4× cell scale, paced in real time exactly like the window.
+//! settles; rendering goes to an offscreen 2560×1440 target at the chosen
+//! cell scale (default 4× = 640×360 cells; `--scale 2` = 1280×720), paced
+//! in real time exactly like the window.
 //!
 //! GPU timing reads timestamps back after each frame, which blocks that
 //! frame on the GPU (waiting costs little CPU). "CPU per frame" is process
@@ -19,26 +20,31 @@ use desktank_sim::{Brush, MaterialTable, World, WorldConfig};
 
 use desktank_sim::scene;
 
-/// Reference display (SPEC §6.1): 2560×1440 at 4× = 640×360 cells.
+/// Reference display (SPEC §6.1): 2560×1440 (640×360 cells at 4×, 1280×720 at 2×).
 const TARGET: (u32, u32) = (2560, 1440);
-const CELL_SCALE: u32 = 4;
+/// Largest grid side: WebGL2's texture limit, kept natively too.
+const MAX_GRID_SIDE: u32 = 2048;
+/// Reference cell scale for the pour geometry (4× -> radius 4, sweep 200, y+10).
+const BASE_SCALE: u32 = 4;
 const SEED: u64 = 7;
 /// Simulation ticks of pouring (5 s of world time).
 const POUR_TICKS: u64 = 100;
-const POUR_RADIUS: u32 = 4;
+const POUR_RADIUS_AT_4X: u32 = 4;
 
 /// Runs the scenario for `seconds` of wall time and prints the report.
 ///
 /// # Errors
 ///
 /// Returns an error if no GPU is available or the world can't be built.
-pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
+pub fn run(seconds: u64, fish: usize, scale: u32) -> anyhow::Result<()> {
+    let scale = desktank_render::even_scale(scale.clamp(1, 8));
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let gpu = pollster::block_on(Gpu::new(&instance, None, GpuOptions { timestamps: true }))?;
+    let cells = |px: u32| (px / scale).clamp(16, MAX_GRID_SIDE) as usize;
     let config = WorldConfig {
-        width: (TARGET.0 / CELL_SCALE) as usize,
-        height: (TARGET.1 / CELL_SCALE) as usize,
+        width: cells(TARGET.0),
+        height: cells(TARGET.1),
         seed: SEED,
         ..WorldConfig::default()
     };
@@ -50,6 +56,11 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
     let gpu_timing = tank.enable_gpu_timing(&gpu);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let view = offscreen_target(&gpu, format);
+
+    let pour_radius = (POUR_RADIUS_AT_4X * BASE_SCALE / scale).clamp(1, 24);
+    let pour_step = i64::from(2 * BASE_SCALE / scale).max(1);
+    let pour_half_sweep = i64::from(100 * BASE_SCALE / scale);
+    let pour_y_offset = i64::from(10 * BASE_SCALE / scale).max(1);
 
     let duration = Duration::from_secs(seconds);
     let start = Instant::now();
@@ -70,10 +81,10 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
         if tick < POUR_TICKS && poured != Some(tick) {
             poured = Some(tick);
             let w = i64::try_from(world.width()).unwrap_or(0);
-            let x = w / 2 + i64::try_from(tick).unwrap_or(0) * 2 - 100;
-            let y = i64::try_from(world.surface_row()).unwrap_or(0) + 10;
+            let x = w / 2 + i64::try_from(tick).unwrap_or(0) * pour_step - pour_half_sweep;
+            let y = i64::try_from(world.surface_row()).unwrap_or(0) + pour_y_offset;
             tank.world_mut()
-                .paint(x, y, POUR_RADIUS, sand, Brush::Pour)?;
+                .paint(x, y, pour_radius, sand, Brush::Pour)?;
         }
         let cpu0 = process_stats().cpu_time;
         let t0 = Instant::now();
@@ -114,6 +125,7 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
     }
     let report = Report {
         seconds,
+        scale,
         start,
         active: &active,
         settled: settled.as_ref(),
@@ -147,6 +159,7 @@ fn offscreen_target(gpu: &Gpu, format: wgpu::TextureFormat) -> wgpu::TextureView
 /// Everything the printed report needs.
 struct Report<'a> {
     seconds: u64,
+    scale: u32,
     start: Instant,
     active: &'a Phase,
     settled: Option<&'a Phase>,
@@ -160,6 +173,7 @@ impl Report<'_> {
     fn render(&self, gpu: &Gpu, world: &World) -> String {
         let Self {
             seconds,
+            scale,
             start,
             active,
             settled,
@@ -170,7 +184,7 @@ impl Report<'_> {
         let mut out = String::new();
         let _ = writeln!(
             out,
-            "desktank bench: {seconds} s, {}x{} cells -> {}x{} offscreen, seed {SEED}, {} ({:?})",
+            "desktank bench: {seconds} s, {}x{} cells ({scale}x) -> {}x{} offscreen, seed {SEED}, {} ({:?})",
             world.width(),
             world.height(),
             TARGET.0,

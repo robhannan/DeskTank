@@ -78,8 +78,6 @@ use winit::window::{Window, WindowId};
 use crate::persist::Persistence;
 use desktank_sim::scene;
 
-/// Screen pixels per cell (SPEC §2.1 default).
-const CELL_SCALE: u32 = 4;
 /// Largest grid side: WebGL2's texture limit, kept natively too.
 const MAX_GRID_SIDE: u32 = 2048;
 /// Pointer sample interval of the demo pour (a 60 Hz mouse).
@@ -121,6 +119,7 @@ pub fn run(
     fish: usize,
     saves: Saves,
     life: LifeSettings,
+    scale: u32,
 ) -> anyhow::Result<()> {
     let saves = if demo_pour.is_some() {
         Saves::Off
@@ -148,6 +147,7 @@ pub fn run(
         time,
         fish,
         life,
+        scale: desktank_render::even_scale(scale.clamp(1, 8)),
         power,
         policy: PowerPolicy::default(),
         state: None,
@@ -174,6 +174,8 @@ struct App {
     fish: usize,
     /// Life-cycle settings to apply to the tank.
     life: LifeSettings,
+    /// Screen pixels per simulation cell for a new tank.
+    scale: u32,
     power: PowerMonitor,
     policy: PowerPolicy,
     state: Option<Running>,
@@ -314,6 +316,7 @@ impl Running {
         instance: &wgpu::Instance,
         event_loop: &ActiveEventLoop,
         saved: Option<World>,
+        scale: u32,
     ) -> anyhow::Result<Self> {
         let attrs = Window::default_attributes()
             .with_title("DeskTank")
@@ -335,7 +338,7 @@ impl Running {
         } else {
             // The grid covers the window as first opened; later resizes
             // rescale.
-            let cells = |px: u32| (px / CELL_SCALE).clamp(16, MAX_GRID_SIDE) as usize;
+            let cells = |px: u32| (px / scale).clamp(16, MAX_GRID_SIDE) as usize;
             let config = WorldConfig {
                 width: cells(size.width),
                 height: cells(size.height),
@@ -824,7 +827,7 @@ impl ApplicationHandler for App {
         }
         let saved = self.saved.take();
         let fresh = saved.is_none();
-        match Running::new(&self.instance, event_loop, saved) {
+        match Running::new(&self.instance, event_loop, saved, self.scale) {
             Ok(mut s) => {
                 if let Some(minute) = self.time {
                     s.tank.set_time_of_day(minute);

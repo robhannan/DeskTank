@@ -61,6 +61,10 @@ pub const MAX_GRID_SIDE: u32 = 2048;
 /// least this many cells across (SPEC §3.5).
 pub const MIN_CELLS_ACROSS: u32 = 320;
 
+/// Minimum cells across when the user opts into the fine (2×) grid under
+/// `Auto` scale.
+pub const FINE_MIN_CELLS_ACROSS: u32 = MIN_CELLS_ACROSS * 2;
+
 /// Largest cell scale (SPEC §2.1).
 pub const MAX_SCALE: u32 = 8;
 
@@ -86,15 +90,22 @@ pub const BUTTON_SECONDARY: u32 = 2;
 /// The grid for a canvas of `width`×`height` device pixels:
 /// `[scale, columns, rows]`. With `scale` 0 (auto) it is the largest even
 /// scale (2 to [`MAX_SCALE`]) that gives at least [`MIN_CELLS_ACROSS`]
-/// columns, or 1 if even 2 gives fewer. Any other `scale` is the user's
-/// override (settings), clamped to 1..=[`MAX_SCALE`] and rounded down to an
-/// even number above 1. Even scales draw every sprite texel (two per cell
-/// side) the same size; see [`desktank_render::Layout`].
+/// columns (or [`FINE_MIN_CELLS_ACROSS`] when `fine` is true), or 1 if even
+/// 2 gives fewer. Any other `scale` is the user's override (settings),
+/// clamped to 1..=[`MAX_SCALE`] and rounded down to an even number above 1
+/// (`fine` has no effect on an explicit scale). Even scales draw every
+/// sprite texel (two per cell side) the same size; see
+/// [`desktank_render::Layout`].
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = gridFor))]
 #[must_use]
-pub fn grid_for(width: u32, height: u32, scale: u32) -> Vec<u32> {
+pub fn grid_for(width: u32, height: u32, scale: u32, fine: bool) -> Vec<u32> {
+    let min_across = if fine {
+        FINE_MIN_CELLS_ACROSS
+    } else {
+        MIN_CELLS_ACROSS
+    };
     let scale = if scale == 0 {
-        width / MIN_CELLS_ACROSS
+        width / min_across
     } else {
         scale
     }

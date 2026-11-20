@@ -6,6 +6,7 @@ import type { Ownership } from "./ownership.ts";
 // The settings panel's values, as stored in localStorage.
 export interface Settings {
   scale: number; // 0 is auto, else 1 or an even scale up to 8
+  fineGrid: boolean; // double Auto minimum cells across (320 -> 640)
   fps: string; // "auto", "30" or "15"
   field: string; // "" or a field overlay name
   avoidCursor: boolean;

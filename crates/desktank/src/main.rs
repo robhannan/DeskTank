@@ -11,6 +11,9 @@ mod window;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+/// Default screen pixels per simulation cell.
+const DEFAULT_CELL_SCALE: u32 = 4;
+
 /// A lightweight pixel-art aquarium for your desktop.
 #[derive(Debug, Parser)]
 #[command(name = "desktank", version, about)]
@@ -100,6 +103,10 @@ struct WindowArgs {
     /// creatures already in the tank). Saved with the tank.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=128))]
     creature_cap: Option<u16>,
+    /// Screen pixels per simulation cell for a new tank (1..=8; odd values
+    /// above 1 round down to even). A saved tank keeps its own grid size.
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_CELL_SCALE, value_parser = clap::value_parser!(u32).range(1..=8))]
+    scale: u32,
 }
 
 #[derive(Debug, Args)]
@@ -111,6 +118,10 @@ struct BenchArgs {
     /// reference tank has about 30).
     #[arg(long, value_name = "N", default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=60))]
     fish: u16,
+    /// Screen pixels per simulation cell (1..=8; odd values above 1 round
+    /// down to even).
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_CELL_SCALE, value_parser = clap::value_parser!(u32).range(1..=8))]
+    scale: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -197,8 +208,13 @@ fn main() -> ExitCode {
                 easy: args.easy_mode,
                 cap: args.creature_cap.map(usize::from),
             },
+            desktank_render::even_scale(args.scale),
         ),
-        Command::Bench(args) => bench::run(args.seconds, usize::from(args.fish)),
+        Command::Bench(args) => bench::run(
+            args.seconds,
+            usize::from(args.fish),
+            desktank_render::even_scale(args.scale),
+        ),
         Command::Import { file } => persist::import(None, file),
         Command::Export { file } => persist::export(None, file),
         Command::Capture(args) => capture::run(&capture::Options {
@@ -303,6 +319,37 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "129"]).is_err());
         assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "0"]).is_err());
+    }
+
+    #[test]
+    fn parses_scale_for_window_and_bench() {
+        let win_scale = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("not a window command");
+            };
+            desktank_render::even_scale(w.scale)
+        };
+        assert_eq!(win_scale(&[]), 4);
+        assert_eq!(win_scale(&["--scale", "2"]), 2);
+        assert_eq!(win_scale(&["--scale", "3"]), 2);
+        assert_eq!(win_scale(&["--scale", "1"]), 1);
+        assert_eq!(win_scale(&["--scale", "8"]), 8);
+        assert!(Cli::try_parse_from(["desktank", "window", "--scale", "0"]).is_err());
+        assert!(Cli::try_parse_from(["desktank", "window", "--scale", "9"]).is_err());
+
+        let bench_scale = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "bench"].iter().chain(args)).unwrap();
+            let Command::Bench(b) = cli.command else {
+                panic!("not a bench command");
+            };
+            desktank_render::even_scale(b.scale)
+        };
+        assert_eq!(bench_scale(&[]), 4);
+        assert_eq!(bench_scale(&["--scale", "2"]), 2);
+        assert_eq!(bench_scale(&["--scale", "5"]), 4);
+        assert!(Cli::try_parse_from(["desktank", "bench", "--scale", "0"]).is_err());
+        assert!(Cli::try_parse_from(["desktank", "bench", "--scale", "9"]).is_err());
     }
 
     #[test]
