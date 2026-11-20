@@ -1,0 +1,19 @@
+ticks = 1
+
+[world]
+starter = true
+
+[[creature]]
+species = "african_dwarf_frog"
+x = 28
+y = 48
+
+[[creature]]
+species = "axolotl"
+x = 78
+y = 75
+
+[[creature]]
+species = "common_frog"
+x = 124
+y = 25

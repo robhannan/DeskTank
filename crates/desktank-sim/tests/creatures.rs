@@ -1162,3 +1162,24 @@ fn palette_bettas_cycle_through_inheritable_colours() {
         tools.release(&mut w, Button::Primary);
     }
 }
+
+#[test]
+fn frogs_return_to_air_between_dives() {
+    for name in ["african_dwarf_frog", "common_frog"] {
+        let mut w = world(128, 100, 19);
+        let frog = w.add_creature(species(&w, name), 60, 50).unwrap();
+        let mut dives = 0;
+        let mut submerged = true;
+        for _ in 0..2400 {
+            w.tick();
+            let top = w.creature_body(w.creature(frog).unwrap()).y0;
+            if top > w.surface_row() + 2 {
+                submerged = true;
+            } else if submerged && top == w.surface_row() {
+                dives += 1;
+                submerged = false;
+            }
+        }
+        assert!(dives >= 3, "{name} surfaced {dives} times");
+    }
+}

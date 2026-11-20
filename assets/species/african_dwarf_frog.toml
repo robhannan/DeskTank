@@ -1,0 +1,193 @@
+id = 24
+name = "african_dwarf_frog"
+zone = "mid"
+depth = [0.0, 1.0]
+min_depth = 12
+length_cm = 4.0
+lifespan_days = 1825
+maturity_days = 270
+temperament = "peaceful"
+speed = 3.5
+max_speed = 12.0
+diet = ["bloodworm", "sinking_pellet"]
+breathes_air = true
+prey_cm = 0.8
+
+[breeding]
+mode = "eggs"
+days = 3
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+colours = { r = "#968b6c", l = "#b1a47f", d = "#4e4838", w = "#f5dec1", k = "#151c23", a = "#c94e65" }
+frames = [
+    [
+        "......................",
+        "......................",
+        "......................",
+        "......................",
+        "....d....rrrrrrrrrkr..",
+        "...ddddrrrrllrrrrkkkr.",
+        "..ddddrrrllrrrllrrkrrr",
+        ".....drrrrrrllllrdrrr.",
+        ".......rrrrrrrrrdrrr..",
+        ".ddddddddrrrrrrd......",
+        "ddddddddd.......d.....",
+        ".................d....",
+    ],
+    [
+        "......................",
+        "......................",
+        "......................",
+        "......................",
+        "....d....rrrrrrrrrkr..",
+        "...ddddrrrrllrrrrkkkr.",
+        "..ddddrrrllrrrllrrkrrr",
+        ".....drrrrrrllllrdrrr.",
+        ".......rrrrrrrrrdrrr..",
+        "....dddddrrrrrrd......",
+        ".dddddddd.......dd....",
+        "d.................d...",
+    ],
+    [
+        "......................",
+        "......................",
+        "......................",
+        "......................",
+        "....d....rrrrrrrrrkr..",
+        "...ddddrrrrllrrrrkkkr.",
+        "..ddddrrrllrrrllrrkrrr",
+        ".....drrrrrrllllrdrrr.",
+        ".......rrrrrrrrrdrrr..",
+        "....dddddrrrrrrd......",
+        ".dddddddd.......dd....",
+        "d.................d...",
+    ],
+    [
+        "......................",
+        "......................",
+        "......................",
+        "......................",
+        "....d....rrrrrrrrrkr..",
+        "...ddddrrrrllrrrrkkkr.",
+        "..ddddrrrllrrrllrrkrrr",
+        ".....drrrrrrllllrdrrr.",
+        ".ddddddrrrrrrrrrdrrr..",
+        ".ddddddddrrrrrrd......",
+        "ddddddddd......d......",
+        "...............d......",
+    ],
+]
+fine_frames = [
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "....................rrrrrrrrrrr.rrrrrrrr....",
+        ".........d.......rrrrrrrlrrrrrrrrrrrrkkrrr..",
+        "........ddddd..rrrrrrrrlllrrrrrrrrrrkkkkrrr.",
+        "......dddddddrrrrrrrrrrrlrrrrrrrrrrrkkkkrrrr",
+        ".....ddddddddrrrrrlllrrrrrrrrrrrrrrrkkkkrrrr",
+        "...dddddddddrrrrrrlllrrrrrrrlllrrrrrrkkrrrrr",
+        ".....dddddddrrrrrrrrrrrrrllllllrrrdrrrrrrrr.",
+        ".......ddddddrrrrrrrrrrrrlllrrrrrdddrrrrrr..",
+        ".........ddddrrrrrrrrrrrrrrrrrrrrddrrrrr....",
+        "...........ddddrrrrrrrrrrrrrrrrrddrr........",
+        ".............ddddrrrrrrrrrrrrrrddd..........",
+        "...dddddddddddddddd.rrrrrrrrrrr.d...........",
+        "..dddddddddddddddd.............ddd..........",
+        ".dddddddd.......................dd..........",
+        "d................................dd.........",
+        ".................................ddd........",
+    ],
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "....................rrrrrrrrrrr.rrrrrrrr....",
+        ".........d.......rrrrrrrlrrrrrrrrrrrrkkrrr..",
+        "........ddddd..rrrrrrrrlllrrrrrrrrrrkkkkrrr.",
+        "......dddddddrrrrrrrrrrrlrrrrrrrrrrrkkkkrrrr",
+        ".....ddddddddrrrrrlllrrrrrrrrrrrrrrrkkkkrrrr",
+        "...dddddddddrrrrrrlllrrrrrrrlllrrrrrrkkrrrrr",
+        ".....dddddddrrrrrrrrrrrrrllllllrrrdrrrrrrrr.",
+        ".......ddddddrrrrrrrrrrrrlllrrrrrdddrrrrrr..",
+        ".........ddddrrrrrrrrrrrrrrrrrrrrddrrrrr....",
+        "...........ddddrrrrrrrrrrrrrrrrrddrr........",
+        ".............ddddrrrrrrrrrrrrrrddd..........",
+        "..........ddddddddd.rrrrrrrrrrrdd...........",
+        "......dddddddddddd.............ddd..........",
+        "...ddddddddd.....................dd.........",
+        "..ddddd............................dd.......",
+        "dd..................................ddd.....",
+    ],
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "....................rrrrrrrrrrr.rrrrrrrr....",
+        ".........d.......rrrrrrrlrrrrrrrrrrrrkkrrr..",
+        "........ddddd..rrrrrrrrlllrrrrrrrrrrkkkkrrr.",
+        "......dddddddrrrrrrrrrrrlrrrrrrrrrrrkkkkrrrr",
+        ".....ddddddddrrrrrlllrrrrrrrrrrrrrrrkkkkrrrr",
+        "...dddddddddrrrrrrlllrrrrrrrlllrrrrrrkkrrrrr",
+        ".....dddddddrrrrrrrrrrrrrllllllrrrdrrrrrrrr.",
+        ".......ddddddrrrrrrrrrrrrlllrrrrrdddrrrrrr..",
+        ".........ddddrrrrrrrrrrrrrrrrrrrrddrrrrr....",
+        "...........ddddrrrrrrrrrrrrrrrrrddrr........",
+        ".............ddddrrrrrrrrrrrrrrddd..........",
+        "........ddddddddddd.rrrrrrrrrrr.d...........",
+        "...ddddddddddddddd.............ddd..........",
+        "..ddddddd.......................ddd.........",
+        "dd................................ddd.......",
+        "...................................ddd......",
+    ],
+    [
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "............................................",
+        "....................rrrrrrrrrrr.rrrrrrrr....",
+        ".........d.......rrrrrrrlrrrrrrrrrrrrkkrrr..",
+        "........ddddd..rrrrrrrrlllrrrrrrrrrrkkkkrrr.",
+        "......dddddddrrrrrrrrrrrlrrrrrrrrrrrkkkkrrrr",
+        ".....ddddddddrrrrrlllrrrrrrrrrrrrrrrkkkkrrrr",
+        "...dddddddddrrrrrrlllrrrrrrrlllrrrrrrkkrrrrr",
+        ".....dddddddrrrrrrrrrrrrrllllllrrrdrrrrrrrr.",
+        ".......ddddddrrrrrrrrrrrrlllrrrrrdddrrrrrr..",
+        ".........ddddrrrrrrrrrrrrrrrrrrrrddrrrrr....",
+        "...d.......ddddrrrrrrrrrrrrrrrrrddrr........",
+        "..dddddddddddddddrrrrrrrrrrrrrrddd..........",
+        "..ddddddddddddddddd.rrrrrrrrrrrdd...........",
+        ".ddddddddddddddddd.............dd...........",
+        "d..............................dd...........",
+        "...............................dd...........",
+        "...............................dd...........",
+    ],
+]
+icon = [
+    "........",
+    ".drrrrkr",
+    "ddrrrrkr",
+    "dddd.dd.",
+]
