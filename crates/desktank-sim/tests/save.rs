@@ -1,14 +1,14 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and the version 1 to 7 fixtures
+//! rigid bodies the hash leaves out), and the version 1 to 8 fixtures
 //! load (version 1 migrated to 2, T9; version 2 to 3, T9 part 2; version
 //! 3 to 4, D21; version 4 to 5, the crabs' homes; version 5 to 6, names;
-//! version 6 to 7, floaters' rafts).
+//! version 6 to 7, floaters' rafts; version 7 to 8, plant colouration).
 //!
-//! The version 1 to 6 fixtures are frozen: this build no longer writes
+//! The version 1 to 7 fixtures are frozen: this build no longer writes
 //! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
-//! the version 7 fixture; only do that while version 7 is unreleased or its
+//! the version 8 fixture; only do that while version 8 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -548,11 +548,7 @@ fn floating() -> World {
 
 #[test]
 fn a_version_7_fixture_loads() {
-    let path = fixture(7);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&floating())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(7)).unwrap();
     assert_eq!(save::check(&bytes), Ok(7));
     let mut w = save::decode(&bytes, table()).unwrap();
     let mut fresh = floating();
@@ -569,6 +565,62 @@ fn a_version_7_fixture_loads() {
     };
     assert!(floaters(&w) >= 4, "{} floaters", floaters(&w));
     // The rafts are saved: it drifts on exactly as the tank that wrote it.
+    for _ in 0..400 {
+        w.tick();
+        fresh.tick();
+    }
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Version 8 migrates it uncoloured.
+    assert!(w.plants().all(|p| p.colour == 0.0));
+}
+
+/// A shallow, brightly lit aquasoil tank (T6d) with rotala, ludwigia and
+/// hygrophila grown for 3 minutes: the rotala and ludwigia colour, the
+/// hygrophila doesn't.
+fn coloured() -> World {
+    let mut w = World::new(
+        WorldConfig {
+            width: 96,
+            height: 40,
+            seed: 11,
+            water_level: 0.95,
+        },
+        table(),
+    )
+    .unwrap();
+    let soil = id(&w, "aquasoil");
+    w.fill_rect(rect(0, 32, 96, 40), soil, Brush::Replace)
+        .unwrap();
+    for (x, name) in [(20, "rotala"), (48, "ludwigia"), (76, "hygrophila")] {
+        let s = w.plant_species().id(name).unwrap();
+        w.paint_plant(x, 30, 0, s, desktank_sim::Propagule::Cuttings)
+            .unwrap();
+    }
+    for _ in 0..3600 {
+        w.tick();
+    }
+    w
+}
+
+#[test]
+fn a_version_8_fixture_loads() {
+    let path = fixture(8);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&coloured())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(8));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    let mut fresh = coloured();
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    let colours =
+        |w: &World| -> Vec<(u16, f32)> { w.plants().map(|p| (p.id.0, p.colour)).collect() };
+    assert_eq!(colours(&w), colours(&fresh));
+    assert!(
+        w.plants().filter(|p| p.colour > 0.2).count() >= 2,
+        "{:?}",
+        colours(&w)
+    );
     for _ in 0..400 {
         w.tick();
         fresh.tick();

@@ -43,3 +43,9 @@ leaf = ["#4a5a24", "#66662a", "#80582c", "#9a4630", "#b23a36", "#c8424a"]
 leaf = "round"
 stem = "stalk"
 root = "strand"
+
+# Strong light (above 0.7) with lean water deepens it to crimson.
+[colouration]
+colour = "#b8283a"
+light = 0.7
+nutrient = 0.6

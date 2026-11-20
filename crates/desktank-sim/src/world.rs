@@ -39,7 +39,10 @@ pub use creatures::{
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
 use plants::Plants;
-pub use plants::{MAX_PLANTS, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, UPDATE_SECONDS};
+pub use plants::{
+    COLOUR_PER_SECOND, MAX_PLANTS, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, TINT_STEPS,
+    UPDATE_SECONDS, tint_step,
+};
 
 /// Side of a square chunk, in cells.
 pub const CHUNK_SIZE: usize = 64;

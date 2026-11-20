@@ -19,7 +19,7 @@
 //! little-endian `u32`) holding the `postcard` encoding of the version's
 //! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2,
 //! `save::v3::Save` for 3, `save::v4::Save` for 4, `save::v5::Save` for 5,
-//! `save::v6::Save` for 6, `save::v7::Save` for 7).
+//! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -39,7 +39,8 @@
 //! target depth and each corpse's band (D21, version 4); and each
 //! creature's home (a home owning species', version 5); and each
 //! creature's name (T9 part 3, version 6); and each floater's raft, its
-//! motion as a buoyant body (T6c part 2, version 7). Random streams are derived from `(seed, tick, stream)` (SPEC
+//! motion as a buoyant body (T6c part 2, version 7); and each plant's
+//! colouration (T6d, version 8). Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
 //! the build, and the save records the name behind every material and
@@ -60,8 +61,9 @@
 //! creature just added would start in (a hash of the seed and its id,
 //! within its species' bands), and its corpses in the front band.
 //! Version 5 migrates a version 4 tank's creatures with no home, version
-//! 6 a version 5 tank's with no name, and version 7 a version 6 tank with
-//! no rafts (no build before it had floaters).
+//! 6 a version 5 tank's with no name, version 7 a version 6 tank with
+//! no rafts (no build before it had floaters), and version 8 a version 7
+//! tank's plants uncoloured.
 
 use thiserror::Error;
 
@@ -76,11 +78,12 @@ pub(crate) mod v4;
 pub(crate) mod v5;
 pub(crate) mod v6;
 pub(crate) mod v7;
+pub(crate) mod v8;
 
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 7;
+pub const FORMAT_VERSION: u16 = 8;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -127,7 +130,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v7();
+    let snapshot = world.to_v8();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     let payload = lz4_flex::block::compress_prepend_size(&raw);
@@ -154,10 +157,15 @@ pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError
     let (version, payload) = open(bytes)?;
     let raw = decompress(payload)?;
     let payload = |e: postcard::Error| SaveError::Payload(e.to_string());
-    let from_v6 = |s: v6::Save| World::from_v7(v7::Save::from_v6(s), materials.clone());
+    let from_v7 = |s: v7::Save| World::from_v8(v8::Save::from_v7(s), materials.clone());
+    let from_v6 = |s: v6::Save| from_v7(v7::Save::from_v6(s));
+    if version == 8 {
+        let snapshot: v8::Save = postcard::from_bytes(&raw).map_err(payload)?;
+        return World::from_v8(snapshot, materials);
+    }
     if version == 7 {
         let snapshot: v7::Save = postcard::from_bytes(&raw).map_err(payload)?;
-        return World::from_v7(snapshot, materials);
+        return from_v7(snapshot);
     }
     if version == 6 {
         let snapshot: v6::Save = postcard::from_bytes(&raw).map_err(payload)?;
@@ -314,6 +322,51 @@ mod tests {
     }
 
     #[test]
+    fn rejects_bad_plant_colours() {
+        let mut world = World::new(
+            crate::WorldConfig {
+                width: 64,
+                height: 32,
+                ..crate::WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let soil = world.materials().id("aquasoil").unwrap();
+        let bed = crate::Rect {
+            x0: 0,
+            y0: 26,
+            x1: 64,
+            y1: 32,
+        };
+        world.fill_rect(bed, soil, crate::Brush::Replace).unwrap();
+        let rotala = world.plant_species().id("rotala").unwrap();
+        world
+            .paint_plant(32, 24, 0, rotala, crate::Propagule::Cuttings)
+            .unwrap();
+        for _ in 0..200 {
+            world.tick();
+        }
+        let id = world.plants().next().unwrap().id.0;
+        let mut good = world.to_v8();
+        let colour = |plant, colour| v8::PlantColour { plant, colour };
+        good.colours = vec![colour(id, 0.5)];
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
+        let loaded = load(good.clone()).unwrap();
+        assert!((loaded.plants().next().unwrap().colour - 0.5).abs() < f32::EPSILON);
+        for bad in [
+            vec![colour(id, 1.5)],
+            vec![colour(id, f32::NAN)],
+            vec![colour(id + 100, 0.5)],
+            vec![colour(id, 0.5), colour(id, 0.25)],
+        ] {
+            let mut s = good.clone();
+            s.colours = bad;
+            assert!(matches!(load(s), Err(SaveError::Invalid(_))));
+        }
+    }
+
+    #[test]
     fn old_food_lists_gain_settled_fronds() {
         let mut world = World::new(
             crate::WorldConfig::default(),
@@ -333,11 +386,11 @@ mod tests {
         for _ in 0..20 {
             world.tick();
         }
-        let mut saved = world.to_v7();
+        let mut saved = world.to_v8();
         assert_eq!(saved.life.food.iter().map(Vec::len).sum::<usize>(), 1);
         saved.life.food.iter_mut().for_each(Vec::clear);
-        let restored = World::from_v7(saved, MaterialTable::builtin().unwrap()).unwrap();
-        assert_eq!(restored.to_v7().life.food, world.to_v7().life.food);
+        let restored = World::from_v8(saved, MaterialTable::builtin().unwrap()).unwrap();
+        assert_eq!(restored.to_v8().life.food, world.to_v8().life.food);
     }
 
     #[test]
@@ -354,8 +407,8 @@ mod tests {
         let rock = world.materials().id("rock").unwrap();
         world.paint(20, 10, 3, rock, crate::Brush::Pour).unwrap();
         world.tick();
-        let good = world.to_v7();
-        let load = |s: v7::Save| World::from_v7(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v8();
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
         assert!(load(good.clone()).is_ok());
 
         let mut renamed = good.clone();
@@ -454,7 +507,7 @@ mod tests {
                 .add_creature_with_traits(guppy, x, 20, traits)
                 .unwrap();
         }
-        let mut good = world.to_v7();
+        let mut good = world.to_v8();
         let gestation =
             world.species().get(guppy).unwrap().breeding.unwrap().days * crate::LIFE_DAY_TICKS;
         let female = good.creatures.list.iter().position(|c| c.female).unwrap();
@@ -469,7 +522,7 @@ mod tests {
             eggs: vec![130, 140],
         });
         good.creatures.next_clutch = 2;
-        let load = |s: v7::Save| World::from_v7(s, MaterialTable::builtin().unwrap());
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
         assert!(load(good.clone()).is_ok());
         // The next clutch id is only where the search starts: 0 becomes 1.
         let mut zero = good.clone();
@@ -537,8 +590,8 @@ mod tests {
             let s = world.species().id(name).unwrap();
             world.add_creature(s, 32, 30).unwrap();
         }
-        let good = world.to_v7();
-        let load = |s: v7::Save| World::from_v7(s, MaterialTable::builtin().unwrap());
+        let good = world.to_v8();
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
         let with = |i: usize, home| {
             let mut s = good.clone();
             s.creatures.list[i].home = Some(home);
@@ -565,9 +618,9 @@ mod tests {
         let tetra = world.species().id("neon_tetra").unwrap();
         let id = world.add_creature(tetra, 32, 30).unwrap();
         world.set_creature_name(id, "Bubbles");
-        let good = world.to_v7();
+        let good = world.to_v8();
         assert_eq!(good.creatures.list[0].name, "Bubbles");
-        let load = |s: v7::Save| World::from_v7(s, MaterialTable::builtin().unwrap());
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
         let with = |name: &str| {
             let mut s = good.clone();
             s.creatures.list[0].name = name.to_owned();
@@ -609,9 +662,9 @@ mod tests {
         world.set_cell(40, 40, stem).unwrap();
         world.tick();
         assert_eq!(world.plant_count(), 2);
-        let good = world.to_v7();
+        let good = world.to_v8();
         assert_eq!(good.rafts.len(), 1, "only the floater has a raft");
-        let load = |s: v7::Save| World::from_v7(s, MaterialTable::builtin().unwrap());
+        let load = |s: v8::Save| World::from_v8(s, MaterialTable::builtin().unwrap());
         assert_eq!(load(good.clone()).unwrap().state_hash(), world.state_hash());
         let floater = good.rafts[0].plant;
         let other = good
@@ -621,7 +674,7 @@ mod tests {
             .find(|p| p.id != floater)
             .unwrap()
             .id;
-        let bad: [fn(&mut v7::Raft, u16); 4] = [
+        let bad: [fn(&mut v8::Raft, u16); 4] = [
             |r, other| r.plant = other,
             |r, _| r.plant = 999,
             |r, _| r.off = (0, 5 * 256),
@@ -638,7 +691,7 @@ mod tests {
         let mut missing = good;
         missing.rafts.clear();
         let filled = load(missing).unwrap();
-        assert_eq!(filled.to_v7().rafts.len(), 1);
+        assert_eq!(filled.to_v8().rafts.len(), 1);
     }
 
     #[test]

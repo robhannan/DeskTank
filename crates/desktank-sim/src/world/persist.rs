@@ -6,15 +6,15 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v7};
+use crate::save::{SaveError, runs, unrun, v1, v8};
 use crate::species::SpeciesId;
 
 impl World {
-    /// The world as a version 7 snapshot.
-    pub(crate) fn to_v7(&self) -> v7::Save {
+    /// The world as a version 8 snapshot.
+    pub(crate) fn to_v8(&self) -> v8::Save {
         let base = |i: usize| variant(self.seed, 0, i);
         #[allow(clippy::cast_possible_truncation)] // sides ≤ MAX_SIDE
-        v7::Save {
+        v8::Save {
             width: self.width as u32,
             height: self.height as u32,
             seed: self.seed,
@@ -39,7 +39,7 @@ impl World {
             morphs: self
                 .species()
                 .iter()
-                .map(|s| v7::Morphs {
+                .map(|s| v8::Morphs {
                     species: s.id.0,
                     names: s.morphs.clone(),
                 })
@@ -70,11 +70,12 @@ impl World {
             plants: self.save_plants(),
             creatures: self.save_creatures(),
             rafts: self.save_rafts(),
+            colours: self.save_plant_colours(),
         }
     }
 
-    /// A world restored from a version 7 snapshot, on `materials`.
-    pub(crate) fn from_v7(s: v7::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+    /// A world restored from a version 8 snapshot, on `materials`.
+    pub(crate) fn from_v8(s: v8::Save, materials: MaterialTable) -> Result<Self, SaveError> {
         let config = WorldConfig {
             width: s.width as usize,
             height: s.height as usize,
@@ -153,13 +154,14 @@ impl World {
         w.load_life(s.life)?;
         w.load_plants(s.plants)?;
         w.load_rafts(s.rafts)?;
+        w.load_plant_colours(&s.colours)?;
         w.load_creatures(s.creatures)?;
         Ok(w)
     }
 
     /// Every material and species id the save names must still name the
     /// same thing, and every species' morphs must start with the saved ones.
-    fn check_names(&self, s: &v7::Save) -> Result<(), SaveError> {
+    fn check_names(&self, s: &v8::Save) -> Result<(), SaveError> {
         let check = |what: &str, saved: &[v1::Named], now: &dyn Fn(u8) -> Option<String>| {
             for e in saved {
                 let current = now(e.id);
