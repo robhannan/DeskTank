@@ -148,6 +148,8 @@ fn food_lodged_in_a_dense_plant_is_eaten() {
 /// `minutes` in a planted tank fed every half minute.
 fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
     let mut w = world(160, 96, seed);
+    // Keep the tracked swimmers alive together, including prey-sized fish.
+    w.set_easy_mode(true);
     let soil = id(&w, "aquasoil");
     w.fill_rect(
         Rect {
