@@ -114,7 +114,21 @@ test("a slow compositor doesn't hold world time back after the tab is shown", as
   // first animation frame after a tab is shown; ticks must not wait for it.
   await page.addInitScript(() => {
     const raf = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (cb) => window.setTimeout(() => raf(cb), 800);
+    const cancel = window.cancelAnimationFrame.bind(window);
+    const late = new Map<number, number>();
+    let next = 0;
+    window.requestAnimationFrame = (cb) => {
+      const id = ++next;
+      late.set(id, window.setTimeout(() => late.set(id, -raf(cb)), 800));
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      const t = late.get(id);
+      late.delete(id);
+      if (t === undefined) return;
+      if (t > 0) window.clearTimeout(t);
+      else cancel(-t);
+    };
   });
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");

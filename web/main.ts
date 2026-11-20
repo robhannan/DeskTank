@@ -625,14 +625,18 @@ function loop(now: number) {
   else updateStats();
 }
 
-// Runs the loop on the next vsync. A running tank also keeps its tick
-// deadline: a compositor that holds rAF back (SwiftShader on a busy machine,
-// a slow first frame after the tab is shown) must not hold world time back
-// with it, so whichever comes first runs the loop.
+// Runs the loop on the next vsync. A running tank also keeps a timer at
+// most one tick away: a compositor that holds rAF back (SwiftShader on a
+// busy machine, a slow first frame after the tab is shown) must not hold
+// world time back with it, so whichever comes first runs the loop. Paused,
+// the rAF alone will do.
 function kick() {
   if (hidden || restoring || contextLost) return;
   if (!rafId) rafId = requestAnimationFrame(loop);
-  if (!timerId && tank?.running()) sleepUntil(performance.now() + TICK_MS);
+  if (!tank?.running()) {
+    clearTimeout(timerId);
+    timerId = 0;
+  } else if (!timerId) sleepUntil(performance.now() + TICK_MS);
 }
 
 // Sleeps on a timer and then runs the loop directly (not through rAF, whose
