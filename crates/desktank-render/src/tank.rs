@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use desktank_sim::{FieldKind, TICKS_PER_SECOND, World, daylight};
+use desktank_sim::{TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
 use crate::grid::DirtyRects;
@@ -53,7 +53,7 @@ pub struct Tank {
     /// The brush outline, if shown.
     cursor: Option<BrushPreview>,
     /// The field tinted over the tank (debug overlay), if any.
-    field_overlay: Option<FieldKind>,
+    field_overlay: Option<crate::FieldOverlay>,
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
@@ -109,7 +109,7 @@ impl Tank {
 
     /// Tints the tank by a field's value (a debug overlay), or with `None`
     /// turns the tint off. While on, a field change asks for a frame.
-    pub fn set_field_overlay(&mut self, field: Option<FieldKind>) {
+    pub fn set_field_overlay(&mut self, field: Option<crate::FieldOverlay>) {
         if self.field_overlay != field {
             self.field_overlay = field;
             self.needs_frame = true;
@@ -118,7 +118,7 @@ impl Tank {
 
     /// The field overlay shown, if any.
     #[must_use]
-    pub fn field_overlay(&self) -> Option<FieldKind> {
+    pub fn field_overlay(&self) -> Option<crate::FieldOverlay> {
         self.field_overlay
     }
 

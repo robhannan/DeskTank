@@ -6,6 +6,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 ## Done
 
+- Filter outflow deflects rising air and CO₂ bubbles. The water flow overlay shows the signed current in each field block in the window, web Settings and scripted captures (`--field flow`).
+
 - Hungry guppies seek and eat live duckweed fronds. A bite damages the owning plant and feeds the fish.
 
 - Repository, licences (MIT OR Apache-2.0), README.

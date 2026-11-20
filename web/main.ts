@@ -78,7 +78,7 @@ const LIMITS: Record<string, string> = {
   "co2-low": "CO₂ too low",
   "co2-high": "CO₂ too high",
 };
-const FIELDS = ["", "nutrient", "co2", "light"];
+const FIELDS = ["", "nutrient", "co2", "light", "flow"];
 
 const SETTINGS_KEY = "desktank.settings.v1";
 // The one web tank: its saves in IndexedDB and its Web Lock / channel.

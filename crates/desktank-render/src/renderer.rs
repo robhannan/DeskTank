@@ -294,12 +294,13 @@ impl Renderer {
         // The cell-upload scratch buffer, reused.
         let texels = &mut self.scratch;
         texels.clear();
+        let speed = world.ecology().current.speed;
         texels.extend((0..n.len()).flat_map(|i| {
             [
                 byte(n[i] / FIELD_SHOW_MAX),
                 byte(c[i] / FIELD_SHOW_MAX),
                 byte(l[i]),
-                255,
+                byte((128.0 + 127.0 * world.current()[i] / speed) / 255.0),
             ]
         }));
         gpu.queue.write_texture(
@@ -354,7 +355,7 @@ impl Renderer {
         overlay: (
             Option<PaletteLayout>,
             Option<BrushPreview>,
-            Option<FieldKind>,
+            Option<crate::FieldOverlay>,
         ),
         timer: Option<&GpuTimer>,
     ) {
@@ -363,9 +364,10 @@ impl Renderer {
         // 0 = none; 1, 2, 3 = nutrient, CO₂, light (the texture's channels).
         let field_mode = match field {
             None => 0.0,
-            Some(FieldKind::Nutrient) => 1.0,
-            Some(FieldKind::Co2) => 2.0,
-            Some(FieldKind::Light) => 3.0,
+            Some(crate::FieldOverlay::Scalar(FieldKind::Nutrient)) => 1.0,
+            Some(crate::FieldOverlay::Scalar(FieldKind::Co2)) => 2.0,
+            Some(crate::FieldOverlay::Scalar(FieldKind::Light)) => 3.0,
+            Some(crate::FieldOverlay::Flow) => 4.0,
         };
         #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
         let extra = {

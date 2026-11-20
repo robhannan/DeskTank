@@ -42,7 +42,7 @@ struct View {
     // and 1 if shown.
     hud: vec4<f32>,
     // Palette image size in palette pixels (xy), and the field overlay (z):
-    // 0 none, 1 nutrient, 2 CO2, 3 light.
+    // 0 none, 1 nutrient, 2 CO2, 3 light, 4 flow.
     hud_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
@@ -63,7 +63,7 @@ struct View {
 @group(0) @binding(1) var cells: texture_2d<f32>;
 @group(0) @binding(2) var palette: texture_2d<f32>;
 @group(0) @binding(3) var hud: texture_2d<f32>;
-// Nutrient, CO2 and light per 8x8-cell field cell, for the overlay.
+// Nutrient, CO2, light and signed current per 8x8-cell field cell, for the overlay.
 @group(0) @binding(4) var fields: texture_2d<f32>;
 // Creature sprite frames (sRGB-encoded RGBA; alpha 0 is transparent).
 @group(0) @binding(5) var atlas: texture_2d<f32>;
@@ -173,7 +173,15 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     rgb = rgb * view.daylight.rgb;
     // Debug overlay: tint by a field's value.
     let mode = view.hud_size.z;
-    if mode > 0.5 {
+    if mode > 3.5 {
+        // One chevron per simulation block. Alpha 128 encodes still water.
+        let velocity = (round(textureLoad(fields, at / 8, 0).a * 255.0) - 128.0) / 127.0;
+        let local = at % 8;
+        let dx = (local.x - 3) * i32(sign(velocity));
+        if abs(velocity) > 0.0 && abs(local.y - 3) <= 2 && dx == 1 - abs(local.y - 3) {
+            rgb = mix(rgb, vec3<f32>(0.55, 0.95, 1.0), 0.25 + 0.7 * abs(velocity));
+        }
+    } else if mode > 0.5 {
         let f = field_at(cell);
         if mode < 1.5 {
             rgb = mix(rgb, vec3<f32>(0.35, 1.0, 0.3), 0.75 * f.r);
