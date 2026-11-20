@@ -292,3 +292,4 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - Palette at grid scale 1: `PaletteLayout::fit` shrinks only to fit the width, so in a very short window the two rows can run past the bottom (PR #23 review).
 - Sprite tests: assert texel bounds for every turn and mirror on the CPU (the shader maths is covered only by the creatures and climbing render references).
 - Crabs: Corpse eating needs a corpse within reach: the crabs don't seek corpses out (food search covers cells only). The home owner's lawn then spreads by runners like any carpet (the plant cap bounds it); it doesn't tend or replant it, and a tank without a carpet substrate (bare glass, rock) leaves it homeless and wandering. A v2 save's dead plant matter isn't in the food registry until those cells change (the crabs are the first eaters of `dead_plant`). The crabs walk upright, flipping to face where they go, rather than scuttling sideways in their own frame.
+
