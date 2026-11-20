@@ -439,10 +439,20 @@ fn quarter_set(m: u32, q: vec2<i32>) -> bool {
     return ((m >> u32(q.y * 4 + q.x)) & 1u) != 0u;
 }
 
+// Bits set in a 16-bit mask (portable: GLSL ES 3.00 lacks bitCount).
+fn ones16(m: u32) -> i32 {
+    var v = m - ((m >> 1u) & 0x5555u);
+    v = (v & 0x3333u) + ((v >> 2u) & 0x3333u);
+    v = (v + (v >> 4u)) & 0x0f0fu;
+    return i32((v + (v >> 8u)) & 0x1fu);
+}
+
 // Whether the rigid texel at `quarter` of a partial cell (outline `own`) is
 // drawn: its quarter is covered (at 2x, at least two of its sub-cell's four),
-// or it faces no open fluid on the sides it is nearest (so a round stone
-// bedded in sand stays square against the sand rather than showing water).
+// or the side(s) the outline is cut back from face no open fluid (so a round
+// stone bedded in sand stays square against the sand rather than showing
+// water). The cut faces the half of the cell with fewer covered quarters,
+// up or down and left or right; a balanced axis checks the texel's own half.
 fn rigid_drawn(at: vec2<i32>, mat: i32, own: u32, quarter: vec2<i32>, fine: bool) -> bool {
     var covered = quarter_set(own, quarter);
     if !fine {
@@ -454,8 +464,10 @@ fn rigid_drawn(at: vec2<i32>, mat: i32, own: u32, quarter: vec2<i32>, fine: bool
     if covered {
         return true;
     }
-    let sx = select(1, -1, quarter.x < 2);
-    let sy = select(1, -1, quarter.y < 2);
+    let tb = ones16(own & 0x00ffu) - ones16(own & 0xff00u);
+    let lr = ones16(own & 0x3333u) - ones16(own & 0xccccu);
+    let sy = select(select(1, -1, tb < 0), select(1, -1, quarter.y < 2), tb == 0);
+    let sx = select(select(1, -1, lr < 0), select(1, -1, quarter.x < 2), lr == 0);
     return !is_open_fluid(at + vec2<i32>(sx, 0), mat) && !is_open_fluid(at + vec2<i32>(0, sy), mat);
 }
 

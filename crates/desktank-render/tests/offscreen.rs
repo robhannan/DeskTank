@@ -4,7 +4,7 @@
 //! in `crates/desktank/tests/render.rs`.
 
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
-use desktank_sim::{MaterialTable, World, WorldConfig};
+use desktank_sim::{Brush, MaterialTable, World, WorldConfig};
 
 const W: u32 = 80;
 const H: u32 = 32;
@@ -24,9 +24,19 @@ fn gpu() -> Option<Gpu> {
 
 /// Renders `tank` into a `W`×`H` RGBA target of `format` and returns tightly packed rows.
 fn render(gpu: &Gpu, tank: &mut Tank, format: wgpu::TextureFormat) -> Vec<u8> {
+    render_sized(gpu, tank, format, (W, H))
+}
+
+/// [`render`] into a `w`×`h` target.
+fn render_sized(
+    gpu: &Gpu,
+    tank: &mut Tank,
+    format: wgpu::TextureFormat,
+    (w, h): (u32, u32),
+) -> Vec<u8> {
     let size = wgpu::Extent3d {
-        width: W,
-        height: H,
+        width: w,
+        height: h,
         depth_or_array_layers: 1,
     };
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -40,11 +50,11 @@ fn render(gpu: &Gpu, tank: &mut Tank, format: wgpu::TextureFormat) -> Vec<u8> {
         view_formats: &[],
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    tank.render_to(gpu, &view, format, (W, H));
-    let padded = (W * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    tank.render_to(gpu, &view, format, (w, h));
+    let padded = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: u64::from(padded * H),
+        size: u64::from(padded * h),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -70,7 +80,7 @@ fn render(gpu: &Gpu, tank: &mut Tank, format: wgpu::TextureFormat) -> Vec<u8> {
         .unwrap();
     let data = buffer.get_mapped_range(..).unwrap();
     data.chunks(padded as usize)
-        .flat_map(|row| &row[..(W * 4) as usize])
+        .flat_map(|row| &row[..(w * 4) as usize])
         .copied()
         .collect()
 }
@@ -123,6 +133,78 @@ fn draws_cells_scaled_and_letterboxed() {
     // Water around it is blue.
     let [wr, _, wb] = px(&img, 9, 1);
     assert!(wb > wr);
+}
+
+/// A radius-10 rock pour draws a round disc at 4×, not the octagon its
+/// cells make: each texel row's width follows the brush's circle within a
+/// texel on each side, its top rim is lit and its underside shadowed.
+#[test]
+fn a_poured_rock_disc_is_round() {
+    let Some(gpu) = gpu() else { return };
+    let materials = MaterialTable::builtin().unwrap();
+    let rock = materials.id("rock").unwrap();
+    let config = WorldConfig {
+        width: 24,
+        height: 24,
+        seed: 1,
+        water_level: 1.0,
+    };
+    let mut world = World::new(config, materials).unwrap();
+    world.paint(12, 12, 10, rock, Brush::Replace).unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    // 24×24 cells in 96×96 px: scale 4, no letterbox.
+    let side = 96;
+    let img = render_sized(
+        &gpu,
+        &mut tank,
+        wgpu::TextureFormat::Rgba8Unorm,
+        (side, side),
+    );
+    let at = |x: u32, y: u32| {
+        let i = ((y * side + x) * 4) as usize;
+        [img[i], img[i + 1], img[i + 2]]
+    };
+    let is_rock = |p: [u8; 3]| p[2] < p[0].saturating_add(16);
+    // The brush's circle: radius √(r² + r/4) cells about cell (12, 12)'s
+    // centre, in texels.
+    let radius = 4.0 * (100.0_f64 + 2.5).sqrt();
+    let centre = 4.0 * 12.0 + 2.0;
+    let mut rows = Vec::new();
+    for y in 0..side {
+        let cols: Vec<u32> = (0..side).filter(|&x| is_rock(at(x, y))).collect();
+        let dy = f64::from(y) + 0.5 - centre;
+        let half = (radius * radius - dy * dy).max(0.0).sqrt();
+        let ideal = 2.0 * half;
+        let Some((&first, &last)) = cols.first().zip(cols.last()) else {
+            assert!(ideal < 2.5, "row {y}: no rock, circle {ideal:.1} wide");
+            continue;
+        };
+        assert_eq!(
+            usize::try_from(last - first + 1).unwrap(),
+            cols.len(),
+            "row {y} has a gap"
+        );
+        let width = f64::from(last - first + 1);
+        assert!(
+            (width - ideal).abs() <= 2.5,
+            "row {y}: {width} texels wide, circle {ideal:.1}"
+        );
+        rows.push((y, first, last));
+    }
+    // Rounder than the octagon: its flat top spans 7 cells (28 texels);
+    // the disc's top row is a short arc.
+    let (top, first, last) = rows[0];
+    assert!(last - first + 1 <= 20, "top row {top}: {first}..={last}");
+    // Lit on top, shadowed underneath (centre column).
+    let (bottom, ..) = *rows.last().unwrap();
+    let mid = side / 2;
+    let lum = |p: [u8; 3]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    assert!(
+        lum(at(mid, top)) > lum(at(mid, bottom)),
+        "top rim {:?} vs underside {:?}",
+        at(mid, top),
+        at(mid, bottom)
+    );
 }
 
 #[test]

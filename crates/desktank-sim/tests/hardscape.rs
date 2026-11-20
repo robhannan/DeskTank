@@ -109,16 +109,58 @@ fn erasing_clears_and_carves_outlines() {
     let r = i64::from(tools.radius());
     assert_eq!(w.cell(40, 30).unwrap().material, water);
     assert_eq!(w.rigid_mask(30 * 80 + 40), None);
+    // Straight out from the centre the hole's edge is a cell edge, so the
+    // cell there stays whole; on the diagonals the stair-step corners of
+    // the cells around the hole are cut back to the circle.
     let rim = usize::try_from(40 + r + 1).unwrap();
     assert_eq!(w.cell(rim, 30).unwrap().material, rock);
-    let carved = w.cell_mask(rim, 30);
-    assert_ne!(
-        carved, FULL_MASK,
-        "the rim cell right of the hole is carved"
-    );
-    // Its left (hole-facing) quarters go, its right ones stay.
-    assert_eq!(carved & 0x1111, 0, "{carved:#06x}");
-    assert_eq!(carved & 0x8888, 0x8888, "{carved:#06x}");
+    assert_eq!(w.cell_mask(rim, 30), FULL_MASK);
+    let carved: BTreeMap<(i64, i64), u16> = masks(&w)
+        .into_iter()
+        .filter(|&(_, m)| m != FULL_MASK)
+        .map(|((x, y), m)| {
+            #[allow(clippy::cast_possible_wrap)]
+            let d = (x as i64 - 40, y as i64 - 30);
+            (d, m)
+        })
+        // The pour's own outer edge is partial too; keep the hole's rim.
+        .filter(|&((dx, dy), _)| dx * dx + dy * dy <= (r + 2) * (r + 2))
+        .collect();
+    assert!(carved.len() >= 4, "{carved:?}");
+    for (&(dx, dy), &m) in &carved {
+        // The hollow is symmetric: the left-right mirror cell has the
+        // mirrored mask.
+        let flipped = (0..16).fold(0u16, |acc, b| {
+            let (qx, qy) = (b % 4, b / 4);
+            if m & (1 << b) != 0 {
+                acc | 1 << (qy * 4 + 3 - qx)
+            } else {
+                acc
+            }
+        });
+        assert_eq!(
+            carved.get(&(-dx, dy)),
+            Some(&flipped),
+            "({dx}, {dy}) {m:#06x}"
+        );
+        // Cut quarters face the hole: each lies nearer its centre than
+        // any quarter the cell keeps.
+        let dist = |b: i64| {
+            let (px, py) = (8 * dx + 2 * (b % 4) - 3, 8 * dy + 2 * (b / 4) - 3);
+            px * px + py * py
+        };
+        let cut = (0..16)
+            .filter(|&b| m & (1 << b) == 0)
+            .map(dist)
+            .max()
+            .unwrap();
+        let kept = (0..16)
+            .filter(|&b| m & (1 << b) != 0)
+            .map(dist)
+            .min()
+            .unwrap();
+        assert!(cut < kept, "({dx}, {dy}) {m:#06x}");
+    }
 }
 
 #[test]
