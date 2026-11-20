@@ -164,6 +164,14 @@ fn plant_floaters_scene_matches_reference() {
     check("plant_floaters");
 }
 
+/// T6c part 3: anubias on rock, java fern on driftwood, layered christmas
+/// moss, branching rotala and surface-trailing cabomba, grown for 15
+/// minutes.
+#[test]
+fn plant_epiphytes_scene_matches_reference() {
+    check("plant_epiphytes");
+}
+
 /// Four-texel plant detail: the plant scenes at scale 4, where every leaf,
 /// stem and root shape is drawn with quarter-cell structure, against
 /// `<scene>_x4.png`.
@@ -174,6 +182,7 @@ fn plant_scenes_match_reference_at_scale_4() {
         "plant_rosettes",
         "plant_carpets",
         "plant_floaters",
+        "plant_epiphytes",
     ] {
         check_named(scene, &format!("{scene}_x4"), None, SIZE_X4);
     }

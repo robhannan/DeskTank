@@ -80,6 +80,7 @@ fn five_hundred_plants() -> World {
     let (rock, soil) = (t.id("rock").expect("rock"), t.id("aquasoil").expect("soil"));
     let ids = |n| w.plant_species().id(n).expect("species");
     let (hyg, rotala, moss) = (ids("hygrophila"), ids("rotala"), ids("java_moss"));
+    let (xmas, anubias, java_fern) = (ids("christmas_moss"), ids("anubias"), ids("java_fern"));
     let carpets = [ids("dwarf_hairgrass"), ids("monte_carlo")];
     let rosettes = [ids("amazon_sword"), ids("vallisneria"), ids("cryptocoryne")];
     let glue = |w: &mut World, x: usize, y: usize| {
@@ -128,9 +129,15 @@ fn five_hundred_plants() -> World {
         let x = 140 + 160 * i64::try_from(k).expect("k");
         w.paint(x, 220, 8, rock, Brush::Replace).expect("rock");
         glue(&mut w, usize::try_from(x).expect("x"), 220);
+        let on_rock = match k {
+            0 => moss,
+            1 => xmas,
+            2 => anubias,
+            _ => java_fern,
+        };
         for dx in [-6, -3, 0, 3, 6] {
-            w.paint_plant(x + dx, 205, 0, moss, Propagule::Fragments)
-                .expect("moss");
+            w.paint_plant(x + dx, 205, 0, on_rock, Propagule::Fragments)
+                .expect("on_rock");
         }
     }
     for x in (0..584).filter(|x| x % 4 != 3) {
@@ -148,7 +155,7 @@ fn five_hundred_plants() -> World {
         }
         w.tick();
     }
-    for s in [hyg, rotala, moss]
+    for s in [hyg, rotala, moss, xmas, anubias, java_fern]
         .into_iter()
         .chain(carpets)
         .chain(rosettes)

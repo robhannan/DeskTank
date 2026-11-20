@@ -820,11 +820,12 @@ stays a material film, not individuals.
     cutting's `state` holds the species id it grows into (0 for the
     default, the lowest id). The generic parts so far are root, stem and
     leaf (a mat's cells are stems); T6c adds the rest.
-    *T6c (part 1):* a rosette's or carpet's blades are leaf cells (the
-    species' `[look] leaf` picks a blade shape), so blades cost no
-    material id; `runner` is a new part material, counted with roots in a
-    plant's part counts (so the table and saves keep three count slots).
-    Rhizomes and floating leaves come with T6c's later parts.
+    *T6c (parts 1–3):* a rosette's, carpet's or epiphyte's blades are leaf
+    cells (the species' `[look] leaf` picks a blade shape), so blades cost
+    no material id; `runner` (id 77, counted with roots), `floating_leaf`
+    (id 79, counted with leaves) and `rhizome` (id 80, counted with stems)
+    are the remaining part materials, so the table and saves keep three
+    count slots.
   - The table holds age and health, which the grid can't rebuild, so
     saves store it (§2.6). Ids, part counts and bounds are checked
     against the grid in tests.
@@ -864,7 +865,12 @@ stays a material film, not individuals.
     cells (opposite or alternate, with length and angle), side shoots
     from nodes with probability `branching` (bushy species), topping out
     at the surface and trailing along it. A rootless variant anchors
-    loosely or floats (hornwort type).
+    loosely or floats (hornwort type). *T6c part 3:* `[stem] branching`
+    (0..=1; rotala 0.2, ludwigia 0.15) sets the deterministic per-node
+    chance of a side shoot, which steps two cells out before rising so it
+    keeps a one-cell gap from the main stem (leaves stop short of a rising
+    shoot below them); any stem reaching the top water row trails sideways
+    along it up to `height`.
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
     *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from
@@ -918,15 +924,26 @@ stays a material film, not individuals.
     exactly.
   - **Epiphyte and mat:** attaches to rock, driftwood or glued bodies by
     a creeping rhizome with leaves (anubias type) or as a mat (moss), and
-    falls off when nothing holds it. Whether a plant on a moving body
-    moves with it or is torn off is settled in T6c.
+    falls off when nothing holds it. *T6c part 3 (D24):* `[epiphyte]` sets
+    `on`, `rhizome_length` (1–32), `spacing` (rhizome cells between
+    leaves), `leaf_length` and `lean`. A fragment touching `on` roots as a
+    `rhizome` cell (id 80, counted with stems); the rhizome creeps as a
+    single strand over cells touching `on` and puts up upright blade leaves
+    (`pad` for anubias, id 15; `sword` for java fern, id 16). `[mat]` gains
+    `layers` (1–4; java moss 1, christmas moss 3), storing each cell's
+    layer in its variant position; outer layers stay while touching a
+    nearer layer. Both epiphytes and mats stay on the grid and are **torn
+    off** when a moving body leaves them behind (D24): an unsupported
+    rhizome or mat cell falls off as dead plant matter, cascading through
+    outer mat layers, and an epiphyte piece left without a rhizome dies.
   - **Propagation:** runners and buds make child plants (parent id set);
     mature plants of seeding species drop seeds now and then; the palette
     pours a species' seeds, cuttings or fragments (one it lists; a
     poured fragment is the `cutting` material); fragments also come from
     cuts. *T6c:* a species listing `runners` (rosettes and carpets) spreads
     by them, and the palette's runners pour a plantlet (the `cutting`
-    material).
+    material); healthy mature (or topped-out) plants of seeding species
+    drop seeds into adjacent water now and then while below the plant cap.
 - <a id="plant-appearance"></a>**Appearance.** Effects are computed at
   render time where possible, so a change in a plant's look costs no
   chunk wakes and no cell rewrites.
@@ -1858,7 +1875,7 @@ Each package depends only on the packages before it.
 
   *Done:* species hygrophila (T6's plant), java moss (T6's moss) and
   rotala; layout, cap and upload cost in §2.7 (*T6b*).
-- [ ] **T6c Growth forms and propagation** (§2.7
+- [x] **T6c Growth forms and propagation** (§2.7
   [Growth forms](#growth-forms)). Stems with branching and surface
   trailing, rosettes, carpets, floaters, epiphytes and mats; runners,
   buds, fragments and seeds; the v1 species set (about 8). *Accept:*
@@ -1886,6 +1903,13 @@ Each package depends only on the packages before it.
   in the top water row, drift with the current, shade the water below
   (light under a frogbit strip about 58% of the open water's) and bud
   children with the parent id set within the cap; save format version 7.
+  *Part 3 done:* epiphytes on rock and driftwood via the `rhizome` part
+  (id 80; anubias and java fern, ids 15–16), torn off when what holds them
+  is removed or moves away (D24); layered mats (`[mat] layers`; christmas
+  moss 3 layers, cascading fall-off); stem branching (`[stem] branching`;
+  rotala and ludwigia) and surface trailing along the top water row;
+  seeding from mature healthy plants; reference image `plant_epiphytes`
+  (2× and 4×); sixteen built-in plant species across every v1 form.
 - [ ] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night
@@ -2348,8 +2372,9 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
 | D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. Occlusion (part 2, 2026-11-20) needs no second grid pass or depth buffer: the grid is drawn once, sprites follow back to front, and each sprite fragment checks the cell under it in a per-cell band texture, dropping itself where a plant cell in a nearer band covers that texel (its shape is evaluated as the grid shader does). One grid pass and one sprite draw per frame, whatever the number of creatures or bands; per-band plant layers would cost up to eight grid passes, and splitting the grid in two works for one depth only. A subtle depth cue fades creatures and plant cells towards the water colour with depth. |
-| D22 | **Floaters are buoyant bodies** (2026-11-20). A floating plant (duckweed, frogbit) is held at the surface and carried by the current as one object, built on the rigid-body motion (D17, T4c), not by a cell rule that pins floating leaves to the top water row. The plant table stays its owner (species, health, growth, budding, cutting, death); a per-plant raft holds only its motion (sub-cell offset and velocity), so cells growing onto it or cut from it need no re-anchoring. A rule would have kept leaves at the surface but let a plant's roots and leaves part when the current carried some cells and not others; as a body the whole plant moves together, rests by its leaves' buoyancy, falls back when lifted out, and stops at the glass. Rafts are saved (format version 7) and hashed. Epiphytes on moving bodies are settled with T6c part 3. |
+| D22 | **Floaters are buoyant bodies** (2026-11-20). A floating plant (duckweed, frogbit) is held at the surface and carried by the current as one object, built on the rigid-body motion (D17, T4c), not by a cell rule that pins floating leaves to the top water row. The plant table stays its owner (species, health, growth, budding, cutting, death); a per-plant raft holds only its motion (sub-cell offset and velocity), so cells growing onto it or cut from it need no re-anchoring. A rule would have kept leaves at the surface but let a plant's roots and leaves part when the current carried some cells and not others; as a body the whole plant moves together, rests by its leaves' buoyancy, falls back when lifted out, and stops at the glass. Rafts are saved (format version 7) and hashed. Epiphytes on moving bodies are settled in D24. |
 | D23 | **Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal. |
+| D24 | **Epiphytes and mats stay on the grid and are torn off when a body moves away** (2026-11-20). An epiphyte (anubias, java fern) or mat (java moss, christmas moss) growing on a rigid body (rock or driftwood) does not ride the body if it is unglued or knocked away: rigid bodies translate and rotate (T4c), and a plant can span multiple bodies or static scenery, so riding a rotating body would shear cell-aligned leaves and require body-attachment state in saves and body-split logic. Instead, hardscape should be settled or glued before planting on it; when a body moves away or is scooped out, any rhizome or mat cell that no longer touches its support loses its hold and falls off as dead plant matter (cascading through outer mat layers, and killing epiphyte leaves left without a rhizome). No extra save state or per-tick body coupling is needed. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
