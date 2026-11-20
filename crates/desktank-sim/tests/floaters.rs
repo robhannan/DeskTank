@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use desktank_sim::{
-    Brush, FieldKind, MaterialId, MaterialTable, Placeable, PlantInfo, PlantSpeciesId, Propagule,
-    Rect, World, WorldConfig, save,
+    BAND_REACH, Brush, CreatureId, FieldKind, MaterialId, MaterialTable, Placeable, PlantInfo,
+    PlantSpeciesId, Propagule, Rect, World, WorldConfig, save,
 };
 
 /// Ticks in a simulated minute.
@@ -359,4 +359,81 @@ fn guppies_leave_frogbit_intact() {
     run(&mut w, 200);
     assert_eq!(w.creature(fish).unwrap().eaten(), 0);
     assert!(w.plants().any(|p| p.species == species(&w, "frogbit")));
+}
+
+/// Plant cells inside `fish`'s body in reach of its band, as (material,
+/// plant species).
+fn plant_cells_in_reach(w: &World, fish: CreatureId) -> Vec<(MaterialId, PlantSpeciesId)> {
+    let c = w.creature(fish).unwrap();
+    let b = w.creature_body(c);
+    let mut out = Vec::new();
+    for y in b.y0..b.y1 {
+        for x in b.x0..b.x1 {
+            let Some(band) = w.plant_band(x, y) else {
+                continue;
+            };
+            if band.abs_diff(c.band()) <= BAND_REACH {
+                let p = w.plant(w.plant_at(x, y).unwrap()).unwrap();
+                out.push((w.cell(x, y).unwrap().material, p.species));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn guppies_swim_through_hanging_roots_but_not_stem_plants() {
+    let mut w = tank(8);
+    for x in (4..WIDTH as i64 - 4).step_by(6) {
+        bud(&mut w, "duckweed", x, 2);
+    }
+    // A stand of stem plants (they still block within reach of their
+    // bands).
+    let rotala = species(&w, "rotala");
+    for x in (60..100).step_by(4) {
+        w.paint_plant(x, (HEIGHT - BED - 1) as i64, 0, rotala, Propagule::Cuttings)
+            .unwrap();
+    }
+    run(&mut w, 5 * MINUTE);
+    // A mat across the surface with roots hanging under it.
+    let (leaf, root) = (id(&w, "floating_leaf"), id(&w, "root"));
+    let row = w.surface_row();
+    let count = |m: MaterialId, y: usize| {
+        (0..WIDTH)
+            .filter(|&x| w.cell(x, y).unwrap().material == m)
+            .count()
+    };
+    let (leaves, roots) = (count(leaf, row), count(root, row + 1));
+    assert!(
+        leaves > WIDTH / 2 && roots > WIDTH / 6,
+        "a rooted mat: {leaves} leaves, {roots} roots"
+    );
+    let duckweed = species(&w, "duckweed");
+    let guppy = w.species().id("guppy").unwrap();
+    let fish: Vec<_> = (0..4)
+        .map(|i| w.add_creature(guppy, 20 + 40 * i, 30).unwrap())
+        .collect();
+    let mut through_roots = 0;
+    for _ in 0..MINUTE {
+        w.tick();
+        for &f in &fish {
+            let cells = plant_cells_in_reach(&w, f);
+            for &(m, s) in &cells {
+                assert!(
+                    m == root && s == duckweed,
+                    "a guppy overlaps a plant cell other than a floater's root \
+                     in reach of its band, tick {}",
+                    w.tick_count()
+                );
+            }
+            through_roots += usize::from(!cells.is_empty());
+        }
+    }
+    assert!(through_roots > 0, "the guppies swam among the roots");
+    let eaten: u32 = fish
+        .iter()
+        .filter_map(|&f| w.creature(f))
+        .map(desktank_sim::Creature::eaten)
+        .sum();
+    assert!(eaten >= 4, "the guppies grazed the mat: {eaten} bites");
 }

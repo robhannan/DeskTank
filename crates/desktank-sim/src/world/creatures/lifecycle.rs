@@ -478,14 +478,14 @@ impl World {
         );
         corpses.retain_mut(|c| {
             let (w, h) = (i32::from(c.w), i32::from(c.h));
-            if self.fits_box(w, h, c.x, c.y + SINK, Some(c.band)) {
+            if self.fits_box(w, h, c.x, c.y + SINK, Some(c.band), true) {
                 c.y += SINK;
                 changed = true;
             } else {
                 // Settle the rest of the way onto whatever stopped it.
                 let top = c.y - h * ONE / 2;
                 let settled = (top + ONE - 1).div_euclid(ONE) * ONE + h * ONE / 2;
-                if settled > c.y && self.fits_box(w, h, c.x, settled, Some(c.band)) {
+                if settled > c.y && self.fits_box(w, h, c.x, settled, Some(c.band), true) {
                     c.y = settled;
                     changed = true;
                 }
