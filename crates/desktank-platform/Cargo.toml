@@ -16,6 +16,10 @@ desktank-render.workspace = true
 libc = { version = "0.2.191", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "0.6.2", default-features = false, features = ["alloc"] }
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFBase", "CFDate", "CFDictionary", "CFNumber", "CFRunLoop", "CFString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDistributedNotificationCenter", "NSNotification", "NSObject", "NSOperation", "NSProcessInfo", "NSString", "block2"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
