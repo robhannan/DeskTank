@@ -431,14 +431,14 @@ target computes the same bits.
   livebearer such as a guppy, a betta, a corydoras, cherry and amano-type
   shrimp, a nerite-type and a ramshorn-type snail, and a dwarf frog that
   surfaces to breathe. Fictional species are a stretch goal.
-  *Shipped so far (11):* neon tetra, betta, corydoras, nerite, cherry
+  *Stocked species (16):* neon tetra, betta, corydoras, nerite, cherry
   shrimp (*Neocaridina davidi*), amano shrimp (*Caridina multidentata*),
   Thai micro crab (*Limnopilos naiyanetri*, a surface crawler beyond
   the examples above), honey gourami (*Trichogaster chuna*, an
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Three species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Three species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp) and `bands` (the depth bands it

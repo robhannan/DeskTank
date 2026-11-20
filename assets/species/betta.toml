@@ -34,6 +34,22 @@ days = 2
 brood = [6, 12]
 rest_days = 14
 
+[genetics]
+cycle_palette = true
+wildtype = "wild"
+sprite = "wild"
+
+[[genetics.morph]]
+name = "wild"
+
+[[genetics.morph]]
+name = "royal_blue"
+colours = { e = "#ffffff", r = "#245ac4", h = "#5084e8", s = "#7aa2f0", d = "#1a469a", S = "#1e4da8", o = "#12316e", m = "#1a4392", n = "#102d66", v = "#2c59b0", q = "#4072d4", O = "#0a204a", p = "#5a8ae8", a = "#8fb5ff" }
+
+[[genetics.morph]]
+name = "copper"
+colours = { e = "#ffffff", r = "#c49361", h = "#e8ba8a", s = "#f0cca7", d = "#9a734b", S = "#a87e52", o = "#6e5235", m = "#926e48", n = "#664c31", v = "#b0885e", q = "#d4a778", O = "#4a3722", p = "#e8bd90", a = "#ffddba" }
+
 [sprite]
 # Facing right; two texels per cell side. A slim 12-cell (6 cm) red body
 # with the betta's scowl: the forehead slopes down to an upturned mouth
