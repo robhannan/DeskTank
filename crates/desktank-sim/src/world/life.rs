@@ -522,10 +522,15 @@ impl World {
         for (registry, lists) in [
             (&mut life.living, saved.living),
             (&mut life.devices, saved.devices),
-            (&mut life.food, saved.food),
         ] {
             registry.total = lists.iter().map(Vec::len).sum();
             registry.lists = lists;
+        }
+        // Food search breaks ties by cell index. Rebuild this derived list so
+        // an older tank immediately recognises newly edible materials.
+        for (ci, chunk) in self.chunks.iter().enumerate() {
+            life.food
+                .refresh(ci, chunk.bounds, self.width, &self.cells, &life.flags);
         }
         self.recompute_current();
         let life = &mut self.life;

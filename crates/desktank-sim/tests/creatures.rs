@@ -1122,3 +1122,22 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     let cells = |w: &World| w.material_counts()[usize::from(algae.0)];
     assert_eq!(cells(&control) - cells(&w), eaten as usize);
 }
+
+#[test]
+fn guppy_bites_a_live_frond_and_damages_its_plant() {
+    let mut w = world(80, 64, 7);
+    let fish = w.add_creature(species(&w, "guppy"), 40, 10).unwrap();
+    let leaf = id(&w, "floating_leaf");
+    w.fill_rect(rect(35, 8, 46, 9), leaf, Brush::Replace)
+        .unwrap();
+    let plant = w.plant_at(40, 8).unwrap();
+    let health = w.plant(plant).unwrap().health;
+    for _ in 0..100 {
+        w.tick();
+        if w.creature(fish).unwrap().eaten() > 0 {
+            assert!(w.plant(plant).unwrap().health < health);
+            return;
+        }
+    }
+    panic!("guppy never ate the floating leaves");
+}

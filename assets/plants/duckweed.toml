@@ -6,6 +6,7 @@ id = 13
 name = "duckweed"
 description = "Tiny floating fronds that bud fast and cover the surface."
 form = "floater"
+palatable = true
 propagation = ["buds", "fragments"]
 
 # Floating leaf cells side by side, root strands hanging from them, and
