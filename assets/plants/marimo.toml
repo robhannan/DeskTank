@@ -1,0 +1,41 @@
+# Marimo moss ball (Aegagropila linnaei): not a moss but a velvety green
+# ball of filamentous algae that lies loose on the bottom. It needs little
+# light and few nutrients and grows very slowly, a cell at a time all
+# round, staying round. The whole ball is one body, a little denser than
+# water: it sinks to rest on whatever is below it and a current can nudge
+# it along the bottom. A piece broken off rounds into a ball of its own.
+id = 17
+name = "marimo"
+description = "A slow, velvety ball of algae that lies loose on the bottom."
+form = "ball"
+propagation = ["fragments"]
+
+# Largest radius, in cells.
+[ball]
+radius = 4
+
+[prefer]
+light = { min = 0.005, optimum = 0.3, max = 2.0 }
+nutrient = { min = -0.5, optimum = 0.2, max = 2.5 }
+co2 = { min = -1.0, optimum = 0.5, max = 4.0 }
+
+[growth]
+rate = 3.0
+size = 50
+cost = 0.004
+
+# Very hardy: it waits out bad conditions for a long time.
+[hardiness]
+tolerance = 60.0
+decline = 0.004
+recovery = 0.01
+
+# Deep, velvety greens (the ball has no roots or leaves; their ramps are
+# never drawn).
+[colours]
+root = ["#2c4a2a"]
+stem = ["#123019", "#183e1f", "#1f4d26", "#28602e", "#327236", "#3f8441", "#52984f", "#6aac60"]
+leaf = ["#28602e"]
+
+[look]
+stem = "velvet"

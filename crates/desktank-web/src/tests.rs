@@ -186,7 +186,7 @@ fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
 fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
     let mut t = tank();
     let species = t.plant_species();
-    assert_eq!(species.len(), 16);
+    assert_eq!(species.len(), 18);
     assert!(species[0].starts_with("hygrophila "));
     for name in [
         "ludwigia",
@@ -202,6 +202,8 @@ fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
         "frogbit",
         "anubias",
         "java_fern",
+        "marimo",
+        "tiger_lotus",
     ] {
         let entry = format!("{name} ");
         assert!(species.iter().any(|s| s.starts_with(&entry)), "{name}");

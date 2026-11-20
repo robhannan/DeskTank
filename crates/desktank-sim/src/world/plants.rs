@@ -31,6 +31,8 @@
 //!   also has a raft ([`raft`]) holding its sub-cell offset and velocity,
 //!   and its cells move together each tick as a rigid body's do (T4c), held
 //!   at the surface by its floating leaves and carried by the current.
+//!   A ball (marimo) has a raft too, but sinks: it rests on what is below
+//!   it and the current only nudges it.
 //!
 //! The table is plain data (numbers, ids and a rectangle), so the save
 //! format (T8) can store it as it is; the samples and update bookkeeping
@@ -53,7 +55,7 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, Limit, Part, PlantSpecies,
+    BallForm, COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, Limit, Part, PlantSpecies,
     PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
 };
 use crate::rng::splitmix64;
@@ -112,6 +114,14 @@ const EPIPHYTE_LEAF_WEIGHT: u32 = 6;
 /// building up outer layers.
 const MAT_BASE_WEIGHT: u32 = 3;
 const MAT_LAYER_WEIGHT: u32 = 1;
+/// A leaf pad spreading from its petiole's tip, like a new blade.
+const PAD_WEIGHT: u32 = 3;
+/// How much further from its middle (in quarter cells², from the nearest)
+/// a ball may grow a cell: a little, so it grows round but not in rings.
+const BALL_SLACK: u32 = 2;
+/// How much nearer (in quarter cells²) a ball's site counts for each of
+/// its cells it touches.
+const BALL_HOLD: u32 = 2;
 /// Chance per maturity cycle (~35 s when topped out, or 5 s at `growth.size`)
 /// that a healthy plant of a seeding species drops a seed into adjacent water.
 const SEED_DROP_CHANCE: f64 = 0.05;
@@ -415,7 +425,14 @@ impl World {
         let (x, y) = (i % self.width, i / self.width);
         let (key, spread) = match (part, depth.shape) {
             (Part::Leaf, Shape::Stem { base_x }) => (((y as u64) << 1) | u64::from(x < base_x), 1),
-            (Part::Leaf, Shape::Blades) => ((x as u64) << 1, 2),
+            // Leaf pads lie across columns: a plant's pads share a band.
+            (
+                Part::Leaf,
+                Shape::Blades {
+                    pads_from: Some(len),
+                },
+            ) if plant_position(cell.variant) > len => (1, 2),
+            (Part::Leaf, Shape::Blades { .. }) => ((x as u64) << 1, 2),
             (Part::Stem, Shape::Mat) => (i as u64, 1),
             _ => return u8::try_from(depth.base).ok(),
         };
@@ -438,9 +455,12 @@ impl World {
             Some(Form::Stem(_)) => Shape::Stem {
                 base_x: p.map_or(0, |p| p.base % self.width),
             },
-            Some(Form::Rosette(_) | Form::Carpet(_) | Form::Epiphyte(_)) => Shape::Blades,
+            Some(Form::Rosette(f) | Form::Carpet(f)) => Shape::Blades {
+                pads_from: (f.pad > 0).then_some(f.blade_length),
+            },
+            Some(Form::Epiphyte(_)) => Shape::Blades { pads_from: None },
             Some(Form::Mat(_)) => Shape::Mat,
-            Some(Form::Floater(_)) | None => Shape::Plain,
+            Some(Form::Floater(_) | Form::Ball(_)) | None => Shape::Plain,
         };
         PlantDepth { id, base, shape }
     }
@@ -797,11 +817,8 @@ impl World {
                     pending: false,
                     idle: 0,
                 });
-                let floats = plants
-                    .species
-                    .get(species)
-                    .is_some_and(|s| s.form.floater().is_some());
-                if floats {
+                let drifts = plants.species.get(species).is_some_and(|s| s.form.drifts());
+                if drifts {
                     // A bud or fragment starts moving as its parent does.
                     let raft = parent
                         .and_then(|p| plants.rafts.get(&p))
@@ -1135,6 +1152,8 @@ impl World {
             (Form::Epiphyte(e), _) => {
                 self.plants.material(Part::Rhizome).is_some() && self.touches_any(i, &e.on)
             }
+            // A ball starts where its piece comes to rest on something.
+            (Form::Ball(_), _) => below.is_some_and(|j| !self.is_fluid(self.cells[j].material)),
             // A floater's plantlet opens in open water (water above it)
             // and rises to the surface.
             (Form::Floater(_), _) => {
@@ -1176,7 +1195,7 @@ impl World {
                     self.put_part(j, Part::Root, id, 1);
                 }
             }
-            Form::Mat(_) => self.put_part(i, Part::Stem, id, 0),
+            Form::Mat(_) | Form::Ball(_) => self.put_part(i, Part::Stem, id, 0),
             Form::Floater(_) => self.put_part(i, Part::Float, id, 0),
             Form::Epiphyte(_) => self.put_part(i, Part::Rhizome, id, 1),
         }
@@ -1416,6 +1435,7 @@ impl World {
             }
             Form::Floater(f) => self.floater_sites(id, p.base, f, spread_only, &members),
             Form::Epiphyte(f) => self.epiphyte_sites(id, p.base, f, &members),
+            Form::Ball(f) => self.ball_sites(f, &members),
         };
         if spread_only {
             sites.retain(|s| s.part == Part::Runner || s.bud);
@@ -1753,7 +1773,47 @@ impl World {
             }
         }
         let new_blades = blades < f.blades;
+        // How long a petiole grows (tiger lotus type), by plant and the
+        // column it rose from: the one from the crown's first cell to
+        // `blade_length`, so one reaches as high as it can, the others to
+        // between 55% and all of it, so they stop at differing heights.
+        let limit = |from: usize| -> u8 {
+            if from == bx {
+                return f.blade_length;
+            }
+            let k = splitmix64(self.seed ^ (u64::from(id) << 32) ^ from as u64);
+            #[allow(clippy::cast_possible_truncation)] // ≤ blade_length
+            let len = (u64::from(f.blade_length) * (55 + k % 46) / 100) as u8;
+            len.max(2)
+        };
+        // A leaf pad cell at `j`: floating leaves at the surface.
+        let pad_part = |j: usize| {
+            let (x, y) = (j % self.width, j / self.width);
+            let surface = self.at(x, y, 0, -1).is_some_and(|a| {
+                let m = self.cells[a].material;
+                Some(m) != self.plants.water && self.is_fluid(m)
+            });
+            if surface && self.plants.material(Part::Float).is_some() {
+                Part::Float
+            } else {
+                Part::Leaf
+            }
+        };
         let mut sites = Vec::new();
+        // A pad grows out sideways from `(x, y)` at `position`, and, under
+        // water, puts a cell of its narrower upper row above it.
+        let spread_pad = |sites: &mut Vec<Site>, x: usize, y: usize, position: u8| {
+            for dx in [-1, 1] {
+                if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j)) {
+                    sites.push(Site::new(j, pad_part(j), position, PAD_WEIGHT));
+                }
+            }
+            if let Some(j) = self.at(x, y, 0, -1).filter(|&j| is_water(j))
+                && pad_part(j) == Part::Leaf
+            {
+                sites.push(Site::new(j, Part::Leaf, f.pad_top(), PAD_WEIGHT));
+            }
+        };
         for &i in members {
             let c = self.cells[i];
             let (x, y) = (i % self.width, i / self.width);
@@ -1764,7 +1824,41 @@ impl World {
                         sites.push(Site::new(j, Part::Leaf, 1, NEW_BLADE_WEIGHT));
                     }
                 }
-                Some(Part::Leaf) if pos < f.blade_length => {
+                // A leaf pad spreads on sideways from its outer cells (not
+                // from its edge, nor its upper row).
+                Some(Part::Leaf | Part::Float) if f.is_pad(pos) => {
+                    if pos < f.blade_length + f.pad {
+                        spread_pad(&mut sites, x, y, pos + 1);
+                    }
+                }
+                // A petiole (with a pad) grows on from its tip, leaning
+                // outwards by the column it rose from (every `lean` cells
+                // from the crown, twice as often from beside it, and so
+                // on), so the petioles fan apart; where it grows no further
+                // (at its length, or under the air or something else) it
+                // spreads its leaf pad.
+                Some(Part::Leaf)
+                    if f.pad > 0
+                        && pos <= f.blade_length
+                        && !self.petiole_goes_on(x, y, id, pos, f) =>
+                {
+                    let from = self.petiole_base(x, y, id, pos, f);
+                    let (dir, out) = side(from);
+                    let lean = (usize::from(f.lean) / (out + 1)).max(3);
+                    let out = f.lean > 0
+                        && dir != 0
+                        && pos >= 2
+                        && usize::from(pos - 2).is_multiple_of(lean);
+                    let (dx, dy) = if out { (dir, 0) } else { (0, -1) };
+                    let next = self.at(x, y, dx, dy).filter(|&j| is_water(j));
+                    match next {
+                        Some(j) if pos < limit(from) => {
+                            sites.push(Site::new(j, Part::Leaf, pos + 1, BLADE_WEIGHT));
+                        }
+                        _ => spread_pad(&mut sites, x, y, f.blade_length + 1),
+                    }
+                }
+                Some(Part::Leaf) if f.pad == 0 && pos < f.blade_length => {
                     // A blade's next cell follows from its position and
                     // column alone, so only its tip finds water there. It
                     // steps outwards at its second cell and every `lean`
@@ -1801,11 +1895,14 @@ impl World {
                 // Only a runner's tip creeps on: a cell further back can
                 // find substrate ahead again once its runner has climbed
                 // over it.
-                Some(Part::Runner)
-                    if pos < f.spacing.saturating_mul(2) && self.runner_tip(x, y, id, pos) =>
-                {
+                Some(Part::Runner) if pos < f.runner_limit() && self.runner_tip(x, y, id, pos) => {
                     let dir = if x < bx { -1 } else { 1 };
-                    if let Some(j) = self.runner_step(x, y, dir, &f.substrates) {
+                    let step = if f.runner_depth == 0 {
+                        self.runner_step(x, y, dir, &f.substrates)
+                    } else {
+                        self.deep_runner_step(x, y, dir, f, pos)
+                    };
+                    if let Some(j) = step {
                         sites.push(Site::new(j, Part::Runner, pos + 1, RUNNER_WEIGHT));
                     }
                 }
@@ -1844,6 +1941,45 @@ impl World {
         sites.sort_unstable_by_key(|s| (s.at, core::cmp::Reverse(s.weight), s.position));
         sites.dedup_by_key(|s| s.at);
         sites
+    }
+
+    /// The column plant `id`'s petiole through `(x, y)` (at `pos`) rose
+    /// from: where its first cell is, found by walking down it.
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn petiole_base(&self, x: usize, y: usize, id: u16, pos: u8, f: &RosetteForm) -> usize {
+        let leaf = self.plants.material(Part::Leaf);
+        let (mut x, mut y, mut pos) = (x, y, pos);
+        while pos > 1 {
+            let prev = [(0, 1), (-1, 0), (1, 0)].into_iter().find_map(|(dx, dy)| {
+                let j = self.at(x, y, dx, dy)?;
+                let c = self.cells[j];
+                (Some(c.material) == leaf
+                    && c.state == id
+                    && plant_position(c.variant) == pos - 1
+                    && !f.is_pad(pos - 1))
+                .then_some(j)
+            });
+            let Some(j) = prev else {
+                break;
+            };
+            (x, y, pos) = (j % self.width, j / self.width, pos - 1);
+        }
+        x
+    }
+
+    /// Whether plant `id`'s petiole cell at `(x, y)`, at `pos`, has a next
+    /// petiole cell beside it (it is not its petiole's tip).
+    fn petiole_goes_on(&self, x: usize, y: usize, id: u16, pos: u8, f: &RosetteForm) -> bool {
+        let leaf = self.plants.material(Part::Leaf);
+        DIRS.iter().any(|&(dx, dy)| {
+            self.at(x, y, dx, dy).is_some_and(|j| {
+                let c = self.cells[j];
+                Some(c.material) == leaf
+                    && c.state == id
+                    && plant_position(c.variant) == pos + 1
+                    && !f.is_pad(pos + 1)
+            })
+        })
     }
 
     /// Whether plant `id`'s runner cell at `(x, y)`, at `pos`, is its
@@ -1891,6 +2027,72 @@ impl World {
 
     /// How deep the cell at `j` lies in the ground: 1 if the cell above is
     /// open (fluid or a plant), 2 if the one above that is, else 3.
+    /// The next cell of a deep runner (`runner_depth` > 0, tiger lotus
+    /// type) whose tip is at `(x, y)` and `pos`: short of `spacing` it dives
+    /// to `runner_depth` cells below the bed's top layer and creeps on there
+    /// (rising where the bed rises); from `spacing` on it climbs back up
+    /// through the substrate, to root a plant where water is above.
+    fn deep_runner_step(
+        &self,
+        x: usize,
+        y: usize,
+        dir: isize,
+        f: &RosetteForm,
+        pos: u8,
+    ) -> Option<usize> {
+        let substrate = |j: usize| f.substrates.contains(&self.cells[j].material);
+        if pos >= f.spacing {
+            let up = self.at(x, y, 0, -1)?;
+            let m = self.cells[up].material;
+            if substrate(up) {
+                return Some(up);
+            }
+            // Under the plant it rooted (or water, where it couldn't): it
+            // is done. Under rock or the like it creeps on to get past.
+            if self.is_fluid(m) || self.plants.part(m).is_some() {
+                return None;
+            }
+            return self.runner_step(x, y, dir, &f.substrates);
+        }
+        let depth = f.runner_depth;
+        let down = self.at(x, y, 0, 1).filter(|&j| substrate(j));
+        if self.depth_in_bed(x + y * self.width, depth) < depth
+            && let Some(down) = down
+        {
+            return Some(down);
+        }
+        let ahead = self.at(x, y, dir, 0)?;
+        if substrate(ahead) {
+            if self.depth_in_bed(ahead, depth) <= depth {
+                return Some(ahead);
+            }
+            // The bed rises ahead: keep to its depth.
+            return self.at(x, y, 0, -1).filter(|&j| substrate(j));
+        }
+        // Rock or glass ahead, or the bed drops away: go under if it can.
+        down
+    }
+
+    /// How many cells of the bed (and the roots and runners in it) lie
+    /// above `j` before water or a plant above the bed (0 in the top
+    /// layer), counted up to `cap + 1`.
+    fn depth_in_bed(&self, j: usize, cap: u8) -> u8 {
+        let (x, y) = (j % self.width, j / self.width);
+        let mut depth = 0;
+        while depth <= cap {
+            let Some(above) = self.at(x, y, 0, -isize::from(depth) - 1) else {
+                break;
+            };
+            let m = self.cells[above].material;
+            let buried = matches!(self.plants.part(m), None | Some(Part::Root | Part::Runner));
+            if self.is_fluid(m) || !buried {
+                break;
+            }
+            depth += 1;
+        }
+        depth
+    }
+
     fn top_layer(&self, j: usize) -> u8 {
         let (x, y) = (j % self.width, j / self.width);
         let open = |k: Option<usize>| {
@@ -2091,6 +2293,81 @@ impl World {
         sites
     }
 
+    /// Where a ball can grow (see [`BallForm`]): water beside its cells,
+    /// within `radius` + ½ of their middle (their mean) and keeping its
+    /// bounds within `2 · radius + 1`, nearest the middle first, so it
+    /// grows round, out from where it rests.
+    #[allow(clippy::cast_possible_wrap, clippy::many_single_char_names)] // cell maths
+    fn ball_sites(&self, f: &BallForm, members: &[usize]) -> Vec<Site> {
+        let water = self.plants.water;
+        let mut bounds = Rect::EMPTY;
+        let (mut sx, mut sy) = (0usize, 0usize);
+        for &i in members {
+            let (x, y) = (i % self.width, i / self.width);
+            bounds = bounds.union(point(x, y));
+            sx += x;
+            sy += y;
+        }
+        // The middle, in half cells.
+        let n = members.len().max(1);
+        let (cx2, cy2) = ((4 * sx / n).div_ceil(2), (4 * sy / n).div_ceil(2));
+        let span = 2 * usize::from(f.radius) + 1;
+        // Distances in half cells: within `radius` + ½.
+        let reach = (span * span) as isize;
+        let mut sites = Vec::new();
+        for &i in members {
+            let (x, y) = (i % self.width, i / self.width);
+            for &(dx, dy) in &DIRS {
+                let Some(j) = self
+                    .at(x, y, dx, dy)
+                    .filter(|&j| Some(self.cells[j].material) == water)
+                else {
+                    continue;
+                };
+                let (jx, jy) = (j % self.width, j / self.width);
+                let b = bounds.union(point(jx, jy));
+                if b.x1 - b.x0 > span || b.y1 - b.y0 > span {
+                    continue;
+                }
+                let ex = 2 * jx as isize - cx2 as isize;
+                let ey = 2 * jy as isize - cy2 as isize;
+                let d2 = ex * ex + ey * ey;
+                if d2 > reach {
+                    continue;
+                }
+                // How far out, in cells, rounded.
+                #[allow(clippy::cast_precision_loss)] // d2 <= reach, small
+                let out = (d2.unsigned_abs() as f64).sqrt() / 2.0;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ≤ radius
+                let position = (out.round() as u8).min(f.radius);
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // 0..=reach
+                let weight = 1 + (reach - d2) as u32;
+                sites.push(Site::new(j, Part::Stem, position, weight));
+            }
+        }
+        sites.sort_unstable_by_key(|s| (s.at, core::cmp::Reverse(s.weight), s.position));
+        sites.dedup_by_key(|s| s.at);
+        // It grows nearest its middle first, so it stays round (a site
+        // touching more of its cells counts as a little nearer, so it fills
+        // in before it bulges).
+        let score = |s: &Site| {
+            let (x, y) = (s.at % self.width, s.at / self.width);
+            let held = DIRS
+                .iter()
+                .filter(|&&(dx, dy)| {
+                    self.at(x, y, dx, dy)
+                        .is_some_and(|j| members.binary_search(&j).is_ok())
+                })
+                .count();
+            #[allow(clippy::cast_possible_truncation)] // ≤ 4
+            let held = held as u32;
+            s.weight + BALL_HOLD * held
+        };
+        let best = sites.iter().map(score).max().unwrap_or(0);
+        sites.retain(|s| score(s) + BALL_SLACK >= best);
+        sites
+    }
+
     /// Where a mat can grow: water next to its cells that touches what it
     /// clings to (layer 0), or an outer layer (`pos + 1 < layers`) off a
     /// nearer layer.
@@ -2135,13 +2412,18 @@ impl World {
             .is_some_and(|s| s.form.floater().is_some());
         // A floater's leaves are floating leaves; it loses its outermost
         // first (sorted below as a stem plant's are: one row, furthest out).
+        // A tiger lotus type's floating pads count with its blades.
         let leaf = self
             .plants
             .material(if floats { Part::Float } else { Part::Leaf });
+        let pad = self.plants.material(Part::Float);
         let mut leaves: Vec<usize> = self
             .plant_members(id, self.clip_to_grid(p.bounds))
             .into_iter()
-            .filter(|&i| Some(self.cells[i].material) == leaf)
+            .filter(|&i| {
+                let m = Some(self.cells[i].material);
+                m == leaf || (m == pad && pad.is_some())
+            })
             .collect();
         let blades = self
             .plants
@@ -2220,8 +2502,11 @@ enum Shape {
     Stem {
         base_x: usize,
     },
-    /// A rosette's or carpet's blades.
-    Blades,
+    /// A rosette's, carpet's or epiphyte's blades; leaf cells past
+    /// `pads_from` are a tiger lotus type's leaf pads.
+    Blades {
+        pads_from: Option<u8>,
+    },
     Mat,
     /// One band: a floater, or a plant not in the table (between an edit
     /// and its tidy).

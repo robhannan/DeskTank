@@ -938,7 +938,12 @@ stays a material film, not individuals.
     substrate layers (following the bed up and down) and, `spacing` or
     more cells out where water is above, roots a child (crown above, root
     at the tip; parent id set, generation + 1); it gives up at twice
-    `spacing`. A plant at its mature size still grows its runners.
+    `spacing` (at most 62 cells, the position bits' limit; `spacing` is
+    2–48). With `runner_depth` (1–8, rosettes only; tiger lotus type) a
+    runner instead dives to that many cells below the bed's top layer,
+    creeps on there (rising where the bed rises, going under rock), and
+    from `spacing` on climbs back up to root its child where water is
+    above, then stops. A plant at its mature size still grows its runners.
     `[growth] root_feeder` makes only roots and runners sample nutrients.
   - **Carpet:** low tufts; runners creep through the top substrate layer
     and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a
@@ -990,6 +995,31 @@ stays a material film, not individuals.
     off** when a moving body leaves them behind (D24): an unsupported
     rhizome or mat cell falls off as dead plant matter, cascading through
     outer mat layers, and an epiphyte piece left without a rhizome dies.
+  - **Ball** (issue #45, marimo type): `[ball] radius` (1–8). A fragment
+    roots as one `stem` cell where it rests on anything not fluid, and
+    the ball grows into the water beside it within `radius` + ½ of its
+    cells' mean and a `2 · radius + 1` box, nearest the middle first
+    (sites touching more of its cells count as a little nearer), so it
+    stays round; each cell's position is how far out it grew. Like a
+    floater it is one body with a **raft**, but its cells weigh their
+    density less the fluid's everywhere, so it sinks to rest on the bed;
+    it grips the current a third as hard and rolls at most at a quarter
+    of its speed, so a current nudges it along the bottom. A cut piece
+    lives on as a ball of its own. Drawn with the `velvet` stem shape: a
+    sphere lit from above by how far the ball runs on each way from a
+    cell, its rim fuzzed and corners rounded. Marimo (*Aegagropila
+    linnaei*, id 17) ships.
+  - **Leaf pads** (issue #45, tiger lotus type): a rosette with `[rosette]
+    pad` (1–4) has petioles in place of blades (`lotus` leaf shape). Each
+    leans out by the column it rose from (every `lean` cells from the
+    crown, twice as often from beside it, …) and stops at `blade_length`
+    (the one from the crown's first cell) or 55–100% of it (by plant and
+    column), or where it is blocked, such as under the air. There it
+    spreads a leaf pad sideways along its tip's row, `pad` cells each way
+    (positions past `blade_length`), with a narrower upper row under
+    water; at the surface the pad is `floating_leaf` cells, which shade
+    the water below. Pads die back first. Tiger lotus (*Nymphaea
+    zenkeri*, id 18) ships.
   - **Propagation:** runners and buds make child plants (parent id set);
     mature plants of seeding species drop seeds now and then; the palette
     pours a species' seeds, cuttings or fragments (one it lists; a

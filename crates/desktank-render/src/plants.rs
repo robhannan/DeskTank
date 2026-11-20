@@ -121,8 +121,9 @@ pub const SPECIES_WIDTH: usize = 32;
 /// Column of the shapes texel: leaf, stem and root shape discriminants.
 pub const SHAPES_COLUMN: usize = 3 * RAMP;
 /// Column of the sizes texel: stem height, root depth and leaf length in
-/// cells (blade length for the first and last of a rosette or carpet;
-/// fronds, root length and fronds for a floater; 0 for a mat).
+/// cells (blade length for the first and last of a rosette or carpet, then
+/// its leaf pad width; fronds, root length and fronds for a floater; radius
+/// for the first and third of a ball; 0 for a mat).
 pub const SIZES_COLUMN: usize = SHAPES_COLUMN + 1;
 /// Column of the colouration texel: the colour a plant shifts towards in
 /// strong light with low nutrients (T6d), alpha 255 if it colours at all.
@@ -175,11 +176,15 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     // by height.
     let sizes = match &s.form {
         Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
-        Form::Rosette(f) | Form::Carpet(f) => [f.blade_length, f.root_depth, f.blade_length, 0],
+        // A tiger lotus type's leaf pads: leaf cells past the blade length,
+        // up to `pad` further.
+        Form::Rosette(f) | Form::Carpet(f) => [f.blade_length, f.root_depth, f.blade_length, f.pad],
         Form::Mat(_) => [0; 4],
         // A floater's roots shade by length; its fronds by how far out.
         Form::Floater(f) => [f.fronds, f.root_length, f.fronds, 0],
         Form::Epiphyte(f) => [f.leaf_length, f.rhizome_length, f.leaf_length, 0],
+        // A ball shades by how far out a cell grew.
+        Form::Ball(f) => [f.radius, 0, f.radius, 0],
     };
     let at = SIZES_COLUMN * 4;
     row[at..at + 4].copy_from_slice(&sizes);

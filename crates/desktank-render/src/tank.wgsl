@@ -143,10 +143,12 @@ const LEAF_GRASS: i32 = 6;
 const LEAF_PAD: i32 = 7;
 const LEAF_LENS: i32 = 8;
 const LEAF_DISC: i32 = 9;
+const LEAF_LOTUS: i32 = 10;
 const STEM_STALK: i32 = 0;
 const STEM_THICK: i32 = 1;
 const STEM_FUZZ: i32 = 2;
 const STEM_FROND: i32 = 3;
+const STEM_VELVET: i32 = 4;
 const ROOT_STRAND: i32 = 0;
 const ROOT_THICK: i32 = 1;
 
@@ -820,6 +822,21 @@ fn kin(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> vec2<i32> {
     return vec2<i32>(part, position_of(t));
 }
 
+// How many cells of the same plant as `me` follow on from `at` along `d`,
+// up to 3 (how far a ball runs on that way). `STEM_VELVET` calls it four
+// times, so a ball's fragments make up to 12 extra loads; only marimo cells
+// pay this, and a ball is at most 50 cells.
+fn ball_run(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> i32 {
+    var n = 0;
+    for (var k = 1; k <= 3; k++) {
+        if kin(at, d * k, me).x < 0 {
+            break;
+        }
+        n = k;
+    }
+    return n;
+}
+
 // Whether the cell at `at` is water (what a mat's fringe frays into).
 fn is_water(at: vec2<i32>) -> bool {
     return inside(at) && round(textureLoad(cells, at, 0).r * 255.0) == view.plant_parts.w;
@@ -925,6 +942,54 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                     covered = quarter.x == 1;
                 }
             }
+        } else if shape == LEAF_LOTUS {
+            // A thin petiole up to a broad leaf pad spread sideways from its
+            // tip (sizes.x is the petiole length, sizes.w the pad width;
+            // pad cells sit past the length, a narrower upper row at
+            // length + width + 1): green mottled with maroon blotches, lit
+            // along its upper edge, darker beneath, rounded at its ends.
+            let len = i32(sizes.x);
+            let pad_l = left.x >= 0 && left.y > len;
+            let pad_r = right.x >= 0 && right.y > len;
+            let pad_u = up.x >= 0 && up.y > len;
+            if pos > len || pad_l || pad_r || pad_u {
+                let upper = pos == len + i32(sizes.w) + 1;
+                let open_l = left.x < 0;
+                let open_r = right.x < 0;
+                let open_u = up.x < 0;
+                let open_d = kin(at, vec2<i32>(0, 1), me).x < 0;
+                let blotch = (hash(at * 2 + sub) & 7u) < 2u || (hash(at) & 7u) == 0u;
+                let corner = (top && open_u) || (!top && open_d && !upper);
+                covered = !(corner && ((open_l && sub.x == 0) || (open_r && sub.x == 1)));
+                step = 5 + select(0, 1, top && open_u) - select(0, 1, !top && open_d)
+                    + noise_step(me);
+                if blotch {
+                    step = 1 + i32(hash(at * 2 + sub) >> 9u) % 2;
+                }
+                if fine {
+                    // Quarter detail: rounded ends, a lit rim along the
+                    // top, a dark rim under the lower row, and maroon
+                    // flecks two quarters across.
+                    let end = (open_l && (quarter.x == 0)) || (open_r && (quarter.x == 3));
+                    let rim_u = open_u && quarter.y == 0;
+                    let rim_d = open_d && quarter.y == 3;
+                    covered = !(end && (rim_u || rim_d));
+                    let fleck = (hash(at * 4 + quarter / 2 * 2) & 7u) < 2u;
+                    step = 5 + select(0, 2, rim_u) - select(0, 2, rim_d) + noise_step(me);
+                    if blotch || fleck {
+                        step = 1 + i32(rim_u) + i32(hash(at) >> 9u) % 2;
+                    }
+                }
+            } else {
+                // The petiole: a bronze stalk one texel wide.
+                covered = sub.x == 0;
+                step = 3 + noise_step(me);
+                if fine {
+                    // Two quarters wide, lit on its left.
+                    covered = quarter.x == 1 || quarter.x == 2;
+                    step += select(0, 1, quarter.x == 1);
+                }
+            }
         } else if shape == LEAF_SWORD {
             // A narrow stalk, then a broad blade with a pale midrib (the
             // left texel), tapering to a point.
@@ -981,11 +1046,19 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
     } else if part == PART_FLOAT {
         // A floating leaf (T6c part 2) lying on the water line, lit on top,
         // rounded where the row of leaves ends.
-        let left = kin(at, vec2<i32>(-1, 0), me).x == PART_FLOAT;
-        let right = kin(at, vec2<i32>(1, 0), me).x == PART_FLOAT;
+        // A tiger lotus type's floating pad joins its petiole's tip.
+        let lotus = shapes.x == LEAF_LOTUS;
+        let kl = kin(at, vec2<i32>(-1, 0), me).x;
+        let kr = kin(at, vec2<i32>(1, 0), me).x;
+        let left = kl == PART_FLOAT || (lotus && kl >= 0);
+        let right = kr == PART_FLOAT || (lotus && kr >= 0);
         let end = select(!right, !left, sub.x == 0);
-        let disc = shapes.x == LEAF_DISC;
+        let disc = shapes.x == LEAF_DISC || lotus;
         step += 2 + select(-1, 1, top) + select(0, 1, (hash(at) & 3u) == 0u);
+        if lotus {
+            // Green, mottled maroon.
+            step = select(4, 6, top);
+        }
         if disc {
             // A round pad over a dark, spongy underside.
             covered = !(top && end);
@@ -1001,7 +1074,7 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                 // underside, rounded at both ends.
                 covered = !(edge && (quarter.y == 0 || quarter.y == 3));
                 step = step + select(0, 1, quarter.y == 0) - select(0, 3, quarter.y == 3)
-                    + select(0, 2, quarter.y == 1 && quarter.x == 1);
+                    + select(0, 2, quarter.y == 1 && quarter.x == 1 && !lotus);
             } else {
                 // A flat oval frond three quarters thick, tapered at its
                 // ends, the water showing under it but for the root's
@@ -1011,6 +1084,9 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                 covered = (quarter.y <= 2 && !(edge && quarter.y != 1)) || stalk;
                 step += select(0, 1, quarter.y == 0) - select(0, 1, quarter.y == 2) - select(0, 2, stalk);
             }
+        }
+        if lotus && ((hash(at * 2 + sub) & 7u) < 2u || (hash(at) & 7u) == 0u) {
+            step = 1 + i32(top) + i32(hash(at) >> 9u) % 2;
         }
     } else if part == PART_RHIZOME {
         // A creeping epiphyte rhizome hugging rock or wood: thick, slightly
@@ -1177,6 +1253,43 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                     step = i32((h >> 3u) & 1u) + select(0, 3, depth < 2) + select(0, 3, depth == 0)
                         + select(0, 2, depth == 2 && branch) + select(0, 2, depth == 1 && m == 0);
                 }
+            }
+        } else if shape == STEM_VELVET {
+            // A ball (marimo): a dense velvet pile shaded as a sphere lit
+            // from above and a little to the left, by how far the ball
+            // runs on each way from the cell, its rim softly fuzzed and its
+            // corners rounded where it meets the water.
+            let du = ball_run(at, vec2<i32>(0, -1), me);
+            let dd = ball_run(at, vec2<i32>(0, 1), me);
+            let dl = ball_run(at, vec2<i32>(-1, 0), me);
+            let dr = ball_run(at, vec2<i32>(1, 0), me);
+            let open_u = du == 0;
+            let open_d = dd == 0;
+            let open_l = dl == 0;
+            let open_r = dr == 0;
+            let rim = (top && open_u) || (!top && open_d) || (sub.x == 0 && open_l)
+                || (sub.x == 1 && open_r);
+            var h = hash(at * 2 + sub);
+            let lit = 3.6 + f32(dd - du) * 0.75 + f32(dr - dl) * 0.3
+                - select(0.0, 0.6, min(dl, dr) == 0);
+            step = i32(round(lit + select(-0.3, 0.3, top) + select(-0.15, 0.15, sub.x == 0)))
+                + i32((h >> 3u) & 1u) - 1 + noise_step(me);
+            // Corners open on both sides are rounded off.
+            let corner = select(open_d, open_u, top) && select(open_r, open_l, sub.x == 0);
+            covered = (!rim || (h & 3u) != 0u) && !corner;
+            if fine {
+                // Fine pile: the outer quarter facing the water is a
+                // sparse fringe of lit tufts; the corners round off.
+                h = hash(at * 4 + quarter);
+                let fringe = (quarter.y == 0 && open_u) || (quarter.y == 3 && open_d)
+                    || (quarter.x == 0 && open_l) || (quarter.x == 3 && open_r);
+                let cx = select(select(-1, 3, open_r), 0, open_l);
+                let cy = select(select(-1, 3, open_d), 0, open_u);
+                let near = abs(quarter.x - cx) + abs(quarter.y - cy) <= 1 && cx >= 0 && cy >= 0;
+                covered = (!fringe || (h & 3u) == 0u) && !near;
+                let q = vec2<f32>(quarter) - 1.5;
+                step = i32(round(lit - q.y * 0.25 - q.x * 0.1)) + i32((h >> 3u) & 1u) - 1
+                    + noise_step(me) + select(0, 1, fringe);
             }
         } else {
             let left = kin(at, vec2<i32>(-1, 0), me);
