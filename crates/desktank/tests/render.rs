@@ -144,6 +144,22 @@ fn plant_species_scene_matches_reference() {
     check("plant_species");
 }
 
+/// T6d: a starving plant. Rotala shaded by rock slabs at staggered ticks:
+/// healthy, then dying (brown and translucent), browning, yellowing and
+/// pale.
+#[test]
+fn plant_starving_scene_matches_reference() {
+    check("plant_starving");
+}
+
+/// T6d: a strongly lit red plant. Rotala and ludwigia on a terrace just
+/// under the surface colour pink-red in lean aquasoil water; a rotala on
+/// the low bed stays green.
+#[test]
+fn plant_lit_scene_matches_reference() {
+    check("plant_lit");
+}
+
 /// T6c: amazon sword (on a root tab), vallisneria and cryptocoryne grown
 /// for 15 minutes, with runners and runner-rooted plants.
 #[test]
@@ -179,6 +195,8 @@ fn plant_epiphytes_scene_matches_reference() {
 fn plant_scenes_match_reference_at_scale_4() {
     for scene in [
         "plant_species",
+        "plant_starving",
+        "plant_lit",
         "plant_rosettes",
         "plant_carpets",
         "plant_floaters",

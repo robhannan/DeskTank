@@ -29,15 +29,22 @@ tolerance = 15.0
 decline = 0.012
 recovery = 0.02
 
-# Green low down, through gold to red-orange at the top, where the light
-# is strongest.
+# Green low down to a bright yellow-green at the tips. In strong light
+# with lean water its new growth turns pink-red ([colouration]).
 [colours]
 root = ["#a89c74", "#c9bd94", "#e4dbb8"]
-stem = ["#5a3c22", "#6a4a2a", "#7e5a32", "#94703e"]
-leaf = ["#5f7a2c", "#7a8f34", "#a3a83e", "#c99a44", "#e07a52", "#ee6448"]
+stem = ["#5a4a26", "#6a5a2c", "#7e6a34", "#94803e"]
+leaf = ["#4f6e2a", "#5f8030", "#739438", "#8aa842", "#a2bc4e", "#b8cc62"]
 
 # Fine, narrow leaves on a thin stalk.
 [look]
 leaf = "needle"
 stem = "stalk"
 root = "strand"
+
+# Strong light (above 0.65) with lean water (nutrient below 0.8, fully at
+# 0.4, so an aquasoil tank's level) turns it pink-red, the tips most.
+[colouration]
+colour = "#e0566a"
+light = 0.65
+nutrient = 0.8

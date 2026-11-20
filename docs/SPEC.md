@@ -737,6 +737,8 @@ target computes the same bits.
     - each floater's raft, its motion as a buoyant body (offset,
       velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
       tank had no floaters and migrates with none);
+    - each plant's colouration (version 8, T6d; a version 7 tank's
+      plants migrate uncoloured);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -992,6 +994,23 @@ stays a material film, not individuals.
     (stem position / species height), towards leaf tips and on leaf
     tops, plus the noise bits. Per-cell age isn't stored, so height
     stands in for it (new growth is at the top).
+    *T6d part 2:* the plant texel is (health, colouration, spare,
+    species), each 0–1 value at 32 steps, so the plants version changes
+    only at a step. The shader tints from health (pale and yellowing to
+    0.5, browning to 0, keeping each shade's lightness; below 0.3 the
+    plant turns translucent, down to 35% opaque, over what is behind it)
+    and shifts a species' leaves (stems half as much, roots not at all,
+    lighter and newer shades most) towards its colouration colour, a
+    texel after the sizes in the species texture. Colouration is sim
+    state: an optional `[colouration]` in the species TOML (`colour`,
+    `light`, `nutrient`) sets a target from the mean light and nutrient
+    at each plant update (rising over 0.25 above `light`, and from
+    `nutrient` down to half of it), and the plant's colouration moves
+    towards it at 1/120 per second (holding within a tint step of a target inside (0, 1)), so sampling noise doesn't flicker it.
+    It is saved (format version 8) and hashed when non-zero. Rotala
+    (light 0.65, nutrient 0.8: an aquasoil tank's 0.4 is lean for it)
+    turns pink-red near the surface and stays green when fertilised;
+    ludwigia (0.7, 0.6) deepens to crimson.
 - **Interaction.** The palette gets one plants slot with a species picker
   (the palette strip is short, §9 T4) in `desktank window` and on the
   web, and a propagule picker listing only that species' methods (seeds,
@@ -1947,8 +1966,11 @@ Each package depends only on the packages before it.
   with per-species part shapes (`[look]` in the species TOML: leaf
   lanceolate, needle, round or feather; stem stalk or thick, fuzz or
   frond for mats; root strand or thick), and the `plant_species`
-  reference image of healthy plants. Colouration in strong light, dying
-  translucency, night folding, pearling and sway are open.
+  reference image of healthy plants. *Part 2:* colouration in strong
+  light with low nutrients (`[colouration]`, saved, format version 8),
+  dying plants brown and translucent, and the `plant_starving` and
+  `plant_lit` reference images (the first acceptance bullet is met).
+  Night folding, pearling and sway are open.
 - [x] **T7 Creatures.** Species TOML (including depth and surface
   needs), the sprite atlas pipeline with placeholder art (D11), steering
   (wander, schooling, zones, bottom-walking, surface-grazing,

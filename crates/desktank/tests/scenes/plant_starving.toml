@@ -1,0 +1,91 @@
+# A starving plant (T6d): five rotala grown in an aquasoil bed for seven
+# minutes, then four of them starved of light by a glued rock slab poured
+# above each at staggered ticks. Left to right: healthy, then dying (brown
+# and translucent, most leaves dropped), browning, yellowing and pale.
+ticks = 9600
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 16
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 48
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 80
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 112
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 144
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+tick = 7880
+repeat = 20
+x = 38
+y = 14
+dx = 1
+radius = 4
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 8140
+repeat = 20
+x = 70
+y = 14
+dx = 1
+radius = 4
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 8460
+repeat = 20
+x = 102
+y = 14
+dx = 1
+radius = 4
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 8800
+repeat = 20
+x = 134
+y = 14
+dx = 1
+radius = 4
+material = "rock"
+brush = "replace"
+glued = true

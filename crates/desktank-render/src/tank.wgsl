@@ -4,8 +4,10 @@
 // cells (T6b, T6d) are drawn from their species instead, at two texels per
 // cell side like the sprites, or four at scales divisible by four: the
 // cell's state bytes are its plant id, whose texel in the plant texture
-// holds the health tint and the species id; the species texture holds the
-// colour ramps and part shapes. The interact overlay (palette and brush
+// holds its health, colouration and species id; the species texture holds
+// the colour ramps, part shapes and colouration colour. A plant shifts
+// towards its colouration colour (strong light, lean water), pales,
+// yellows and then browns and turns translucent as its health falls. The interact overlay (palette and brush
 // outline) is drawn on top. Creature sprites are instanced quads
 // drawn after the grid (vs_sprite / fs_sprite), two atlas texels per cell
 // side, or four from the fine frames at scales divisible by four.
@@ -67,13 +69,14 @@ struct View {
 @group(0) @binding(4) var fields: texture_2d<f32>;
 // Creature sprite frames (sRGB-encoded RGBA; alpha 0 is transparent).
 @group(0) @binding(5) var atlas: texture_2d<f32>;
-// Per plant id (id & 255 across, id >> 8 down): health tint (rgb) and
-// species id (a).
+// Per plant id (id & 255 across, id >> 8 down): health (r), colouration
+// (g) and species id (a).
 @group(0) @binding(6) var plant_tints: texture_2d<f32>;
 // Per species id (down): RAMP shades each for root, stem and leaf, then the
 // shapes texel (leaf, stem, root) and the sizes texel (stem height, root
 // depth, leaf length; blade length, root depth, blade length for rosettes
-// and carpets), as bytes (plants.rs).
+// and carpets) and the colouration texel (colour, a = 1 if it colours), as
+// bytes (plants.rs).
 @group(0) @binding(7) var plant_species: texture_2d<f32>;
 // Per cell: a plant cell's depth band (D21) in bands / 255 (0 elsewhere).
 @group(0) @binding(8) var bands: texture_2d<f32>;
@@ -98,6 +101,23 @@ const PART_RHIZOME: i32 = 5;
 const RAMP: i32 = 8;
 const SHAPES_COLUMN: i32 = 24;
 const SIZES_COLUMN: i32 = 25;
+const COLOUR_COLUMN: i32 = 26;
+// Health (T6b, T6d): untinted at and above VIGOROUS, paling to YELLOW by
+// YELLOW_AT (where leaves start to drop), then browning to DEAD_BROWN at 0,
+// each shade keeping its lightness; below FADE_AT it turns translucent,
+// down to MIN_OPACITY.
+const VIGOROUS: f32 = 0.8;
+const YELLOW_AT: f32 = 0.5;
+const YELLOW: vec3<f32> = vec3<f32>(1.0, 0.92, 0.55);
+const DEAD_BROWN: vec3<f32> = vec3<f32>(0.5, 0.36, 0.2);
+const FADE_AT: f32 = 0.3;
+const MIN_OPACITY: f32 = 0.35;
+// Colouration (T6d): how much of a plant's colouration its darkest (vs
+// lightest, newest) shades take, its stems' share of its leaves', and how
+// far ahead of the colouration the shift runs.
+const COLOUR_DARK: f32 = 0.5;
+const COLOUR_STEM: f32 = 0.5;
+const COLOUR_GAIN: f32 = 1.6;
 // Shapes (desktank_sim::plants::{LeafShape, StemShape, RootShape}).
 const LEAF_LANCEOLATE: i32 = 0;
 const LEAF_NEEDLE: i32 = 1;
@@ -732,7 +752,6 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
             step += select(0, 1, core) - select(0, 1, free_x || free_y);
         }
     }
-    let tint = plant.rgb;
     // Runners and rhizomes are drawn from the stem's ramp, floating leaves
     // from the leaf's.
     let ramp = select(
@@ -740,13 +759,65 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
         PART_LEAF,
         part == PART_FLOAT,
     );
+    let health = plant.r;
     if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
-        let rgb = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb * tint;
-        return vec4<f32>(depth_cue(rgb, band), 1.0);
+        let base = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb;
+        let rgb = depth_cue(health_tint(coloured(base, shade, ramp, plant.g, species), health), band);
+        if health >= FADE_AT {
+            return vec4<f32>(rgb, 1.0);
+        }
+        // A dying plant: what is behind shows through.
+        let opacity = mix(MIN_OPACITY, 1.0, health / FADE_AT);
+        let shadow = plant_shadow(ramp, plant, species, band);
+        return vec4<f32>(mix(behind(at, sub, shadow), rgb, opacity), opacity);
     }
-    let shadow = textureLoad(plant_species, vec2<i32>(ramp * RAMP, species), 0).rgb * tint * 0.6;
-    return vec4<f32>(behind(at, sub, depth_cue(shadow, band)), 0.0);
+    return vec4<f32>(behind(at, sub, plant_shadow(ramp, plant, species, band)), 0.0);
+}
+
+// What shows through a plant cell's empty texel where the plant fills its
+// neighbours: the ramp's darkest shade, darkened.
+fn plant_shadow(ramp: i32, plant: vec4<f32>, species: i32, band: f32) -> vec3<f32> {
+    let rgb = textureLoad(plant_species, vec2<i32>(ramp * RAMP, species), 0).rgb;
+    return depth_cue(health_tint(coloured(rgb, 0, ramp, plant.g, species), plant.r) * 0.6, band);
+}
+
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.299, 0.587, 0.114));
+}
+
+// `rgb` (ramp `ramp`'s shade `shade`) shifted towards the species'
+// colouration colour by `amount` (the plant's colouration, 0-1): the
+// lighter, newer shades most, stems half as much, roots not at all. The
+// colour keeps the shade's lightness.
+fn coloured(rgb: vec3<f32>, shade: i32, ramp: i32, amount: f32, species: i32) -> vec3<f32> {
+    if amount <= 0.0 || ramp == PART_ROOT {
+        return rgb;
+    }
+    let c = textureLoad(plant_species, vec2<i32>(COLOUR_COLUMN, species), 0);
+    if c.a < 0.5 {
+        return rgb;
+    }
+    let shifted = min(c.rgb * (luma(rgb) / max(luma(c.rgb), 0.05)), vec3<f32>(1.0));
+    let lift = mix(COLOUR_DARK, 1.0, f32(shade) / f32(RAMP - 1));
+    // Complementary greens and reds mix to a dull tan halfway, so the
+    // shift runs ahead of the colouration and saturates.
+    let k = amount * lift * select(1.0, COLOUR_STEM, ramp == PART_STEM) * COLOUR_GAIN;
+    return mix(rgb, shifted, min(k, 1.0));
+}
+
+// `rgb` tinted for a plant of `health` (0-1): untinted while vigorous,
+// paling to yellow as health falls to YELLOW_AT, then browning as it dies.
+fn health_tint(rgb: vec3<f32>, health: f32) -> vec3<f32> {
+    if health >= VIGOROUS {
+        return rgb;
+    }
+    let pale = rgb * mix(vec3<f32>(1.0), YELLOW, clamp((VIGOROUS - health) / (VIGOROUS - YELLOW_AT), 0.0, 1.0));
+    if health >= YELLOW_AT {
+        return pale;
+    }
+    let brown = DEAD_BROWN * (0.6 + 0.9 * luma(rgb));
+    return mix(pale, brown, (YELLOW_AT - health) / YELLOW_AT);
 }
 
 // An sRGB-encoded colour as the target expects it. Shading happens in
