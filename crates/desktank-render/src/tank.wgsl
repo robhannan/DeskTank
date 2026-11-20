@@ -190,14 +190,15 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             }
         }
     }
-    let cell = floor((pos.xy - view.offset) / view.scale);
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
         return out(view.backdrop.rgb);
     }
     let at = vec2<i32>(cell);
     let texel = textureLoad(cells, at, 0);
     let quarter = clamp(
-        vec2<i32>(floor(fract((pos.xy - view.offset) / view.scale) * 4.0)),
+        vec2<i32>(floor((grid_pos - cell) * 4.0)),
         vec2<i32>(0),
         vec2<i32>(3),
     );
@@ -349,20 +350,20 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         var rgb: vec3<f32>;
         if style == STYLE_WATER {
             // Subtle horizontal-biased pixel-art water grain.
-            let h1 = hash(vec2<i32>(p.x / 2, p.y));
+            let h1 = hash(vec2<i32>(i32(u32(p.x) >> 1u), p.y));
             let h2 = hash(p);
             let grain = 1.0 + (f32(h1 & 7u) - 3.5) * 0.005 + (f32(h2 & 3u) - 1.5) * 0.004;
             rgb = base * d * grain;
         } else {
             // Liquid fertiliser: wispy plume variation driven by cell variant.
-            let h = hash_grain(vec2<i32>(p.x / 2, p.y), v);
+            let h = hash_grain(vec2<i32>(i32(u32(p.x) >> 1u), p.y), v);
             let plume = 1.0 + (f32(h & 15u) - 7.5) * 0.008;
             rgb = base * d * plume;
         }
-        // Crisp water-surface highlight where water meets air. Skip the
-        // neighbour palette lookup when the cell above is the same material
-        // (nearly all water cells) or on the bottom fine row.
-        if at.y > 0 && (!fine || quarter.y < 3) {
+        // Crisp water-surface highlight where water meets air. Only cells near
+        // the water surface can touch air above, so skip the neighbour read
+        // everywhere else in the water column.
+        if at.y > 0 && abs(f32(at.y) - view.surface_row) <= 8.0 && (!fine || quarter.y < 3) {
             let above = textureLoad(cells, at + vec2<i32>(0, -1), 0);
             if i32(round(above.r * 255.0)) != mat && style_of(above) == STYLE_AIR {
                 let ripple = hash(vec2<i32>(p.x / 2, at.y)) & 3u;
