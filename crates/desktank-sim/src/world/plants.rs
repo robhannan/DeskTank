@@ -775,10 +775,32 @@ impl World {
             return;
         }
         let pieces = self.plant_pieces(&members, id, bounds);
+        let floater = self
+            .plants
+            .species
+            .get(species)
+            .is_some_and(|s| s.form.floater().is_some());
+        // A floater lives on only in a piece with a floating leaf to hold
+        // it up: hanging roots alone neither float nor grow.
+        let float = self.plants.material(Part::Float);
+        let floats = |piece: &[usize]| {
+            piece
+                .iter()
+                .any(|&i| float.is_some() && Some(self.cells[i].material) == float)
+        };
         let keeper = pieces
             .iter()
-            .position(|piece| piece.binary_search(&base).is_ok())
+            .position(|piece| piece.binary_search(&base).is_ok() && (!floater || floats(piece)))
+            .or_else(|| {
+                floater
+                    .then(|| pieces.iter().position(|piece| floats(piece)))
+                    .flatten()
+            })
             .unwrap_or(0);
+        if floater && !floats(&pieces[keeper]) {
+            self.kill_plant(id);
+            return;
+        }
         let fragments = self
             .plants
             .species

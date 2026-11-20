@@ -909,7 +909,8 @@ stays a material film, not individuals.
     cap. A floater lies in one depth band (D21), from its plant id, so
     fish pass under it in the other bands. Tools: a scoop or cut splits
     it as any plant (a piece holding a floating leaf lives on as a
-    fragment with its own raft, moving as its parent did); the net takes
+    fragment with its own raft, moving as its parent did, and a floater
+    left with no floating leaf dies); the net takes
     only creatures. Duckweed (*Lemna minor*) and Amazon frogbit
     (*Limnobium laevigatum*) ship (ids 13, 14). Rafts are saved (format
     version 7) and hashed with the plant table, so a saved tank drifts on

@@ -284,6 +284,34 @@ fn a_cut_floater_piece_floats_on_as_a_fragment() {
 }
 
 #[test]
+fn a_floater_stripped_of_its_leaves_dies() {
+    let mut w = tank(5);
+    let s = species(&w, "frogbit");
+    bud(&mut w, "frogbit", 80, 2);
+    run(&mut w, 5 * MINUTE);
+    let p = of_species(&w, s)[0];
+    let root = id(&w, "root");
+    assert!(
+        !cells_of(&w, p.id.0, root).is_empty(),
+        "it hangs roots: {p:?}"
+    );
+    // Take every floating leaf: the hanging roots alone can't float or
+    // grow, so the plant dies rather than living on as roots.
+    let (leaf, water) = (id(&w, "floating_leaf"), id(&w, "water"));
+    for (x, y) in cells_of(&w, p.id.0, leaf) {
+        w.set_cell(x, y, water).unwrap();
+    }
+    run(&mut w, 20);
+    assert!(
+        w.plants().all(|q| q.id != p.id),
+        "the plant is gone: {:?}",
+        of_species(&w, s)
+    );
+    assert!(cells_of(&w, p.id.0, root).is_empty(), "its roots died");
+    check_table(&w);
+}
+
+#[test]
 fn a_saved_drifting_floater_continues_exactly() {
     let mut w = tank(6);
     let row = w.surface_row() as i64 + 2;
