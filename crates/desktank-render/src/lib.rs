@@ -41,7 +41,7 @@ pub use layout::{Layout, even_scale};
 pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;
 pub use surface::{SurfaceError, TankSurface};
-pub use tank::{DrawError, Tank, TankConfig};
+pub use tank::{DrawError, SWAY_MAX_FPS, Tank, TankConfig};
 
 /// The field visualised over the tank.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

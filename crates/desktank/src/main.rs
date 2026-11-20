@@ -100,6 +100,10 @@ struct WindowArgs {
     /// creatures already in the tank). Saved with the tank.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=128))]
     creature_cap: Option<u16>,
+    /// Optional render-only plant sway (10 fps cap; off on battery, in the
+    /// screensaver and while hidden).
+    #[arg(long)]
+    sway: bool,
 }
 
 #[derive(Debug, Args)]
@@ -111,6 +115,13 @@ struct BenchArgs {
     /// reference tank has about 30).
     #[arg(long, value_name = "N", default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=60))]
     fish: u16,
+    /// Pre-grow a planted bed before timing (for measuring plant rendering
+    /// and optional sway).
+    #[arg(long)]
+    plants: bool,
+    /// Enable optional plant sway during the benchmark (10 fps cap).
+    #[arg(long)]
+    sway: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -143,6 +154,9 @@ struct CaptureArgs {
     /// Tint the tank by a field (debug overlay): nutrient, co2, light or flow.
     #[arg(long, value_name = "FIELD", value_parser = capture::parse_field)]
     field: Option<desktank_render::FieldOverlay>,
+    /// Enable optional render-only plant sway.
+    #[arg(long)]
+    sway: bool,
     /// Directory to write frames to (`frame.png`, or `frame_NNNN.png` for several).
     #[arg(long, value_name = "DIR")]
     out: PathBuf,
@@ -197,8 +211,11 @@ fn main() -> ExitCode {
                 easy: args.easy_mode,
                 cap: args.creature_cap.map(usize::from),
             },
+            args.sway,
         ),
-        Command::Bench(args) => bench::run(args.seconds, usize::from(args.fish)),
+        Command::Bench(args) => {
+            bench::run(args.seconds, usize::from(args.fish), args.plants, args.sway)
+        }
         Command::Import { file } => persist::import(None, file),
         Command::Export { file } => persist::export(None, file),
         Command::Capture(args) => capture::run(&capture::Options {
@@ -208,6 +225,7 @@ fn main() -> ExitCode {
             frames: args.frames,
             script: args.script.clone(),
             field: args.field,
+            sway: args.sway,
             out: args.out.clone(),
         }),
         other => {
@@ -244,6 +262,7 @@ mod tests {
             (&["window", "--fresh"], "window"),
             (&["window", "--no-save"], "window"),
             (&["window", "--easy-mode"], "window"),
+            (&["window", "--sway"], "window"),
             (
                 &["window", "--easy-mode=false", "--creature-cap", "30"],
                 "window",
@@ -273,7 +292,7 @@ mod tests {
                 "capture",
             ),
             (&["bench"], "bench"),
-            (&["bench", "--seconds", "5"], "bench"),
+            (&["bench", "--seconds", "5", "--plants", "--sway"], "bench"),
             (&["import", "tank.dtank"], "import"),
             (&["export", "tank.dtank"], "export"),
             (&["saver", "install"], "saver install"),

@@ -40,8 +40,8 @@ use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
 use plants::Plants;
 pub use plants::{
-    COLOUR_PER_SECOND, MAX_PLANTS, MAX_UPDATES_PER_TICK, PlantId, PlantInfo, TINT_STEPS,
-    UPDATE_SECONDS, tint_step,
+    COLOUR_PER_SECOND, MAX_PLANTS, MAX_UPDATES_PER_TICK, PEARL_CO2, PEARL_HEALTH, PEARL_LIGHT,
+    PEARL_MAX_PER_SECOND, PlantId, PlantInfo, TINT_STEPS, UPDATE_SECONDS, tint_step,
 };
 
 /// Side of a square chunk, in cells.
@@ -572,6 +572,7 @@ impl World {
     /// Advances the world by one fixed tick (1/20 s of world time).
     pub fn tick(&mut self) {
         self.tick += 1;
+        self.plants.pearled_this_tick = false;
         #[allow(clippy::cast_possible_truncation)] // wraps after 2^32 ticks (6.8 years)
         let stamp = self.tick as u32;
         self.stamp = stamp;

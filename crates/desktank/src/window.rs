@@ -60,7 +60,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use desktank_platform::{PowerDecision, PowerMonitor, PowerPolicy, process_stats};
+use desktank_platform::{PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats};
 use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Palette, PaletteHit, Tank, TankConfig, TankSurface, wgpu,
 };
@@ -121,6 +121,7 @@ pub fn run(
     fish: usize,
     saves: Saves,
     life: LifeSettings,
+    sway: bool,
 ) -> anyhow::Result<()> {
     let saves = if demo_pour.is_some() {
         Saves::Off
@@ -148,6 +149,7 @@ pub fn run(
         time,
         fish,
         life,
+        sway,
         power,
         policy: PowerPolicy::default(),
         state: None,
@@ -174,6 +176,8 @@ struct App {
     fish: usize,
     /// Life-cycle settings to apply to the tank.
     life: LifeSettings,
+    /// Optional render-only plant sway.
+    sway: bool,
     power: PowerMonitor,
     policy: PowerPolicy,
     state: Option<Running>,
@@ -829,6 +833,7 @@ impl ApplicationHandler for App {
                 if let Some(minute) = self.time {
                     s.tank.set_time_of_day(minute);
                 }
+                s.tank.set_sway(self.sway);
                 let world = s.tank.world_mut();
                 if let Some(easy) = self.life.easy {
                     world.set_easy_mode(easy);
@@ -929,6 +934,13 @@ impl ApplicationHandler for App {
                         s.window
                             .set_title(&format!("DeskTank — cursor avoidance {state}"));
                     }
+                    Key::Character(c) if c.eq_ignore_ascii_case("s") && !event.repeat => {
+                        let next = !s.tank.sway();
+                        s.tank.set_sway(next);
+                        let state = if next { "on" } else { "off" };
+                        s.window
+                            .set_title(&format!("DeskTank — plant sway {state}"));
+                    }
                     Key::Character(c) if c.eq_ignore_ascii_case("f") => {
                         use desktank_render::FieldOverlay::{Flow, Scalar};
                         let next = match s.tank.field_overlay() {
@@ -1006,7 +1018,11 @@ impl ApplicationHandler for App {
         let Some(s) = self.state.as_mut() else { return };
         // Not every platform sends an event for minimising, so ask.
         s.hidden.minimised = s.window.is_minimized() == Some(true);
+        let on_battery = matches!(self.power.signals().source, PowerSource::Battery { .. });
+        s.tank.set_on_battery(on_battery);
         let decision = s.decision(&self.policy, &self.power);
+        s.tank
+            .set_hidden(matches!(decision, PowerDecision::Pause(_)));
         if decision != s.last_decision {
             match (s.last_decision, decision) {
                 (PowerDecision::Run { .. }, PowerDecision::Pause(reason)) => {

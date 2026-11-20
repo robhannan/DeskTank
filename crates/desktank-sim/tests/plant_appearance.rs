@@ -5,8 +5,8 @@
 //! and changes the plants version only at its tint steps.
 
 use desktank_sim::{
-    Brush, COLOUR_PER_SECOND, MaterialTable, PlantInfo, Propagule, Rect, TICKS_PER_SECOND, World,
-    WorldConfig, save,
+    Brush, COLOUR_PER_SECOND, FieldKind, MaterialTable, PEARL_CO2, PEARL_HEALTH, PEARL_LIGHT,
+    PEARL_MAX_PER_SECOND, PlantInfo, Propagule, Rect, TICKS_PER_SECOND, World, WorldConfig, save,
 };
 
 /// A shallow tank (light everywhere strong) with an aquasoil bed, a rotala
@@ -133,4 +133,230 @@ fn colouration_steps_the_plants_version_then_settles() {
     run(&mut w, 120);
     let bumps = w.plants_version() - start;
     assert!(bumps <= 2, "{bumps} bumps in 120 s near the target");
+}
+
+/// Injects CO₂ bubbles near the bed so they dissolve into the CO₂ field
+/// without creating any `air_bubble` cells.
+fn inject_co2(w: &mut World) {
+    let co2 = w.materials().id("co2_bubble").unwrap();
+    for x in (8..w.width() - 8).step_by(6) {
+        let _ = w.paint(
+            i64::try_from(x).unwrap(),
+            i64::try_from(w.height() - 10).unwrap(),
+            2,
+            co2,
+            Brush::Pour,
+        );
+    }
+}
+
+/// Runs `seconds` of world time, counting pearls exactly (from the world's
+/// diagnostic counter): the total and the most in any one second. Asserts at
+/// most one pearl per tick.
+fn count_pearls(w: &mut World, seconds: u32, refill_co2: bool) -> (u64, u64) {
+    let mut total = 0;
+    let mut max_per_sec = 0;
+    for sec in 0..seconds {
+        if refill_co2 && sec % 5 == 0 {
+            inject_co2(w);
+        }
+        let start = w.pearls_released();
+        for _ in 0..TICKS_PER_SECOND {
+            let before = w.pearls_released();
+            w.tick();
+            assert!(
+                w.pearls_released() - before <= 1,
+                "more than 1 pearl in a tick"
+            );
+        }
+        let this_sec = w.pearls_released() - start;
+        total += this_sec;
+        max_per_sec = max_per_sec.max(this_sec);
+    }
+    (total, max_per_sec)
+}
+
+#[test]
+fn pearling_appears_only_above_light_and_co2_thresholds() {
+    // Grow healthy plants in a shallow, well-lit tank.
+    let mut lit_no_co2 = shallow(0);
+    run(&mut lit_no_co2, 120);
+    assert!(plant(&lit_no_co2, "rotala").health >= PEARL_HEALTH);
+    assert!(plant(&lit_no_co2, "hygrophila").health >= PEARL_HEALTH);
+
+    // 1. Strong light, NO CO₂: zero pearls.
+    let mut no_co2 = lit_no_co2.clone();
+    assert!(no_co2.field(FieldKind::Co2).at_cell(30, 20) < PEARL_CO2);
+    let (pearls_no_co2, _) = count_pearls(&mut no_co2, 20, false);
+    assert_eq!(pearls_no_co2, 0, "pearled without CO₂");
+
+    // 2. Strong light + high CO₂: pearls appear.
+    let mut with_co2 = lit_no_co2.clone();
+    inject_co2(&mut with_co2);
+    run(&mut with_co2, 4);
+    assert!(with_co2.field(FieldKind::Light).at_cell(30, 20) >= PEARL_LIGHT);
+    assert!(with_co2.field(FieldKind::Co2).at_cell(30, 20) >= PEARL_CO2);
+    let (pearls_lit, max_per_sec) = count_pearls(&mut with_co2, 25, true);
+    assert!(
+        pearls_lit > 0,
+        "expected pearling under strong light and high CO₂"
+    );
+    assert!(
+        max_per_sec <= u64::from(PEARL_MAX_PER_SECOND),
+        "exceeded cap: {max_per_sec} > {PEARL_MAX_PER_SECOND}"
+    );
+
+    // 3. Dim light (glued rock lid across the top) + high CO₂: zero pearls.
+    let mut shaded = lit_no_co2;
+    let rock = shaded.materials().id("rock").unwrap();
+    shaded
+        .fill_rect(
+            Rect {
+                x0: 0,
+                y0: 3,
+                x1: shaded.width(),
+                y1: 7,
+            },
+            rock,
+            Brush::Replace,
+        )
+        .unwrap();
+    for b in shaded.bodies().map(|b| b.id).collect::<Vec<_>>() {
+        shaded.set_anchored(b, true);
+    }
+    inject_co2(&mut shaded);
+    run(&mut shaded, 4);
+    assert!(
+        shaded.field(FieldKind::Light).at_cell(30, 20) < PEARL_LIGHT,
+        "light under lid should be below PEARL_LIGHT"
+    );
+    assert!(shaded.field(FieldKind::Co2).at_cell(30, 20) >= PEARL_CO2);
+    let (pearls_shaded, _) = count_pearls(&mut shaded, 20, true);
+    assert_eq!(pearls_shaded, 0, "pearled in dim light");
+}
+
+#[test]
+fn pearling_stops_on_unhealthy_plants() {
+    let mut w = World::new(
+        WorldConfig {
+            width: 96,
+            height: 40,
+            seed: 5,
+            water_level: 0.95,
+        },
+        MaterialTable::builtin().unwrap(),
+    )
+    .unwrap();
+    let soil = w.materials().id("aquasoil").unwrap();
+    w.fill_rect(
+        Rect {
+            x0: 0,
+            y0: 32,
+            x1: 96,
+            y1: 40,
+        },
+        soil,
+        Brush::Replace,
+    )
+    .unwrap();
+    let rotala = w.plant_species().id("rotala").unwrap();
+    w.paint_plant(48, 30, 0, rotala, Propagule::Cuttings)
+        .unwrap();
+    run(&mut w, 120);
+    // Starve rotala under a rock lid until health drops below PEARL_HEALTH
+    // (still alive and holding leaves).
+    let rock = w.materials().id("rock").unwrap();
+    w.fill_rect(
+        Rect {
+            x0: 0,
+            y0: 2,
+            x1: w.width(),
+            y1: 12,
+        },
+        rock,
+        Brush::Replace,
+    )
+    .unwrap();
+    for b in w.bodies().map(|b| b.id).collect::<Vec<_>>() {
+        w.set_anchored(b, true);
+    }
+    for _ in 0..120 {
+        run(&mut w, 2);
+        if w.plants().all(|p| p.health < PEARL_HEALTH) {
+            break;
+        }
+    }
+    assert!(w.plant_count() > 0);
+    assert!(
+        w.plants()
+            .all(|p| p.health < PEARL_HEALTH && p.parts[2] > 0)
+    );
+    // Remove the lid so light returns to strong, and inject CO₂, then check
+    // immediately before health recovers back to PEARL_HEALTH.
+    let water = w.materials().id("water").unwrap();
+    w.fill_rect(
+        Rect {
+            x0: 0,
+            y0: 2,
+            x1: w.width(),
+            y1: 12,
+        },
+        water,
+        Brush::Replace,
+    )
+    .unwrap();
+    inject_co2(&mut w);
+    run(&mut w, 2);
+    // Light and CO₂ are over their thresholds at the plant's upper leaves
+    // (rows 21–23), so only health holds it back.
+    assert!(w.field(FieldKind::Light).at_cell(48, 22) >= PEARL_LIGHT);
+    assert!(w.field(FieldKind::Co2).at_cell(48, 22) >= PEARL_CO2);
+    // Tick while every plant stays below PEARL_HEALTH (it recovers in the
+    // light): none of those ticks may pearl.
+    let mut ticks = 0;
+    while ticks < 3 * TICKS_PER_SECOND {
+        let before = w.pearls_released();
+        w.tick();
+        if !w.plants().all(|p| p.health < PEARL_HEALTH) {
+            break;
+        }
+        assert_eq!(w.pearls_released(), before, "an unhealthy plant pearled");
+        ticks += 1;
+    }
+    assert!(
+        ticks >= TICKS_PER_SECOND,
+        "only {ticks} ticks before health recovered"
+    );
+    assert!(w.field(FieldKind::Co2).at_cell(48, 22) >= PEARL_CO2);
+}
+
+#[test]
+fn pearling_stays_within_cap_and_is_save_deterministic() {
+    // Pack the shallow tank with many plants so dozens of leaves are eligible.
+    let mut w = shallow(0);
+    let hygro = w.plant_species().id("hygrophila").unwrap();
+    let rotala = w.plant_species().id("rotala").unwrap();
+    for x in (6..90).step_by(6) {
+        let s = if x % 12 == 0 { rotala } else { hygro };
+        let _ = w.paint_plant(x, 30, 0, s, Propagule::Cuttings);
+    }
+    run(&mut w, 120);
+    inject_co2(&mut w);
+    run(&mut w, 4);
+
+    // Save/load mid-pearling continues tick for tick.
+    let bytes = save::encode(&w);
+    let mut loaded = save::decode(&bytes, MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(loaded.state_hash(), w.state_hash());
+
+    let (total, max_per_sec) = count_pearls(&mut w, 15, true);
+    let (total2, max_per_sec2) = count_pearls(&mut loaded, 15, true);
+    assert_eq!(loaded.state_hash(), w.state_hash());
+    assert_eq!(total, total2);
+    assert_eq!(max_per_sec, max_per_sec2);
+    assert!(total > 0, "dense lit CO₂ tank should pearl");
+    assert!(
+        max_per_sec <= u64::from(PEARL_MAX_PER_SECOND),
+        "pearling rate {max_per_sec}/s exceeded cap {PEARL_MAX_PER_SECOND}/s"
+    );
 }

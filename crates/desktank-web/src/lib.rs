@@ -756,6 +756,31 @@ impl WebTank {
         self.tank.set_max_fps(fps);
     }
 
+    /// Turns optional render-only plant sway on or off (SPEC §2.7, T6d;
+    /// off by default, capped at 10 fps, disabled on battery and while hidden).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setSway))]
+    pub fn set_sway(&mut self, enabled: bool) {
+        self.tank.set_sway(enabled);
+    }
+
+    /// Whether optional plant sway is enabled.
+    #[must_use]
+    pub fn sway(&self) -> bool {
+        self.tank.sway()
+    }
+
+    /// Tells the tank whether the device is on battery power (disables sway).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setOnBattery))]
+    pub fn set_on_battery(&mut self, on_battery: bool) {
+        self.tank.set_on_battery(on_battery);
+    }
+
+    /// Tells the tank whether the page is hidden (disables sway).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setHidden))]
+    pub fn set_hidden(&mut self, hidden: bool) {
+        self.tank.set_hidden(hidden);
+    }
+
     /// The canvas was resized to `width`×`height` device pixels. The grid
     /// keeps its size and is redrawn at the largest scale that fits,
     /// letterboxed.
