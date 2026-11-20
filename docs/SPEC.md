@@ -1,6 +1,6 @@
 # DeskTank — Plan and Spec
 
-Status: **draft v0.5** (2026-11-18).
+Status: **draft v0.6** (2026-11-20).
 
 - ❓ marks items still waiting on owner decisions (see
   [Open questions](#12-open-questions)). The defaults shown are what we
@@ -25,7 +25,7 @@ The tank's edges are the edges of the screen. You leave it running all
 day, so it must feel cheap: it should never appear on a "top energy
 users" list.
 
-It can run as any combination of four desktop **display modes**, or in a browser tab (web):
+It can run as any combination of four desktop **display modes**, in a browser tab (web), or on Android TV and phones (Android):
 
 | Mode | What the user sees |
 |---|---|
@@ -34,6 +34,7 @@ It can run as any combination of four desktop **display modes**, or in a browser
 | **Screensaver** | A full-screen tank when the machine is idle. |
 | **Lock screen** | The tank on the lock screen, as far as each OS allows (§3.4). |
 | **Web** | The same tank, full-page in a browser tab on desktop or mobile, hosted on GitHub Pages (§3.5, D15). |
+| **Android** | The same tank as the screensaver (a Dream) on Android TV and phones, then as an app and a live wallpaper (§3.6, D23). |
 
 ### Principles
 
@@ -63,8 +64,8 @@ It can run as any combination of four desktop **display modes**, or in a browser
 
 ### Non-goals (v1)
 
-- Native mobile apps. Mobile browsers are covered by the web version
-  (D15).
+- A native iOS app. iPhones and iPads are covered by the web version
+  (D15). Android has a native host, led by its screensaver (D23).
 - 3D rendering. The tank is drawn as a 2D picture; discrete depth bands
   for movement, collision and occlusion are in scope (D21).
 - Online features, accounts or telemetry.
@@ -733,6 +734,9 @@ target computes the same bits.
       band in version 4, D21; a home owning crab's home in version 5,
       migrating version 4 creatures without one; each creature's name in
       version 6, T9 part 3, migrating version 5 creatures unnamed);
+    - each floater's raft, its motion as a buoyant body (offset,
+      velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
+      tank had no floaters and migrates with none);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -828,7 +832,8 @@ stays a material film, not individuals.
     splits a body: at the next tick, the piece still joined to the base
     keeps the id, and each other 4-connected piece becomes a new plant of
     the same species (a fragment, parent id set) if the species
-    propagates by fragments and the piece holds a stem or rhizome;
+    propagates by fragments and the piece holds a stem or rhizome (or a
+    floater's floating leaf, which floats on as a buoyant body, D22);
     otherwise it becomes dead plant matter. A fragment drifts or sinks
     like a cutting until it roots.
   - **Health and death.** Health falls while the plant's conditions are
@@ -882,8 +887,35 @@ stays a material film, not individuals.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.
-    Whether floaters hold to the surface by a rule or as buoyant bodies is
-    settled in T6c.
+    *T6c part 2 (D22):* a floater is a **buoyant body**, not a cell rule.
+    `[floater]` sets `fronds` (floating leaf cells side by side, at most
+    8), `roots` (hanging strands) and `root_length` (at most 32 cells).
+    Its leaves are the `floating_leaf` part material (density 0.75,
+    opacity 0.95), grown only into water open to the air above, so they
+    keep to the top water row; roots hang straight down through water.
+    The plant table owns the plant (species, health, part counts, growth,
+    cutting, death); a **raft** beside the table, by plant id, holds only
+    its motion (sub-cell offset and velocity, as a rigid body's, D17,
+    T4c). Each tick, with the rigid bodies, an awake raft feels its
+    leaves' buoyancy against the fluid beside each row, is pulled towards
+    the current's mean speed over its cells, and moves a cell at a time
+    into fluid or floating cells (which take the cells it leaves), stopped
+    by grains, solids, bodies, other plants and the glass; it sleeps at
+    rest and wakes when it grows, is cut, work reaches its chunks or the
+    current changes. Because the raft holds no reference shape, growth on
+    the moving plant needs no re-anchoring: the next step works on
+    whatever cells it has. Once it has its fronds (or its mature size) it
+    **buds** a new plant (one floating leaf beside an end frond; parent id
+    set, generation + 1, moving as its parent does), never past the plant
+    cap. A floater lies in one depth band (D21), from its plant id, so
+    fish pass under it in the other bands. Tools: a scoop or cut splits
+    it as any plant (a piece holding a floating leaf lives on as a
+    fragment with its own raft, moving as its parent did, and a floater
+    left with no floating leaf dies); the net takes
+    only creatures. Duckweed (*Lemna minor*) and Amazon frogbit
+    (*Limnobium laevigatum*) ship (ids 13, 14). Rafts are saved (format
+    version 7) and hashed with the plant table, so a saved tank drifts on
+    exactly.
   - **Epiphyte and mat:** attaches to rock, driftwood or glued bodies by
     a creeping rhizome with leaves (anubias type) or as a mat (moss), and
     falls off when nothing holds it. Whether a plant on a moving body
@@ -960,6 +992,11 @@ stays a material film, not individuals.
 | Screensaver | ✅ `.saver` bundle ⚠️ host bugs 🔍 | ✅ `.scr` | ✅ built-in idle mode; ⚠️ XScreenSaver hack only where XScreenSaver is the saver | ✅ built-in idle mode |
 | Lock screen | ⚠️ saver shown while locked | ⚠️ static snapshot image only 🔍 | ⚠️ via saver | ⚠️ `ext-session-lock-v1` (stretch) |
 | Interact (modifier key) | ✅ modifier polling 🔍 | ✅ | ✅ | ⚠️ tray toggle or compositor key binding to the CLI |
+
+Android (§3.6, D23): screensaver ✅ as a Dream (⚠️ Google TV hides
+third-party screensavers from its picker 🔍); wallpaper ✅ as a live
+wallpaper on phones and tablets; window ✅ as an app; overlay and lock
+screen ❌.
 
 ### 3.2 Wallpaper
 
@@ -1191,6 +1228,106 @@ modes; it is a "window mode" in a page.
   worker cache is versioned by build hash and old caches are deleted on
   activate.
 
+### 3.6 Android (D23)
+
+Android is a native target, led by the screensaver: Android TV first,
+phones and tablets second. It uses the same simulation, renderer and save
+format as the desktop and the web, through a thin Kotlin shim.
+
+| Mode | Android host | Package |
+|---|---|---|
+| Screensaver | A `DreamService` ("Dream": the screensaver on Android TV, and on phones while charging or docked) | A1 |
+| Window | An Activity: the tank with touch interaction and an in-app menu and settings | A3 |
+| Wallpaper | A `WallpaperService` live wallpaper (phones and tablets) | A4 |
+
+There is no overlay (it would need `SYSTEM_ALERT_WINDOW`, and an always-on
+layer over other apps would break the budget) and no lock-screen mode
+(Android has no third-party lock-screen surface; a Dream already shows
+over the keyguard while charging).
+
+- **Host**: a Gradle project in `android/`, written in Kotlin and kept as
+  thin as possible: one class per mode, no UI framework beyond the
+  platform's (the settings screen may use AndroidX Preference). Each class
+  owns a `SurfaceView` (or the wallpaper's `SurfaceHolder`) and forwards
+  its lifecycle over JNI to `desktank-android`, a Rust `cdylib`
+  (`libdesktank_android.so`):
+  - `surfaceCreated` / `surfaceChanged` / `surfaceDestroyed`, plus
+    `onDreamingStarted` / `onDreamingStopped`, the Activity's
+    `onResume` / `onPause` and the wallpaper's `onVisibilityChanged`;
+  - touch events in the app (as §3.5's touch mapping).
+
+  `desktank-android` turns the `Surface` into an `ANativeWindow`
+  (`ndk::NativeWindow::from_surface`), makes a wgpu surface from its
+  raw window handle, and drives the loop-agnostic `Tank` (§4.2) on a
+  render thread it owns, paced by the frame pacer: no `Choreographer`
+  callback runs while nothing is due. Kotlin holds no tank state.
+- **Backend selection**: Vulkan where the device offers a conformant
+  Vulkan 1.1 driver, otherwise OpenGL ES 3.0 through wgpu's GL backend
+  (EGL). The renderer already stays within WebGL2 limits (§3.5), which
+  GLES 3.0 meets. A setting forces one backend for testing, and a Vulkan
+  device that is lost or fails to create falls back to GLES. Android
+  requires Vulkan 1.1 only of 64-bit devices, and most Google TV devices
+  run a 32-bit userspace (below), so GLES is the expected path on them.
+  *A0:* on the Android TV and Google TV emulators wgpu gets Vulkan
+  (SwiftShader) and, forced, GLES 3.0; both draw. 🔍 Which backend the
+  reference TV device gets, and whether its Vulkan driver is usable, waits
+  for the owner's run on a real device (PROGRESS).
+- **Builds**: `cargo-ndk` builds the `cdylib` for `arm64-v8a`,
+  `armeabi-v7a` (many TV devices run a 32-bit userspace on a 64-bit CPU,
+  including Chromecast with Google TV and the Google TV Streamer; wgpu
+  builds for it) and `x86_64` (the emulator); Gradle packages it, and
+  `./gradlew assembleDebug` runs `cargo-ndk` itself. `minSdk` is API 26
+  (Android 8): every Google TV device ships Android 10 or later, and
+  older Android TV boxes are out of scope (A0).
+- **Grid and scale**: an even scale from 2 to 8 (§2.1, D19), chosen from
+  the display's size: at 1080p the default 4× (D1) gives 480×270 cells,
+  and at 4K the same tank is drawn at 8×, so a tank looks the same on any
+  TV. Phones use the web's
+  rule (§3.5). A tank keeps its grid size when the display changes; it is
+  drawn at the largest even scale that fits, letterboxed.
+- **Screensaver** (the Dream):
+  - full screen, non-interactive (`isInteractive = false`), so any key or
+    touch ends it, as a screensaver should; no tools, inspect card or
+    cheats (D20);
+  - it starts drawing on `onDreamingStarted` and stops, saves and
+    releases the surface on `onDreamingStopped`;
+  - to protect OLED and plasma TVs from burn-in by the static bed and
+    glass edges, the picture shifts by a few pixels every few minutes,
+    within the letterbox margin or by a crop of at most one cell;
+  - its `android:settingsActivity` meta-data opens the app's settings
+    (A3).
+- **Choosing the screensaver** 🔍: plain Android TV and phones list the
+  Dream in Settings (Display → Screen saver). Google TV devices (Android
+  TV 12 and later: Chromecast with Google TV, Google TV Streamer, and
+  Google TV sets) hide third-party screensavers from that picker. There,
+  the user grants `WRITE_SECURE_SETTINGS` once over ADB, after which the
+  app's settings can set `screensaver_components` itself; the README and
+  the settings screen give the one-line command. A launcher with a
+  screensaver override is the other route, though a 2025 Google TV update
+  blocked one such launcher (Projectivy). *A0:* on the Google TV emulator
+  image (Android 16) `adb shell settings put secure screensaver_components`
+  selects the Dream and it runs; 🔍 a current Google TV device is the
+  owner's check (PROGRESS).
+- **Persistence**: one shared tank across the modes (D10): the same
+  envelope and payload as §2.6, through `SaveStore` in the app's private
+  files directory (`Context.getFilesDir()`, passed in over JNI). Every
+  host runs in the one app process, so at most one surface owns the tank
+  at a time; when another becomes visible it takes over as in §2.6's
+  saver handover. Saves happen when a surface stops or is destroyed, and
+  every 5 minutes. The app offers export and import of a save file
+  (Storage Access Framework), so a tank moves between Android, the web
+  and the desktop.
+- **Time and power** (§6.2):
+  - world time runs only while a surface is visible (§2.6); optional
+    catch-up works as on native;
+  - 30 fps cap; 15 fps on battery and paused in battery saver
+    (`BatteryManager`, `PowerManager.isPowerSaveMode`); a TV is always
+    on mains power, and a phone Dream runs only while charging;
+  - nothing runs while no surface is visible: the render thread parks and
+    no timers are left set.
+- **Interaction** (app only): touch as on the web (§3.5). D-pad control
+  of the tools on a TV (a cursor moved by the arrows) is open.
+
 ## 4. Architecture
 
 ### 4.1 Crates
@@ -1209,12 +1346,18 @@ crates/
   desktank-saver-mac # macOS .saver bundle (ScreenSaverView subclass).
   desktank-web       # web host (wasm-bindgen): page lifecycle, rAF loop, input, IndexedDB,
                      # in-page menu. Today a canvas-2D demo of the sim (WB0).
+  desktank-android   # Android host (cdylib over JNI): surfaces, render thread, lifecycle,
+                     # saves for the Kotlin Dream, Activity and live wallpaper (§3.6).
+android/             # Gradle project: the Kotlin shim (DreamService, Activity,
+                     # WallpaperService, settings) that packages libdesktank_android.so
 assets/              # materials/*.toml, reactions.toml, plants/*.toml, species/*.toml, sprites (PNG atlases + source files)
 ```
 
 Dependency direction: `sim ← render ← platform ← {desktank,
 desktank-saver}`, `sim ← render ← desktank-saver-mac`, and
-`sim ← render ← desktank-web`. The saver binary reuses `platform` for its
+`sim ← render ← desktank-web`, and
+`sim ← render ← platform ← desktank-android` (for `SaveStore`; the
+platform crate's desktop hosts stay behind `cfg`). The saver binary reuses `platform` for its
 windows and input detection.
 
 `desktank-sim` and `desktank-render` must build for `wasm32-unknown-unknown`,
@@ -1222,8 +1365,9 @@ and CI checks this from T2. Platform-specific code never goes into them.
 
 `desktank-sim` and `desktank-render` use `#![forbid(unsafe_code)]`. If
 wgpu surface creation from raw handles needs `unsafe`, it moves into
-`platform`. All other `unsafe` lives in `platform` and
-`desktank-saver-mac`, at FFI boundaries, with `// SAFETY:` comments.
+`platform`. All other `unsafe` lives in `platform`,
+`desktank-saver-mac` and `desktank-android` (JNI and the NDK), at FFI
+boundaries, with `// SAFETY:` comments.
 
 Assets are embedded in the binary (`include_bytes!`). A user override
 directory for custom materials and species is a stretch goal.
@@ -1355,6 +1499,7 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 | Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable; `Cargo.lock` committed |
 | GPU | `wgpu` 30 | Metal, DX12 and Vulkan natively; WebGPU with a WebGL2 fallback on the web; offscreen rendering for capture and tests |
 | Web | `wasm-bindgen`, `web-sys`, `js-sys` | wasm-bindgen CLI pinned to the crate version; built by `scripts/build-web.ts` |
+| Android | `jni`, `ndk` (`NativeWindow`), `cargo-ndk`; Gradle with the Android Gradle Plugin and Kotlin | Kotlin only for the platform classes Rust can't provide (D23); versions pinned in the Gradle version catalogue |
 | Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit minor and major updates (0.x minors are breaking) until we choose to upgrade |
 | Wayland | `smithay-client-toolkit` 0.21 + `calloop` | Layer-shell and idle-notify |
 | macOS FFI | `objc2` 0.6 + `objc2-app-kit` / `objc2-screen-saver` | |
@@ -1392,6 +1537,7 @@ Linux numbers are recorded and tracked, but not gated in v1.
 | Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
 | Web transfer size (wasm + JS + assets, gzip, as reported by `scripts/build-web.ts`) | ≤ 3 MB | — | — |
 | Web on the reference phone (🔍 to be chosen in WB2: a 2021-era mid-range iPhone or Android) | p95 frame interval ≤ 50 ms, no thermal throttling within 10 min | — | — |
+| Android TV reference device (🔍 chosen in A0: a current low-end Google TV device) and Android reference phone | Screensaver: p95 frame interval ≤ 40 ms at the 30 fps cap, no thermal throttling within 1 h, memory (PSS from `dumpsys meminfo`) ≤ 120 MB 🔍, start to first frame ≤ 1 s; APK ≤ 25 MB per ABI | — | — |
 | Cold start to first frame (including loading the save) | ≤ 500 ms | — | ≤ 500 ms |
 | Energy Impact (Activity Monitor) | "Low" while visible | — | "Low" |
 
@@ -1430,6 +1576,12 @@ Defaults, all configurable:
 Everything is event-driven except the idle polls (at most every 10 s)
 and the modifier poll (10 Hz, only while a tank is visible and interact
 by modifier is enabled).
+
+On Android the platform reports these as lifecycle callbacks instead
+(§3.6): a hidden surface is `onDreamingStopped`, `onPause` or a wallpaper
+`onVisibilityChanged(false)`; power comes from `BatteryManager` and
+`PowerManager` broadcasts; display sleep and lock end the Dream or pause
+the app; there is no full-screen check or interact modifier.
 
 *O3 (`desktank_platform`, `desktank::window`):* `PowerPolicy::evaluate`
 turns `PowerSignals` plus surface visibility into `Run { max_fps }` (30
@@ -1474,6 +1626,10 @@ stubs until O1-Win and O1-Linux.
 - **Benchmarks**: `criterion` benches for the simulation tick (settled,
   heavy pour, 60 creatures). CI records the numbers; it doesn't gate on
   them.
+- **Android** (from A0): CI builds the `cdylib` for each ABI and the
+  APK on Linux; from A2 it starts the Dream on an Android TV emulator,
+  takes a `screencap` frame and checks the tank is drawn, failing on a
+  Rust panic or a `FATAL` line in logcat.
 - **Platform smoke tests** on each OS runner: start each available mode
   for a few seconds where the runner allows, then exit cleanly.
 - **CI** runs on macOS, Windows and Ubuntu: fmt, clippy, test, doc and
@@ -1502,6 +1658,14 @@ stubs until O1-Win and O1-Linux.
   - Homebrew (where the cask can strip quarantine) and winget soften
     this.
   - Signing can be added later without changing the pipeline shape.
+  - Android (D23): every APK must be signed to install, so releases are
+    signed with a self-generated release key held as a CI secret (PR
+    builds use a debug key). Sideloading needs "install unknown apps"
+    for the browser or file manager; the README covers it, and
+    `adb install` for TVs.
+- **Android**: a signed APK (per ABI, plus a universal one) on GitHub
+  Releases, sideloaded. Google Play (and its TV review) is a later
+  decision (❓ Q3).
 - **Package managers later**:
   - a Homebrew **cask** in our own tap, maintained separately (cargo-dist
     produces formulae, not casks);
@@ -1716,6 +1880,12 @@ Each package depends only on the packages before it.
   Carlo; reference images `plant_rosettes` and `plant_carpets`; runners
   root children with the parent id set; `settled_500_plants` grows every
   form so far in 11.5 µs.
+  *Part 2 done:* floaters as buoyant bodies (D22, §2.7
+  [Growth forms](#growth-forms)), the `floating_leaf` part, budding, and
+  duckweed and frogbit; reference image `plant_floaters`; floaters rest
+  in the top water row, drift with the current, shade the water below
+  (light under a frogbit strip about 58% of the open water's) and bud
+  children with the parent id set within the cap; save format version 7.
 - [ ] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night
@@ -2048,6 +2218,63 @@ Each package depends only on the packages before it.
   `start_url` and `scope` of `./`) and an active service worker; after
   `context.setOffline(true)`, a reload loads the page and it runs.
 
+### MA — Android (D23)
+
+- [ ] **A0 Android spike and skeleton** (findings in PROGRESS). A Kotlin
+  `DreamService` hands its surface to a minimal `desktank-android`
+  `cdylib` that clears it with wgpu, built by `cargo-ndk` and Gradle, and
+  run on the Android TV emulator and a real Google TV device. Answer:
+  - which wgpu backend the reference TV device gets (Vulkan or GLES), and
+    whether its Vulkan driver is usable;
+  - whether target TV devices run a 32-bit userspace (`armeabi-v7a`);
+  - the `minSdk` (API 26 unless a target device needs lower);
+  - whether a third-party Dream can still be chosen on a current Google
+    TV build, by ADB or by an app granted `WRITE_SECURE_SETTINGS`;
+  - the memory (PSS) of an empty wgpu Dream, against the §6.1 row;
+  - how to start a Dream from CI on the emulator (for A2).
+
+  *Accept:* each question answered with evidence (a doc link, a log or a
+  screenshot from the device); the 🔍 marks in §3.6 and §6.1 resolved;
+  the reference TV device chosen and recorded in §6.1; the skeleton
+  (`android/` and `desktank-android`) lands with CI building the APK for
+  every ABI.
+- [ ] **A1 The tank as an Android screensaver.** The Dream draws the real
+  tank (§3.6): backend fallback, grid and scale for 1080p and 4K, world
+  time only while dreaming, the shared save in the files directory, the
+  burn-in shift, and a stop and save on any key. *Accept:*
+  - on the reference TV device at its native resolution, within the §6.1
+    Android row, measured over 1 h;
+  - pressing any remote key ends the Dream within one frame, and the
+    next Dream continues the same tank;
+  - a save written by the desktop or web loads, and an Android save
+    loads on the desktop;
+  - while not dreaming the process uses no CPU (`top`), with no timers
+    or wake locks held;
+  - the README gives the Google TV setup steps, and they work on the
+    reference device.
+- [ ] **A2 Android CI smoke test.** CI starts the Dream on an Android TV
+  emulator image (`x86_64`), captures a frame and checks the tank is
+  drawn, and fails on a panic or `FATAL` in logcat. *Accept:* the job is
+  green on `main` and red on a PR that breaks the Dream (shown once in
+  the PR).
+- [ ] **A3 Android app** (phones first, also on TV). An Activity in
+  window mode with touch input (§3.5's mapping), an in-app menu and a
+  settings screen (scale, backend, easy mode, the screensaver setup on
+  Google TV, export and import). It shares the tank with the Dream.
+  *Accept:* pouring and scooping work by touch on the reference phone
+  within the web phone budget (§6.1); the Dream and the app take the tank
+  over from each other with no lost changes; export from the app imports
+  on the web.
+- [ ] **A4 Android live wallpaper** (phones and tablets, optional). A
+  `WallpaperService` drawing the shared tank, paused while hidden.
+  *Accept:* the tank shows as the home-screen wallpaper, draws nothing
+  while an app covers it (a frame-count check), and stays within the
+  phone budget.
+- [ ] **A5 Android release.** CI signs the APKs with the release key
+  and attaches them to GitHub Releases (with R1). *Accept:* following
+  the README on a clean TV device and a clean phone installs a release
+  APK and runs the screensaver.
+
 ### Stretch goals (unscheduled)
 
 - Open windows act as solid obstacles, so sand piles on title bars and
@@ -2067,6 +2294,10 @@ Each package depends only on the packages before it.
    T7.
 3. O3, then O1-Mac, then O2, then O5.
 4. W1, then S3, then S2, then the rest.
+
+5. Android: A0, then A1 and A2, then A3, A4 and A5. MA can run alongside
+   everything else: it adds new paths (`android/`, `desktank-android`)
+   and needs only `sim`, `render` and `SaveStore` from the core.
 
 Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run alongside M3 and M4.
 
@@ -2088,6 +2319,9 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | WebGL2 limits constrain the renderer | Native features blocked, or web broken | Renderer kept within WebGL2 downlevel limits from T2; CI builds render for wasm32; the WB1 smoke test |
 | Browser storage eviction | A lost web tank | `navigator.storage.persist()`, export/import, a visible "last saved" indicator |
 | Mobile browser performance | Janky or hot phones | Cell scale adapts to screen size; the population cap; profile in WB1 and WB2 |
+| Google TV hides third-party screensavers | Users can't choose DeskTank as the screensaver | One-time ADB grant so the app sets itself; launcher overrides; plain Android TV and phones unaffected; checked in A0 |
+| Weak TV GPUs and Vulkan drivers | Slow or broken drawing on cheap TV devices | GLES 3.0 fallback within the WebGL2 limits; a low-end reference TV device; the A2 emulator test |
+| Burn-in from a static screensaver | Damaged OLED or plasma TVs | A periodic shift of a few pixels (§3.6) |
 
 ## 11. Decision log
 
@@ -2107,13 +2341,15 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D12 | **Water level configurable**; species declare depth and surface needs. |
 | D13 | **Colour genetics**: offspring inherit morphs; mixed lines revert to wildtype (e.g. neocaridina). |
 | D14 | **No code signing** for now. |
-| D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal. |
+| D15 | **Web is a product target**: the same tank in a browser tab on desktop and mobile, via wgpu WebGPU/WebGL2 (§3.5). Native mobile apps remain a non-goal (revised by D23 for Android). |
 | D16 | **Memory budget is raw RSS ≤ 100 MB** (`ps` RSS, which counts shared GPU-driver pages), raised from 80 MB after T2 measured 90 MB RSS / 53 MB physical footprint. |
 | D17 | **Solids are rigid bodies.** Rock (and driftwood) poured in one stroke is one object that sinks (or rises) as a whole, can topple and can embed in loose substrate; a **glue** tool makes bodies static. The `solid` class stays for truly static materials (§2.1 [Rigid bodies](#rigid-bodies), T4b). |
 | D18 | **Plants are individuals of data-defined species** (2026-11-18). Each plant is distinct from every other, even of the same species, with its own age, health and size; species set environment preferences, growth speed, size, hardiness and appearance in TOML (§2.7). **Varied growth forms** (branching stems, rosettes and runners, carpets, floaters, epiphytes and mats) and **dynamic leaf appearance** (age and health shading, colouration in strong light, pearling, optional sway) are wanted, not stretch goals (T6b–T6d). |
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
 | D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. Occlusion (part 2, 2026-11-20) needs no second grid pass or depth buffer: the grid is drawn once, sprites follow back to front, and each sprite fragment checks the cell under it in a per-cell band texture, dropping itself where a plant cell in a nearer band covers that texel (its shape is evaluated as the grid shader does). One grid pass and one sprite draw per frame, whatever the number of creatures or bands; per-band plant layers would cost up to eight grid passes, and splitting the grid in two works for one depth only. A subtle depth cue fades creatures and plant cells towards the water colour with depth. |
+| D22 | **Floaters are buoyant bodies** (2026-11-20). A floating plant (duckweed, frogbit) is held at the surface and carried by the current as one object, built on the rigid-body motion (D17, T4c), not by a cell rule that pins floating leaves to the top water row. The plant table stays its owner (species, health, growth, budding, cutting, death); a per-plant raft holds only its motion (sub-cell offset and velocity), so cells growing onto it or cut from it need no re-anchoring. A rule would have kept leaves at the surface but let a plant's roots and leaves part when the current carried some cells and not others; as a body the whole plant moves together, rests by its leaves' buoyancy, falls back when lifted out, and stops at the glass. Rafts are saved (format version 7) and hashed. Epiphytes on moving bodies are settled with T6c part 3. |
+| D23 | **Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
@@ -2123,3 +2359,6 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
    until placeholder art is in place.
 2. **Name and identity.** "DeskTank" is TBC, and there is no icon
    direction yet. A placeholder icon will be used.
+3. **Google Play.** Whether to publish on Google Play (a developer
+   account, the TV app review, a privacy policy) or stay with sideloaded
+   APKs (D23). Deferred until A5.

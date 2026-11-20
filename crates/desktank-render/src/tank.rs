@@ -277,24 +277,15 @@ impl Tank {
     ///
     /// Returns an error if the surface texture fails validation.
     pub fn draw(&mut self, gpu: &Gpu, surface: &TankSurface) -> Result<bool, DrawError> {
-        let frame = match surface.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
-                // Draw this one; reconfigure for the next.
-                let drawn = self.present(gpu, surface, f);
-                surface.reconfigure(gpu);
-                return Ok(drawn);
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(false);
-            }
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                surface.reconfigure(gpu);
-                return Ok(false);
-            }
-            wgpu::CurrentSurfaceTexture::Validation => return Err(DrawError::Validation),
+        let Some((frame, suboptimal)) = surface.acquire(gpu)? else {
+            return Ok(false);
         };
-        Ok(self.present(gpu, surface, frame))
+        let drawn = self.present(gpu, surface, frame);
+        if suboptimal {
+            // Drawn; reconfigure for the next.
+            surface.reconfigure(gpu);
+        }
+        Ok(drawn)
     }
 
     fn present(&mut self, gpu: &Gpu, surface: &TankSurface, frame: wgpu::SurfaceTexture) -> bool {

@@ -4,15 +4,16 @@
 //! passed between bodies, and sleep. Integer maths only (see
 //! [`super::shape`]).
 
+use crate::grid::Cell;
 use crate::material::{GLUED_VARIANT_BIT, MovementClass};
 
 use super::super::World;
 use super::shape::{ONE, RASTER_STEP, TURN, isqrt, rotate, to_i64};
 
 /// Gravity, in 1/256 cell per tick² (1/8 cell/tick²).
-const GRAVITY: i64 = 32;
+pub(in crate::world) const GRAVITY: i64 = 32;
 /// Speed cap, so a sub-stepped move stays a few cells per tick.
-const MAX_SPEED: i64 = 4 * ONE;
+pub(in crate::world) const MAX_SPEED: i64 = 4 * ONE;
 /// Spin cap, in angle units per tick (1/64 turn).
 const MAX_SPIN: i64 = TURN / 64;
 /// Quadratic drag: the speed lost per tick is `v² · ρ_fluid / (DRAG_QUAD ·
@@ -44,9 +45,9 @@ const FRICTION: i64 = 12;
 const SLIDE: i64 = 20;
 /// Below this speed (and with no spin) a body that didn't move counts as
 /// resting.
-const REST_SPEED: i64 = 4;
+pub(in crate::world) const REST_SPEED: i64 = 4;
 /// Ticks at rest after which a body sleeps.
-const REST_TICKS: u16 = 10;
+pub(in crate::world) const REST_TICKS: u16 = 10;
 /// Angle units per radian (65536 / 2π).
 const PER_RADIAN: i64 = 10_430;
 
@@ -605,12 +606,41 @@ impl World {
     /// it has. The fluid in cells it enters goes to the cells it leaves,
     /// paired top row first, so air stays above water: every cell is
     /// conserved.
-    pub(super) fn relocate(&mut self, id: u16, mut new: Vec<(usize, u8)>) {
+    pub(super) fn relocate(&mut self, id: u16, new: Vec<(usize, u8)>) {
         let Some(b) = self.bodies.get_mut(&id) else {
             return;
         };
         let material = b.material;
         let old = core::mem::take(&mut b.cells);
+        let new = new
+            .into_iter()
+            .map(|(k, v)| {
+                let cell = Cell {
+                    material,
+                    variant: v & !GLUED_VARIANT_BIT,
+                    state: id,
+                };
+                (k, cell)
+            })
+            .collect();
+        let cells = self.carry(&old, new);
+        let bounds = super::bounds(&cells, self.width);
+        if let Some(b) = self.bodies.get_mut(&id) {
+            b.cells = cells;
+            b.bounds = bounds;
+        }
+    }
+
+    /// Moves an object whose cells are `old` (ascending indices) onto
+    /// `new` (index, cell), as many as it has: a rigid body, or a floater
+    /// (T6c part 2). The fluid in cells it enters goes to the cells it
+    /// leaves, paired top row first, so air stays above water: every cell
+    /// is conserved. Returns its new cell indices, ascending.
+    pub(in crate::world) fn carry(
+        &mut self,
+        old: &[usize],
+        mut new: Vec<(usize, Cell)>,
+    ) -> Vec<usize> {
         new.sort_unstable_by_key(|c| c.0);
         let (mut entered, mut left) = (Vec::new(), Vec::new());
         let (mut i, mut j) = (0, 0);
@@ -636,12 +666,7 @@ impl World {
             }
         }
         let displaced: Vec<_> = entered.iter().map(|&e| self.cells[e]).collect();
-        for &(k, v) in &new {
-            let cell = crate::grid::Cell {
-                material,
-                variant: v & !GLUED_VARIANT_BIT,
-                state: id,
-            };
+        for &(k, cell) in &new {
             if self.cells[k] != cell {
                 self.cells[k] = cell;
                 self.moved[k] = self.stamp;
@@ -653,18 +678,13 @@ impl World {
             self.moved[k] = self.stamp;
             self.mark_changed(k % self.width, k / self.width);
         }
-        let cells: Vec<usize> = new.into_iter().map(|c| c.0).collect();
-        let bounds = super::bounds(&cells, self.width);
-        if let Some(b) = self.bodies.get_mut(&id) {
-            b.cells = cells;
-            b.bounds = bounds;
-        }
+        new.into_iter().map(|c| c.0).collect()
     }
 }
 
 /// Whole cells to step for an offset `off` between where a body is and
 /// where it is drawn (0 inside the [`SNAP`] dead band).
-fn steps(off: i64) -> i64 {
+pub(in crate::world) fn steps(off: i64) -> i64 {
     if off.abs() <= SNAP {
         0
     } else {

@@ -129,8 +129,8 @@ pub const SPECIES_WIDTH: usize = 32;
 /// Column of the shapes texel: leaf, stem and root shape discriminants.
 pub const SHAPES_COLUMN: usize = 3 * RAMP;
 /// Column of the sizes texel: stem height, root depth and leaf length in
-/// cells (blade length for the first and last of a rosette or carpet; 0 for
-/// a mat).
+/// cells (blade length for the first and last of a rosette or carpet;
+/// fronds, root length and fronds for a floater; 0 for a mat).
 pub const SIZES_COLUMN: usize = SHAPES_COLUMN + 1;
 
 /// The species texture's contents, row-major (`SPECIES_WIDTH` texels per
@@ -160,13 +160,13 @@ pub fn species_image(table: &PlantSpeciesTable) -> Vec<u8> {
 /// One species' row of the species texture.
 fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     let mut row = [0; SPECIES_WIDTH * 4];
-    // Runners have no ramp of their own: the shader draws them from the
-    // stem's.
+    // Runners and floating leaves have no ramps of their own: the shader
+    // draws them from the stem's and the leaf's.
     for part in [Part::Root, Part::Stem, Part::Leaf] {
         let ramp = match part {
             Part::Root => &s.colours.root,
             Part::Stem | Part::Runner => &s.colours.stem,
-            Part::Leaf => &s.colours.leaf,
+            Part::Leaf | Part::Float => &s.colours.leaf,
         };
         for (k, shade) in resample(ramp).into_iter().enumerate() {
             let at = (part.index() * RAMP + k) * 4;
@@ -181,6 +181,8 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
         Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
         Form::Rosette(f) | Form::Carpet(f) => [f.blade_length, f.root_depth, f.blade_length, 0],
         Form::Mat(_) => [0; 4],
+        // A floater's roots shade by length; its fronds by how far out.
+        Form::Floater(f) => [f.fronds, f.root_length, f.fronds, 0],
     };
     let at = SIZES_COLUMN * 4;
     row[at..at + 4].copy_from_slice(&sizes);
