@@ -3,7 +3,7 @@
 
 use crate::power::PowerSignals;
 
-/// Stub power monitor for Linux; real UPower and logind D-Bus wiring lands in
+/// Stub power monitor for Linux; real `UPower` and logind D-Bus wiring lands in
 /// `O1-Linux` (SPEC §9 O3).
 pub(crate) struct PowerMonitor;
 

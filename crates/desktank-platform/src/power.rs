@@ -185,10 +185,11 @@ mod fallback {
 
     impl PowerMonitor {
         pub(crate) fn new(on_change: impl Fn() + Send + Sync + 'static) -> Self {
-            let _ = on_change;
+            drop(on_change);
             Self
         }
 
+        #[allow(clippy::unused_self)] // macOS reads self; keep uniform backend signature
         pub(crate) fn signals(&self) -> PowerSignals {
             PowerSignals::default()
         }
