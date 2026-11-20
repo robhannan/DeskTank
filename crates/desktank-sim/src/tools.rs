@@ -532,7 +532,7 @@ impl Tools {
                 Tool::Place(p) => Outcome::Painted(world.place(p, cell.0, cell.1).unwrap_or(0)),
                 // No room (solid there) or a full tank adds nothing.
                 Tool::AddCreature(s) => world
-                    .add_creature(s, cell.0, cell.1)
+                    .add_palette_creature(s, cell.0, cell.1)
                     .map_or(Outcome::None, Outcome::Added),
                 _ => Outcome::None,
             },

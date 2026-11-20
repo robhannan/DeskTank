@@ -1,0 +1,171 @@
+id = 18
+name = "pea_puffer"
+zone = "mid"
+depth = [0.2, 0.8]
+min_depth = 12
+length_cm = 3.0
+lifespan_days = 1460
+maturity_days = 150
+temperament = "territorial"
+speed = 3.0
+max_speed = 9.0
+diet = ["bloodworm"]
+prey_cm = 1.0
+territory_cm = 5
+
+[breeding]
+mode = "eggs"
+days = 3
+brood = [3, 8]
+rest_days = 28
+
+[sprite]
+colours = { r = "#b0bb55", l = "#cfdc64", d = "#5b612c", w = "#f5dec1", k = "#151c23", a = "#c94e65" }
+frames = [
+    [
+        "..............",
+        "......d.......",
+        "l....rrrrrr...",
+        ".l.rrrddrrrrr.",
+        ".lrrddddddwkkr",
+        ".lrrddddldwkkr",
+        ".lrrrrdllddrrr",
+        "lllrrrrlrddrr.",
+        "l....rrrrrr...",
+        "..............",
+    ],
+    [
+        "..............",
+        "......d.......",
+        "l....rrrrrr...",
+        "ll.rrrddrrrrr.",
+        ".lrrddddddwkkr",
+        ".lrrddddldwkkr",
+        ".lrrrrddlddrrr",
+        ".llrrrrllddrr.",
+        "ll...rrlrrr...",
+        "l.............",
+    ],
+    [
+        "..............",
+        "......d.......",
+        "l....rrrrrr...",
+        "ll.rrrddrrrrr.",
+        ".lrrddddddwkkr",
+        ".lrrddddldwkkr",
+        ".lrrrrdllddrrr",
+        ".llrrrrlrddrr.",
+        "ll...rrrrrr...",
+        "l.............",
+    ],
+    [
+        "..............",
+        "l.....d.......",
+        "ll...rrrrrr...",
+        ".llrrrddrrrrr.",
+        ".lrrddddddwkkr",
+        ".lrrddddldwkkr",
+        ".lrrrrdllddrrr",
+        "lllrrrrrrddrr.",
+        "l....rrrrrr...",
+        "..............",
+    ],
+]
+fine_frames = [
+    [
+        "............................",
+        "............................",
+        "............................",
+        "l...........rrrrrrrrr.......",
+        "ll........rrrrrrrrrrrrr.....",
+        ".lll....rrrrrrrrrrrrrrrrr...",
+        ".llll..rrrrrrrrrrrrrrrrrrr..",
+        ".lllllrrrrrrrdrrrrrrrrrrrrr.",
+        ".llllrrrrrrrdddrrrrrrrrkkrrr",
+        "..lllrrrrrdrrdrrrdrrdrwkkwrr",
+        "..lllrrrrdddrrrrddddddwkkwrr",
+        "..lllrrrrrdrrrrdldrrdrrwwrrr",
+        ".llllrrrrrrrrrdldrrdrrrrrrrr",
+        ".lllllrrrrrrrrdllldddrrrrrr.",
+        ".llllllrrrrrrrllrrrdrrrrrr..",
+        ".llll...rrrrrrrrrrrrrrrrr...",
+        "lll.......rrrrrrrrrrrrr.....",
+        "l...........rrrrrrrrr.......",
+        "............................",
+        "............................",
+    ],
+    [
+        "............................",
+        "............................",
+        "............................",
+        "............rrrrrrrrr.......",
+        "..........rrrrrrrrrrrrr.....",
+        "l.......rrrrrrrrrrrrrrrrr...",
+        "lll....rrrrrrrrrrrrrrrrrrr..",
+        ".llll.rrrrrrrdrrrrrrrrrrrrr.",
+        ".llllrrrrrrrdddrrrrrrrrkkrrr",
+        ".llllrrrrrdrrdrrrdrrdrwkkwrr",
+        "..lllrrrrdddrrrrddddddwkkwrr",
+        "..lllrrrrrdrrrrdldrrdrrwwrrr",
+        "..lllrrrrrrrrrddlrrdrrrrrrrr",
+        "..llllrrrrrrrrdldldddrrrrrr.",
+        ".llllllrrrrrrrrllrrdrrrrrr..",
+        ".llllll.rrrrrrllrrrrrrrrr...",
+        ".llll.....rrrrlrrrrrrrr.....",
+        ".lll........rrrrrrrrr.......",
+        "ll..........................",
+        "l...........................",
+    ],
+    [
+        "............................",
+        "............................",
+        "............................",
+        "............rrrrrrrrr.......",
+        "l.........rrrrrrrrrrrrr.....",
+        "ll......rrrrrrrrrrrrrrrrr...",
+        ".lll...rrrrrrrrrrrrrrrrrrr..",
+        ".llll.rrrrrrrdrrrrrrrrrrrrr.",
+        ".llllrrrrrrrdddrrrrrrrrkkrrr",
+        "..lllrrrrrdrrdrrrdrrdrwkkwrr",
+        "..lllrrrrdddrrrrddddddwkkwrr",
+        "..lllrrrrrdrrrrdldrrdrrwwrrr",
+        "..lllrrrrrrrrrdldrrdrrrrrrrr",
+        ".lllllrrrrrrrrdldldddrrrrrr.",
+        ".llllllrrrrrrrlllrrdrrrrrr..",
+        ".lllll..rrrrrrlrrrrrrrrrr...",
+        ".llll.....rrrrrrrrrrrrr.....",
+        "lll.........rrrrrrrrr.......",
+        "l...........................",
+        "............................",
+    ],
+    [
+        "............................",
+        "............................",
+        "l...........................",
+        "ll..........rrrrrrrrr.......",
+        ".ll.......rrrrrrrrrrrrr.....",
+        ".lll....rrrrrrrrrrrrrrrrr...",
+        ".llll..rrrrrrrrrrrrrrrrrrr..",
+        "..llllrrrrrrrdrrrrrrrrrrrrr.",
+        "..lllrrrrrrrdddrrrrrrrrkkrrr",
+        "..lllrrrrrdrrdrrrdrrdrwkkwrr",
+        "..lllrrrrdddrrrrddddddwkkwrr",
+        ".llllrrrrrdrrrrdldrrdrrwwrrr",
+        ".llllrrrrrrrrrlldrrdrrrrrrrr",
+        ".lllllrrrrrrrrddlldddrrrrrr.",
+        ".llllllrrrrrrrrdrrrdrrrrrr..",
+        "llll....rrrrrrrrrrrrrrrrr...",
+        "l.........rrrrrrrrrrrrr.....",
+        "............rrrrrrrrr.......",
+        "............................",
+        "............................",
+    ],
+]
+icon = [
+    "........",
+    "l..rrr..",
+    "lrddddkr",
+    "lrddldkr",
+    "lrrrldrr",
+    "l..rrr..",
+]

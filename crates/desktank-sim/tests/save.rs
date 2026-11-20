@@ -83,13 +83,11 @@ fn busy(seed: u64, ticks: u32) -> World {
         let m = id(&w, name);
         w.paint(100, 20, 2, m, Brush::Pour).unwrap();
     }
-    // Every species but the blinker, added after the pinned fixtures were
-    // written (it would move their hashes; `tests/blinker.rs` covers its
-    // save round trip).
+    // This fixture predates species IDs 14 and up. Keep its stocking order stable.
     let species: Vec<_> = w
         .species()
         .iter()
-        .filter(|s| s.name != "blinker")
+        .filter(|s| s.id.0 <= 13)
         .map(|s| s.id)
         .collect();
     let n = species.len() as i64;
@@ -189,7 +187,15 @@ fn saving_at_any_tick_carries_on_exactly() {
 
 #[test]
 fn a_fresh_tank_compresses_well() {
-    let w = World::new(WorldConfig::default(), table()).unwrap();
+    let w = World::new(
+        WorldConfig {
+            width: 160,
+            height: 90,
+            ..WorldConfig::default()
+        },
+        table(),
+    )
+    .unwrap();
     let bytes = save::encode(&w);
     // 640 × 360 cells (900 KiB in memory): runs and untouched colour noise
     // compress to almost nothing.
@@ -732,4 +738,48 @@ fn rejects_damage() {
         Err(SaveError::Truncated { .. })
     ));
     assert_eq!(save::decode(&[], table()).err(), Some(SaveError::NotASave));
+}
+
+/// Every stocked species and colour can be placed, saved and simulated after loading.
+#[test]
+fn catalogue_species_and_morphs_round_trip() {
+    let mut world = World::new(
+        WorldConfig {
+            width: 160,
+            height: 90,
+            ..WorldConfig::default()
+        },
+        table(),
+    )
+    .unwrap();
+    let species: Vec<_> = world
+        .species()
+        .iter()
+        .filter(|s| !s.cheat_only)
+        .map(|s| (s.id, s.morphs.len()))
+        .collect();
+    for (id, colours) in species {
+        for morph in 0..u8::try_from(colours).unwrap() {
+            let creature = world
+                .add_creature_with_traits(
+                    id,
+                    80,
+                    60,
+                    Traits {
+                        alleles: Some([morph; 2]),
+                        ..Traits::default()
+                    },
+                )
+                .unwrap();
+            world.tick();
+            let mut restored = reload(&world);
+            let saved = restored.creature(creature).unwrap();
+            assert_eq!(saved.species(), id);
+            assert_eq!(restored.creature_morph(saved), morph);
+            restored.tick();
+            world.tick();
+            assert_eq!(restored.state_hash(), world.state_hash());
+            world.remove_creature(creature);
+        }
+    }
 }

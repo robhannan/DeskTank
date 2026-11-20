@@ -209,9 +209,9 @@ fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
     w.paint(60, 70, 6, id(&w, "rock"), Brush::Replace).unwrap();
     let ids: Vec<_> = w.species().iter().map(|s| (s.id, s.name.clone())).collect();
     for (k, (s, _)) in ids.iter().enumerate() {
-        // Four of each, but one blinker (30×22 cells).
+        // Two of each fit under the population cap, but one blinker (30×22 cells).
         let one = w.species().get(*s).unwrap().name == "blinker";
-        for j in 0..if one { 1 } else { 4_i64 } {
+        for j in 0..if one { 1 } else { 2_i64 } {
             // Start everyone mid-tank, out of most zones.
             let x = 20 + j * 36 + i64::try_from(k).unwrap() * 2;
             w.add_creature(*s, x, 60).unwrap();
@@ -530,7 +530,7 @@ fn inspect_reports_the_creature_and_the_cell() {
 
 #[test]
 fn the_palette_adds_creatures_of_each_species() {
-    let mut w = world(160, 90, 8);
+    let mut w = world(360, 90, 8);
     sand_bed(&mut w, 8);
     let palette = Tools::palette(&w);
     let adders: Vec<_> = palette
@@ -1143,4 +1143,19 @@ fn guppy_bites_a_live_frond_and_damages_its_plant() {
         }
     }
     panic!("guppy never ate the floating leaves");
+}
+
+#[test]
+fn palette_bettas_cycle_through_inheritable_colours() {
+    let mut w = world(160, 90, 8);
+    let betta = species(&w, "betta");
+    let mut tools = Tools::new(id(&w, "sand"));
+    tools.select(PaletteItem::Tool(Tool::AddCreature(betta)));
+    for morph in [0, 1, 2, 0] {
+        let Outcome::Added(id) = tools.press(&mut w, Button::Primary, (80, 40)) else {
+            panic!("expected a betta");
+        };
+        assert_eq!(w.creature(id).unwrap().alleles(), [morph; 2]);
+        tools.release(&mut w, Button::Primary);
+    }
 }
