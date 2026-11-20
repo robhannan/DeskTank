@@ -611,11 +611,20 @@ fn a_version_8_fixture_loads() {
 /// A creature's id, quarry, fright and home.
 type Pursuit = (u32, Option<u32>, u32, Option<(usize, usize)>);
 
-/// What the version 9 fixture holds: [`bred`] run on until a predator is
-/// hunting, a territorial betta has claimed its territory and a creature
-/// is frightened, all at once (hunting and territory).
+/// What the version 9 fixture holds: [`bred`] with a second betta, run on
+/// until a predator is hunting, a territorial betta has claimed its
+/// territory and a creature is frightened, all at once (hunting and
+/// territory). The second betta holds a territory while the first hunts:
+/// at 6 cm the betta does most of the hunting.
 fn hunting() -> World {
     let mut w = bred();
+    let betta = w.species().id("betta").unwrap();
+    let (top, bottom) = w.zone_rows(betta).unwrap();
+    let y = i64::try_from(usize::midpoint(top, bottom)).unwrap();
+    let spot = (100..180)
+        .step_by(10)
+        .find(|&x| w.add_creature(betta, x, y).is_ok());
+    assert!(spot.is_some(), "no room for a second betta");
     let busy = |w: &World| {
         let cs = w.creatures();
         cs.iter().any(|c| c.quarry().is_some())
@@ -655,7 +664,7 @@ fn a_version_9_fixture_loads() {
     assert!(w.creatures().iter().any(|c| c.quarry().is_some()));
     assert!(w.creatures().iter().any(|c| c.fear() > 0));
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x81ba_c270_59d4_4d9c);
+    assert_eq!(w.state_hash(), 0x2ab9_5592_0c2b_e8ef);
     // Saved mid-chase, it hunts on exactly as the tank that wrote it.
     for _ in 0..400 {
         w.tick();
