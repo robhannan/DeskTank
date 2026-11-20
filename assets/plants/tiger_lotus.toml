@@ -2,8 +2,9 @@
 # arrowhead-to-round leaves mottled red and green on long petioles of
 # differing lengths. The longest reach the surface, where the leaves lie
 # flat on the water as floating pads that shade the tank below. A fast,
-# hungry root feeder that wants fairly bright light; it spreads by runners
-# and reddens further in strong light with lean water.
+# hungry root feeder that wants fairly bright light; it spreads by long
+# runners deep in the substrate, rooting new bulbs far from the first, and
+# reddens further in strong light with lean water.
 id = 18
 name = "tiger_lotus"
 description = "Mottled red leaves on long stalks from a bulb; some float."
@@ -11,15 +12,18 @@ form = "rosette"
 propagation = ["runners"]
 
 # Crown (bulb) cells; petioles (≤ crown + 2) and the longest's length;
-# cells between outward steps; root depth; runner cells to a new plant;
-# substrates; cells each leaf pad spreads to either side of its petiole.
+# cells between outward steps; root depth; runner cells to a new plant
+# (far further than a carpet's) and how deep its runners creep below the
+# bed's top layer; substrates; cells each leaf pad spreads to either side
+# of its petiole.
 [rosette]
 crown = 2
 blades = 4
 blade_length = 56
 lean = 14
 root_depth = 10
-spacing = 16
+spacing = 40
+runner_depth = 4
 substrates = ["sand", "gravel", "aquasoil"]
 pad = 4
 

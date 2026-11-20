@@ -938,7 +938,12 @@ stays a material film, not individuals.
     substrate layers (following the bed up and down) and, `spacing` or
     more cells out where water is above, roots a child (crown above, root
     at the tip; parent id set, generation + 1); it gives up at twice
-    `spacing`. A plant at its mature size still grows its runners.
+    `spacing` (at most 62 cells, the position bits' limit; `spacing` is
+    2–48). With `runner_depth` (1–8, rosettes only; tiger lotus type) a
+    runner instead dives to that many cells below the bed's top layer,
+    creeps on there (rising where the bed rises, going under rock), and
+    from `spacing` on climbs back up to root its child where water is
+    above, then stops. A plant at its mature size still grows its runners.
     `[growth] root_feeder` makes only roots and runners sample nutrients.
   - **Carpet:** low tufts; runners creep through the top substrate layer
     and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a

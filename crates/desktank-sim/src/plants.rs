@@ -426,6 +426,14 @@ pub struct FloaterForm {
     pub root_length: u8,
 }
 
+/// Longest runner, in cells (its positions must fit [`MAX_POSITION`]).
+pub const MAX_RUNNER: u8 = MAX_POSITION - 1;
+/// Widest runner spacing: a runner needs some cells past it to find a place
+/// to root.
+pub const MAX_SPACING: u8 = 48;
+/// Deepest a rosette's runners creep below the bed's top layer, in cells.
+pub const MAX_RUNNER_DEPTH: u8 = 8;
+
 /// Widest leaf pad a rosette's blade spreads to each side, in cells.
 pub const MAX_PAD: u8 = 4;
 
@@ -469,8 +477,12 @@ pub struct RosetteForm {
     /// Deepest root, in cells from the crown.
     pub root_depth: u8,
     /// Runner cells from the crown to a new plant (a runner gives up at
-    /// twice this).
+    /// twice this, or at [`MAX_RUNNER`] cells).
     pub spacing: u8,
+    /// How deep its runners creep, in substrate cells below the bed's top
+    /// layer (0: in the top two layers; 1..=[`MAX_RUNNER_DEPTH`]: they dive
+    /// to it, and climb back up to root the next plant).
+    pub runner_depth: u8,
     /// Substrates it roots in and runners creep through.
     pub substrates: Vec<MaterialId>,
     /// Cells a petiole's leaf pad spreads to each side (0: plain blades;
@@ -479,6 +491,12 @@ pub struct RosetteForm {
 }
 
 impl RosetteForm {
+    /// The longest a runner grows before it gives up, in cells.
+    #[must_use]
+    pub fn runner_limit(&self) -> u8 {
+        self.spacing.saturating_mul(2).min(MAX_RUNNER)
+    }
+
     /// Whether a leaf cell at `position` is part of a leaf pad rather than
     /// a blade.
     #[must_use]
@@ -1043,6 +1061,8 @@ struct RosetteDef {
     lean: u8,
     root_depth: u8,
     spacing: u8,
+    #[serde(default)]
+    runner_depth: u8,
     substrates: Vec<String>,
     #[serde(default)]
     pad: u8,
@@ -1318,8 +1338,11 @@ fn validate(
             if r.lean > max || !(1..=max).contains(&r.root_depth) {
                 return Err(invalid("lean must be 0..=63 and root_depth 1..=63"));
             }
-            if !(2..=max / 2).contains(&r.spacing) {
-                return Err(invalid("runner spacing must be 2..=31"));
+            if !(2..=MAX_SPACING).contains(&r.spacing) {
+                return Err(invalid("runner spacing must be 2..=48"));
+            }
+            if r.runner_depth > MAX_RUNNER_DEPTH || (carpet && r.runner_depth > 0) {
+                return Err(invalid("runner_depth must be 0..=8, and 0 for a carpet"));
             }
             if r.pad > 0 && (carpet || r.pad > MAX_PAD || r.blade_length + r.pad >= max) {
                 return Err(invalid(
@@ -1333,6 +1356,7 @@ fn validate(
                 lean: r.lean,
                 root_depth: r.root_depth,
                 spacing: r.spacing,
+                runner_depth: r.runner_depth,
                 substrates: lookup(&r.substrates)?,
                 pad: r.pad,
             };
@@ -2065,6 +2089,17 @@ mod tests {
         assert!(lotus.growth.rate > get("cryptocoryne").growth.rate);
         assert!(lotus.growth.root_feeder && lotus.colouration.is_some());
         assert_eq!(lotus.default_propagule(), Propagule::Runners);
+        // Its runners creep deep in the bed and root new bulbs far further
+        // out than any other runner's.
+        assert!(f.runner_depth >= 3, "{f:?}");
+        for other in t.iter().filter(|o| o.name != "tiger_lotus") {
+            if let Some(o) = other.form.rosette() {
+                assert!(f.spacing >= 2 * o.spacing, "{}", other.name);
+                assert_eq!(o.runner_depth, 0, "{}", other.name);
+            }
+        }
+        assert!(f.spacing >= 10 * get("monte_carlo").form.rosette().unwrap().spacing);
+        assert!(f.runner_limit() > f.spacing && f.runner_limit() <= MAX_RUNNER);
         // Its leaf ramp runs from maroon (the blotches) to green.
         let red = |c: [u8; 3]| c[0] > c[1] && c[0] > c[2];
         assert!(red(lotus.colours.leaf[0]));
@@ -2125,6 +2160,35 @@ mod tests {
             rosette.replace("\n        pad = 2", "")
         ));
         invalid(rosette.clone());
+        // Deep runners: at most 8 down, and never on a carpet; spacing up to
+        // 48, the runner then giving up at the position bits' limit.
+        let deep = rosette.replace("spacing = 6", "spacing = 48\n        runner_depth = 8");
+        let t = PlantSpeciesTable::from_toml_sources(&[&deep.replace("\n        pad = 2", "")], &m)
+            .unwrap();
+        let f = t
+            .get(PlantSpeciesId(9))
+            .unwrap()
+            .form
+            .rosette()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            (f.spacing, f.runner_depth, f.runner_limit()),
+            (48, 8, MAX_RUNNER)
+        );
+        invalid(deep.replace("runner_depth = 8", "runner_depth = 9"));
+        invalid(deep.replace("spacing = 48", "spacing = 49"));
+        let carpet = deep
+            .replace("form = \"rosette\"", "form = \"carpet\"")
+            .replace("[rosette]\n        crown = 1", "[carpet]")
+            .replace("blade_length = 20", "blade_length = 2")
+            .replace("\n        pad = 2", "");
+        invalid(carpet.clone());
+        PlantSpeciesTable::from_toml_sources(
+            &[&carpet.replace("\n        runner_depth = 8", "")],
+            &m,
+        )
+        .unwrap();
         assert!(matches!(
             PlantSpeciesTable::from_toml_sources(&[&ball.replace("[ball]", "[balls]")], &m),
             Err(PlantSpeciesError::Parse { .. })

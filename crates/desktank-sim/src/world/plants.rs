@@ -1895,11 +1895,14 @@ impl World {
                 // Only a runner's tip creeps on: a cell further back can
                 // find substrate ahead again once its runner has climbed
                 // over it.
-                Some(Part::Runner)
-                    if pos < f.spacing.saturating_mul(2) && self.runner_tip(x, y, id, pos) =>
-                {
+                Some(Part::Runner) if pos < f.runner_limit() && self.runner_tip(x, y, id, pos) => {
                     let dir = if x < bx { -1 } else { 1 };
-                    if let Some(j) = self.runner_step(x, y, dir, &f.substrates) {
+                    let step = if f.runner_depth == 0 {
+                        self.runner_step(x, y, dir, &f.substrates)
+                    } else {
+                        self.deep_runner_step(x, y, dir, f, pos)
+                    };
+                    if let Some(j) = step {
                         sites.push(Site::new(j, Part::Runner, pos + 1, RUNNER_WEIGHT));
                     }
                 }
@@ -2024,6 +2027,72 @@ impl World {
 
     /// How deep the cell at `j` lies in the ground: 1 if the cell above is
     /// open (fluid or a plant), 2 if the one above that is, else 3.
+    /// The next cell of a deep runner (`runner_depth` > 0, tiger lotus
+    /// type) whose tip is at `(x, y)` and `pos`: short of `spacing` it dives
+    /// to `runner_depth` cells below the bed's top layer and creeps on there
+    /// (rising where the bed rises); from `spacing` on it climbs back up
+    /// through the substrate, to root a plant where water is above.
+    fn deep_runner_step(
+        &self,
+        x: usize,
+        y: usize,
+        dir: isize,
+        f: &RosetteForm,
+        pos: u8,
+    ) -> Option<usize> {
+        let substrate = |j: usize| f.substrates.contains(&self.cells[j].material);
+        if pos >= f.spacing {
+            let up = self.at(x, y, 0, -1)?;
+            let m = self.cells[up].material;
+            if substrate(up) {
+                return Some(up);
+            }
+            // Under the plant it rooted (or water, where it couldn't): it
+            // is done. Under rock or the like it creeps on to get past.
+            if self.is_fluid(m) || self.plants.part(m).is_some() {
+                return None;
+            }
+            return self.runner_step(x, y, dir, &f.substrates);
+        }
+        let depth = f.runner_depth;
+        let down = self.at(x, y, 0, 1).filter(|&j| substrate(j));
+        if self.depth_in_bed(x + y * self.width, depth) < depth
+            && let Some(down) = down
+        {
+            return Some(down);
+        }
+        let ahead = self.at(x, y, dir, 0)?;
+        if substrate(ahead) {
+            if self.depth_in_bed(ahead, depth) <= depth {
+                return Some(ahead);
+            }
+            // The bed rises ahead: keep to its depth.
+            return self.at(x, y, 0, -1).filter(|&j| substrate(j));
+        }
+        // Rock or glass ahead, or the bed drops away: go under if it can.
+        down
+    }
+
+    /// How many cells of the bed (and the roots and runners in it) lie
+    /// above `j` before water or a plant above the bed (0 in the top
+    /// layer), counted up to `cap + 1`.
+    fn depth_in_bed(&self, j: usize, cap: u8) -> u8 {
+        let (x, y) = (j % self.width, j / self.width);
+        let mut depth = 0;
+        while depth <= cap {
+            let Some(above) = self.at(x, y, 0, -isize::from(depth) - 1) else {
+                break;
+            };
+            let m = self.cells[above].material;
+            let buried = matches!(self.plants.part(m), None | Some(Part::Root | Part::Runner));
+            if self.is_fluid(m) || !buried {
+                break;
+            }
+            depth += 1;
+        }
+        depth
+    }
+
     fn top_layer(&self, j: usize) -> u8 {
         let (x, y) = (j % self.width, j / self.width);
         let open = |k: Option<usize>| {

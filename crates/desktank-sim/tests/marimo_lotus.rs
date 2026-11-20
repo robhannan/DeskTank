@@ -4,7 +4,8 @@
 //! that saves keep exactly. A tiger lotus puts up petioles of differing
 //! lengths, each spreading a broad leaf pad where it stops, those at the
 //! surface lying on the water as floating leaves that shade the tank; the
-//! table matches the grid throughout and growth is deterministic.
+//! table matches the grid throughout and growth is deterministic. It
+//! spreads by deep runners that root new bulbs far off.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -317,11 +318,67 @@ fn a_tiger_lotus_spreads_leaf_pads_and_floats_some_on_the_surface() {
     let under = floating[floating.len() / 2].0;
     // (Light is full just under the surface; look a little deeper.)
     let shaded = light.at_cell(under, surface + 16);
-    let open = light.at_cell(10, surface + 16);
+    // Open water: a column well clear of every leaf (its runners root
+    // bulbs across the tank).
+    let leaves: Vec<usize> = (0..WIDTH)
+        .filter(|&x| (0..FLOOR).any(|y| [leaf, float].contains(&w.cell(x, y).unwrap().material)))
+        .collect();
+    let clear = (0..WIDTH)
+        .find(|&x| leaves.iter().all(|&l| l.abs_diff(x) > 8))
+        .expect("open water somewhere");
+    let open = light.at_cell(clear, surface + 16);
     assert!(
         shaded < 0.95 * open,
         "light under a pad {shaded}, in the open {open}"
     );
+}
+
+#[test]
+fn a_tiger_lotus_roots_new_bulbs_far_off_through_deep_runners() {
+    let mut w = lotus(1, 0);
+    let s = species(&w, "tiger_lotus");
+    let f = w
+        .plant_species()
+        .get(s)
+        .unwrap()
+        .form
+        .rosette()
+        .unwrap()
+        .clone();
+    let runner = id(&w, "runner");
+    for _ in 0..40 {
+        run(&mut w, MINUTE);
+        check_table(&w);
+    }
+    let plants = of_species(&w, s);
+    let first = plants.iter().find(|p| p.parent.is_none()).unwrap();
+    // A child bulb on each side, far further out than a carpet's (3
+    // cells) or a sword's (14), and each alone: a runner stops once it has
+    // rooted its plant.
+    let fx = first.base.0 as i64;
+    let mut sides = BTreeSet::new();
+    for c in plants.iter().filter(|p| p.parent == Some(first.id)) {
+        let dx = c.base.0 as i64 - fx;
+        assert!(dx.abs() >= 30, "a child {dx} cells out: {plants:?}");
+        sides.insert(dx.signum());
+    }
+    assert_eq!(sides.len(), 2, "{plants:?}");
+    let bases: Vec<i64> = plants.iter().map(|p| p.base.0 as i64).collect();
+    for (k, a) in bases.iter().enumerate() {
+        for b in &bases[k + 1..] {
+            assert!((a - b).abs() >= 20, "bulbs crowd at {bases:?}");
+        }
+    }
+    // Its runners creep underground: most of their cells at runner_depth
+    // (or a cell short of it) below the bed's top row, none deeper.
+    let cells = cells_of(&w, first.id.0, runner);
+    let depth = usize::from(f.runner_depth);
+    let deep = cells
+        .iter()
+        .filter(|&&(_, y)| y + 1 >= FLOOR + depth)
+        .count();
+    assert!(deep * 2 > cells.len(), "{deep} of {} deep", cells.len());
+    assert!(cells.iter().all(|&(_, y)| y <= FLOOR + depth), "{cells:?}");
 }
 
 #[test]
