@@ -22,6 +22,7 @@ use bodies::Body;
 pub use bodies::{BodyId, BodyInfo};
 
 mod creatures;
+mod hardscape;
 mod life;
 mod persist;
 mod plants;
@@ -36,6 +37,7 @@ pub use creatures::{
     REVERSION_PER_MILLE, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, SETTLE_TICKS, STRESS_LIMIT,
     STRIKE_ODDS, Traits, UnmetNeed, clean_name, pursuit,
 };
+pub use hardscape::{FULL_MASK, disc_mask, quarter_bit};
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};
 use plants::Plants;
@@ -226,6 +228,8 @@ pub struct World {
     creatures: Creatures,
     /// Plant species and the plant table (T6b, D18).
     plants: Plants,
+    /// Partial sub-cell outlines of rigid cells by index ([`hardscape`]).
+    masks: BTreeMap<usize, u16>,
 }
 
 impl World {
@@ -331,6 +335,7 @@ impl World {
             life,
             creatures,
             plants,
+            masks: BTreeMap::new(),
         };
         world.init_life();
         Ok(world)
@@ -438,6 +443,7 @@ impl World {
         self.hash_life(&mut h);
         self.hash_creatures(&mut h);
         self.hash_plants(&mut h);
+        self.hash_masks(&mut h);
         h.finish()
     }
 
@@ -527,10 +533,18 @@ impl World {
                 if dx * dx + dy * dy > r * r + r {
                     continue;
                 }
-                if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y))
-                    && self.brush_cell(x, y, material, brush, &mut body)
-                {
+                let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+                    continue;
+                };
+                let i = y * self.width + x;
+                if self.brush_cell(x, y, material, brush, &mut body) {
                     changed += 1;
+                    if rigid {
+                        self.set_mask(i, disc_mask(dx, dy, r));
+                    }
+                } else if rigid && self.cells[i].material == material {
+                    // Overlapping dabs of a stroke fill in each other's edges.
+                    self.add_mask(i, disc_mask(dx, dy, r));
                 }
             }
         }
@@ -658,6 +672,7 @@ impl World {
     fn write_cell(&mut self, x: usize, y: usize, material: MaterialId, group: &mut Option<u16>) {
         let i = y * self.width + x;
         let old = self.cells[i];
+        self.masks.remove(&i);
         if self.props[usize::from(old.material.0)].class == MovementClass::Rigid {
             self.body_removed(old.state);
         }
@@ -787,6 +802,9 @@ impl World {
     }
 
     fn swap(&mut self, i: usize, j: usize) {
+        if self.is_rigid(i) || self.is_rigid(j) {
+            self.swap_masks(i, j);
+        }
         self.cells.swap(i, j);
         self.moved[i] = self.stamp;
         self.moved[j] = self.stamp;

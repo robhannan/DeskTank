@@ -35,7 +35,7 @@ use shape::{Shape, TURN};
 
 use super::World;
 use super::persist::{rect_from_v1, rect_v1};
-use crate::save::{SaveError, v1};
+use crate::save::{SaveError, v1, v10};
 
 /// Ticks a body stays still after cells were last poured into it, so a
 /// stroke can draw a shape before it drops (2, so a host that runs two
@@ -209,6 +209,15 @@ impl World {
         b.anchored
     }
 
+    /// Records that rigid cell `i`'s outline mask changed in place, so its
+    /// body takes its cells as its shape again (a turn redraws from the
+    /// shape and would otherwise restore the old outline).
+    pub(super) fn outline_edited(&mut self, i: usize) {
+        if let Some(b) = self.bodies.get_mut(&self.cells[i].state) {
+            b.pending = b.pending.max(Pending::Sort);
+        }
+    }
+
     /// Records that a cell of body `id` was overwritten.
     pub(super) fn body_removed(&mut self, id: u16) {
         if let Some(b) = self.bodies.get_mut(&id) {
@@ -330,7 +339,15 @@ impl World {
         let cells: Vec<_> = b
             .cells
             .iter()
-            .map(|&i| (i % w, i / w, self.cells[i].variant & !GLUED_VARIANT_BIT))
+            .map(|&i| {
+                let mask = self.masks.get(&i).copied().unwrap_or(super::FULL_MASK);
+                (
+                    i % w,
+                    i / w,
+                    self.cells[i].variant & !GLUED_VARIANT_BIT,
+                    mask,
+                )
+            })
             .collect();
         let (shape, anchor) = Shape::new(&cells);
         if let Some(b) = self.bodies.get_mut(&id) {
@@ -454,6 +471,36 @@ impl World {
             .collect()
     }
 
+    /// The reference-shape masks of bodies that have partial ones, as
+    /// saved (version 10).
+    pub(super) fn save_shape_masks(&self) -> Vec<v10::ShapeMasks> {
+        self.bodies
+            .iter()
+            .filter(|(_, b)| !b.shape.masks().is_empty())
+            .map(|(&body, b)| v10::ShapeMasks {
+                body,
+                masks: b.shape.masks().to_vec(),
+            })
+            .collect()
+    }
+
+    /// Restores bodies' reference-shape masks (after [`World::load_bodies`]).
+    pub(super) fn load_shape_masks(
+        &mut self,
+        saved: Vec<v10::ShapeMasks>,
+    ) -> Result<(), SaveError> {
+        for s in saved {
+            let Some(b) = self.bodies.get_mut(&s.body) else {
+                return Err(SaveError::Invalid(format!(
+                    "outline masks for missing body {}",
+                    s.body
+                )));
+            };
+            b.shape.set_masks(s.masks)?;
+        }
+        Ok(())
+    }
+
     /// Restores the body table from a save.
     pub(super) fn load_bodies(&mut self, saved: Vec<v1::Body>) -> Result<(), SaveError> {
         let invalid = |what: &str, id: u16| SaveError::Invalid(format!("body {id}: {what}"));
@@ -538,4 +585,48 @@ fn bounds(cells: &[usize], width: usize) -> Rect {
         });
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Brush, FULL_MASK, World, WorldConfig};
+    use crate::MaterialTable;
+
+    /// An outline edited in place (a scoop's carve, a stroke's dab filling
+    /// an edge) reaches the body's reference shape by the next tick, so a
+    /// later turn, which redraws from the shape, keeps the edit.
+    #[test]
+    fn outline_edits_reach_the_shape() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 60,
+                height: 40,
+                seed: 3,
+                water_level: 1.0,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        w.paint(30, 20, 6, rock, Brush::Replace).unwrap();
+        let id = w.body_at(30, 20).unwrap().0;
+        w.set_anchored(super::BodyId(id), true);
+        w.tick();
+        let shape = w.bodies[&id].shape.masks().to_vec();
+        // Cut a hollow beside the stone, near enough to trim its outline
+        // (`carve` only trims, so any centre is safe to try).
+        let before = w.masks.clone();
+        let carved = (31..44).any(|c| {
+            w.carve(c, 50 - c, 3);
+            w.masks != before
+        });
+        assert!(carved, "no carve trimmed the stone");
+        assert!(w.masks.values().all(|&m| m != 0 && m != FULL_MASK));
+        w.tick();
+        let after = w.bodies[&id].shape.masks().to_vec();
+        assert_ne!(after, shape, "the shape took the carved outline");
+        // Taking the cells as the shape again changes nothing: in sync.
+        w.reshape(id);
+        assert_eq!(w.bodies[&id].shape.masks(), after.as_slice());
+    }
 }

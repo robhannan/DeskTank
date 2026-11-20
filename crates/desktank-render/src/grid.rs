@@ -66,13 +66,24 @@ pub const TEXEL_BYTES: usize = 4;
 
 /// Packs the cells of `r` (row-major, `width` cells per grid row) as
 /// (material, variant, state low, state high) texels into `out`, replacing
-/// its contents.
-pub fn pack(cells: &[Cell], width: usize, r: Rect, out: &mut Vec<u8>) {
+/// its contents. A rigid cell (`mask` gives its sub-cell outline, see
+/// `World::rigid_mask`) sends its outline mask in place of its state (its
+/// body id, which the shader never reads), so outlines cost no texture of
+/// their own.
+pub fn pack(
+    cells: &[Cell],
+    width: usize,
+    r: Rect,
+    mask: impl Fn(usize) -> Option<u16>,
+    out: &mut Vec<u8>,
+) {
     out.clear();
     out.reserve(r.area() * TEXEL_BYTES);
     for y in r.y0..r.y1 {
-        for c in &cells[y * width + r.x0..y * width + r.x1] {
-            let [lo, hi] = c.state.to_le_bytes();
+        let row = y * width;
+        for (x, c) in (r.x0..r.x1).zip(&cells[row + r.x0..row + r.x1]) {
+            let state = mask(row + x).unwrap_or(c.state);
+            let [lo, hi] = state.to_le_bytes();
             out.extend_from_slice(&[c.material.0, c.variant, lo, hi]);
         }
     }
@@ -120,10 +131,19 @@ mod tests {
             })
             .collect();
         let mut out = Vec::new();
-        pack(&cells, w, rect(1, 1, 3, 3), &mut out);
+        pack(&cells, w, rect(1, 1, 3, 3), |_| None, &mut out);
         assert_eq!(
             out,
             [4, 104, 4, 4, 5, 105, 5, 5, 7, 107, 7, 7, 8, 108, 8, 8]
         );
+        // Rigid cells send their outline mask instead of their state.
+        pack(
+            &cells,
+            w,
+            rect(1, 1, 3, 2),
+            |i| (i == 5).then_some(0x0ff0),
+            &mut out,
+        );
+        assert_eq!(out, [4, 104, 4, 4, 5, 105, 0xf0, 0x0f]);
     }
 }

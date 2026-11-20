@@ -6,10 +6,27 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10};
 use crate::species::SpeciesId;
 
 impl World {
+    /// The world as a version 10 snapshot.
+    pub(crate) fn to_v10(&self) -> v10::Save {
+        v10::Save {
+            base: self.to_v9(),
+            masks: self.save_masks(),
+            shapes: self.save_shape_masks(),
+        }
+    }
+
+    /// A world restored from a version 10 snapshot, on `materials`.
+    pub(crate) fn from_v10(s: v10::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let mut w = Self::from_v9(s.base, materials)?;
+        w.load_masks(&s.masks)?;
+        w.load_shape_masks(s.shapes)?;
+        Ok(w)
+    }
+
     /// The world as a version 9 snapshot.
     pub(crate) fn to_v9(&self) -> v9::Save {
         let base = |i: usize| variant(self.seed, 0, i);

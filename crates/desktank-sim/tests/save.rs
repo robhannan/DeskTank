@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use desktank_sim::save::{self, FORMAT_VERSION, SaveError};
 use desktank_sim::{
-    Brush, DEFAULT_CREATURE_CAP, ENERGY_RESERVE, LIFE_DAY_TICKS, LifeStage, MaterialId,
+    Brush, DEFAULT_CREATURE_CAP, ENERGY_RESERVE, FULL_MASK, LIFE_DAY_TICKS, LifeStage, MaterialId,
     MaterialTable, Placeable, Rect, SETTLE_TICKS, Traits, World, WorldConfig,
 };
 
@@ -645,32 +645,65 @@ fn hunting() -> World {
 
 #[test]
 fn a_version_9_fixture_loads() {
-    let path = fixture(9);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&hunting())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    // Frozen since version 10: blessing writes only the current version.
+    let bytes = std::fs::read(fixture(9)).unwrap();
     assert_eq!(save::check(&bytes), Ok(9));
     let mut w = save::decode(&bytes, table()).unwrap();
-    let mut fresh = hunting();
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Pinned, so every platform decodes the same state.
+    assert_eq!(w.state_hash(), 0x2ab9_5592_0c2b_e8ef);
     let pursuit = |w: &World| -> Vec<Pursuit> {
         w.creatures()
             .iter()
             .map(|c| (c.id().0, c.quarry().map(|q| q.0), c.fear(), c.home()))
             .collect()
     };
-    assert_eq!(pursuit(&w), pursuit(&fresh));
     assert!(w.creatures().iter().any(|c| c.quarry().is_some()));
     assert!(w.creatures().iter().any(|c| c.fear() > 0));
-    // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x2ab9_5592_0c2b_e8ef);
-    // Saved mid-chase, it hunts on exactly as the tank that wrote it.
+    // Version 10 migrates its rigid cells whole: the tank that wrote it
+    // has round outlines on its poured stones, which change no physics,
+    // so it hunts on exactly as that tank does.
+    let mut fresh = hunting();
+    assert_eq!(pursuit(&w), pursuit(&fresh));
+    assert!((0..w.width() * w.height()).all(|i| w.rigid_mask(i).is_none_or(|m| m == FULL_MASK)));
+    for _ in 0..400 {
+        w.tick();
+        fresh.tick();
+    }
+    assert_eq!(pursuit(&w), pursuit(&fresh));
+    let cells = |w: &World| -> Vec<_> {
+        (0..w.height())
+            .flat_map(|y| (0..w.width()).map(move |x| (x, y)))
+            .map(|(x, y)| w.cell(x, y).unwrap().material)
+            .collect()
+    };
+    assert!(cells(&w) == cells(&fresh), "the same cells");
+}
+
+#[test]
+fn a_version_10_fixture_loads() {
+    let path = fixture(10);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&hunting())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(10));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    let mut fresh = hunting();
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    // The poured stones keep their round outlines.
+    let partial = |w: &World| -> Vec<(usize, u16)> {
+        (0..w.width() * w.height())
+            .filter_map(|i| w.rigid_mask(i).filter(|&m| m != FULL_MASK).map(|m| (i, m)))
+            .collect()
+    };
+    assert_ne!(partial(&w), Vec::new());
+    assert_eq!(partial(&w), partial(&fresh));
     for _ in 0..400 {
         w.tick();
         fresh.tick();
     }
     assert_eq!(w.state_hash(), fresh.state_hash());
+    assert_eq!(partial(&w), partial(&fresh));
 }
 
 /// A migrated tank's creatures rest whole bands deep, spread over them.

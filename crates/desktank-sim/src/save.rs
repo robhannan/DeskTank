@@ -20,7 +20,7 @@
 //! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2,
 //! `save::v3::Save` for 3, `save::v4::Save` for 4, `save::v5::Save` for 5,
 //! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8,
-//! `save::v9::Save` for 9).
+//! `save::v9::Save` for 9, `save::v10::Save` for 10).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -42,7 +42,8 @@
 //! creature's name (T9 part 3, version 6); and each floater's raft, its
 //! motion as a buoyant body (T6c part 2, version 7); and each plant's
 //! colouration (T6d, version 8); and each creature's quarry, pursuit
-//! counter and fright (hunting and territory, version 9).
+//! counter and fright (hunting and territory, version 9); and the
+//! sub-cell outline masks of rigid cells and bodies' shapes (version 10).
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -67,7 +68,8 @@
 //! 6 a version 5 tank's with no name, version 7 a version 6 tank with
 //! no rafts (no build before it had floaters), and version 8 a version 7
 //! tank's plants uncoloured, and version 9 a version 8 tank's creatures
-//! calm, with no quarry and no rest from a chase.
+//! calm, with no quarry and no rest from a chase, and version 10 a
+//! version 9 tank's rigid cells whole.
 
 use thiserror::Error;
 
@@ -76,6 +78,7 @@ use crate::species::{SpeciesId, SpeciesTable};
 use crate::world::{DEPTH_BANDS, LIFE_DAY_TICKS, World, WorldError, default_band};
 
 pub(crate) mod v1;
+pub(crate) mod v10;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -88,7 +91,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 9;
+pub const FORMAT_VERSION: u16 = 10;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -135,7 +138,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v9();
+    let snapshot = world.to_v10();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     let payload = lz4_flex::block::compress_prepend_size(&raw);
@@ -165,9 +168,13 @@ pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError
     let from_v8 = |s: v8::Save| World::from_v9(v9::Save::from_v8(s), materials.clone());
     let from_v7 = |s: v7::Save| from_v8(v8::Save::from_v7(s));
     let from_v6 = |s: v6::Save| from_v7(v7::Save::from_v6(s));
+    if version == 10 {
+        let snapshot: v10::Save = postcard::from_bytes(&raw).map_err(payload)?;
+        return World::from_v10(snapshot, materials);
+    }
     if version == 9 {
         let snapshot: v9::Save = postcard::from_bytes(&raw).map_err(payload)?;
-        return World::from_v9(snapshot, materials);
+        return World::from_v10(v10::Save::from_v9(snapshot), materials);
     }
     if version == 8 {
         let snapshot: v8::Save = postcard::from_bytes(&raw).map_err(payload)?;
