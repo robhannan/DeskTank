@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
 use desktank_sim::{FieldKind, MaterialTable, Script, World};
 
-use crate::scene;
+use desktank_sim::scene;
 
 /// What to capture, from the command line.
 #[derive(Debug)]

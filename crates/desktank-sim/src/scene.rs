@@ -1,22 +1,28 @@
-//! Starting scenes shared by `desktank window` and `desktank bench`.
+//! Starting scenes shared by the hosts: `desktank window`, `desktank bench`,
+//! `desktank capture` and the Android Dream.
 
-use desktank_sim::species::Zone;
-use desktank_sim::{Brush, MaterialId, Rect, World, WorldError};
+use crate::species::Zone;
+use crate::{Brush, MaterialId, Rect, World, WorldError};
 
 /// A built-in material's ID. The built-in table always has these.
-pub fn material(world: &World, name: &str) -> anyhow::Result<MaterialId> {
+///
+/// # Errors
+///
+/// Returns [`WorldError::MissingMaterial`] if the world's table lacks it.
+pub fn material(world: &World, name: &'static str) -> Result<MaterialId, WorldError> {
     world
         .materials()
         .id(name)
-        .ok_or_else(|| anyhow::anyhow!("built-in material {name:?} is missing"))
+        .ok_or(WorldError::MissingMaterial(name))
 }
 
 /// A sand bed with a gravel patch and a few rocks, laid out from the seed.
 ///
 /// # Errors
 ///
-/// Returns an error if a built-in material is missing.
-pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
+/// Returns an error if a built-in material is missing or the world rejects
+/// a fill.
+pub fn starter(world: &mut World, seed: u64) -> Result<(), WorldError> {
     let (w, h) = (world.width(), world.height());
     let [sand, gravel, rock] = ["sand", "gravel", "rock"].map(|n| material(world, n));
     let (sand, gravel, rock) = (sand?, gravel?, rock?);
@@ -56,7 +62,7 @@ pub fn starter(world: &mut World, seed: u64) -> anyhow::Result<()> {
 ///
 /// Returns an error if the world rejects a creature for a reason other
 /// than having no room at its spot.
-pub fn stock(world: &mut World, count: usize, seed: u64) -> anyhow::Result<usize> {
+pub fn stock(world: &mut World, count: usize, seed: u64) -> Result<usize, WorldError> {
     let species: Vec<_> = world
         .species()
         .iter()
@@ -86,7 +92,7 @@ pub fn stock(world: &mut World, count: usize, seed: u64) -> anyhow::Result<usize
         match world.add_creature(s, x, y) {
             Ok(_) => added += 1,
             Err(WorldError::NoRoom) => {}
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         }
     }
     Ok(added)
@@ -99,7 +105,7 @@ fn rect(x0: usize, y0: usize, x1: usize, y1: usize) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use desktank_sim::{MaterialTable, WorldConfig};
+    use crate::{MaterialTable, WorldConfig};
 
     #[test]
     fn starter_scene_settles() {
@@ -161,7 +167,7 @@ mod tests {
         );
         assert_eq!(
             stock(&mut world, 1000, 7).unwrap(),
-            desktank_sim::DEFAULT_CREATURE_CAP - 30
+            crate::DEFAULT_CREATURE_CAP - 30
         );
     }
 }

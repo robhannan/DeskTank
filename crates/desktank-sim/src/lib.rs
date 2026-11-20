@@ -16,6 +16,7 @@ mod placeable;
 pub mod plants;
 mod rng;
 pub mod save;
+pub mod scene;
 pub mod script;
 pub mod snapshot;
 pub mod species;
