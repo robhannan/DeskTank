@@ -6,10 +6,14 @@
 //! in the lead's frame (along its heading and across it) and its own pace,
 //! and both drift with smooth noise:
 //!
-//! - **Place.** A slot from [`AHEAD`] to [`BEHIND`] body lengths along the
-//!   heading and [`ACROSS`] either side of it, so the school stretches
-//!   along the way it swims. The slot drifts over [`SLOT_TICKS`], so fish
-//!   slide through the school, trail behind or swim up level with the lead,
+//! - **Place.** A slot up to [`ALONG`] body lengths either way along the
+//!   school's axis and [`ACROSS`] either side of it, so the school stretches
+//!   along the way it swims. Slots are measured from the point the lead
+//!   reaches in 8 ticks. The axis is level, tilted as the lead climbs or
+//!   dives (less while it's slow) and never mirrored, so a lead turning
+//!   round doesn't fling every slot across the school: the fish turn with
+//!   it, and those that were behind now lead. The slot drifts over
+//!   [`SLOT_TICKS`], so fish slide through the school, trail or swim ahead,
 //!   and a [`WOBBLE_TICKS`] wobble keeps each one moving on its own.
 //! - **Pace.** A speed cap between cruise and top over [`PACE_TICKS`];
 //!   near the top of its swing it darts ahead, near the bottom it lags
@@ -25,10 +29,9 @@
 use super::{CreatureId, Kind, ONE, Schoolmate};
 use crate::rng::splitmix64;
 
-/// Slot range along the lead's heading, in body lengths (ahead positive).
-const AHEAD: i32 = 1;
-const BEHIND: i32 = 6;
-/// Slot range either side of the heading, in body lengths.
+/// Slot range either way along the school's axis, in body lengths.
+const ALONG: i32 = 7 / 2;
+/// Slot range either side of the axis, in body lengths.
 const ACROSS: i32 = 2;
 /// Periods of the slot's drift, the wobble and the pace, in ticks (each
 /// fish draws its own from the range).
@@ -76,9 +79,8 @@ impl Quirks {
     /// Its place in the lead's frame, `(along, across)` in 1/256 cells for
     /// a body `len` long (1/256 cells).
     pub(super) fn slot(&self, len: i32) -> (i32, i32) {
-        let span = AHEAD + BEHIND;
-        // Centred on the middle of the span, ±span / 2.
-        let along = (AHEAD - BEHIND) * len / 2 + self.noise(0, SLOT_TICKS) * span * len / (2 * ONE);
+        // ±3.5 lengths: a whole school about seven long.
+        let along = self.noise(0, SLOT_TICKS) * (2 * ALONG + 1) * len / (2 * ONE);
         let across = self.noise(1, SLOT_TICKS) * ACROSS * len / ONE;
         let wobble = |salt, reach: i32| self.noise(salt, WOBBLE_TICKS) * reach / ONE;
         (along + wobble(2, len * 3 / 4), across + wobble(3, len / 2))
@@ -106,15 +108,20 @@ impl Quirks {
     }
 }
 
-/// The lead's heading as a unit vector in 1/256: the way it swims, or the
-/// way it faces while nearly still, so slots don't spin as it turns on the
-/// spot.
-pub(super) fn heading(k: &Kind, lead: &Schoolmate) -> (i32, i32) {
+/// The school's axis as a unit vector in 1/256: level, tilted by the
+/// lead's climb or dive (by less while it swims slower than cruise), and
+/// never mirrored, so it turns smoothly however the lead does.
+pub(super) fn axis(k: &Kind, lead: &Schoolmate) -> (i32, i32) {
     let speed = i32::try_from(super::dist(lead.vx, lead.vy)).unwrap_or(0);
-    if speed <= k.cruise / 4 {
-        return (if lead.facing_left { -ONE } else { ONE }, 0);
+    if speed == 0 {
+        return (ONE, 0);
     }
-    (lead.vx * ONE / speed, lead.vy * ONE / speed)
+    // The heading's sine times its cosine: the slope of a level axis tilted
+    // by the heading, the same for a heading and its reverse, in 1/256.
+    let (hx, hy) = (lead.vx * ONE / speed, lead.vy * ONE / speed);
+    let tilt = hx * hy / ONE * speed.min(k.cruise) / k.cruise.max(1);
+    let n = i32::try_from(super::dist(ONE, tilt)).unwrap_or(ONE).max(1);
+    (ONE * ONE / n, tilt * ONE / n)
 }
 
 #[cfg(test)]
@@ -144,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn slots_stretch_along_the_heading() {
+    fn slots_are_longer_than_wide() {
         let len = 7 * ONE;
         let (mut along, mut across) = ((i32::MAX, i32::MIN), (i32::MAX, i32::MIN));
         for id in 1..40 {
@@ -155,15 +162,60 @@ mod tests {
             }
         }
         // Inside the span and wobble, and longer than it is wide.
-        assert!(
-            along.0 >= -(BEHIND * len + len) && along.1 <= AHEAD * len + len,
-            "{along:?}"
-        );
+        let reach = (2 * ALONG + 1) * len / 2 + len;
+        assert!(along.0 >= -reach && along.1 <= reach, "{along:?}");
         assert!(
             across.0.abs().max(across.1.abs()) <= ACROSS * len + len,
             "{across:?}"
         );
         assert!(along.1 - along.0 > (across.1 - across.0) * 5 / 4);
+    }
+
+    fn lead(vx: i32, vy: i32) -> Schoolmate {
+        Schoolmate {
+            id: CreatureId(1),
+            species: crate::species::SpeciesId(0),
+            x: 0,
+            y: 0,
+            vx,
+            vy,
+        }
+    }
+
+    #[test]
+    fn the_axis_turns_smoothly_and_never_mirrors() {
+        let mut k = *crate::World::new(
+            crate::WorldConfig::default(),
+            crate::MaterialTable::builtin().unwrap(),
+        )
+        .unwrap()
+        .creatures
+        .kinds
+        .iter()
+        .flatten()
+        .next()
+        .unwrap();
+        k.cruise = 64;
+        // Level when level, still, or swimming either way.
+        assert_eq!(axis(&k, &lead(0, 0)), (ONE, 0));
+        assert_eq!(axis(&k, &lead(64, 0)), (ONE, 0));
+        assert_eq!(axis(&k, &lead(-64, 0)), (ONE, 0));
+        // The same line for a heading and its reverse.
+        assert_eq!(axis(&k, &lead(60, 30)), axis(&k, &lead(-60, -30)));
+        assert!(axis(&k, &lead(60, 30)).1 > 0 && axis(&k, &lead(60, -30)).1 < 0);
+        // Turning round through every heading, the axis moves at most a
+        // little per step.
+        let mut last = axis(&k, &lead(64, 0));
+        for deg in 1..=360 {
+            let r = f64::from(deg).to_radians();
+            #[allow(clippy::cast_possible_truncation)]
+            let now = axis(&k, &lead((64.0 * r.cos()) as i32, (64.0 * r.sin()) as i32));
+            assert!(
+                (now.0 - last.0).abs() + (now.1 - last.1).abs() <= 16,
+                "{deg}°"
+            );
+            last = now;
+        }
     }
 
     #[test]

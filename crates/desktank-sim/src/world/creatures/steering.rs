@@ -221,7 +221,7 @@ impl World {
         let quirks = school::Quirks::of(self.seed, c.id, self.tick);
         let len = k.w * ONE;
         let (along, across) = quirks.slot(len);
-        let (hx, hy) = school::heading(k, lead);
+        let (hx, hy) = school::axis(k, lead);
         let mut tx = lead.x + 8 * lead.vx + (along * hx - across * hy) / ONE;
         let mut ty = lead.y + 8 * lead.vy + (along * hy + across * hx) / ONE;
         let spacing = quirks.spacing(len);

@@ -526,7 +526,6 @@ struct Schoolmate {
     y: i32,
     vx: i32,
     vy: i32,
-    facing_left: bool,
 }
 
 impl Creatures {
@@ -1288,7 +1287,6 @@ impl World {
                     y: c.y,
                     vx: c.vx,
                     vy: c.vy,
-                    facing_left: c.facing_left,
                 });
             }
         }

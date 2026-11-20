@@ -1245,7 +1245,9 @@ fn schools_are_loose_irregular_and_out_of_step() {
     for (seed, name) in [
         (4, "neon_tetra"),
         (77, "neon_tetra"),
+        (123, "neon_tetra"),
         (9, "harlequin_rasbora"),
+        (31, "harlequin_rasbora"),
     ] {
         let s = school_shape(seed, name, 10);
         eprintln!(
