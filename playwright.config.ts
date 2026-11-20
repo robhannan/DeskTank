@@ -11,7 +11,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [["list"], ["github"]] : "list",
   use: {
-    baseURL: `http://127.0.0.1:${PORT}/`,
+    baseURL: `http://127.0.0.1:${PORT}/DeskTank/`,
     ...devices["Desktop Chrome"],
     deviceScaleFactor: 1,
     // CI runners have no GPU: Chromium's WebGL2 then runs on SwiftShader,
@@ -20,8 +20,8 @@ export default defineConfig({
   },
   projects: [{ name: "chromium" }],
   webServer: {
-    command: `node scripts/serve-web.ts ${PORT}`,
-    url: `http://127.0.0.1:${PORT}/`,
+    command: `node scripts/serve-web.ts ${PORT} /DeskTank/`,
+    url: `http://127.0.0.1:${PORT}/DeskTank/`,
     reuseExistingServer: !process.env.CI,
   },
 });
