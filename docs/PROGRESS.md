@@ -6,6 +6,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 ## Done
 
+- Sub-cell background and sand resolution (`desktank-render`): non-plant cells (`ground` and `behind` in `tank.wgsl`) now draw at 2×2 texels per cell at scale ≥ 2 and 4×4 at scales divisible by 4 (keeping 1×1 at scale 1), matching the enhanced plants and creatures without changing the sim, save format or WebGL2 limits. Palette alpha encodes `GroundStyle` (`palette.rs`, checked against WGSL constants in `renderer.rs`): water and liquid fertiliser use sub-cell depth gradients, subtle grain and a crisp air-water surface meniscus; air drops chunky 1× blocks for a clean sky lift; sand renders fine quartz grains with top-edge water lighting; gravel and aquasoil render staggered river pebbles and dark matte soil pellets; rock and driftwood render faceted stone strata and horizontal wood grain with edge bevels (preserving glued amber tint); bubbles, algae and detritus are refined over background water. Static on settled tanks (zero extra frames); render references re-blessed.
+
 - Filter outflow deflects rising air and CO₂ bubbles. The water flow overlay tints the tank by local current speed, from teal to yellow in the window, web Settings and scripted captures (`--field flow`).
 
 - Hungry guppies seek and eat live duckweed fronds. A bite damages the owning plant and feeds the fish.
