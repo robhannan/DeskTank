@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use desktank_platform::{ProcessStats, process_stats};
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
-use desktank_sim::{Brush, MaterialTable, World, WorldConfig};
+use desktank_sim::{Brush, MaterialTable, Propagule, Rect, TICKS_PER_SECOND, World, WorldConfig};
 
 use desktank_sim::scene;
 
@@ -32,7 +32,7 @@ const POUR_RADIUS: u32 = 4;
 /// # Errors
 ///
 /// Returns an error if no GPU is available or the world can't be built.
-pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
+pub fn run(seconds: u64, fish: usize, plants: bool, sway: bool) -> anyhow::Result<()> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let gpu = pollster::block_on(Gpu::new(&instance, None, GpuOptions { timestamps: true }))?;
@@ -44,9 +44,13 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
     };
     let mut world = World::new(config, MaterialTable::builtin()?)?;
     scene::starter(&mut world, SEED)?;
+    if plants {
+        plant_bed(&mut world)?;
+    }
     scene::stock(&mut world, fish, SEED)?;
     let sand = scene::material(&world, "sand")?;
     let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_sway(sway);
     let gpu_timing = tank.enable_gpu_timing(&gpu);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let view = offscreen_target(&gpu, format);
@@ -57,6 +61,8 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
     let mut settled: Option<Phase> = None;
     let mut gpu_times = Samples::default();
     let mut max_awake = 0;
+    let pour_start = tank.world().tick_count();
+    let pour_end = pour_start + POUR_TICKS;
     // The last tick poured into, so each tick gets exactly one disc.
     let mut poured = None;
     loop {
@@ -67,10 +73,10 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
         // The scripted pour: a disc of sand each tick, sweeping sideways.
         let world = tank.world();
         let tick = world.tick_count();
-        if tick < POUR_TICKS && poured != Some(tick) {
+        if tick < pour_end && poured != Some(tick) {
             poured = Some(tick);
             let w = i64::try_from(world.width()).unwrap_or(0);
-            let x = w / 2 + i64::try_from(tick).unwrap_or(0) * 2 - 100;
+            let x = w / 2 + i64::try_from(tick - pour_start).unwrap_or(0) * 2 - 100;
             let y = i64::try_from(world.surface_row()).unwrap_or(0) + 10;
             tank.world_mut()
                 .paint(x, y, POUR_RADIUS, sand, Brush::Pour)?;
@@ -97,7 +103,7 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
         let awake = tank.world().awake_chunks();
         max_awake = max_awake.max(awake);
         phase.max_awake = phase.max_awake.max(awake);
-        if settled.is_none() && tank.world().tick_count() > POUR_TICKS && awake == 0 {
+        if settled.is_none() && tank.world().tick_count() > pour_end && awake == 0 {
             let now = Instant::now();
             let stats = process_stats();
             active.end(now, stats);
@@ -119,9 +125,47 @@ pub fn run(seconds: u64, fish: usize) -> anyhow::Result<()> {
         settled: settled.as_ref(),
         gpu_times: gpu_timing.then_some(&gpu_times),
         max_awake,
+        sway,
         end: end.1,
     };
     print!("{}", report.render(&gpu, tank.world()));
+    Ok(())
+}
+
+/// Pre-grows a planted bed across the starter tank for `--plants` benchmarks.
+fn plant_bed(world: &mut World) -> anyhow::Result<()> {
+    let (w, h) = (world.width(), world.height());
+    let soil = scene::material(world, "aquasoil")?;
+    world.fill_rect(
+        Rect {
+            x0: w / 8,
+            y0: h - h / 10,
+            x1: w - w / 8,
+            y1: h - h / 16,
+        },
+        soil,
+        Brush::Replace,
+    )?;
+    let names = [
+        ("hygrophila", Propagule::Cuttings),
+        ("rotala", Propagule::Cuttings),
+        ("ludwigia", Propagule::Cuttings),
+        ("vallisneria", Propagule::Runners),
+        ("amazon_sword", Propagule::Runners),
+        ("bacopa", Propagule::Cuttings),
+    ];
+    let y = i64::try_from(h - h / 10 - 2).unwrap_or(0);
+    for k in 0..18 {
+        let (name, prop) = names[k % names.len()];
+        if let Some(id) = world.plant_species().id(name) {
+            let x = i64::try_from(w / 7 + k * (w * 5 / 7) / 18).unwrap_or(0);
+            let _ = world.paint_plant(x, y, 0, id, prop);
+        }
+    }
+    // Pre-grow for 3 minutes of world time so stems and blades are full-sized.
+    for _ in 0..180 * TICKS_PER_SECOND {
+        world.tick();
+    }
     Ok(())
 }
 
@@ -153,6 +197,7 @@ struct Report<'a> {
     /// `None` if the adapter has no timestamp queries.
     gpu_times: Option<&'a Samples>,
     max_awake: usize,
+    sway: bool,
     end: ProcessStats,
 }
 
@@ -198,6 +243,13 @@ impl Report<'_> {
             world.awake_chunks()
         );
         let _ = writeln!(out, "creatures: {}", world.creatures().len());
+        let _ = writeln!(
+            out,
+            "plants: {} ({} cells), sway: {}",
+            world.plant_count(),
+            world.plant_cells(),
+            if self.sway { "on" } else { "off" }
+        );
         match self.gpu_times {
             Some(t) => {
                 let _ = writeln!(out, "GPU frame time ({} frames): {}", t.len(), t.summary());

@@ -89,7 +89,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, sway: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -126,6 +126,7 @@ let rafId = 0;
 let timerId = 0;
 let hidden = document.hidden;
 let batteryFps = FPS_AC;
+let onBattery = false;
 let restoring = false; // a graphics open is in flight
 let contextLost = false; // WebGL2 context lost, not yet restored
 let lossCount = 0; // bumped on each loss, so a stale open is discarded
@@ -217,6 +218,7 @@ function loadSettings(): Settings {
     field: typeof saved.field === "string" && FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
     avoidCursor: saved.avoidCursor === true,
     easyMode: saved.easyMode === true,
+    sway: saved.sway === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
     seed: int(saved.seed, 0, 0xffffffff, DEFAULTS.seed),
     radius: int(saved.radius, 0, 24, DEFAULTS.radius), // the tank clamps it too
@@ -244,6 +246,7 @@ function showSettings() {
   $<HTMLSelectElement>("set-field").value = settings.field;
   $<HTMLInputElement>("set-avoid-cursor").checked = settings.avoidCursor;
   $<HTMLInputElement>("set-easy-mode").checked = settings.easyMode;
+  $<HTMLInputElement>("set-sway").checked = settings.sway;
   $<HTMLInputElement>("set-stats").checked = settings.stats;
   seedInput.value = String(settings.seed);
   brushInput.value = String(settings.radius);
@@ -254,6 +257,9 @@ function showSettings() {
     tank.setFieldOverlay(settings.field);
     tank.setCursorAvoidance(settings.avoidCursor);
     tank.setEasyMode(settings.easyMode);
+    tank.setSway(settings.sway);
+    tank.setOnBattery(onBattery);
+    tank.setHidden(hidden);
     tank.setRadius(settings.radius);
     kick();
   }
@@ -1278,6 +1284,7 @@ function wireSettings(resetTank: () => void) {
   $("set-field").addEventListener("change", (e) => update({ field: valueOf(e) }));
   $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: checkedOf(e) }));
   $("set-easy-mode").addEventListener("change", (e) => update({ easyMode: checkedOf(e) }));
+  $("set-sway").addEventListener("change", (e) => update({ sway: checkedOf(e) }));
   $("set-stats").addEventListener("change", (e) => {
     update({ stats: checkedOf(e) });
     updateStats();
@@ -1299,6 +1306,7 @@ function wireLifecycle() {
   // A hidden page is also the last reliable moment to save (SPEC §3.5).
   document.addEventListener("visibilitychange", () => {
     hidden = document.hidden;
+    tank?.setHidden(hidden);
     if (hidden) {
       tank?.pause();
       stopLoop();
@@ -1333,8 +1341,10 @@ function wireLifecycle() {
   // unless the settings fix the cap.
   navigator.getBattery?.().then((battery) => {
     const onChange = () => {
+      onBattery = !battery.charging;
       batteryFps = battery.charging ? FPS_AC : FPS_BATTERY;
       tank?.setMaxFps(maxFps());
+      tank?.setOnBattery(onBattery);
     };
     battery.addEventListener("chargingchange", onChange);
     onChange();

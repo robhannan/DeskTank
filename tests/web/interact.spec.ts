@@ -394,6 +394,9 @@ test("settings persist across reloads", async ({ page }) => {
   await page.getByLabel("Fish avoid the pointer").check();
   await page.getByLabel("Easy mode (only old age kills)").check();
   expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(true);
+  expect(await page.evaluate(() => window.desktank.tank.sway())).toBe(false);
+  await page.getByLabel("Plant sway (10 fps, off on battery)").check();
+  expect(await page.evaluate(() => window.desktank.tank.sway())).toBe(true);
   await page.locator("#set-stats").uncheck();
   await page.locator("#seed").fill("42");
   await page.locator("#seed").dispatchEvent("change");
@@ -410,6 +413,7 @@ test("settings persist across reloads", async ({ page }) => {
     stats: false,
     avoidCursor: true,
     easyMode: true,
+    sway: true,
     seed: 42,
     radius: 7,
   });
@@ -417,6 +421,7 @@ test("settings persist across reloads", async ({ page }) => {
   expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("flow");
   expect(await page.evaluate(() => window.desktank.tank.radius())).toBe(7);
   expect(await page.evaluate(() => window.desktank.tank.easyMode()), "easy mode applies to the new tank").toBe(true);
+  expect(await page.evaluate(() => window.desktank.tank.sway()), "sway applies to the new tank").toBe(true);
   await expect(page.locator("#stats")).toBeHidden();
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.locator("#set-scale")).toHaveValue(String(scale));
@@ -427,6 +432,7 @@ test("settings persist across reloads", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => window.desktank.grid[0])).toBe(autoScale);
   expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("");
   expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(false);
+  expect(await page.evaluate(() => window.desktank.tank.sway())).toBe(false);
   // Garbage in storage falls back to the defaults.
   await page.evaluate(() => localStorage.setItem("desktank.settings.v1", "{not json"));
   await page.reload();

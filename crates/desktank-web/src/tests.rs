@@ -578,6 +578,18 @@ fn a_frame_is_wanted_after_an_edit() {
 }
 
 #[test]
+fn sway_is_off_by_default_and_toggles() {
+    let mut t = tank();
+    assert!(!t.sway());
+    t.set_sway(true);
+    assert!(t.sway());
+    t.set_on_battery(true);
+    t.set_hidden(true);
+    t.set_sway(false);
+    assert!(!t.sway());
+}
+
+#[test]
 fn maps_canvas_pixels_to_cells_with_letterbox() {
     let mut t = tank();
     // 512×288 holds 128×72 at scale 4 exactly.

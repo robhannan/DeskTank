@@ -338,7 +338,10 @@ fn pearling_stops_on_unhealthy_plants() {
         }
     }
     assert!(w.plant_count() > 0);
-    assert!(w.plants().all(|p| p.health < PEARL_HEALTH && p.parts[2] > 0));
+    assert!(
+        w.plants()
+            .all(|p| p.health < PEARL_HEALTH && p.parts[2] > 0)
+    );
     // Remove the lid so light returns to strong, and inject CO₂, then check
     // immediately before health recovers back to PEARL_HEALTH.
     let water = w.materials().id("water").unwrap();

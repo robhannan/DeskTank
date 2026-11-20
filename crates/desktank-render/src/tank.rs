@@ -19,6 +19,44 @@ pub const SWAY_MAX_FPS: u32 = 10;
 /// Minimum interval between sway-only redraws (100 ms = 10 fps).
 const SWAY_INTERVAL: Duration = Duration::from_millis(100);
 
+const SWAY_ENABLED: u8 = 1 << 0;
+const SWAY_BATTERY: u8 = 1 << 1;
+const SWAY_SAVER: u8 = 1 << 2;
+const SWAY_HIDDEN: u8 = 1 << 3;
+
+/// Optional plant-sway setting and host-environment gates (SPEC §2.7, T6d).
+#[derive(Clone, Copy, Debug, Default)]
+struct Sway {
+    flags: u8,
+    last_frame: Option<Duration>,
+}
+
+impl Sway {
+    fn enabled(self) -> bool {
+        self.flags & SWAY_ENABLED != 0
+    }
+
+    fn hidden(self) -> bool {
+        self.flags & SWAY_HIDDEN != 0
+    }
+
+    fn active(self) -> bool {
+        self.flags == SWAY_ENABLED
+    }
+
+    fn set_flag(&mut self, bit: u8, on: bool) {
+        if on {
+            self.flags |= bit;
+        } else {
+            self.flags &= !bit;
+        }
+    }
+
+    fn frame_due(self, now: Duration) -> bool {
+        self.last_frame.is_none_or(|t| now >= t + SWAY_INTERVAL)
+    }
+}
+
 /// Tank settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TankConfig {
@@ -68,16 +106,8 @@ pub struct Tank {
     creatures_drawn: Option<u64>,
     /// Plants version last drawn (`None` before the first frame).
     plants_drawn: Option<u64>,
-    /// Optional render-only plant sway (SPEC §2.7, T6d); off by default.
-    sway: bool,
-    /// Host is running on battery power: suppresses sway frames.
-    on_battery: bool,
-    /// Host is running as a screensaver: suppresses sway frames.
-    saver_mode: bool,
-    /// Host surface is hidden/paused: suppresses sway frames.
-    hidden: bool,
-    /// Host time of the last frame drawn while sway was active.
-    last_sway_frame: Option<Duration>,
+    /// Optional render-only plant sway state (SPEC §2.7, T6d); off by default.
+    sway: Sway,
 }
 
 impl Tank {
@@ -101,11 +131,7 @@ impl Tank {
             time_of_day: daylight::NOON,
             creatures_drawn: None,
             plants_drawn: None,
-            sway: false,
-            on_battery: false,
-            saver_mode: false,
-            hidden: false,
-            last_sway_frame: None,
+            sway: Sway::default(),
         }
     }
 
@@ -114,52 +140,42 @@ impl Tank {
     /// most [`SWAY_MAX_FPS`] (10 fps), and is automatically disabled on
     /// battery, in screensaver mode and while hidden.
     pub fn set_sway(&mut self, enabled: bool) {
-        let was = self.sway_active();
-        self.sway = enabled;
-        if self.sway_active() != was && !self.hidden {
-            self.needs_frame = true;
-            if !self.sway_active() {
-                self.last_sway_frame = None;
-            }
-        }
+        self.set_sway_flag(SWAY_ENABLED, enabled);
     }
 
     /// Whether the user has enabled plant sway.
     #[must_use]
     pub fn sway(&self) -> bool {
-        self.sway
+        self.sway.enabled()
     }
 
     /// Tells the tank whether the host is on battery power (disables sway).
     pub fn set_on_battery(&mut self, on_battery: bool) {
-        let was = self.sway_active();
-        self.on_battery = on_battery;
-        if self.sway_active() != was && !self.hidden {
-            self.needs_frame = true;
-            if !self.sway_active() {
-                self.last_sway_frame = None;
-            }
-        }
+        self.set_sway_flag(SWAY_BATTERY, on_battery);
     }
 
     /// Tells the tank whether the host is a screensaver (disables sway).
     pub fn set_saver_mode(&mut self, saver_mode: bool) {
-        let was = self.sway_active();
-        self.saver_mode = saver_mode;
-        if self.sway_active() != was && !self.hidden {
-            self.needs_frame = true;
-            if !self.sway_active() {
-                self.last_sway_frame = None;
-            }
-        }
+        self.set_sway_flag(SWAY_SAVER, saver_mode);
     }
 
     /// Tells the tank whether the host surface is hidden (disables sway
     /// without requesting a frame).
     pub fn set_hidden(&mut self, hidden: bool) {
-        self.hidden = hidden;
+        self.sway.set_flag(SWAY_HIDDEN, hidden);
         if hidden {
-            self.last_sway_frame = None;
+            self.sway.last_frame = None;
+        }
+    }
+
+    fn set_sway_flag(&mut self, bit: u8, on: bool) {
+        let was = self.sway_active();
+        self.sway.set_flag(bit, on);
+        if self.sway_active() != was && !self.sway.hidden() {
+            self.needs_frame = true;
+            if !self.sway_active() {
+                self.sway.last_frame = None;
+            }
         }
     }
 
@@ -167,16 +183,7 @@ impl Tank {
     /// in screensaver mode, not hidden, and the tank has at least one plant).
     #[must_use]
     pub fn sway_active(&self) -> bool {
-        self.sway
-            && !self.on_battery
-            && !self.saver_mode
-            && !self.hidden
-            && self.world.plant_count() > 0
-    }
-
-    fn sway_frame_due(&self, now: Duration) -> bool {
-        self.last_sway_frame
-            .is_none_or(|t| now >= t + SWAY_INTERVAL)
+        self.sway.active() && self.world.plant_count() > 0
     }
 
     /// Current sway phase in seconds of world time (deterministic for
@@ -285,19 +292,19 @@ impl Tank {
         }
         let world_wanted = self.frame_wanted();
         let sway_on = self.sway_active();
-        let sway_wanted = sway_on && self.sway_frame_due(now);
+        let sway_wanted = sway_on && self.sway.frame_due(now);
         let wanted = world_wanted || sway_wanted;
-        let redraw = !self.hidden && wanted && self.pacer.frame_allowed(now);
+        let redraw = !self.sway.hidden() && wanted && self.pacer.frame_allowed(now);
         if redraw {
             self.pacer.frame_drawn(now);
             if sway_on {
-                self.last_sway_frame = Some(now);
+                self.sway.last_frame = Some(now);
             }
         }
         let mut wake_at = self.pacer.wake_at(now, wanted && !redraw);
         if sway_on
             && !redraw
-            && let Some(last) = self.last_sway_frame
+            && let Some(last) = self.sway.last_frame
         {
             wake_at = wake_at.min(last + SWAY_INTERVAL);
         }
@@ -325,7 +332,7 @@ impl Tank {
     /// [`Tank::tick`] restarts the clock without catching up.
     pub fn pause(&mut self) {
         self.pacer.pause();
-        self.last_sway_frame = None;
+        self.sway.last_frame = None;
     }
 
     /// Asks for a frame even if the world hasn't changed (resize, expose).
