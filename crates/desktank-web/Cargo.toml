@@ -21,7 +21,7 @@ desktank-render.workspace = true
 
 # Only the wasm build links the browser bindings, so native workspace builds
 # stay unchanged. wasm-bindgen is pinned exactly: the wasm-bindgen CLI must
-# match this version (CI reads it from Cargo.lock; scripts/build-web.mjs
+# match this version (CI reads it from Cargo.lock; scripts/build-web.ts
 # checks).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "=0.2.130", default-features = false, features = ["std"] }

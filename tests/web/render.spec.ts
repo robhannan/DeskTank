@@ -5,8 +5,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { compare } from "./delta-e.mjs";
-import { decodePng, open, watchErrors } from "./support.mjs";
+import { compare } from "./delta-e.ts";
+import { decodePng, open, watchErrors } from "./support.ts";
 
 const crate = path.resolve(import.meta.dirname, "..", "..", "crates", "desktank", "tests");
 const MAX_DELTA_E = 2;

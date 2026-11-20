@@ -1354,7 +1354,7 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 |---|---|---|
 | Language | Rust 2024 edition, toolchain pinned in `rust-toolchain.toml` | MSRV = pinned stable; `Cargo.lock` committed |
 | GPU | `wgpu` 30 | Metal, DX12 and Vulkan natively; WebGPU with a WebGL2 fallback on the web; offscreen rendering for capture and tests |
-| Web | `wasm-bindgen`, `web-sys`, `js-sys` | wasm-bindgen CLI pinned to the crate version; built by `scripts/build-web.mjs` |
+| Web | `wasm-bindgen`, `web-sys`, `js-sys` | wasm-bindgen CLI pinned to the crate version; built by `scripts/build-web.ts` |
 | Windowing | `winit` 0.30 (stable) | 0.31 is in beta, so Dependabot ignores winit minor and major updates (0.x minors are breaking) until we choose to upgrade |
 | Wayland | `smithay-client-toolkit` 0.21 + `calloop` | Layer-shell and idle-notify |
 | macOS FFI | `objc2` 0.6 + `objc2-app-kit` / `objc2-screen-saver` | |
@@ -1370,7 +1370,7 @@ Versions current at the time of writing; Dependabot keeps them fresh.
 | CLI / config | `clap` 4, `serde` + `toml` 1, `directories` 6, `notify` | |
 | Errors / logs | `thiserror` 2 (libraries), `anyhow` (binaries only), `tracing` + `tracing-appender` | |
 | Supply chain | `cargo deny` (licences, advisories, duplicates) | |
-| Release | `cargo-dist` for archives, MSI and shell installers; zx scripts (pnpm) build `.app`, `.saver` and `.dmg` | |
+| Release | `cargo-dist` for archives, MSI and shell installers; zx scripts (TypeScript, pnpm) build `.app`, `.saver` and `.dmg` | |
 
 ## 6. Resource budget and power policy
 
@@ -1390,7 +1390,7 @@ Linux numbers are recorded and tracked, but not gated in v1.
 | GPU frame time at 1440p | ≤ 2 ms | +2 ms | ≤ 2 ms per display |
 | Resident memory (raw RSS, as `ps` reports it, including shared GPU-driver pages; D16) | ≤ 100 MB, aiming for ≤ 60 MB | +10 MB | ≤ 100 MB, with growth ≤ 20 MB over 8 h |
 | Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
-| Web transfer size (wasm + JS + assets, gzip, as reported by `scripts/build-web.mjs`) | ≤ 3 MB | — | — |
+| Web transfer size (wasm + JS + assets, gzip, as reported by `scripts/build-web.ts`) | ≤ 3 MB | — | — |
 | Web on the reference phone (🔍 to be chosen in WB2: a 2021-era mid-range iPhone or Android) | p95 frame interval ≤ 50 ms, no thermal throttling within 10 min | — | — |
 | Cold start to first frame (including loading the save) | ≤ 500 ms | — | ≤ 500 ms |
 | Energy Impact (Activity Monitor) | "Low" while visible | — | "Low" |
@@ -1479,7 +1479,7 @@ by modifier is enabled).
   - **`cargo-dist`** builds the archives, the Windows MSI (which also
     installs the `.scr` per-machine) and the shell and PowerShell
     installers.
-  - **zx scripts** build `DeskTank.app` (universal binary), assemble
+  - **zx scripts** (TypeScript) build `DeskTank.app` (universal binary), assemble
     `DeskTank.saver`, and package both in a `.dmg`.
   - Linux ships a tarball now, with AppImage and AUR later.
 - **Signing: none for now** (D14).
@@ -1963,7 +1963,7 @@ Each package depends only on the packages before it.
 - [x] **WB0 Browser demo of the sim core.** `desktank-web` wraps
   `desktank-sim` with wasm-bindgen; a plain HTML/CSS/JS page in `web/`
   pours and erases materials at a fixed 20 Hz tick, built by
-  `scripts/build-web.mjs` and deployed to GitHub Pages
+  `scripts/build-web.ts` and deployed to GitHub Pages
   (https://robhannan.github.io/DeskTank/) from `main`. Not the product
   renderer. *Accept:* the demo builds in CI on every PR, and the page
   loads and pours on desktop and mobile.

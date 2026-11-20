@@ -1,8 +1,10 @@
-#!/usr/bin/env zx
+#!/usr/bin/env node
 // Builds the web version into target/site/: the desktank-web crate for
 // wasm32, wasm-bindgen's JS glue (--target web), wasm-opt if it is on the
-// PATH, and the static files from web/. Then it reports the gzip transfer
-// size of the site (wasm + JS + assets) and fails above the SPEC §6.1 budget.
+// PATH, the page's TypeScript (web/*.ts, emitted by tsc as readable ES
+// modules with source maps; a type error fails the build) and the static
+// files from web/. Then it reports the gzip transfer size of the site
+// (wasm + JS + assets) and fails above the SPEC §6.1 budget.
 //
 //   pnpm install && pnpm build:web
 //   python3 -m http.server -d target/site 8000
@@ -21,6 +23,10 @@ cd(root);
 const TARGET = "wasm32-unknown-unknown";
 const site = path.join(root, "target", "site");
 const wasmIn = path.join(root, "target", TARGET, "release", "desktank_web.wasm");
+// wasm-bindgen's output with its TypeScript declarations, which web/main.ts
+// is checked against (web/tsconfig.json's rootDirs); only the glue and the wasm
+// are shipped.
+const bindgen = path.join(root, "target", "web-bindgen", "pkg");
 
 // The CLI and the crate must agree exactly, or the glue won't load.
 const lock = await fs.readFile("Cargo.lock", "utf8");
@@ -44,9 +50,10 @@ if (!targets.split("\n").includes(TARGET)) {
 await $`cargo build --locked --release -p desktank-web --target ${TARGET} --config ${'profile.release.strip="debuginfo"'}`;
 
 await fs.remove(site);
-await $`wasm-bindgen --target web --no-typescript --out-dir ${path.join(site, "pkg")} ${wasmIn}`;
+await fs.remove(bindgen);
+await $`wasm-bindgen --target web --out-dir ${bindgen} ${wasmIn}`;
 
-const wasmOut = path.join(site, "pkg", "desktank_web_bg.wasm");
+const wasmOut = path.join(bindgen, "desktank_web_bg.wasm");
 if (await which("wasm-opt", { nothrow: true })) {
   // Rust's wasm32 target enables these proposals by default; wasm-opt
   // must be told, or it rejects the module.
@@ -55,18 +62,26 @@ if (await which("wasm-opt", { nothrow: true })) {
   echo(chalk.yellow("wasm-opt not found; skipping size optimisation."));
 }
 
-await fs.copy(path.join(root, "web"), site);
+await fs.copy(bindgen, path.join(site, "pkg"), { filter: (src: string) => !src.endsWith(".d.ts") });
+// The page's TypeScript becomes .js beside the static files. The project's
+// own tsc, so the script also works outside `pnpm build:web`.
+await $`${path.join(root, "node_modules", ".bin", "tsc")} -p web/tsconfig.json`;
+await fs.copy(path.join(root, "web"), site, {
+  filter: (src: string) => !src.endsWith(".ts") && path.basename(src) !== "tsconfig.json",
+});
 
 // Transfer size (SPEC §6.1): every file as a browser would fetch it, gzipped
 // at the highest level (a static host's on-the-fly gzip is at most this good).
+// Source maps are listed but not counted: only open developer tools fetch them.
 const BUDGET = 3 * 1024 * 1024;
-const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
+const kib = (n: number) => `${(n / 1024).toFixed(1)} KiB`;
 let total = 0;
 for (const file of (await glob("**/*", { cwd: site, onlyFiles: true })).sort()) {
   const raw = await fs.readFile(path.join(site, file));
   const gz = gzipSync(raw, { level: 9 }).length;
-  total += gz;
-  echo(`  ${file.padEnd(28)} ${kib(raw.length).padStart(12)} raw ${kib(gz).padStart(12)} gzip`);
+  const map = file.endsWith(".map");
+  if (!map) total += gz;
+  echo(`  ${file.padEnd(28)} ${kib(raw.length).padStart(12)} raw ${kib(gz).padStart(12)} gzip${map ? " (not counted)" : ""}`);
 }
 echo(`Transfer size (gzip): ${kib(total)} of a ${kib(BUDGET)} budget.`);
 if (total > BUDGET) {

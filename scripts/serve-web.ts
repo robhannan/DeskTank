@@ -8,17 +8,18 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..", "target", "site");
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
-const TYPES = {
+const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".wasm": "application/wasm",
   ".png": "image/png",
   ".json": "application/json",
+  ".map": "application/json",
 };
 
 createServer(async (req, res) => {
-  const url = new URL(req.url, "http://localhost");
+  const url = new URL(req.url ?? "/", "http://localhost");
   let file = path.join(root, decodeURIComponent(url.pathname));
   if (!file.startsWith(root)) {
     res.writeHead(403).end();

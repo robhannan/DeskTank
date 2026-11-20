@@ -54,12 +54,13 @@ Before a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --all
 
 ## Web
 
-The [web version](https://robhannan.github.io/DeskTank/) (SPEC §3.5, D15) is `crates/desktank-web`, a wasm-bindgen host that drives `desktank-render`'s `Tank` through wgpu (WebGPU first, WebGL2 as the fallback; `?backend=webgpu|webgl2` forces one), plus the static page in `web/`. To build and preview it locally you need [Node](https://nodejs.org) 22+, [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
+The [web version](https://robhannan.github.io/DeskTank/) (SPEC §3.5, D15) is `crates/desktank-web`, a wasm-bindgen host that drives `desktank-render`'s `Tank` through wgpu (WebGPU first, WebGL2 as the fallback; `?backend=webgpu|webgl2` forces one), plus the static page in `web/` (TypeScript, emitted to JS by the build). To build and preview it locally you need [Node](https://nodejs.org) 22.18+ (it runs the TypeScript scripts directly), [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:
 
 ```sh
 cargo install --locked wasm-bindgen-cli --version 0.2.130
 pnpm install
 pnpm build:web           # builds target/site/ and reports the gzip transfer size (budget 3 MB)
+pnpm typecheck           # strict tsc over the page, scripts and tests (after a build)
 pnpm serve:web           # then open http://127.0.0.1:8000
 pnpm exec playwright install chromium
 pnpm test:web            # Playwright: smoke test, context-loss recovery, render match with the native reference, tools with mouse and touch, settings
