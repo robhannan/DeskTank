@@ -60,7 +60,10 @@
 //! were drawn in (the palette's) and alternates their sexes within each
 //! species in id order; none is carrying, and each settles for a day
 //! before breeding. A species' morphs may only be appended to: a save
-//! whose morph names aren't a prefix of the build's is a mismatch.
+//! whose morph names aren't a prefix of the build's is a mismatch. Death
+//! causes are saved as codes and may only be appended to (suffocation
+//! was added within version 10; an older build rejects a corpse with a
+//! code it doesn't know).
 //! Version 4 (D21) puts a version 3 tank's creatures at rest in the band a
 //! creature just added would start in (a hash of the seed and its id,
 //! within its species' bands), and its corpses in the front band.

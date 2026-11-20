@@ -11,6 +11,11 @@ speed = 4.0
 max_speed = 15.0
 diet = ["bloodworm"]
 breathes_air = true
+# World seconds it lasts without air once a breath is due (it then dies of
+# suffocation). An obligate air-breather while active: Rana temporaria only
+# gets by on skin breathing in cold winter water at rest, not swimming in
+# a warm tank. A bigger body holds a little more: three minutes.
+air_tolerance_seconds = 180
 prey_cm = 1.8
 
 [sprite]

@@ -2134,7 +2134,17 @@ Each package depends only on the packages before it.
   they hold (at outside corners, held only diagonally, they keep their turn
   until a face is found); the body box turns with the sprite, and the turn
   is sim state. Air-breathing bettas return to the air interface every
-  20 simulated seconds and skim there for 3 seconds. Grazing a cell gives
+  20 simulated seconds and skim there for 3 seconds. Where floating
+  plants cover the surface, an air-breather heads for the nearest gap
+  of open water with air above it (one with a clear shaft below first);
+  it searches for 45 s of every 90 s while a breath is overdue and
+  wanders and feeds in between, so it never freezes under a mat. Once a
+  breath is 45 s overdue it builds up stress towards the limit over its
+  species' `air_tolerance_seconds` (required for an air-breather) and
+  dies of suffocation there: two to three minutes for the frogs,
+  fifteen for the labyrinth fish, whose gills still take some oxygen.
+  A breath lets the stress recover. A surface with no gap a species
+  fits through is an unmet need (the inspect card's "needs air"). Grazing a cell gives
   the same satiety as one food cell. Cursor avoidance starts off in both hosts.
   In seeded tests the school met the spacing limit on 97.0% of ticks,
   minimum zone occupancy was 96.4%, food was eaten within 7.85 s, and all

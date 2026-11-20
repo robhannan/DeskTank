@@ -54,6 +54,7 @@
 //!   kept to [`MAX_LIVE_FOOD`] beside the population cap, eaten whole by
 //!   species whose diet holds the food they count as (see [`live`]).
 
+mod breathing;
 mod breeding;
 mod habits;
 mod lifecycle;
@@ -179,7 +180,8 @@ pub enum UnmetNeed {
         /// Depth the tank has.
         has: usize,
     },
-    /// It breathes air but the tank is full to the top.
+    /// It breathes air but can't reach any: the tank is full to the top,
+    /// or floating plants cover the surface with no gap it fits through.
     Air,
 }
 
@@ -458,6 +460,8 @@ struct Kind {
     schooling: bool,
     zone: Zone,
     breathes_air: bool,
+    /// Stress per second once out of air (0: it doesn't breathe air).
+    air_stress: u32,
     /// Cells past the body it eats from.
     reach: usize,
     /// Ticks between a walker's hops (0: it never hops).
@@ -507,6 +511,9 @@ pub(super) struct Creatures {
     /// Reused start-of-tick snapshot for hunting and territory, in id
     /// order (empty while no creature hunts or keeps a territory).
     near: Vec<pursuit::Near>,
+    /// Reused start-of-tick list of open water at the surface (empty
+    /// while no air-breather is searching for air).
+    gaps: Vec<breathing::Gap>,
     next_id: u32,
     kinds: Vec<Option<Kind>>,
     /// Per material: a creature's body may overlap it.
@@ -593,6 +600,7 @@ impl Creatures {
                 schooling: s.temperament == Temperament::Schooling,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
+                air_stress: breathing::air_stress(s.air_tolerance_seconds),
                 reach: usize::from(s.reach),
                 // Validated to 1..=600 s.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -636,6 +644,7 @@ impl Creatures {
             list: Vec::new(),
             cursor: None,
             school: Vec::new(),
+            gaps: Vec::new(),
             near: Vec::new(),
             next_id: 1,
             kinds,
@@ -989,7 +998,13 @@ impl World {
                 has,
             });
         }
-        (s.breathes_air && self.surface_row == 0).then_some(UnmetNeed::Air)
+        if !s.breathes_air {
+            return None;
+        }
+        let mut gaps = Vec::new();
+        self.surface_gaps(&mut gaps);
+        let wide = s.size().0;
+        (!gaps.iter().any(|g| g.width() >= wide)).then_some(UnmetNeed::Air)
     }
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
@@ -1357,6 +1372,7 @@ impl World {
             changed |= self.predation(&mut list);
         }
         self.snapshot_near(&list);
+        self.refresh_air_gaps(&list);
         self.creatures.school.clear();
         for c in &list {
             if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
