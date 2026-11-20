@@ -347,13 +347,13 @@ fn spawn(world: &mut World, args: &[&str]) -> Result<CheatOutcome, CheatError> {
     let Some(species) = world
         .species()
         .iter()
-        .find(|s| s.name == name && !s.cheat_only)
+        .find(|s| s.name == name && s.stocked())
         .map(|s| s.id)
     else {
         let names: Vec<&str> = world
             .species()
             .iter()
-            .filter(|s| !s.cheat_only)
+            .filter(|s| s.stocked())
             .map(|s| s.name.as_str())
             .collect();
         return Err(CheatError::Usage(format!(
@@ -399,7 +399,7 @@ fn add(
     let width = i64::try_from(world.width()).unwrap_or(i64::MAX);
     let mut added = 0;
     for i in 0..count {
-        if world.creatures().len() >= world.creature_cap() {
+        if world.stock_count() >= world.creature_cap() {
             break;
         }
         // Spread across the tank, offset by the tick so repeats don't stack.
@@ -416,7 +416,7 @@ fn add(
     }
     if added == 0 {
         let cap = world.creature_cap();
-        return Err(if world.creatures().len() >= cap {
+        return Err(if world.stock_count() >= cap {
             WorldError::PopulationCap(cap)
         } else {
             WorldError::NoRoom
