@@ -49,9 +49,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // IDreamManager.awaken(), in case the test stopped with the Dream up.
-  if ((await currentDream()) !== "") await shell("service", "call", "dreams", "2");
-  for (const [name, value] of saved) await putSecure(name, value);
+  try {
+    // IDreamManager.awaken(), in case the test stopped with the Dream up.
+    if ((await currentDream()) !== "") await shell("service", "call", "dreams", "2");
+  } finally {
+    for (const [name, value] of saved) await putSecure(name, value);
+  }
   const { crash, main } = await logcat();
   await writeFile(`${OUT}/logcat.txt`, main);
   await writeFile(`${OUT}/logcat-crash.txt`, crash);
@@ -75,7 +78,7 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
     .poll(
       async () => {
         const res = await device.takeScreenshot();
-        expect(res.errorMessage ?? "").toBe("");
+        if (!res.success) throw new Error(`screenshot failed: ${res.errorMessage}`);
         shot = res.data;
         return shareNear(decodePng(shot), WATER, TOLERANCE);
       },
@@ -85,7 +88,8 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
   await writeFile(`${OUT}/dreaming.png`, shot);
   await expectNoFatals();
 
-  // Non-interactive, so any key ends it.
+  // Still up (not ended on its own); non-interactive, so any key ends it.
+  expect(await currentDream()).toBe(DREAM_FULL);
   await device.pressKey("DPAD_CENTER");
   await expect.poll(currentDream, { timeout: 15_000 }).toBe("");
   await expectNoFatals();

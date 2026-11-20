@@ -42,20 +42,26 @@ export async function currentDream(): Promise<string> {
   return /mCurrentDream[^\n]*?ComponentInfo\{([^}]+)\}/.exec(out)?.[1] ?? "";
 }
 
-// Lines in the crash buffer and fatal lines in the main buffer that belong
-// to our app's process. Other processes' crashes don't count: the TV
-// emulator's SystemUI logs an unrelated FATAL EXCEPTION (PROGRESS, A0).
+// Lines in the crash buffer and main logcat that show a crash of our app's
+// process. Other processes' crashes don't count: the TV emulator's SystemUI
+// logs an unrelated FATAL EXCEPTION (PROGRESS, A0). A Rust panic in a JNI
+// callback becomes a Java exception the shim doesn't catch, so it shows as
+// a FATAL EXCEPTION too.
 export function appFatals(crash: string, main: string): string[] {
+  const ours = new RegExp(`Process: ${PACKAGE.replaceAll(".", "\\.")}(?![\\w.])`);
   const found: string[] = [];
-  // AndroidRuntime's "FATAL EXCEPTION: <thread>" is followed by
-  // "Process: <name>, PID: <pid>"; native crashes are ">>> <name> <<<".
   const lines = (crash + "\n" + main).split("\n");
   lines.forEach((line, i) => {
-    if (/FATAL EXCEPTION/.test(line) && lines.slice(i + 1, i + 3).some((l) => l.includes(`Process: ${PACKAGE}`))) {
-      found.push(line, ...lines.slice(i + 1, i + 6));
-    } else if (line.includes(`>>> ${PACKAGE} <<<`) || /Fatal signal/.test(line) && line.includes(PACKAGE)) {
-      found.push(line);
-    } else if (/\bpanicked at\b/.test(line) || / F DeskTank\b/.test(line)) {
+    if (line.includes("FATAL EXCEPTION")) {
+      // "Process: <name>, PID: <pid>" follows the header, possibly after
+      // lines other processes interleave.
+      const next = lines.slice(i + 1, i + 20);
+      const end = next.findIndex((l) => l.includes("FATAL EXCEPTION") || l.trim() === "");
+      if (next.slice(0, end === -1 ? next.length : end).some((l) => ours.test(l))) {
+        found.push(line, ...next.slice(0, 5));
+      }
+    } else if (line.includes(`>>> ${PACKAGE} <<<`) || (/Fatal signal/.test(line) && line.includes(PACKAGE))) {
+      // A native crash's tombstone header, or libc's line naming our process.
       found.push(line);
     }
   });
