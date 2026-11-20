@@ -61,7 +61,11 @@ export function appFatals(crash: string, main: string): string[] {
         found.push(line, ...next.slice(0, 5));
       }
     } else if (line.includes(`>>> ${PACKAGE} <<<`) || (/Fatal signal/.test(line) && line.includes(PACKAGE))) {
-      // A native crash's tombstone header, or libc's line naming our process.
+      // A native crash's tombstone header, or libc's line naming our process
+      // (a release build aborts on a panic).
+      found.push(line);
+    } else if (/ E DeskTank\s*: panic: /.test(line)) {
+      // The host's panic hook (crates/desktank-android).
       found.push(line);
     }
   });
@@ -145,19 +149,28 @@ export function decodePng(png: Uint8Array): Image {
   return { width, height, rgba: out };
 }
 
-// The share of pixels within `tolerance` (per channel) of `rgb`.
-export function shareNear(image: Image, rgb: readonly [number, number, number], tolerance: number): number {
-  let near = 0;
-  const n = image.width * image.height;
-  for (let i = 0; i < n; i++) {
-    const o = i * 4;
-    if (
-      Math.abs(image.rgba[o] - rgb[0]) <= tolerance &&
-      Math.abs(image.rgba[o + 1] - rgb[1]) <= tolerance &&
-      Math.abs(image.rgba[o + 2] - rgb[2]) <= tolerance
-    ) {
-      near++;
+// What the frame shows, sampling every `step`th pixel each way: the share
+// of the whole frame that is water (blue well above red and at least
+// green: the lit water's gradient from #1f4e79 down to its dark depths) and
+// the share of the bottom quarter that is sand (warm and light, #d8c08a and
+// its texels). A blank, black or one-colour frame has no sand.
+export function tankShares(image: Image, step = 4): { water: number; sand: number } {
+  let water = 0;
+  let all = 0;
+  let sand = 0;
+  let bottom = 0;
+  const floor = Math.floor(image.height * 0.75);
+  for (let y = 0; y < image.height; y += step) {
+    for (let x = 0; x < image.width; x += step) {
+      const o = (y * image.width + x) * 4;
+      const [r, g, b] = [image.rgba[o], image.rgba[o + 1], image.rgba[o + 2]];
+      all++;
+      if (b >= r + 30 && b >= g) water++;
+      if (y >= floor) {
+        bottom++;
+        if (r >= 150 && r >= b + 50) sand++;
+      }
     }
   }
-  return n === 0 ? 0 : near / n;
+  return { water: all ? water / all : 0, sand: bottom ? sand / bottom : 0 };
 }

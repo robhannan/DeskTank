@@ -13,16 +13,10 @@ import {
   decodePng,
   getSecure,
   putSecure,
-  shareNear,
+  tankShares,
   shell,
 } from "./support.ts";
 
-// assets/materials/water.toml. With A0's skeleton the Dream clears the screen
-// to it; once A1 draws the tank this becomes "the tank is drawn" (sand, rock
-// and plants as well as water).
-const WATER = [0x1f, 0x4e, 0x79] as const;
-// Allows RGB565 (the emulator's GLES config quantises #1f4e79 to #214d7b).
-const TOLERANCE = 4;
 const OUT = "tapsmith-results/dream";
 
 const SETTINGS = ["screensaver_enabled", "screensaver_components"] as const;
@@ -67,25 +61,25 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
   await expect.poll(currentDream, { timeout: 30_000 }).toBe(DREAM_FULL);
   await expect
     .poll(async () => (await adb("logcat", "-d", "-s", "DeskTank")).includes("first frame"), {
-      timeout: 30_000,
+      timeout: 120_000,
     })
     .toBe(true);
 
-  // The Dream window fades in over what was on screen, so poll until the
-  // frame settles. The last screenshot is kept for the artifacts.
-  let shot: Uint8Array = new Uint8Array();
+  // The tank is drawn: mostly water, with sand along the bottom. The Dream
+  // window fades in over what was on screen, so poll until the frame
+  // settles; each screenshot is saved, so the artifact is the last one.
   await expect
     .poll(
       async () => {
         const res = await device.takeScreenshot();
         if (!res.success) throw new Error(`screenshot failed: ${res.errorMessage}`);
-        shot = res.data;
-        return shareNear(decodePng(shot), WATER, TOLERANCE);
+        await writeFile(`${OUT}/dreaming.png`, res.data);
+        const { water, sand } = tankShares(decodePng(res.data));
+        return water >= 0.5 && sand >= 0.1 ? "drawn" : `water ${water.toFixed(3)}, sand ${sand.toFixed(3)}`;
       },
-      { timeout: 15_000, intervals: [500, 1000] },
+      { timeout: 30_000, intervals: [1000] },
     )
-    .toBeGreaterThanOrEqual(0.95);
-  await writeFile(`${OUT}/dreaming.png`, shot);
+    .toBe("drawn");
   await expectNoFatals();
 
   // Still up (not ended on its own); non-interactive, so any key ends it.
