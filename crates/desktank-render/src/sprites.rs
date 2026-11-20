@@ -30,8 +30,10 @@
 
 use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, TICKS_PER_SECOND, World};
 
-/// Atlas width in texels; species shelves stack downwards.
-pub const ATLAS_WIDTH: usize = 256;
+/// Atlas width in texels; species shelves stack downwards. 512 wide keeps
+/// the stack within WebGL2's guaranteed 2048 texels tall now that species
+/// carry several colour morphs of large art (the axolotl alone has three).
+pub const ATLAS_WIDTH: usize = 512;
 /// Most sprites drawn in a frame (the population cap is lower).
 pub const MAX_SPRITES: usize = 256;
 /// Ticks each animation frame shows for (4 frames a second).

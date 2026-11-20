@@ -201,7 +201,9 @@ fn a_creature_buried_by_a_pour_hops_out() {
 /// Fraction of creature-ticks each species spends in its zone over
 /// `minutes`, with no food in the tank.
 fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
-    let mut w = world(160, 120, seed);
+    // Wide enough that two of every species (30, several of them large)
+    // aren't crowded out of their zones.
+    let mut w = world(220, 120, seed);
     // Easy mode: predators hunting the small species down would leave
     // them too few ticks to count.
     w.set_easy_mode(true);
@@ -1160,5 +1162,26 @@ fn palette_bettas_cycle_through_inheritable_colours() {
         };
         assert_eq!(w.creature(id).unwrap().alleles(), [morph; 2]);
         tools.release(&mut w, Button::Primary);
+    }
+}
+
+#[test]
+fn frogs_return_to_air_between_dives() {
+    for name in ["african_dwarf_frog", "common_frog"] {
+        let mut w = world(128, 100, 19);
+        let frog = w.add_creature(species(&w, name), 60, 50).unwrap();
+        let mut dives = 0;
+        let mut submerged = true;
+        for _ in 0..2400 {
+            w.tick();
+            let top = w.creature_body(w.creature(frog).unwrap()).y0;
+            if top > w.surface_row() + 2 {
+                submerged = true;
+            } else if submerged && top == w.surface_row() {
+                dives += 1;
+                submerged = false;
+            }
+        }
+        assert!(dives >= 3, "{name} surfaced {dives} times");
     }
 }
