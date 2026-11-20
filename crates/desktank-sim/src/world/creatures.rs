@@ -746,6 +746,31 @@ impl World {
         self.add_creature_with_traits(species, x, y, Traits::default())
     }
 
+    pub(crate) fn add_palette_creature(
+        &mut self,
+        species: SpeciesId,
+        x: i64,
+        y: i64,
+    ) -> Result<CreatureId, WorldError> {
+        let traits = self
+            .species()
+            .get(species)
+            .filter(|s| s.cycle_palette)
+            .map_or_else(Traits::default, |s| {
+                let count = self
+                    .creatures()
+                    .iter()
+                    .filter(|c| c.species == species)
+                    .count();
+                let morph = u8::try_from(count % s.morphs.len()).unwrap_or(s.palette_morph);
+                Traits {
+                    alleles: Some([morph; 2]),
+                    ..Traits::default()
+                }
+            });
+        self.add_creature_with_traits(species, x, y, traits)
+    }
+
     /// [`World::add_creature`] with the age, sex or morph alleles given.
     ///
     /// # Errors

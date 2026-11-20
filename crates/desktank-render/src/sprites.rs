@@ -30,8 +30,10 @@
 
 use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, TICKS_PER_SECOND, World};
 
-/// Atlas width in texels; species shelves stack downwards.
-pub const ATLAS_WIDTH: usize = 256;
+/// Atlas width in texels; species shelves stack downwards. 512 wide keeps
+/// the stack within WebGL2's guaranteed 2048 texels tall now that species
+/// carry several colour morphs of large art (the axolotl alone has three).
+pub const ATLAS_WIDTH: usize = 512;
 /// Most sprites drawn in a frame (the population cap is lower).
 pub const MAX_SPRITES: usize = 256;
 /// Ticks each animation frame shows for (4 frames a second).
@@ -484,11 +486,19 @@ mod tests {
     #[test]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn every_creature_has_a_second_frame_origin_at_double_density() {
-        let mut world = world();
+        let mut world = World::new(
+            WorldConfig {
+                width: 192,
+                height: 144,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
         let ids: Vec<_> = world.species().iter().map(|s| s.id).collect();
         for (i, &id) in (0_i64..).zip(&ids) {
             world
-                .add_creature(id, 8 + 12 * (i % 5), 10 + 12 * (i / 5))
+                .add_creature(id, 20 + 36 * (i % 5), 24 + 20 * (i / 5))
                 .unwrap();
         }
         let atlas = Atlas::build(world.species());

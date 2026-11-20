@@ -201,7 +201,9 @@ fn a_creature_buried_by_a_pour_hops_out() {
 /// Fraction of creature-ticks each species spends in its zone over
 /// `minutes`, with no food in the tank.
 fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
-    let mut w = world(160, 120, seed);
+    // Wide enough that two of every species (30, several of them large)
+    // aren't crowded out of their zones.
+    let mut w = world(220, 120, seed);
     // Easy mode: predators hunting the small species down would leave
     // them too few ticks to count.
     w.set_easy_mode(true);
@@ -209,9 +211,9 @@ fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
     w.paint(60, 70, 6, id(&w, "rock"), Brush::Replace).unwrap();
     let ids: Vec<_> = w.species().iter().map(|s| (s.id, s.name.clone())).collect();
     for (k, (s, _)) in ids.iter().enumerate() {
-        // Four of each, but one blinker (30×22 cells).
+        // Two of each fit under the population cap, but one blinker (30×22 cells).
         let one = w.species().get(*s).unwrap().name == "blinker";
-        for j in 0..if one { 1 } else { 4_i64 } {
+        for j in 0..if one { 1 } else { 2_i64 } {
             // Start everyone mid-tank, out of most zones.
             let x = 20 + j * 36 + i64::try_from(k).unwrap() * 2;
             w.add_creature(*s, x, 60).unwrap();
@@ -530,7 +532,7 @@ fn inspect_reports_the_creature_and_the_cell() {
 
 #[test]
 fn the_palette_adds_creatures_of_each_species() {
-    let mut w = world(160, 90, 8);
+    let mut w = world(360, 90, 8);
     sand_bed(&mut w, 8);
     let palette = Tools::palette(&w);
     let adders: Vec<_> = palette
@@ -813,10 +815,13 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
 
 #[test]
 fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
-    let grazers: [(&str, &[&str]); 6] = [
+    let grazers: [(&str, &[&str]); 9] = [
         ("corydoras", &["algae", "detritus"]),
         ("nerite", &["algae", "detritus"]),
         ("otocinclus", &["algae", "detritus"]),
+        ("bristlenose_pleco", &["algae", "detritus"]),
+        ("mystery_snail", &["algae", "detritus"]),
+        ("ramshorn_snail", &["algae", "detritus"]),
         ("cherry_shrimp", &["algae", "detritus"]),
         ("amano_shrimp", &["algae", "detritus"]),
         ("thai_micro_crab", &["detritus"]),
@@ -1263,5 +1268,41 @@ fn schools_are_loose_irregular_and_out_of_step() {
         assert!(s.elongation >= 1.6, "a round school");
         assert!(s.polarisation <= 0.9, "fish swim in lockstep");
         assert!(s.reshuffle >= 1.0, "fish keep their places");
+    }
+}
+
+#[test]
+fn palette_bettas_cycle_through_inheritable_colours() {
+    let mut w = world(160, 90, 8);
+    let betta = species(&w, "betta");
+    let mut tools = Tools::new(id(&w, "sand"));
+    tools.select(PaletteItem::Tool(Tool::AddCreature(betta)));
+    for morph in [0, 1, 2, 0] {
+        let Outcome::Added(id) = tools.press(&mut w, Button::Primary, (80, 40)) else {
+            panic!("expected a betta");
+        };
+        assert_eq!(w.creature(id).unwrap().alleles(), [morph; 2]);
+        tools.release(&mut w, Button::Primary);
+    }
+}
+
+#[test]
+fn frogs_return_to_air_between_dives() {
+    for name in ["african_dwarf_frog", "common_frog"] {
+        let mut w = world(128, 100, 19);
+        let frog = w.add_creature(species(&w, name), 60, 50).unwrap();
+        let mut dives = 0;
+        let mut submerged = true;
+        for _ in 0..2400 {
+            w.tick();
+            let top = w.creature_body(w.creature(frog).unwrap()).y0;
+            if top > w.surface_row() + 2 {
+                submerged = true;
+            } else if submerged && top == w.surface_row() {
+                dives += 1;
+                submerged = false;
+            }
+        }
+        assert!(dives >= 3, "{name} surfaced {dives} times");
     }
 }

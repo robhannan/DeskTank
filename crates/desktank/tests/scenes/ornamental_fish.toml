@@ -1,0 +1,41 @@
+ticks = 1
+
+[world]
+starter = true
+
+[[creature]]
+species = "common_goldfish"
+x = 22
+y = 45
+
+[[creature]]
+species = "fancy_goldfish"
+x = 59
+y = 66
+
+[[creature]]
+species = "angelfish"
+x = 86
+y = 45
+
+[[creature]]
+species = "pea_puffer"
+x = 110
+y = 67
+
+[[creature]]
+species = "flowerhorn"
+x = 136
+y = 42
+
+[[creature]]
+species = "betta"
+x = 44
+y = 22
+morph = "royal_blue"
+
+[[creature]]
+species = "betta"
+x = 112
+y = 22
+morph = "copper"

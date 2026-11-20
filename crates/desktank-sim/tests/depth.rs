@@ -148,6 +148,8 @@ fn food_lodged_in_a_dense_plant_is_eaten() {
 /// `minutes` in a planted tank fed every half minute.
 fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
     let mut w = world(160, 96, seed);
+    // Keep the tracked swimmers alive together, including prey-sized fish.
+    w.set_easy_mode(true);
     let soil = id(&w, "aquasoil");
     w.fill_rect(
         Rect {
@@ -183,9 +185,8 @@ fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
         .map(|s| s.id)
         .collect();
     for (k, &s) in swimmers.iter().enumerate() {
-        // One blinker (30×22 cells), wherever it fits among the plants;
-        // three of the rest.
-        if w.species().get(s).unwrap().name == "blinker" {
+        // Give large swimmers a gap in the planted stand.
+        if w.species().get(s).unwrap().size().0 > 16 {
             let spot = (15..150)
                 .step_by(5)
                 .find(|&x| w.add_creature(s, x, 40).is_ok());
@@ -193,7 +194,7 @@ fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
             continue;
         }
         for j in 0..3_i64 {
-            let x = 15 + j * 50 + i64::try_from(k).unwrap() * 4;
+            let x = 15 + (j * 50 + i64::try_from(k).unwrap() * 4) % 135;
             w.add_creature(s, x, 50).unwrap();
         }
     }
