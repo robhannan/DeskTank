@@ -493,6 +493,7 @@ dependencies = [
  "ndk",
  "ndk-sys",
  "pollster",
+ "raw-window-handle",
 ]
 
 [[package]]

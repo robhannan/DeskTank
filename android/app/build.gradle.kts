@@ -47,7 +47,11 @@ val cargoNdk = tasks.register<Exec>("cargoNdk") {
     workingDir = rootDir.parentFile
     // The pinned NDK, so cargo-ndk and AGP use the same one.
     val ndkDir = androidComponents.sdkComponents.sdkDirectory.map { it.dir("ndk/$pinnedNdk") }
-    doFirst { environment("ANDROID_NDK_HOME", ndkDir.get().asFile.path) }
+    doFirst {
+        val path = ndkDir.get().asFile.path
+        environment("ANDROID_NDK_HOME", path)
+        environment("ANDROID_NDK_ROOT", path)
+    }
     commandLine(
         buildList {
             addAll(listOf("cargo", "ndk", "--platform", minApi.toString()))

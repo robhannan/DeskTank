@@ -30,3 +30,5 @@ ndk-sys = { version = "0.6.0", default-features = false }
 # `debug.desktank.backend`, to force a wgpu backend for testing.
 android_system_properties = { version = "0.1.6", default-features = false }
 pollster = "1.0.2"
+# The Android display handle wgpu needs to create surfaces.
+raw-window-handle = { version = "0.6.2", default-features = false }

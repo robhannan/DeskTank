@@ -27,6 +27,19 @@ const BACKEND_PROPERTY: &str = "debug.desktank.backend";
 
 static HOST: Mutex<Option<Host>> = Mutex::new(None);
 
+/// The Android display, for [`wgpu::InstanceDescriptor::display`]: wgpu 30
+/// needs a display handle to create any surface (Vulkan and GLES alike).
+#[derive(Debug)]
+struct AndroidDisplay;
+
+impl raw_window_handle::HasDisplayHandle for AndroidDisplay {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        Ok(raw_window_handle::DisplayHandle::android())
+    }
+}
+
 /// The process's GPU state and the Dream's surface.
 struct Host {
     lifecycle: Lifecycle,
@@ -89,7 +102,8 @@ impl Host {
             .filter(|p| !p.is_empty());
         let mut errors = Vec::new();
         for &backends in backend_order(property.as_deref()) {
-            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            let mut desc =
+                wgpu::InstanceDescriptor::new_with_display_handle(Box::new(AndroidDisplay));
             desc.backends = backends;
             let instance = wgpu::Instance::new(desc);
             let surface = match instance.create_surface(
