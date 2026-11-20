@@ -89,7 +89,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fineGrid: true, fps: "auto", field: "", avoidCursor: false, easyMode: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fineGrid: false, fps: "auto", field: "", avoidCursor: false, easyMode: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -213,7 +213,7 @@ function loadSettings(): Settings {
   return {
     // Even scales only (or 1): an odd one saved by an older version rounds down.
     scale: ((s) => (s > 1 ? s & ~1 : s))(int(saved.scale, 0, 8, DEFAULTS.scale)),
-    fineGrid: typeof saved.fineGrid === "boolean" ? saved.fineGrid : DEFAULTS.fineGrid,
+    fineGrid: saved.fineGrid === true,
     fps: typeof saved.fps === "string" && ["auto", "30", "15"].includes(saved.fps) ? saved.fps : DEFAULTS.fps,
     field: typeof saved.field === "string" && FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
     avoidCursor: saved.avoidCursor === true,

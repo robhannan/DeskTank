@@ -405,7 +405,7 @@ test("settings persist across reloads", async ({ page }) => {
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   expect(await page.evaluate(() => window.desktank.settings)).toEqual({
     scale,
-    fineGrid: true,
+    fineGrid: false,
     fps: "15",
     field: "flow",
     stats: false,
@@ -435,34 +435,33 @@ test("settings persist across reloads", async ({ page }) => {
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   expect(await page.evaluate(() => window.desktank.settings.scale)).toBe(0);
-  expect(await page.evaluate(() => window.desktank.settings.fineGrid)).toBe(true);
+  expect(await page.evaluate(() => window.desktank.settings.fineGrid)).toBe(false);
   expect(errors).toEqual([]);
 });
 
-test("fine grid is on by default, toggles resolution and persists across reloads", async ({ page }) => {
+test("fine grid doubles auto resolution and persists across reloads", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
-  const [fineScale, fineCols] = await page.evaluate(() => window.desktank.grid);
-  expect(fineCols).toBeGreaterThanOrEqual(640);
+  const [stdScale, stdCols] = await page.evaluate(() => window.desktank.grid);
   await page.getByRole("button", { name: "Settings" }).click();
   const fineBox = page.locator("#set-fine-grid");
   await expect(fineBox).toBeEnabled();
-  await expect(fineBox).toBeChecked();
-  await fineBox.uncheck();
-  await expect.poll(() => page.evaluate(() => window.desktank.grid[1])).toBeLessThan(fineCols);
-  const [stdScale, stdCols] = await page.evaluate(() => window.desktank.grid);
-  expect(stdScale).toBeGreaterThan(fineScale);
-  expect(stdCols).toBeGreaterThanOrEqual(320);
+  await expect(fineBox).not.toBeChecked();
+  await fineBox.check();
+  await expect.poll(() => page.evaluate(() => window.desktank.grid[1])).toBeGreaterThan(stdCols);
+  const [fineScale, fineCols] = await page.evaluate(() => window.desktank.grid);
+  expect(fineScale).toBeLessThan(stdScale);
+  expect(fineCols).toBeGreaterThanOrEqual(640);
 
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
-  expect(await page.evaluate(() => window.desktank.settings.fineGrid)).toBe(false);
-  expect(await page.evaluate(() => window.desktank.grid[1])).toBe(stdCols);
+  expect(await page.evaluate(() => window.desktank.settings.fineGrid)).toBe(true);
+  expect(await page.evaluate(() => window.desktank.grid[1])).toBe(fineCols);
 
   await page.getByRole("button", { name: "Settings" }).click();
-  await expect(page.locator("#set-fine-grid")).not.toBeChecked();
+  await expect(page.locator("#set-fine-grid")).toBeChecked();
   await page.getByRole("button", { name: "Defaults" }).click();
-  await expect.poll(() => page.evaluate(() => window.desktank.grid[1])).toBe(fineCols);
-  expect(await page.evaluate(() => window.desktank.settings.fineGrid)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.desktank.grid[1])).toBe(stdCols);
+  expect(await page.evaluate(() => window.desktank.settings.fineGrid)).toBe(false);
   expect(errors).toEqual([]);
 });

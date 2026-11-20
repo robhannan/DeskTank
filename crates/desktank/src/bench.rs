@@ -1,7 +1,7 @@
 //! `desktank bench`: a scripted scenario with performance numbers
 //! (SPEC §6.1). A seeded sand pour into the starter scene, then the tank
 //! settles; rendering goes to an offscreen 2560×1440 target at the chosen
-//! cell scale (default 2× = 1280×720 cells; `--scale 4` = 640×360), paced
+//! cell scale (default 4× = 640×360 cells; `--scale 2` = 1280×720), paced
 //! in real time exactly like the window.
 //!
 //! GPU timing reads timestamps back after each frame, which blocks that
