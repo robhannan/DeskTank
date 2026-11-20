@@ -64,7 +64,9 @@ impl World {
     /// in the grid for a species that keeps one.
     pub(super) fn home_fits(&self, k: &Kind, home: Option<(u32, u32)>) -> bool {
         home.is_none_or(|(x, y)| {
-            k.homebody && (x as usize) < self.width && (y as usize) < self.height
+            (k.homebody || k.territory > 0)
+                && (x as usize) < self.width
+                && (y as usize) < self.height
         })
     }
 
@@ -158,17 +160,25 @@ impl World {
     }
 }
 
-/// The columns a home owner wanders between, `[lo, hi)`, if it has a home.
-pub(super) fn home_span(c: &Creature) -> Option<(i64, i64)> {
+/// The columns a home owner wanders between, `[lo, hi)`, if it has a home:
+/// within [`HOME_RANGE`] of it, or a territorial fish within its
+/// territory's radius.
+pub(super) fn home_span(k: &Kind, c: &Creature) -> Option<(i64, i64)> {
+    let range = if k.territory > 0 {
+        i64::from(k.territory)
+    } else {
+        HOME_RANGE
+    };
     c.home
-        .map(|(x, _)| (i64::from(x) - HOME_RANGE, i64::from(x) + HOME_RANGE + 1))
+        .map(|(x, _)| (i64::from(x) - range, i64::from(x) + range + 1))
 }
 
 /// Whether column `x` is close enough to `c`'s home to forage at (any
-/// column for a creature without a home).
-pub(super) fn near_home(c: &Creature, x: i64) -> bool {
-    c.home
-        .is_none_or(|(hx, _)| (x - i64::from(hx)).abs() <= HOME_FORAGE)
+/// column for a creature without a carpet home).
+pub(super) fn near_home(k: &Kind, c: &Creature, x: i64) -> bool {
+    !k.homebody
+        || c.home
+            .is_none_or(|(hx, _)| (x - i64::from(hx)).abs() <= HOME_FORAGE)
 }
 
 fn to_i64(v: usize) -> i64 {

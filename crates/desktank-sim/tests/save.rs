@@ -1,14 +1,15 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and the version 1 to 8 fixtures
+//! rigid bodies the hash leaves out), and the version 1 to 9 fixtures
 //! load (version 1 migrated to 2, T9; version 2 to 3, T9 part 2; version
 //! 3 to 4, D21; version 4 to 5, the crabs' homes; version 5 to 6, names;
-//! version 6 to 7, floaters' rafts; version 7 to 8, plant colouration).
+//! version 6 to 7, floaters' rafts; version 7 to 8, plant colouration;
+//! version 8 to 9, hunting and territory).
 //!
-//! The version 1 to 7 fixtures are frozen: this build no longer writes
+//! The version 1 to 8 fixtures are frozen: this build no longer writes
 //! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
-//! the version 8 fixture; only do that while version 8 is unreleased or its
+//! the version 9 fixture; only do that while version 9 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -295,9 +296,10 @@ fn a_version_2_fixture_loads() {
     assert_eq!(w.tick_count(), 900);
 }
 
-/// What the version 3 and 4 fixtures hold: `busy` with breeding state (T9 part
-/// 2): a blue cherry shrimp pair and a red one, a female guppy carrying a
-/// red male's young, a corydoras clutch and a corpse of a blue shrimp.
+/// What the version 3 and 4 fixtures hold (as it ran then): `busy` with
+/// breeding state (T9 part 2): a blue cherry shrimp pair and a red one, a
+/// female guppy carrying a red male's young, a corydoras clutch and a
+/// corpse of a blue shrimp.
 fn bred() -> World {
     let mut w = busy(5, 600);
     let get = |w: &World, name: &str| w.species().id(name).unwrap();
@@ -410,22 +412,11 @@ fn a_version_4_fixture_loads() {
     assert_eq!(w.state_hash(), again.state_hash());
 }
 
-/// A creature's id, depth and home.
-type Saved = (u32, f32, Option<(usize, usize)>);
-
-/// What the version 5 fixture holds: [`bred`] (with every species, the
-/// cheat-only crabs too) and a home owning crab on the sand that has had
-/// time to pick its home.
-fn homely() -> World {
-    let mut w = bred();
-    let owner = w.species().id("home_owning_crab").unwrap();
-    w.add_creature(owner, 170, 94).unwrap();
-    for _ in 0..600 {
-        w.tick();
-    }
-    w
-}
-
+/// The version 5 fixture holds [`bred`] as it was then (with every
+/// species, the cheat-only crabs too) and a home owning crab added at
+/// (170, 94) on the sand, run 600 ticks so it has picked its home. Hunting
+/// and territory (version 9) change how such a tank runs, so it is no
+/// longer rebuilt here to compare with.
 #[test]
 fn a_version_5_fixture_loads() {
     let bytes = std::fs::read(fixture(5)).unwrap();
@@ -440,16 +431,6 @@ fn a_version_5_fixture_loads() {
     assert!(w.creatures().iter().any(|c| c.species() == owner));
     // Version 6 migrates it with no names.
     assert!(w.creatures().iter().all(|c| c.name().is_none()));
-    // Homes and depth are saved: decoded, it matches the tank that wrote it.
-    let fresh = homely();
-    let saved = |w: &World| -> Vec<Saved> {
-        w.creatures()
-            .iter()
-            .map(|c| (c.id().0, c.depth(), c.home()))
-            .collect()
-    };
-    assert_eq!(saved(&w), saved(&fresh));
-    assert_eq!(w.state_hash(), fresh.state_hash());
     // Pinned, so every platform decodes the same state. An unnamed
     // creature hashes as before version 6, so this is the hash version 5
     // pinned.
@@ -463,39 +444,29 @@ fn a_version_5_fixture_loads() {
     assert_eq!(w.state_hash(), again.state_hash());
 }
 
-/// What the version 6 fixture holds: [`homely`] with three creatures
-/// named (one with a name outside ASCII) and one named and then unnamed.
-fn named() -> World {
-    let mut w = homely();
-    let ids: Vec<_> = w
-        .creatures()
-        .iter()
-        .map(desktank_sim::Creature::id)
-        .collect();
-    for (id, name) in ids.iter().zip(["Bubbles", "Señor Fin 🐟", "Dot", "Gone"]) {
-        assert!(w.set_creature_name(*id, name).is_some());
-    }
-    assert_eq!(w.set_creature_name(ids[3], "  "), Some(""));
-    w
-}
+/// The version 6 fixture holds the version 5 fixture's tank with its
+/// first three creatures named "Bubbles", "Señor Fin 🐟" and "Dot" and the
+/// fourth named "Gone" and then unnamed (no longer rebuilt here, as for
+/// version 5).
 
 #[test]
 fn a_version_6_fixture_loads() {
     let bytes = std::fs::read(fixture(6)).unwrap();
     assert_eq!(save::check(&bytes), Ok(6));
     let mut w = save::decode(&bytes, table()).unwrap();
-    // Names are saved: decoded, they match the tank that wrote it.
-    let fresh = named();
+    // Names are saved.
     let names = |w: &World| -> Vec<(u32, Option<String>)> {
         w.creatures()
             .iter()
             .map(|c| (c.id().0, c.name().map(str::to_owned)))
             .collect()
     };
-    assert_eq!(names(&w), names(&fresh));
-    let given: Vec<_> = w.creatures().iter().filter_map(|c| c.name()).collect();
-    assert_eq!(given, ["Bubbles", "Señor Fin 🐟", "Dot"]);
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    let given: Vec<_> = w.creatures().iter().map(|c| c.name()).take(4).collect();
+    assert_eq!(
+        given,
+        [Some("Bubbles"), Some("Señor Fin 🐟"), Some("Dot"), None]
+    );
+    assert_eq!(w.creatures().iter().filter_map(|c| c.name()).count(), 3);
     // Pinned, so every platform decodes the same state.
     assert_eq!(w.state_hash(), 0x029c_0413_f990_0954);
     let again = save::decode(&save::encode(&w), table()).unwrap();
@@ -564,6 +535,12 @@ fn a_version_7_fixture_loads() {
             .count()
     };
     assert!(floaters(&w) >= 4, "{} floaters", floaters(&w));
+    // Version 9 migrates its creatures calm, with no quarry.
+    assert!(
+        w.creatures()
+            .iter()
+            .all(|c| c.quarry().is_none() && c.fear() == 0)
+    );
     // The rafts are saved: it drifts on exactly as the tank that wrote it.
     for _ in 0..400 {
         w.tick();
@@ -604,11 +581,8 @@ fn coloured() -> World {
 
 #[test]
 fn a_version_8_fixture_loads() {
-    let path = fixture(8);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&coloured())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    // Frozen since version 9: blessing writes only the current version.
+    let bytes = std::fs::read(fixture(8)).unwrap();
     assert_eq!(save::check(&bytes), Ok(8));
     let mut w = save::decode(&bytes, table()).unwrap();
     let mut fresh = coloured();
@@ -621,6 +595,68 @@ fn a_version_8_fixture_loads() {
         "{:?}",
         colours(&w)
     );
+    // Version 9 migrates its creatures calm, with no quarry.
+    assert!(
+        w.creatures()
+            .iter()
+            .all(|c| c.quarry().is_none() && c.fear() == 0)
+    );
+    for _ in 0..400 {
+        w.tick();
+        fresh.tick();
+    }
+    assert_eq!(w.state_hash(), fresh.state_hash());
+}
+
+/// A creature's id, quarry, fright and home.
+type Pursuit = (u32, Option<u32>, u32, Option<(usize, usize)>);
+
+/// What the version 9 fixture holds: [`bred`] run on until a predator is
+/// hunting, a territorial betta has claimed its territory and a creature
+/// is frightened, all at once (hunting and territory).
+fn hunting() -> World {
+    let mut w = bred();
+    let busy = |w: &World| {
+        let cs = w.creatures();
+        cs.iter().any(|c| c.quarry().is_some())
+            && cs.iter().any(|c| c.fear() > 0)
+            && cs
+                .iter()
+                .any(|c| c.home().is_some() && c.quarry().is_none())
+    };
+    for _ in 0..20_000 {
+        if busy(&w) {
+            break;
+        }
+        w.tick();
+    }
+    assert!(busy(&w), "nothing hunting and frightened");
+    w
+}
+
+#[test]
+fn a_version_9_fixture_loads() {
+    let path = fixture(9);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&hunting())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(9));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    let mut fresh = hunting();
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    let pursuit = |w: &World| -> Vec<Pursuit> {
+        w.creatures()
+            .iter()
+            .map(|c| (c.id().0, c.quarry().map(|q| q.0), c.fear(), c.home()))
+            .collect()
+    };
+    assert_eq!(pursuit(&w), pursuit(&fresh));
+    assert!(w.creatures().iter().any(|c| c.quarry().is_some()));
+    assert!(w.creatures().iter().any(|c| c.fear() > 0));
+    // Pinned, so every platform decodes the same state.
+    assert_eq!(w.state_hash(), 0x81ba_c270_59d4_4d9c);
+    // Saved mid-chase, it hunts on exactly as the tank that wrote it.
     for _ in 0..400 {
         w.tick();
         fresh.tick();

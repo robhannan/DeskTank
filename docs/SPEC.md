@@ -461,7 +461,10 @@ target computes the same bits.
   - finding and eating food cells, and grazing algae and detritus (the
     clean-up crew);
   - avoiding the cursor (optional, D8);
-  - resting at night.
+  - resting at night;
+  - hunting for predators, fleeing to plant cover for their prey, and
+    holding a territory for territorial species (*Hunting and
+    territory* below).
 
   Creatures collide with solid cells and with the substrate surface.
   The tank is 2.5D (D21): it is eight **depth bands** deep, front glass
@@ -589,7 +592,9 @@ target computes the same bits.
     predator whose reach touches a creature no longer than its `prey_cm`
     (its species' length at its size, own young included) eats it with a
     chance of 1 in 4. The prey leaves no corpse (and no death cause); the
-    predator is fed (an hour of energy). Neither may be in the net.
+    predator is fed (an hour of energy). Neither may be in the net, and
+    prey in plant cover is safe. Predators chase their prey and prey flees
+    (*Hunting and territory* below).
   - **Drawing.** Each creature and corpse is drawn in its look (morph and
     sex), two atlas shelves per look: its frames, then its recoloured
     fine frames at four texels per cell.
@@ -618,6 +623,47 @@ target computes the same bits.
   web shows it in its readout with a name field under it (`N` or a click
   focuses it; owner tab only). A drawn in-tank card comes with the
   overlay's interact mode (O5), which has no title bar.
+- *Hunting and territory* (`desktank_sim::pursuit`; the strike itself is
+  T9 part 2's predation, unchanged):
+  - **Sensing.** Every 10 ticks (offset by its id) a creature looks round
+    a start-of-tick snapshot of the tank's creatures, built only while the
+    tank holds a predator (outside easy mode) or a territorial species, so
+    the cost is at most n²/10 distance checks a tick.
+  - **Hunting.** A hungry adult predator, outside easy mode, not in the
+    net, not heading for food and rested picks the nearest creature it
+    could eat (no longer than its `prey_cm`) within 40 cells (20 cm) that
+    isn't in cover and chases it: it stalks halfway between cruising and
+    top speed, dashes at top speed within 12 cells and shifts to its
+    prey's band. It gives up when the prey is gone, more than 56 cells
+    away, in cover, out of reach (its way is blocked), after 12 s or once
+    fed, then rests 5 s before another chase.
+  - **Fleeing.** A creature that a hungry adult predator within 14 cells
+    could eat takes fright for 3 s, renewed while the threat lasts. It
+    heads for the nearest cover within 16 cells (the middle of five plant
+    cells in a column in one band: a stem or blade), taking the band two
+    behind it (or two in front at the back of its range), or else runs 24
+    cells straight away; already in cover it holds still. It flees at its
+    top speed scaled by its size, at least its cruising speed, so fry are
+    slow.
+  - **Cover.** A creature is in cover with 4 plant cells within 2 bands
+    of its own inside 2 cells of its body. A predator neither sees nor
+    strikes prey in cover.
+  - **Territory.** A species with `temperament = "territorial"` may give
+    `territory_cm` (2–50; betta 15 cm, 30 cells). An adult claims a home
+    when it first senses (its column, at the nearest row of its zone) and
+    wanders within that radius of it. It drives out intruders inside its
+    territory and within 40 cells of it: surface and mid-water swimmers
+    too big to eat, and adults of its own species and sex. It chases at
+    top speed until the intruder is 6 cells past the edge or for 3 s,
+    then turns for home and rests 5 s. An intruder chased within 14 cells
+    flees straight away. Blocked outside its territory (driven out of
+    reach of home, behind a stand of plants say), it settles a new one
+    where it is. Territory is kept in easy mode too, as no one is hurt;
+    there is no flaring or fin nipping yet.
+  - **State.** Each creature's quarry, pursuit counter (chase ticks, or
+    rest ticks without a quarry) and fright are saved (format version 9,
+    migrating version 8 creatures calm) and hashed only when set; the
+    territory is the creature's `home`.
 
 ### 2.5 Interaction (D6)
 
@@ -736,7 +782,9 @@ target computes the same bits.
       version 3; 2.5D depth adds each creature's depth and each corpse's
       band in version 4, D21; a home owning crab's home in version 5,
       migrating version 4 creatures without one; each creature's name in
-      version 6, T9 part 3, migrating version 5 creatures unnamed);
+      version 6, T9 part 3, migrating version 5 creatures unnamed; each
+      creature's quarry, pursuit counter and fright in version 9, hunting
+      and territory, migrating version 8 creatures calm);
     - each floater's raft, its motion as a buoyant body (offset,
       velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
       tank had no floaters and migrates with none);

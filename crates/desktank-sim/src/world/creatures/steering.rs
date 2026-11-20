@@ -124,6 +124,9 @@ impl World {
         c: &mut Creature,
         rng: &mut Pcg32,
     ) -> (i32, i32, i32) {
+        if let Some(target) = super::pursuit::flee_target(k, c) {
+            return target;
+        }
         if c.retarget == 0 || dist(c.tx - c.x, c.ty - c.y) <= REACHED {
             self.pick_target(k, c, rng);
         } else {
@@ -153,6 +156,9 @@ impl World {
                 centre_of(to_i64(i / self.width)),
                 k.top,
             );
+        }
+        if let Some(target) = self.chase_target(k, c) {
+            return target;
         }
         if k.schooling {
             if c.stray > 0 {

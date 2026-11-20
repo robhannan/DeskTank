@@ -48,5 +48,5 @@ pub use world::{
     PREY_ENERGY, PlantId, PlantInfo, RANDOM_TICK_BUDGET, REVERSION_PER_MILLE, ROT_AFTER_SECONDS,
     ROT_EVERY_SECONDS, RandomTickStats, SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT, STRIKE_ODDS,
     TICKS_PER_SECOND, TINT_STEPS, Traits, UPDATE_SECONDS, UnmetNeed, World, WorldConfig,
-    WorldError, clean_name, tint_step,
+    WorldError, clean_name, pursuit, tint_step,
 };

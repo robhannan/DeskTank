@@ -16,6 +16,9 @@ maturity_days = 120
 prey_cm = 2.5
 breathes_air = true
 temperament = "territorial"
+# Radius in cm of the territory an adult claims where it settles: it
+# patrols it and drives other fish out (and other males of its own kind).
+territory_cm = 15.0
 speed = 3.5
 max_speed = 8.0
 diet = ["flake_food", "bloodworm", "sinking_pellet"]
