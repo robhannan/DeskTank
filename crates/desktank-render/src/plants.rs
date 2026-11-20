@@ -2,17 +2,21 @@
 //!
 //! **Plant texture** (T6b): a 256×256 `Rgba8Unorm` texture with one texel
 //! per plant id, at column `id & 255` and row `id >> 8`, so every id
-//! (1–65535) has one. Its RGB is the health tint the shader multiplies into
-//! every cell of that plant (the cell texture carries the id in its state
-//! bytes) and its alpha the plant's species id (T6d). It is rebuilt from
+//! (1–65535) has one (the cell texture carries the id in its state bytes).
+//! T6d: red holds the plant's health and green its colouration, each at
+//! [`desktank_sim::TINT_STEPS`] steps, from which the shader tints the
+//! whole plant (pale, yellowing, then brown and translucent as it dies)
+//! and shifts it towards its species' colouration colour; blue is spare
+//! and alpha holds the species id. It is rebuilt from
 //! the plant table when [`desktank_sim::World::plants_version`] changes,
 //! and only the rows that changed are uploaded, so a plant's look changes
 //! without waking a chunk or rewriting its cells.
 //!
 //! **Species texture** (T6d): [`SPECIES_WIDTH`]×256, one row per species
 //! id, built once: each part's colour ramp resampled to [`RAMP`] shades
-//! (root, stem, leaf), then the part shapes ([`desktank_sim::plants::Look`])
-//! and the sizes the shader scales positions by. Rows without a species
+//! (root, stem, leaf), then the part shapes ([`desktank_sim::plants::Look`]),
+//! the sizes the shader scales positions by and the colouration colour
+//! ([`desktank_sim::plants::Colouration`]). Rows without a species
 //! repeat the default species, so a cell whose plant texel isn't written
 //! yet still draws as a plant.
 
@@ -24,38 +28,22 @@ pub const SIDE: usize = 256;
 /// Bytes per row.
 const ROW_BYTES: usize = SIDE * 4;
 
-/// Health at and above which a plant is drawn untinted.
-const VIGOROUS: f32 = 0.8;
-/// Health at which leaves start to drop (`desktank_sim`'s plant update):
-/// the tint is fully yellowed here.
-const YELLOW_AT: f32 = 0.5;
-/// Pale yellow-green: a plant short of what it needs.
-const YELLOW: [f32; 3] = [1.0, 0.92, 0.55];
-/// Brown: a dying plant.
-const BROWN: [f32; 3] = [0.62, 0.45, 0.26];
-
-/// The tint for a plant of `health` (0–1): white while vigorous, paling to
-/// yellow as health falls to 0.5, then browning as it dies.
+/// A 0–1 value (health or colouration) as the texel byte the shader reads:
+/// its [`desktank_sim::TINT_STEPS`] step, so the texel changes exactly when
+/// the plants version does.
 #[must_use]
-pub fn tint(health: f32) -> [u8; 3] {
-    let h = health.clamp(0.0, 1.0);
-    let mix = |a: [f32; 3], b: [f32; 3], t: f32| -> [f32; 3] {
-        core::array::from_fn(|k| a[k] + (b[k] - a[k]) * t.clamp(0.0, 1.0))
-    };
-    let rgb = if h >= YELLOW_AT {
-        mix([1.0; 3], YELLOW, (VIGOROUS - h) / (VIGOROUS - YELLOW_AT))
-    } else {
-        mix(YELLOW, BROWN, (YELLOW_AT - h) / YELLOW_AT)
-    };
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=1
-    rgb.map(|v| (v * 255.0).round() as u8)
+pub fn texel_byte(v: f32) -> u8 {
+    let step = u32::from(desktank_sim::tint_step(v));
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=255
+    let byte = (f64::from(step) * 255.0 / f64::from(desktank_sim::TINT_STEPS)).round() as u8;
+    byte
 }
 
-/// `rows` rows of texels with no plant: untinted, species 0 (a row of the
-/// species texture that repeats the default species, so no real species id
-/// is reserved).
+/// `rows` rows of texels with no plant: healthy, uncoloured, species 0 (a
+/// row of the species texture that repeats the default species, so no
+/// real species id is reserved).
 fn empty_rows(rows: usize) -> Vec<u8> {
-    [u8::MAX, u8::MAX, u8::MAX, 0].repeat(rows * SIDE)
+    [u8::MAX, 0, 0, 0].repeat(rows * SIDE)
 }
 
 /// The texture's contents on the CPU, to find the rows that changed.
@@ -99,8 +87,12 @@ impl PlantTints {
         let mut fresh = empty_rows(rows.max(self.rows));
         for plant in world.plants() {
             let at = usize::from(plant.id.0) * 4;
-            let [red, green, blue] = tint(plant.health);
-            fresh[at..at + 4].copy_from_slice(&[red, green, blue, plant.species.0]);
+            fresh[at..at + 4].copy_from_slice(&[
+                texel_byte(plant.health),
+                texel_byte(plant.colour),
+                0,
+                plant.species.0,
+            ]);
         }
         let old_rows = self.image.as_chunks_mut::<ROW_BYTES>().0.iter_mut();
         for (row, (new, old)) in fresh
@@ -132,6 +124,9 @@ pub const SHAPES_COLUMN: usize = 3 * RAMP;
 /// cells (blade length for the first and last of a rosette or carpet;
 /// fronds, root length and fronds for a floater; 0 for a mat).
 pub const SIZES_COLUMN: usize = SHAPES_COLUMN + 1;
+/// Column of the colouration texel: the colour a plant shifts towards in
+/// strong light with low nutrients (T6d), alpha 255 if it colours at all.
+pub const COLOUR_COLUMN: usize = SIZES_COLUMN + 1;
 
 /// The species texture's contents, row-major (`SPECIES_WIDTH` texels per
 /// row, 256 rows).
@@ -188,6 +183,10 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     };
     let at = SIZES_COLUMN * 4;
     row[at..at + 4].copy_from_slice(&sizes);
+    if let Some(c) = s.colouration {
+        let at = COLOUR_COLUMN * 4;
+        row[at..at + 4].copy_from_slice(&[c.colour[0], c.colour[1], c.colour[2], u8::MAX]);
+    }
     row
 }
 
@@ -220,21 +219,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_pales_then_browns() {
-        assert_eq!(tint(1.0), [255, 255, 255]);
-        assert_eq!(tint(0.85), [255, 255, 255]);
-        let pale = tint(0.6);
-        assert!(pale[2] < 200 && pale[0] == 255, "{pale:?}");
-        let yellow = tint(0.5);
-        let brown = tint(0.0);
-        assert!(brown.iter().zip(yellow).all(|(b, y)| *b < y));
-        // Monotonic: a sicker plant is never brighter.
-        let mut last = tint(1.0);
-        for k in (0..=100).rev() {
+    fn texel_bytes_follow_the_tint_steps() {
+        assert_eq!(texel_byte(1.0), 255);
+        assert_eq!(texel_byte(0.0), 0);
+        assert_eq!(texel_byte(2.0), 255);
+        assert_eq!(texel_byte(0.5), 128);
+        // Values within one step share a byte.
+        assert_eq!(texel_byte(0.5), texel_byte(0.51));
+        let mut last = 0;
+        for k in 0..=100 {
             #[allow(clippy::cast_precision_loss)]
-            let t = tint(k as f32 / 100.0);
-            assert!(t.iter().zip(last).all(|(a, b)| *a <= b), "{k}");
-            last = t;
+            let b = texel_byte(k as f32 / 100.0);
+            assert!(b >= last, "{k}");
+            last = b;
         }
     }
 
@@ -274,6 +271,14 @@ mod tests {
             texel(row, SIZES_COLUMN)[..3],
             [f.height, f.root_depth, f.leaf_length]
         );
+        // Rotala colours; hygrophila doesn't.
+        let c = rotala.colouration.unwrap();
+        assert_eq!(
+            texel(row, COLOUR_COLUMN),
+            [c.colour[0], c.colour[1], c.colour[2], 255]
+        );
+        let hygro = usize::from(table.id("hygrophila").unwrap().0);
+        assert_eq!(texel(hygro, COLOUR_COLUMN)[3], 0);
         // Rows without a species repeat the default.
         let default = usize::from(table.default_species().unwrap().id.0);
         let at = |r: usize| &image[r * SPECIES_WIDTH * 4..(r + 1) * SPECIES_WIDTH * 4];
@@ -285,7 +290,7 @@ mod tests {
                 .as_chunks::<4>()
                 .0
                 .iter()
-                .all(|t| *t == [255, 255, 255, 0])
+                .all(|t| *t == [255, 0, 0, 0])
         );
         assert_eq!(at(255), at(default));
         assert_ne!(at(row), at(default));
@@ -300,6 +305,7 @@ mod tests {
             ("RAMP", RAMP),
             ("SHAPES_COLUMN", SHAPES_COLUMN),
             ("SIZES_COLUMN", SIZES_COLUMN),
+            ("COLOUR_COLUMN", COLOUR_COLUMN),
         ] {
             let line = format!("const {name}: i32 = {value};");
             assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");

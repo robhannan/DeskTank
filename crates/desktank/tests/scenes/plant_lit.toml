@@ -1,0 +1,51 @@
+# A strongly lit red plant (T6d): rotala and ludwigia on a raised aquasoil
+# terrace just under the surface, where the light is strongest, and a
+# rotala on the low bed at the right for comparison. Aquasoil holds the
+# water at a lean nutrient level (0.4), so in that light the terrace plants
+# colour pink-red, their newest growth most; the low rotala stays green.
+ticks = 9600
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+repeat = 20
+x = 0
+y = 56
+dx = 4
+radius = 16
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 16
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 44
+y = 20
+radius = 0
+plant = "ludwigia"
+
+[[pour]]
+x = 72
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 148
+y = 20
+radius = 0
+plant = "rotala"
