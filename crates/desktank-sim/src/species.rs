@@ -1286,8 +1286,8 @@ mod tests {
     }
 
     /// The fish at [`CELLS_PER_CM`]: a male guppy's body is the shortest
-    /// (its fan tail drawn past it), then the neon and otocinclus, with the
-    /// harlequin and honey gourami the longest and deepest.
+    /// (its fan tail drawn past it), then the neon and otocinclus, the
+    /// harlequin and honey gourami, and the betta the longest and deepest.
     #[test]
     fn fish_are_sized_to_scale() {
         let t = SpeciesTable::builtin_for(&materials()).unwrap();
@@ -1317,6 +1317,17 @@ mod tests {
         }
         assert!(rasbora.size().1 > tetra.size().1, "harlequins are deeper");
         assert!(gourami.size().1 > rasbora.size().1, "gouramis are deeper");
+        // The betta: a 6–6.5 cm body, the largest stocked species, with
+        // flowing fins drawn up to 2 cm past it and the tallest sprite.
+        let betta = get("betta");
+        assert!((6.0..=6.5).contains(&betta.length_cm));
+        assert!((0.5..=2.0).contains(&(drawn(betta) - betta.length_cm)));
+        for s in t.iter().filter(|s| !s.cheat_only && s.name != "betta") {
+            assert!(betta.length_cm > s.length_cm, "{}", s.name);
+            assert!(betta.size().1 > s.size().1, "{}", s.name);
+        }
+        // It needs water twice as deep as it is tall.
+        assert!(betta.min_depth >= 2 * betta.size().1);
     }
 
     /// Real-world sizes at [`CELLS_PER_CM`]: the Thai micro crab is the
@@ -1356,10 +1367,12 @@ mod tests {
             );
         }
         assert!(drawn(amano) - amano.length_cm > drawn(cherry) - cherry.length_cm);
-        // Every species is drawn at the shared scale.
+        // Every species is drawn at the shared scale; only the betta's
+        // flowing fins reach 2 cm past its body.
         for s in t.iter() {
+            let fins = if s.name == "betta" { 2.0 } else { 1.5 };
             assert!(
-                s.length_cm <= drawn(s) && drawn(s) - s.length_cm <= 1.5,
+                s.length_cm <= drawn(s) && drawn(s) - s.length_cm <= fins,
                 "{}",
                 s.name
             );
