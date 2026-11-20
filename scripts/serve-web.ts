@@ -8,6 +8,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..", "target", "site");
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
+const mount = process.argv[3] ?? "/";
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -15,12 +16,17 @@ const TYPES: Record<string, string> = {
   ".wasm": "application/wasm",
   ".png": "image/png",
   ".json": "application/json",
+  ".webmanifest": "application/manifest+json",
   ".map": "application/json",
 };
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  let file = path.join(root, decodeURIComponent(url.pathname));
+  if (!url.pathname.startsWith(mount)) {
+    res.writeHead(404).end();
+    return;
+  }
+  let file = path.join(root, decodeURIComponent(url.pathname.slice(mount.length)));
   if (!file.startsWith(root)) {
     res.writeHead(403).end();
     return;
@@ -37,4 +43,4 @@ createServer(async (req, res) => {
     "cache-control": "no-store",
   });
   createReadStream(file).pipe(res);
-}).listen(port, "127.0.0.1", () => console.log(`Serving ${root} on http://127.0.0.1:${port}/`));
+}).listen(port, "127.0.0.1", () => console.log(`Serving ${root} on http://127.0.0.1:${port}${mount}`));

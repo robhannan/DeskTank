@@ -1370,3 +1370,10 @@ async function main() {
 }
 
 main();
+
+// Offline installation is optional on restricted origins and private profiles.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch((error: unknown) => {
+    console.warn("DeskTank offline installation unavailable", error);
+  });
+}
