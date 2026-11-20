@@ -222,6 +222,7 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 ## Next increments
 
+- Offscreen render tests (`crates/desktank-render/tests/offscreen.rs`) return early without a GPU adapter, so they pass vacuously there; make them fail under `CI` like the scene render tests (PR #83 review).
 - Sub-cell hardscape: a 4×4 coverage mask per rock/driftwood cell, set when brushes and pours place them, so round brushes render round at 4× (replacing the `rigid_cut` chamfer).
 - Web without a GPU (SwiftShader): each drawn frame holds the main thread 90–400 ms, so world time runs slow as the pacer drops the backlog (18 ticks a second with one page drawing, 5–13 with two). Consider skipping frames (draw at most every Nth tick) when the measured frame cost exceeds the tick interval, so ticks keep their 20 Hz (CI diagnostics, PR fixing the web CI timing tests).
 - Web take-over: the new owner opens the save into a new renderer, rebuilding its pipelines; on SwiftShader that holds the main thread ~1.7 s right after taking over (~1.5 s before issue #45's larger shader). Keep the renderer across `showTank` when the backend is unchanged. No test covers the hand-over any more (the Playwright test was removed as too unreliable on CI); a reliable one could come back with this.

@@ -372,13 +372,13 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
 // Sub-cell rows trimmed off the top of an exposed loose-material cell (sand,
 // gravel, aquasoil, detritus) so 4x cells form 1-texel slopes and soft crests
 // instead of 4x4 stair-steps (2x: 1-sub-cell bevels). In quarter rows when
-// `fine`, else in 2x sub rows; 0 when the cell is buried.
-fn loose_top(at: vec2<i32>, mat: i32, quarter: vec2<i32>, fine: bool) -> i32 {
-    if !is_open_fluid(at + vec2<i32>(0, -1), mat) {
+// `fine`, else in 2x sub rows; 0 when the cell is buried. Callers pass the
+// open-fluid flags they already read above, left and right, so no
+// neighbour is read twice.
+fn loose_top(open_up: bool, open_l: bool, open_r: bool, at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> i32 {
+    if !open_up {
         return 0;
     }
-    let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
-    let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
     let sub = quarter / 2;
     if fine {
         let px = at.x * 4 + quarter.x;
@@ -403,6 +403,17 @@ fn loose_top(at: vec2<i32>, mat: i32, quarter: vec2<i32>, fine: bool) -> i32 {
         return sub.x;
     }
     return 0;
+}
+
+// `loose_top` for a cell whose caller only read the cell above: the side
+// neighbours are read only when it is open.
+fn loose_top_at(at: vec2<i32>, mat: i32, open_up: bool, quarter: vec2<i32>, fine: bool) -> i32 {
+    if !open_up {
+        return 0;
+    }
+    let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
+    let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
+    return loose_top(true, open_l, open_r, at, quarter, fine);
 }
 
 // Whether the texel at `quarter` falls in a bevelled-off convex corner of a
@@ -516,7 +527,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
         let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
         let h = hash_grain(p, v);
-        let top_row = loose_top(at, mat, quarter, fine);
+        let top_row = loose_top(open_up, open_l, open_r, at, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
             return water_bg(at, quarter, fine);
         }
@@ -568,11 +579,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         // Whole rounded river pebbles laid out per cell from its variant (so
         // moving gravel carries them): mostly one stone filling the cell, else
         // a stone beside a dark gap row or column, flipped at random so gaps
-        // don't line up. Each
-        // stone's top follows the trimmed contour (`loose_top`), so a sloped
-        // or rippled surface shows lit, rounded stones rather than sliced ones.
+        // don't line up. Each stone's top follows the trimmed contour
+        // (`loose_top`), so a sloped or rippled surface shows lit, rounded
+        // stones rather than sliced ones.
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
-        let top_row = loose_top(at, mat, quarter, fine);
+        let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         let q = select(sub, quarter, fine);
         if q.y < top_row {
             return water_bg(at, quarter, fine);
@@ -584,7 +595,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         var k: f32;
         var warm: vec3<f32>;
         if fine {
-            let fx = select(q.x, 3 - q.x, (cv & 4u) != 0u);
+            let fx = select(q.x, 3 - q.x, ((cv >> 8u) & 1u) != 0u);
             // Stone box (x0, y0, x1, y1) within the cell, or none (gap).
             var b = vec4<i32>(0, 0, 3, 3);
             switch cv & 7u {
@@ -674,7 +685,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         // Staggered dark rounded matte soil pellets (3x3 texels at 4x,
         // offset 2x2 at 2x): smaller than gravel pebbles, breaking the cell grid.
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
-        let top_row = loose_top(at, mat, quarter, fine);
+        let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
             return water_bg(at, quarter, fine);
         }
@@ -904,7 +915,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let water_up = is_water(at + vec2<i32>(0, -1));
         let h = hash_grain(p, v);
-        if water_up && select(sub.y, quarter.y, fine) < loose_top(at, mat, quarter, fine) {
+        // Detritus trims only under water (in air it is a resting heap).
+        if water_up && select(sub.y, quarter.y, fine) < loose_top_at(at, mat, open_up, quarter, fine) {
             return water_bg(at, quarter, fine);
         }
         let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);
