@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { open, stateHash, watchErrors } from "./support.mjs";
+import { cellPoint, choose, gridSize, open, stateHash, watchErrors } from "./support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // Written by the native app (desktank-sim's T8 fixture: 200×120 cells, tick
@@ -47,6 +47,33 @@ async function download(page, button) {
   expect(file.suggestedFilename()).toMatch(/^desktank-\d{8}-\d{4}\.dtank$/);
   return readFile(await file.path());
 }
+
+test("a named creature keeps its name across a reload", async ({ page }) => {
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  // Add a neon tetra in mid water and name it.
+  const [w, h] = await gridSize(page);
+  await choose(page, "Neon tetra");
+  const p = await cellPoint(page, Math.round(w / 2), Math.round(h / 2));
+  await page.mouse.click(p.x, p.y);
+  const id = await page.evaluate(() => {
+    const t = window.desktank.tank;
+    for (let id = 1; id < 1000; id++) {
+      if (t.creatureName(id) !== undefined) {
+        t.nameCreature(id, "Señor Fin");
+        return id;
+      }
+    }
+    return 0;
+  });
+  expect(id, "the starter tank has creatures").toBeGreaterThan(0);
+  await setHidden(page, true);
+  await page.evaluate(() => window.desktank.saving);
+  await page.reload();
+  await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
+  expect(await page.evaluate((id) => window.desktank.tank.creatureName(id), id)).toBe("Señor Fin");
+  expect(errors).toEqual([]);
+});
 
 test("a hidden tab runs no ticks, and a reload restores the hidden state", async ({ page }) => {
   const errors = watchErrors(page);

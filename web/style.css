@@ -201,10 +201,20 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
   color: var(--accent);
 }
 
-.inspect {
+/* The inspect card: the readout and, for a creature, its name field. */
+.card {
   position: absolute;
   left: 8px;
+  right: 8px;
   bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.inspect {
   margin: 0;
   padding: 4px 8px;
   line-height: 1.4;
@@ -231,6 +241,21 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
 }
 
 .cheat[hidden] { display: none; }
+
+.name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 4px 8px;
+  background: rgba(5, 11, 17, 0.85);
+  border: 2px solid var(--accent);
+  pointer-events: auto;
+}
+
+.name[hidden] { display: none; }
+.name input { width: min(24ch, 50vw); font: inherit; }
+.name output { opacity: 0.85; }
 .cheat input { width: min(24ch, 60vw); font: inherit; }
 .cheat output { opacity: 0.85; }
 
