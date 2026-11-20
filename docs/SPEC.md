@@ -790,6 +790,10 @@ target computes the same bits.
       tank had no floaters and migrates with none);
     - each plant's colouration (version 8, T6d; a version 7 tank's
       plants migrate uncoloured);
+    - the sub-cell outline of rigid cells (rock, driftwood) and of the
+      rigid bodies' reference shapes: a 4×4 coverage mask per partial cell,
+      stored sparsely (version 10; a version 9 tank's rigid cells migrate
+      whole, drawn square as before);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

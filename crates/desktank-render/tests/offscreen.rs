@@ -194,7 +194,7 @@ fn a_poured_rock_disc_is_round() {
     // Rounder than the octagon: its flat top spans 7 cells (28 texels);
     // the disc's top row is a short arc.
     let (top, first, last) = rows[0];
-    assert!(last - first + 1 <= 20, "top row {top}: {first}..={last}");
+    assert!(last - first < 20, "top row {top}: {first}..={last}");
     // Lit on top, shadowed underneath (centre column).
     let (bottom, ..) = *rows.last().unwrap();
     let mid = side / 2;
