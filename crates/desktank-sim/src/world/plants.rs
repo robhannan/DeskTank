@@ -323,6 +323,26 @@ impl World {
         (x < self.width && y < self.height).then(|| self.plant_band_at(y * self.width + x))?
     }
 
+    /// [`World::plant_band`] for every cell of `r` (clipped to the grid),
+    /// row by row into `out`, replacing its contents; 0 for cells that
+    /// aren't plant parts. Returns whether any cell was a plant part. For
+    /// the renderer, which draws plant cells in front of creatures behind
+    /// them (D21).
+    pub fn plant_bands(&self, r: Rect, out: &mut Vec<u8>) -> bool {
+        out.clear();
+        let (x1, y1) = (r.x1.min(self.width), r.y1.min(self.height));
+        let mut memo = None;
+        let mut any = false;
+        for y in r.y0.min(y1)..y1 {
+            for i in y * self.width + r.x0.min(x1)..y * self.width + x1 {
+                let band = self.plant_band_with(i, &mut memo);
+                any |= band.is_some();
+                out.push(band.unwrap_or(0));
+            }
+        }
+        any
+    }
+
     /// [`World::plant_band`] by cell index. Bands aren't stored: they
     /// follow from the world seed, the plant id and the cell's place in
     /// the plant, so they cost no cell bits and need no save field. A
@@ -400,8 +420,9 @@ impl World {
             .sum()
     }
 
-    /// Bumped whenever a plant is added or removed or its health tint
-    /// changes (renderers re-upload the plant texture on a change).
+    /// Bumped whenever a plant is added or removed, its health tint
+    /// changes or its base moves (renderers re-upload the plant texture,
+    /// and the bands of a plant whose base moved, on a change).
     #[must_use]
     pub fn plants_version(&self) -> u64 {
         self.plants.version
@@ -751,6 +772,11 @@ impl World {
             self.piece_base(piece)
         };
         self.recount_plant(id, piece);
+        if new_base != base {
+            // A stem plant's leaf bands follow its base column (D21), so
+            // renderers re-read its bands.
+            self.plants.version += 1;
+        }
         if let Some(p) = self.plants.table.get_mut(&id) {
             p.base = new_base;
             p.pending = false;

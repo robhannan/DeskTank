@@ -1,0 +1,58 @@
+# 2.5D depth, part 2 (D21): a dense stand of vallisneria and hygrophila
+# grown for 15 minutes on aquasoil, with neon tetras, harlequins and
+# guppies swimming through it for the last 40 s. Plant cells in a band
+# nearer the glass hide the fish behind them; fish in front are drawn
+# over the plants; fish and plants further back fade towards the water.
+ticks = 18000
+
+[world]
+water_level = 0.94
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+repeat = 6
+x = 14
+y = 20
+dx = 26
+radius = 0
+plant = "vallisneria"
+
+[[pour]]
+repeat = 6
+x = 27
+y = 20
+dx = 26
+radius = 0
+plant = "hygrophila"
+
+[[creature]]
+tick = 17200
+species = "neon_tetra"
+x = 20
+y = 50
+count = 8
+dx = 15
+
+[[creature]]
+tick = 17200
+species = "harlequin_rasbora"
+x = 30
+y = 60
+count = 5
+dx = 22
+
+[[creature]]
+tick = 17200
+species = "guppy"
+x = 40
+y = 40
+count = 3
+dx = 40
