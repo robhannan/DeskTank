@@ -1,0 +1,48 @@
+# Marimo and tiger lotus (issue #45) over an aquasoil bed under shallow
+# water, grown for 25 minutes: two tiger lotus put up mottled leaf pads on
+# petioles of differing lengths, the longest lying flat on the surface,
+# and spread by runners; three marimo balls, dropped as fragments, sink to
+# the bed and grow round.
+ticks = 30000
+
+[world]
+water_level = 0.52
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 40
+y = 50
+radius = 0
+plant = "tiger_lotus"
+
+[[pour]]
+x = 112
+y = 50
+radius = 0
+plant = "tiger_lotus"
+
+[[pour]]
+x = 70
+y = 50
+radius = 0
+plant = "marimo"
+
+[[pour]]
+x = 84
+y = 45
+radius = 0
+plant = "marimo"
+
+[[pour]]
+x = 146
+y = 50
+radius = 0
+plant = "marimo"
