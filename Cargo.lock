@@ -490,10 +490,12 @@ dependencies = [
  "desktank-render",
  "desktank-sim",
  "jni",
+ "log",
  "ndk",
  "ndk-sys",
  "pollster",
  "raw-window-handle",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

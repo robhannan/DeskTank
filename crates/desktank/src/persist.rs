@@ -210,7 +210,7 @@ mod tests {
             ..WorldConfig::default()
         };
         let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
-        crate::scene::starter(&mut w, seed).unwrap();
+        desktank_sim::scene::starter(&mut w, seed).unwrap();
         w
     }
 
