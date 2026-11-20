@@ -293,8 +293,6 @@ impl Host {
         let s = self.surfaces.get_mut(&dream)?;
         if self.tank.is_none() {
             let grid = tv_grid(size.0, size.1);
-            // THROWAWAY (A2 red check, reverted in the next commit).
-            assert!(grid.scale == 0, "A2 red check: the Dream is deliberately broken");
             match new_world(grid) {
                 Ok(world) => {
                     log::info!(
