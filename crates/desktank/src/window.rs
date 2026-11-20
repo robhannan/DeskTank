@@ -76,7 +76,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::persist::Persistence;
-use crate::scene;
+use desktank_sim::scene;
 
 /// Screen pixels per cell (SPEC §2.1 default).
 const CELL_SCALE: u32 = 4;
@@ -845,7 +845,7 @@ impl ApplicationHandler for App {
                 // A loaded tank keeps the creatures it had.
                 let fish = if fresh { self.fish } else { 0 };
                 if let Err(e) = scene::stock(s.tank.world_mut(), fish, SEED) {
-                    self.error = Some(e);
+                    self.error = Some(e.into());
                     event_loop.exit();
                     return;
                 }

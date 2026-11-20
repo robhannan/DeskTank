@@ -2,16 +2,15 @@
 //! shim in `android/` (SPEC §3.6, D23).
 //!
 //! The shim's `DreamService` owns a `SurfaceView` and forwards its surface
-//! callbacks and the Dream's start and stop here. This crate turns the
-//! `Surface` into an `ANativeWindow`, makes a wgpu surface from it and
-//! clears it to the tank's water colour. That is the A0 skeleton: it proves
-//! the GPU path and records which backend the device gets. Drawing the real
-//! tank on a render thread is A1.
+//! callbacks and the Dream's start and stop here, each tagged with the
+//! Dream's token. This crate turns the `Surface` into an `ANativeWindow`,
+//! makes a wgpu surface from it and draws the tank on a render thread it
+//! owns, paced by the tank's frame pacer (A1).
 //!
-//! The lifecycle rules and colour maths are OS-agnostic and tested on the
-//! desktop; only the JNI and NDK glue is Android-only. On other targets
-//! this crate compiles to an empty library so that `cargo build
-//! --workspace` works on every OS.
+//! The lifecycle rules, grid choice and log filter are OS-agnostic and
+//! tested on the desktop; only the JNI, NDK and render-thread glue is
+//! Android-only. On other targets this crate compiles to an empty library
+//! so that `cargo build --workspace` works on every OS.
 // FFI crate: `unsafe` is allowed here, only at the JNI and NDK boundary, and
 // every block needs a `// SAFETY:` comment (SPEC §4.1).
 #![allow(unsafe_code)]
@@ -21,63 +20,84 @@ mod lifecycle;
 #[cfg(target_os = "android")]
 mod jni_host;
 
-use desktank_render::wgpu;
-use desktank_sim::MaterialTable;
+use desktank_render::{even_scale, wgpu};
+use desktank_sim::{MaterialError, MaterialTable, World, WorldConfig, WorldError, scene};
+use log::{Level, LevelFilter};
 
-pub use lifecycle::{Event, Lifecycle};
+pub use lifecycle::{DreamId, Dreams, Event, Lifecycle};
 
-/// The material whose colour the A0 skeleton clears to.
-const WATER: &str = "water";
+/// Cells across and down at the default 4× scale on a 1080p TV (D1, SPEC
+/// §3.6): the grid a TV tank aims for at any resolution.
+pub const TV_CELLS: (u32, u32) = (480, 270);
 
-/// The tank's water colour, sRGB-encoded, from the built-in materials.
+/// Smallest and largest TV cell scale (D19: even scales from 2 to 8).
+const SCALES: (u32, u32) = (2, 8);
+
+/// Fewest cells per side, as the desktop window allows.
+const MIN_SIDE: u32 = 16;
+
+/// Seed for a new tank, the desktop's default.
+pub const SEED: u64 = 7;
+
+/// Creatures a new tank is stocked with (the §6.1 reference load).
+pub const STOCK: usize = 30;
+
+/// A grid and the scale it is drawn at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TvGrid {
+    /// Screen pixels per cell side: even, 2 to 8.
+    pub scale: u32,
+    /// Cells across and down.
+    pub cells: (u32, u32),
+}
+
+/// The grid for a new tank on a `width`×`height` pixel surface (SPEC §3.6):
+/// the largest even scale (2 to 8) at which [`TV_CELLS`] fit, and as many
+/// cells as cover the surface at that scale. 1080p gives 4× and 480×270
+/// cells, 4K 8× and the same cells, so a tank looks the same on any TV.
+#[must_use]
+pub fn tv_grid(width: u32, height: u32) -> TvGrid {
+    let fit = (width / TV_CELLS.0).min(height / TV_CELLS.1);
+    let scale = even_scale(fit.clamp(SCALES.0, SCALES.1));
+    let max = u32::try_from(desktank_sim::MAX_SIDE).unwrap_or(u32::MAX);
+    let cells = |px: u32| (px / scale).clamp(MIN_SIDE, max);
+    TvGrid {
+        scale,
+        cells: (cells(width), cells(height)),
+    }
+}
+
+/// A new tank of `grid`'s cells: the starter scene (sand, gravel, rocks)
+/// stocked with [`STOCK`] creatures, from [`SEED`].
 ///
 /// # Errors
 ///
-/// Returns an error if the built-in materials don't load (a build defect,
-/// covered by `desktank-sim`'s tests) or have no water.
-pub fn water_rgb() -> Result<[u8; 3], WaterError> {
-    let materials = MaterialTable::builtin().map_err(|_| WaterError)?;
-    materials
-        .id(WATER)
-        .and_then(|id| materials.get(id))
-        .map(|m| m.colour)
-        .ok_or(WaterError)
-}
-
-/// The built-in materials have no water colour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WaterError;
-
-impl std::fmt::Display for WaterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the built-in materials have no water colour")
-    }
-}
-
-impl std::error::Error for WaterError {}
-
-/// The clear colour that shows `rgb` (sRGB-encoded) on a surface of this
-/// format. wgpu takes clear colours in the attachment's linear space, so an
-/// sRGB surface needs them decoded; a non-sRGB (`Unorm`) one stores the
-/// value as given.
-#[must_use]
-pub fn clear_colour(rgb: [u8; 3], format: wgpu::TextureFormat) -> wgpu::Color {
-    let channel = |c: u8| {
-        let v = f64::from(c) / 255.0;
-        if !format.is_srgb() {
-            v
-        } else if v <= 0.040_45 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
+/// Returns an error if the built-in tables don't load (a build defect,
+/// covered by `desktank-sim`'s tests) or the grid is out of range (never for
+/// a [`tv_grid`]).
+pub fn new_world(grid: TvGrid) -> Result<World, NewWorldError> {
+    let materials = MaterialTable::builtin()?;
+    let config = WorldConfig {
+        width: grid.cells.0 as usize,
+        height: grid.cells.1 as usize,
+        seed: SEED,
+        ..WorldConfig::default()
     };
-    wgpu::Color {
-        r: channel(rgb[0]),
-        g: channel(rgb[1]),
-        b: channel(rgb[2]),
-        a: 1.0,
-    }
+    let mut world = World::new(config, materials)?;
+    scene::starter(&mut world, SEED)?;
+    scene::stock(&mut world, STOCK, SEED)?;
+    Ok(world)
+}
+
+/// Error making a new tank.
+#[derive(Debug, thiserror::Error)]
+pub enum NewWorldError {
+    /// The built-in materials don't load.
+    #[error("built-in materials: {0}")]
+    Materials(#[from] MaterialError),
+    /// The world rejected the grid or the starter scene.
+    #[error("new world: {0}")]
+    World(#[from] WorldError),
 }
 
 /// The wgpu backends to try, in order, from the `debug.desktank.backend`
@@ -93,28 +113,80 @@ pub fn backend_order(property: Option<&str>) -> &'static [wgpu::Backends] {
     }
 }
 
+/// The log level the `debug.desktank.log` system property asks for
+/// (`adb shell setprop debug.desktank.log debug`): `off`, `error`, `warn`,
+/// `info`, `debug` or `trace` applies to every crate; unset (or anything
+/// else) keeps the default of [`log_enabled`].
+#[must_use]
+pub fn log_override(property: Option<&str>) -> Option<LevelFilter> {
+    property.and_then(|p| p.trim().parse().ok())
+}
+
+/// Whether a `level` record from module `target` goes to logcat: with an
+/// override, anything at or above it; by default this crate's info and up
+/// and everything else's (wgpu's) warnings and errors.
+#[must_use]
+pub fn log_enabled(target: &str, level: Level, over: Option<LevelFilter>) -> bool {
+    let max = over.unwrap_or(if target.starts_with(env!("CARGO_CRATE_NAME")) {
+        LevelFilter::Info
+    } else {
+        LevelFilter::Warn
+    });
+    level <= max
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn water_is_the_material_colour() {
-        // assets/materials/water.toml: colour = "#1f4e79".
-        assert_eq!(water_rgb(), Ok([0x1f, 0x4e, 0x79]));
+    fn tv_grid_keeps_the_1080p_tank_on_any_tv() {
+        let hd = TvGrid {
+            scale: 4,
+            cells: (480, 270),
+        };
+        assert_eq!(tv_grid(1920, 1080), hd);
+        assert_eq!(
+            tv_grid(3840, 2160),
+            TvGrid {
+                scale: 8,
+                cells: (480, 270)
+            }
+        );
+        // 1440p: 5× fits, rounded down to an even 4×.
+        assert_eq!(
+            tv_grid(2560, 1440),
+            TvGrid {
+                scale: 4,
+                cells: (640, 360)
+            }
+        );
+        // 720p and smaller: never below 2×.
+        assert_eq!(
+            tv_grid(1280, 720),
+            TvGrid {
+                scale: 2,
+                cells: (640, 360)
+            }
+        );
+        assert_eq!(
+            tv_grid(10, 10),
+            TvGrid {
+                scale: 2,
+                cells: (16, 16)
+            }
+        );
+        // Never above 8×.
+        assert_eq!(tv_grid(7680, 4320).scale, 8);
     }
 
     #[test]
-    fn clear_colour_decodes_srgb_only_for_srgb_surfaces() {
-        let unorm = clear_colour([0, 128, 255], wgpu::TextureFormat::Rgba8Unorm);
-        assert!((unorm.g - 128.0 / 255.0).abs() < 1e-12);
-        assert!((unorm.b - 1.0).abs() < 1e-12);
-
-        let srgb = clear_colour([0, 128, 255], wgpu::TextureFormat::Rgba8UnormSrgb);
-        assert!(srgb.r.abs() < 1e-12);
-        // sRGB 128 is about 21.6% linear.
-        assert!((srgb.g - 0.2158).abs() < 1e-3, "{}", srgb.g);
-        assert!((srgb.b - 1.0).abs() < 1e-12);
-        assert!((srgb.a - 1.0).abs() < 1e-12);
+    fn new_world_is_the_stocked_starter_scene() {
+        let world = new_world(tv_grid(1920, 1080)).unwrap();
+        assert_eq!((world.width(), world.height()), (480, 270));
+        assert_eq!(world.creatures().len(), STOCK);
+        let sand = scene::material(&world, "sand").unwrap();
+        assert!(world.material_counts()[usize::from(sand.0)] > 0);
     }
 
     #[test]
@@ -127,5 +199,22 @@ mod tests {
         assert_eq!(backend_order(None), both);
         assert_eq!(backend_order(Some("")), both);
         assert_eq!(backend_order(Some("metal")), both);
+    }
+
+    #[test]
+    fn logs_our_info_and_wgpu_warnings_unless_overridden() {
+        let ours = "desktank_android::jni_host";
+        assert!(log_enabled(ours, Level::Info, None));
+        assert!(!log_enabled(ours, Level::Debug, None));
+        assert!(log_enabled("wgpu_hal::gles::egl", Level::Warn, None));
+        assert!(!log_enabled("wgpu_core::device", Level::Info, None));
+
+        let debug = log_override(Some("debug\n"));
+        assert_eq!(debug, Some(LevelFilter::Debug));
+        assert!(log_enabled("wgpu_core::device", Level::Debug, debug));
+        assert!(!log_enabled(ours, Level::Trace, debug));
+        assert!(!log_enabled(ours, Level::Error, log_override(Some("off"))));
+        assert_eq!(log_override(Some("loud")), None);
+        assert_eq!(log_override(None), None);
     }
 }

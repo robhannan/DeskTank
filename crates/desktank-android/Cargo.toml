@@ -20,6 +20,9 @@ workspace = true
 [dependencies]
 desktank-sim.workspace = true
 desktank-render.workspace = true
+# wgpu logs through `log`; the host routes it (and its own lines) to logcat.
+log = { version = "0.4.35", default-features = false, features = ["std"] }
+thiserror = "2"
 
 # Only the Android build links JNI and the NDK, so desktop workspace builds
 # compile the OS-agnostic parts (and their tests) and nothing else.

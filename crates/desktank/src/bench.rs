@@ -17,7 +17,7 @@ use desktank_platform::{ProcessStats, process_stats};
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
 use desktank_sim::{Brush, MaterialTable, World, WorldConfig};
 
-use crate::scene;
+use desktank_sim::scene;
 
 /// Reference display (SPEC §6.1): 2560×1440 at 4× = 640×360 cells.
 const TARGET: (u32, u32) = (2560, 1440);
