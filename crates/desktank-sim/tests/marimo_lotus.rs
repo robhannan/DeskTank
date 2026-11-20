@@ -325,6 +325,36 @@ fn a_tiger_lotus_spreads_leaf_pads_and_floats_some_on_the_surface() {
 }
 
 #[test]
+fn a_saved_tiger_lotus_with_floating_pads_continues_exactly() {
+    let mut w = lotus(1, 40);
+    let s = species(&w, "tiger_lotus");
+    let float = id(&w, "floating_leaf");
+    let first = of_species(&w, s)
+        .into_iter()
+        .find(|p| p.parent.is_none())
+        .unwrap();
+    assert!(
+        !cells_of(&w, first.id.0, float).is_empty(),
+        "no floating pads yet: {first:?}"
+    );
+    let bytes = save::encode(&w);
+    let mut loaded = save::decode(&bytes, table()).unwrap();
+    assert_eq!(loaded.state_hash(), w.state_hash());
+    for _ in 0..10 {
+        run(&mut w, MINUTE / 2);
+        run(&mut loaded, MINUTE / 2);
+        assert_eq!(
+            loaded.state_hash(),
+            w.state_hash(),
+            "tick {}",
+            w.tick_count()
+        );
+    }
+    check_table(&loaded);
+    assert_eq!(save::encode(&loaded), save::encode(&w));
+}
+
+#[test]
 fn tiger_lotus_growth_is_deterministic() {
     let a = lotus(3, 12);
     let b = lotus(3, 12);

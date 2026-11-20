@@ -823,7 +823,9 @@ fn kin(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> vec2<i32> {
 }
 
 // How many cells of the same plant as `me` follow on from `at` along `d`,
-// up to 3 (how far a ball runs on that way).
+// up to 3 (how far a ball runs on that way). `STEM_VELVET` calls it four
+// times, so a ball's fragments make up to 12 extra loads; only marimo cells
+// pay this, and a ball is at most 50 cells.
 fn ball_run(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> i32 {
     var n = 0;
     for (var k = 1; k <= 3; k++) {
