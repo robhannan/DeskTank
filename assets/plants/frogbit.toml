@@ -1,0 +1,40 @@
+# Amazon frogbit (Limnobium laevigatum): a floating rosette of round,
+# glossy leaves with spongy, air-filled undersides and long feathery roots
+# trailing below. It buds plantlets on short stolons and shades the tank
+# beneath it. It takes CO₂ from the air, so the water's CO₂ hardly limits
+# it.
+id = 14
+name = "frogbit"
+description = "Round floating leaves over long trailing roots; shades below."
+form = "floater"
+propagation = ["buds", "fragments"]
+
+[floater]
+fronds = 5
+roots = 3
+root_length = 10
+
+[prefer]
+light = { min = 0.1, optimum = 0.9, max = 3.0 }
+nutrient = { min = -0.8, optimum = 0.5, max = 3.0 }
+co2 = { min = -3.0, optimum = 1.0, max = 4.0 }
+
+[growth]
+rate = 8.0
+size = 35
+cost = 0.01
+
+[hardiness]
+tolerance = 25.0
+decline = 0.01
+recovery = 0.02
+
+# Deep glossy green pads; long, pale roots.
+[colours]
+root = ["#9c9478", "#bdb595", "#dad3b4", "#ece6cc"]
+stem = ["#2f6a22", "#3c7d2b"]
+leaf = ["#245a1c", "#2f6f24", "#3c852d", "#4c9a36", "#62b046", "#82c862"]
+
+[look]
+leaf = "disc"
+root = "strand"

@@ -733,6 +733,9 @@ target computes the same bits.
       band in version 4, D21; a home owning crab's home in version 5,
       migrating version 4 creatures without one; each creature's name in
       version 6, T9 part 3, migrating version 5 creatures unnamed);
+    - each floater's raft, its motion as a buoyant body (offset,
+      velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
+      tank had no floaters and migrates with none);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
@@ -828,7 +831,8 @@ stays a material film, not individuals.
     splits a body: at the next tick, the piece still joined to the base
     keeps the id, and each other 4-connected piece becomes a new plant of
     the same species (a fragment, parent id set) if the species
-    propagates by fragments and the piece holds a stem or rhizome;
+    propagates by fragments and the piece holds a stem or rhizome (or a
+    floater's floating leaf, which floats on as a buoyant body, D22);
     otherwise it becomes dead plant matter. A fragment drifts or sinks
     like a cutting until it roots.
   - **Health and death.** Health falls while the plant's conditions are
@@ -882,8 +886,35 @@ stays a material film, not individuals.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.
-    Whether floaters hold to the surface by a rule or as buoyant bodies is
-    settled in T6c.
+    *T6c part 2 (D22):* a floater is a **buoyant body**, not a cell rule.
+    `[floater]` sets `fronds` (floating leaf cells side by side, at most
+    8), `roots` (hanging strands) and `root_length` (at most 32 cells).
+    Its leaves are the `floating_leaf` part material (density 0.75,
+    opacity 0.95), grown only into water open to the air above, so they
+    keep to the top water row; roots hang straight down through water.
+    The plant table owns the plant (species, health, part counts, growth,
+    cutting, death); a **raft** beside the table, by plant id, holds only
+    its motion (sub-cell offset and velocity, as a rigid body's, D17,
+    T4c). Each tick, with the rigid bodies, an awake raft feels its
+    leaves' buoyancy against the fluid beside each row, is pulled towards
+    the current's mean speed over its cells, and moves a cell at a time
+    into fluid or floating cells (which take the cells it leaves), stopped
+    by grains, solids, bodies, other plants and the glass; it sleeps at
+    rest and wakes when it grows, is cut, work reaches its chunks or the
+    current changes. Because the raft holds no reference shape, growth on
+    the moving plant needs no re-anchoring: the next step works on
+    whatever cells it has. Once it has its fronds (or its mature size) it
+    **buds** a new plant (one floating leaf beside an end frond; parent id
+    set, generation + 1, moving as its parent does), never past the plant
+    cap. A floater lies in one depth band (D21), from its plant id, so
+    fish pass under it in the other bands. Tools: a scoop or cut splits
+    it as any plant (a piece holding a floating leaf lives on as a
+    fragment with its own raft, moving as its parent did, and a floater
+    left with no floating leaf dies); the net takes
+    only creatures. Duckweed (*Lemna minor*) and Amazon frogbit
+    (*Limnobium laevigatum*) ship (ids 13, 14). Rafts are saved (format
+    version 7) and hashed with the plant table, so a saved tank drifts on
+    exactly.
   - **Epiphyte and mat:** attaches to rock, driftwood or glued bodies by
     a creeping rhizome with leaves (anubias type) or as a mat (moss), and
     falls off when nothing holds it. Whether a plant on a moving body
@@ -1704,6 +1735,12 @@ Each package depends only on the packages before it.
   Carlo; reference images `plant_rosettes` and `plant_carpets`; runners
   root children with the parent id set; `settled_500_plants` grows every
   form so far in 11.5 µs.
+  *Part 2 done:* floaters as buoyant bodies (D22, §2.7
+  [Growth forms](#growth-forms)), the `floating_leaf` part, budding, and
+  duckweed and frogbit; reference image `plant_floaters`; floaters rest
+  in the top water row, drift with the current, shade the water below
+  (light under a frogbit strip about 58% of the open water's) and bud
+  children with the parent id set within the cap; save format version 7.
 - [ ] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night
@@ -2097,6 +2134,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D19 | **Creature sprites have two texels per cell side** (2026-11-18). A creature's body (collision box) is half its sprite's size in texels, so sprite sides are even; palette icons are hand-drawn at one pixel per cell. Every target draws the grid at an **even integer scale** so each texel is a whole number of pixels; scale 1 is the fallback when 2 doesn't fit, and then shows one texel of each 2×2 block. |
 | D20 | **Cheats behind the Konami code** (2026-11-19). The code opens a text field that runs small, harmless cheats from a registry (§2.5); interactive hosts only (window, web, and the overlay or wallpaper in interact mode with the chord held), never the screensaver or lock screen. |
 | D21 | **2.5D depth** (2026-11-19). The picture stays 2D, but the tank has discrete depth bands for movement and collision, and later for occlusion (plant cells in front of a creature drawn over it): plants are no longer solid in every band, so fish slip past them and reach food lodged inside them (§2.4). Full 3D (perspective, a camera, 3D models) remains a non-goal. Occlusion (part 2, 2026-11-20) needs no second grid pass or depth buffer: the grid is drawn once, sprites follow back to front, and each sprite fragment checks the cell under it in a per-cell band texture, dropping itself where a plant cell in a nearer band covers that texel (its shape is evaluated as the grid shader does). One grid pass and one sprite draw per frame, whatever the number of creatures or bands; per-band plant layers would cost up to eight grid passes, and splitting the grid in two works for one depth only. A subtle depth cue fades creatures and plant cells towards the water colour with depth. |
+| D22 | **Floaters are buoyant bodies** (2026-11-20). A floating plant (duckweed, frogbit) is held at the surface and carried by the current as one object, built on the rigid-body motion (D17, T4c), not by a cell rule that pins floating leaves to the top water row. The plant table stays its owner (species, health, growth, budding, cutting, death); a per-plant raft holds only its motion (sub-cell offset and velocity), so cells growing onto it or cut from it need no re-anchoring. A rule would have kept leaves at the surface but let a plant's roots and leaves part when the current carried some cells and not others; as a body the whole plant moves together, rests by its leaves' buoyancy, falls back when lifted out, and stops at the glass. Rafts are saved (format version 7) and hashed. Epiphytes on moving bodies are settled with T6c part 3. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions
