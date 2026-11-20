@@ -1,6 +1,5 @@
 package io.github.robhannan.desktank
 
-import android.graphics.PixelFormat
 import android.service.dreams.DreamService
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -17,9 +16,6 @@ class DeskTankDream : DreamService(), SurfaceHolder.Callback {
         isInteractive = false
         isFullscreen = true
         val view = SurfaceView(this)
-        // A SurfaceView's buffers default to RGB 565, which wgpu's GL backend
-        // (EGL) keeps, banding the water; Vulkan sets its own format.
-        view.holder.setFormat(PixelFormat.RGBA_8888)
         view.holder.addCallback(this)
         setContentView(view)
     }
