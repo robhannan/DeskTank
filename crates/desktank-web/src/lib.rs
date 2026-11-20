@@ -43,7 +43,10 @@ use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
 use desktank_sim::tools::{
     self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
-use desktank_sim::{FieldKind, MaterialTable, Propagule, Script, World, WorldConfig, cheats, save};
+use desktank_sim::{
+    CreatureCard, CreatureId, FieldKind, MaterialTable, Propagule, Script, World, WorldConfig,
+    cheats, save,
+};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -579,10 +582,44 @@ impl WebTank {
     /// <column> <row>"`, `"plant <species> <id> <age seconds> <health %>
     /// <cells> <limit> <column> <row>"` (limit as
     /// [`desktank_sim::Limit::key`]), `"creature <species> <id> <material>
-    /// <column> <row>"`, or `""` if nothing new.
+    /// <column> <row> <stage> <age days> <health %> <energy %> <female|male>
+    /// <morph|-> <carrying days|-> <name…>"` (the name, last, may hold
+    /// spaces or be empty; see [`desktank_sim::CreatureCard`]), or `""` if
+    /// nothing new.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
     pub fn take_inspection(&mut self) -> String {
         core::mem::take(&mut self.inspection)
+    }
+
+    /// Names creature `id` `name` (cleaned as [`desktank_sim::clean_name`]
+    /// does; blank removes its name) and returns the name it now has, `""`
+    /// for none. Names are saved with the tank.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if there is no such creature (it died or was
+    /// netted out).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = nameCreature))]
+    pub fn name_creature(&mut self, id: u32, name: &str) -> Result<String, String> {
+        let kept = self
+            .tank
+            .world_mut()
+            .set_creature_name(CreatureId(id), name)
+            .map(str::to_owned)
+            .ok_or_else(|| "That creature has left the tank".to_owned())?;
+        self.dirty = true;
+        Ok(kept)
+    }
+
+    /// Creature `id`'s name (`""` for none), or `None` (`undefined`) if
+    /// there is no such creature (tests).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = creatureName))]
+    #[must_use]
+    pub fn creature_name(&self, id: u32) -> Option<String> {
+        self.tank
+            .world()
+            .creature(CreatureId(id))
+            .map(|c| c.name().unwrap_or("").to_owned())
     }
 
     /// The material name at cell `(x, y)`, or `""` outside the grid (tests).
@@ -951,21 +988,19 @@ impl WebTank {
                     }
                     Inspection::Creature {
                         id,
-                        species,
+                        species: _,
                         x,
                         y,
                         material,
                     } => {
                         let world = self.tank.world();
-                        let name = world
-                            .species()
-                            .get(species)
-                            .map_or("?", |s| s.name.as_str());
                         let over = world
                             .materials()
                             .get(material)
                             .map_or("?", |m| m.name.as_str());
-                        format!("creature {name} {} {over} {x} {y}", id.0)
+                        world
+                            .creature_card(id)
+                            .map_or_else(String::new, |card| creature_line(&card, over, x, y))
                     }
                 };
                 0
@@ -1053,6 +1088,24 @@ impl WebTank {
             .as_ref()
             .map_or_else(String::new, Graphics::backend)
     }
+}
+
+/// A creature's inspect line (see [`WebTank::take_inspection`]).
+fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String {
+    let dash = |v: Option<String>| v.unwrap_or_else(|| "-".to_owned());
+    format!(
+        "creature {} {} {over} {x} {y} {} {} {:.0} {:.0} {} {} {} {}",
+        card.species,
+        card.id.0,
+        card.stage.name(),
+        card.age_days,
+        card.health * 100.0,
+        card.energy * 100.0,
+        if card.female { "female" } else { "male" },
+        dash(card.morph.clone()),
+        dash(card.carrying_days.map(|d| d.to_string())),
+        card.name.as_deref().unwrap_or(""),
+    )
 }
 
 fn to_button(code: u32) -> Option<Button> {

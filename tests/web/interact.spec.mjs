@@ -105,13 +105,33 @@ test.describe("mouse", () => {
     await page.mouse.click(p.x, p.y);
     expect(await creatures()).toBe(1);
 
-    // Inspect names it and the cell under it; that changes nothing.
+    // Inspect shows its card and the cell under it; that changes nothing.
     const hash = await stateHash(page);
     await choose(page, "Inspect");
     p = await cellPoint(page, x, y);
     await page.mouse.click(p.x, p.y);
-    await expect(page.locator("#inspect")).toHaveText(/^Neon tetra #1 · over Water · cell \d+, \d+$/);
+    await expect(page.locator("#inspect")).toHaveText(
+      /^Neon tetra #1 · adult male · 180 days old · health 100% · energy 100% · over Water · cell \d+, \d+$/,
+    );
     expect(await stateHash(page)).toBe(hash);
+
+    // N opens its name field; Enter names it, and the card shows the name.
+    await expect(page.locator("#name")).toBeVisible();
+    await page.keyboard.press("n");
+    await expect(page.locator("#name-input")).toBeFocused();
+    await page.keyboard.type("  Big   Blue ");
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#inspect")).toHaveText(/^Big Blue · Neon tetra #1 · adult male · /);
+    await expect(page.locator("#name-input")).toHaveValue("Big Blue");
+    // Inspecting it again shows the name it keeps.
+    await page.mouse.click(p.x, p.y);
+    await expect(page.locator("#inspect")).toHaveText(/^Big Blue · Neon tetra #1 · /);
+    await expect(page.locator("#name-input")).toHaveValue("Big Blue");
+    // Inspecting water hides the name field.
+    const water = await cellPoint(page, 2, y);
+    await page.mouse.click(water.x, water.y);
+    await expect(page.locator("#inspect")).toHaveText(/^Water · cell /);
+    await expect(page.locator("#name")).toBeHidden();
 
     // The net carries it up out of the water: it's gone.
     await choose(page, "Net");
