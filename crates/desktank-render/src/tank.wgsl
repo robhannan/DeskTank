@@ -211,6 +211,12 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let part = part_of(texel);
     let sway_on = view.target_size.w > 0.5;
     let self_sways = sway_on && part >= 0 && is_swaying_part(part, texel);
+    var src_at = at;
+    var src_texel = texel;
+    var src_part = part;
+    var src_quarter = quarter;
+    var from_sway = false;
+    var swayed_away = false;
     if sway_on && (part < 0 || self_sways) {
         let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
         let s_cell = floor(s_grid);
@@ -224,47 +230,29 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
         }
         if s_sways && (self_sways || style_of(texel) == STYLE_WATER) {
-            let s_quarter = clamp(
+            src_at = s_at;
+            src_texel = s_texel;
+            src_part = s_part;
+            src_quarter = clamp(
                 vec2<i32>(floor((s_grid - s_cell) * 4.0)),
                 vec2<i32>(0),
                 vec2<i32>(3),
             );
-            let band = band_at(s_at);
-            let pt = plant_texel(s_at, s_texel, s_part, s_quarter, band);
-            if pt.a >= 0.999 {
-                rgb = pt.rgb;
-                need_ground = false;
-            } else if self_sways {
-                let nbr = behind_cell(at, quarter);
-                if nbr.x >= 0 {
-                    ground_texel = textureLoad(cells, nbr, 0);
-                    plant_rgb = pt.rgb;
-                    plant_alpha = pt.a;
-                } else {
-                    let shadow = plant_shadow_of(s_texel, s_part, band);
-                    rgb = mix(shadow, pt.rgb, pt.a);
-                    need_ground = false;
-                }
-            } else {
-                plant_rgb = pt.rgb;
-                plant_alpha = pt.a;
-            }
+            from_sway = !self_sways;
         } else if self_sways {
-            // The swaying leaf moved away from `at`, revealing what is behind.
-            let nbr = behind_cell(at, quarter);
-            if nbr.x >= 0 {
-                ground_texel = textureLoad(cells, nbr, 0);
-            } else {
-                rgb = water_bg(at, quarter, FINE_PLANTS && fine_scale());
-                need_ground = false;
-            }
+            src_part = -1;
+            swayed_away = true;
         }
-    } else if part >= 0 {
-        let band = band_at(at);
-        let pt = plant_texel(at, texel, part, quarter, band);
+    }
+    if src_part >= 0 {
+        let band = band_at(src_at);
+        let pt = plant_texel(src_at, src_texel, src_part, src_quarter, band);
         if pt.a >= 0.999 {
             rgb = pt.rgb;
             need_ground = false;
+        } else if from_sway {
+            plant_rgb = pt.rgb;
+            plant_alpha = pt.a;
         } else {
             let nbr = behind_cell(at, quarter);
             if nbr.x >= 0 {
@@ -272,10 +260,19 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                 plant_rgb = pt.rgb;
                 plant_alpha = pt.a;
             } else {
-                let shadow = plant_shadow_of(texel, part, band);
+                let shadow = plant_shadow_of(src_texel, src_part, band);
                 rgb = mix(shadow, pt.rgb, pt.a);
                 need_ground = false;
             }
+        }
+    } else if swayed_away {
+        // The swaying leaf moved away from `at`, revealing what is behind.
+        let nbr = behind_cell(at, quarter);
+        if nbr.x >= 0 {
+            ground_texel = textureLoad(cells, nbr, 0);
+        } else {
+            rgb = water_bg(at, quarter, FINE_PLANTS && fine_scale());
+            need_ground = false;
         }
     }
     if need_ground {
@@ -1580,6 +1577,10 @@ fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
     let part = part_of(t);
     let sway_on = view.target_size.w > 0.5;
     let self_sways = sway_on && part >= 0 && is_swaying_part(part, t);
+    var src_at = at;
+    var src_t = t;
+    var src_part = part;
+    var src_quarter = vec2<i32>(floor(fract(grid_pos) * 4.0));
     if sway_on && (part < 0 || self_sways) {
         let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
         let s_cell = floor(s_grid);
@@ -1595,26 +1596,23 @@ fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
         if !self_sways && style_of(t) != STYLE_WATER {
             return false;
         }
-        let band = band_at(s_at);
-        if band + 0.5 >= depth {
-            return false;
-        }
-        let s_quarter = clamp(
+        src_at = s_at;
+        src_t = s_t;
+        src_part = s_part;
+        src_quarter = clamp(
             vec2<i32>(floor((s_grid - s_cell) * 4.0)),
             vec2<i32>(0),
             vec2<i32>(3),
         );
-        return plant_texel(s_at, s_t, s_part, s_quarter, band).a > 0.5;
     }
-    if part < 0 {
+    if src_part < 0 {
         return false;
     }
-    let band = band_at(at);
+    let band = band_at(src_at);
     if band + 0.5 >= depth {
         return false;
     }
-    let quarter = vec2<i32>(floor(fract(grid_pos) * 4.0));
-    return plant_texel(at, t, part, quarter, band).a > 0.5;
+    return plant_texel(src_at, src_t, src_part, src_quarter, band).a > 0.5;
 }
 
 // The atlas texel at `p` within `frame` (transparent outside it).
