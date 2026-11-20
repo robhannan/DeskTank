@@ -8,17 +8,92 @@ on:
 permissions:
   contents: read
 
+# Pushes to main are never cancelled: each diffs only against the commit
+# before it, so a cancelled run would leave its changes untested.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUSTDOCFLAGS: -D warnings
 
 jobs:
+  # Which parts of the repo this PR (or push to main, against the previous
+  # commit) touches, so a docs-only change skips the builds. Jobs gate on these
+  # outputs rather than `paths-ignore`, so skipped jobs report as skipped and
+  # `ci-ok` below still gives one check to require.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      deny: ${{ steps.filter.outputs.deny }}
+      web: ${{ steps.filter.outputs.web }}
+      android: ${{ steps.filter.outputs.android }}
+    steps:
+      # Pushes are diffed with git; pull requests use the API.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'push'
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          # Changing CI itself always runs everything. Crates only some hosts link
+          # (desktop platform, savers) gate just the native matrix.
+          filters: |
+            ci: &ci
+              - .github/workflows/ci.yml
+              - .github/actions/**
+            workspace: &workspace
+              - *ci
+              - Cargo.toml
+              - Cargo.lock
+              - rust-toolchain.toml
+              - clippy.toml
+              - rustfmt.toml
+              - .cargo/**
+              - assets/**
+            core: &core
+              - *workspace
+              - crates/desktank-sim/**
+              - crates/desktank-render/**
+            rust:
+              - *workspace
+              - crates/**
+            deny:
+              - *ci
+              - Cargo.toml
+              - Cargo.lock
+              - rust-toolchain.toml
+              - .cargo/**
+              - deny.toml
+              - crates/*/Cargo.toml
+            web:
+              - *core
+              - crates/desktank-web/**
+              # Scenes and references the web render and save tests share.
+              - crates/desktank/tests/**
+              - web/**
+              - tests/web/**
+              - scripts/**
+              - package.json
+              - pnpm-lock.yaml
+              - tsconfig.json
+              - playwright.config.ts
+              - .github/workflows/pages.yml
+            android:
+              - *core
+              - crates/desktank-android/**
+              - android/**
+
   check:
     name: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +133,8 @@ jobs:
 
   deny:
     name: cargo deny
+    needs: changes
+    if: needs.changes.outputs.deny == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +147,8 @@ jobs:
 
   web:
     name: web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,6 +180,8 @@ jobs:
   # with cargo-ndk, packaged into the debug APK by Gradle.
   android:
     name: android
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,3 +245,23 @@ jobs:
           name: desktank-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+  # The one check to require: passes when every job above passed or was
+  # skipped as irrelevant, fails if any failed or was cancelled.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [changes, check, deny, web, android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::A CI job finished as $r"; exit 1 ;;
+            esac
+          done
