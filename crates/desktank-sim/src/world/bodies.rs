@@ -209,6 +209,15 @@ impl World {
         b.anchored
     }
 
+    /// Records that rigid cell `i`'s outline mask changed in place, so its
+    /// body takes its cells as its shape again (a turn redraws from the
+    /// shape and would otherwise restore the old outline).
+    pub(super) fn outline_edited(&mut self, i: usize) {
+        if let Some(b) = self.bodies.get_mut(&self.cells[i].state) {
+            b.pending = b.pending.max(Pending::Sort);
+        }
+    }
+
     /// Records that a cell of body `id` was overwritten.
     pub(super) fn body_removed(&mut self, id: u16) {
         if let Some(b) = self.bodies.get_mut(&id) {
@@ -576,4 +585,48 @@ fn bounds(cells: &[usize], width: usize) -> Rect {
         });
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Brush, FULL_MASK, World, WorldConfig};
+    use crate::MaterialTable;
+
+    /// An outline edited in place (a scoop's carve, a stroke's dab filling
+    /// an edge) reaches the body's reference shape by the next tick, so a
+    /// later turn, which redraws from the shape, keeps the edit.
+    #[test]
+    fn outline_edits_reach_the_shape() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 60,
+                height: 40,
+                seed: 3,
+                water_level: 1.0,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        w.paint(30, 20, 6, rock, Brush::Replace).unwrap();
+        let id = w.body_at(30, 20).unwrap().0;
+        w.set_anchored(super::BodyId(id), true);
+        w.tick();
+        let shape = w.bodies[&id].shape.masks().to_vec();
+        // Cut a hollow beside the stone, near enough to trim its outline
+        // (`carve` only trims, so any centre is safe to try).
+        let before = w.masks.clone();
+        let carved = (31..44).any(|c| {
+            w.carve(c, 50 - c, 3);
+            w.masks != before
+        });
+        assert!(carved, "no carve trimmed the stone");
+        assert!(w.masks.values().all(|&m| m != 0 && m != FULL_MASK));
+        w.tick();
+        let after = w.bodies[&id].shape.masks().to_vec();
+        assert_ne!(after, shape, "the shape took the carved outline");
+        // Taking the cells as the shape again changes nothing: in sync.
+        w.reshape(id);
+        assert_eq!(w.bodies[&id].shape.masks(), after.as_slice());
+    }
 }

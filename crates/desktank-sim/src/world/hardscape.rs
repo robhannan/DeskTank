@@ -124,9 +124,12 @@ impl World {
     /// Adds quarters to cell `i`'s mask (a partial mask grows; a whole
     /// cell stays whole).
     pub(super) fn add_mask(&mut self, i: usize, mask: u16) {
-        if let Some(m) = self.masks.get(&i).copied() {
+        if let Some(m) = self.masks.get(&i).copied()
+            && m | mask != m
+        {
             self.set_mask(i, m | mask);
             self.mark_changed(i % self.width, i / self.width);
+            self.outline_edited(i);
         }
     }
 
@@ -145,7 +148,7 @@ impl World {
     /// Cuts an erasing disc's outline into the rigid cells around it that
     /// it didn't take, so a round scoop leaves a round hollow: the quarters
     /// within r + ½ cells of its centre (where the erased cells' edge
-    /// lies). A cell keeps at least one quarter.
+    /// lies). A cell the cut would empty keeps the outline it had.
     pub fn carve(&mut self, cx: i64, cy: i64, radius: u32) {
         let r = i64::from(radius).min(2 * to_i64(super::MAX_SIDE));
         for y in cy - r - 1..=cy + r + 1 {
@@ -166,9 +169,12 @@ impl World {
                     continue;
                 }
                 let m = self.masks.get(&i).copied().unwrap_or(FULL_MASK) & !cut;
-                if m != 0 {
+                // A cell the cut would empty keeps its outline: it is still
+                // rigid, and an invisible rigid cell would be worse.
+                if m != 0 && m != self.masks.get(&i).copied().unwrap_or(FULL_MASK) {
                     self.set_mask(i, m);
                     self.mark_changed(ux, uy);
+                    self.outline_edited(i);
                 }
             }
         }

@@ -3,7 +3,8 @@
 // palette, darkens water with depth and tints by the time of day. Plant
 // cells (T6b, T6d) are drawn from their species instead, at two texels per
 // cell side like the sprites, or four at scales divisible by four: the
-// cell's state bytes are its plant id, whose texel in the plant texture
+// cell's state bytes are its plant id (a rigid cell's are its sub-cell
+// outline mask instead, see `outline_of`), whose texel in the plant texture
 // holds its health, colouration and species id; the species texture holds
 // the colour ramps, part shapes and colouration colour. A plant shifts
 // towards its colouration colour (strong light, lean water), pales,
