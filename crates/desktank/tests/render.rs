@@ -157,12 +157,24 @@ fn plant_carpets_scene_matches_reference() {
     check("plant_carpets");
 }
 
+/// T6c part 2: duckweed and frogbit floating at the surface, grown for 8
+/// minutes, the frogbit shading a stem plant below it.
+#[test]
+fn plant_floaters_scene_matches_reference() {
+    check("plant_floaters");
+}
+
 /// Four-texel plant detail: the plant scenes at scale 4, where every leaf,
 /// stem and root shape is drawn with quarter-cell structure, against
 /// `<scene>_x4.png`.
 #[test]
 fn plant_scenes_match_reference_at_scale_4() {
-    for scene in ["plant_species", "plant_rosettes", "plant_carpets"] {
+    for scene in [
+        "plant_species",
+        "plant_rosettes",
+        "plant_carpets",
+        "plant_floaters",
+    ] {
         check_named(scene, &format!("{scene}_x4"), None, SIZE_X4);
     }
 }
