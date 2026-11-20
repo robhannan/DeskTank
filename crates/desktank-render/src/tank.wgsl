@@ -614,7 +614,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
                 warm = vec3<f32>(0.97, 0.98, 1.02);
             } else {
                 let ph = hash(vec2<i32>(i32(cv >> 3u), 1));
-                k = 0.86 + f32(ph & 7u) * 0.04 + cell_n;
+                k = 0.92 + f32(ph & 7u) * 0.04 + cell_n;
                 let tone = (ph >> 3u) & 3u;
                 warm = vec3<f32>(0.96, 0.99, 1.04);
                 if tone == 1u {
