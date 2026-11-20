@@ -39,13 +39,12 @@
 
 use core::time::Duration;
 
-use desktank_render::{BrushPreview, Layout, Tank, TankConfig};
+use desktank_render::{BrushPreview, FieldOverlay, Layout, Tank, TankConfig};
 use desktank_sim::tools::{
     self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureCard, CreatureId, FieldKind, MaterialTable, Propagule, Script, World, WorldConfig,
-    cheats, save,
+    CreatureCard, CreatureId, MaterialTable, Propagule, Script, World, WorldConfig, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -708,9 +707,9 @@ impl WebTank {
     pub fn set_field_overlay(&mut self, field: &str) -> Result<(), String> {
         let field = match field {
             "" => None,
-            name => {
-                Some(FieldKind::from_name(name).ok_or_else(|| format!("unknown field {name:?}"))?)
-            }
+            name => Some(
+                FieldOverlay::from_name(name).ok_or_else(|| format!("unknown field {name:?}"))?,
+            ),
         };
         self.tank.set_field_overlay(field);
         Ok(())

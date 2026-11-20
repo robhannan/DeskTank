@@ -530,6 +530,8 @@ fn field_overlay_round_trips() {
     assert_eq!(t.field_overlay(), "");
     t.set_field_overlay("co2").unwrap();
     assert_eq!(t.field_overlay(), "co2");
+    t.set_field_overlay("flow").unwrap();
+    assert_eq!(t.field_overlay(), "flow");
     assert!(t.set_field_overlay("magic").is_err());
     t.set_field_overlay("").unwrap();
     assert_eq!(t.field_overlay(), "");

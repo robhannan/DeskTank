@@ -390,7 +390,7 @@ test("settings persist across reloads", async ({ page }) => {
   await page.locator("#set-scale").selectOption(String(scale));
   await expect.poll(() => page.evaluate(() => window.desktank.grid[0])).toBe(scale);
   await page.locator("#set-fps").selectOption("15");
-  await page.locator("#set-field").selectOption("co2");
+  await page.locator("#set-field").selectOption("flow");
   await page.getByLabel("Fish avoid the pointer").check();
   await page.getByLabel("Easy mode (only old age kills)").check();
   expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(true);
@@ -399,14 +399,14 @@ test("settings persist across reloads", async ({ page }) => {
   await page.locator("#seed").dispatchEvent("change");
   await page.locator("#brush").fill("7");
   await expect(page.locator("#stats")).toBeHidden();
-  expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("co2");
+  expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("flow");
 
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   expect(await page.evaluate(() => window.desktank.settings)).toEqual({
     scale,
     fps: "15",
-    field: "co2",
+    field: "flow",
     stats: false,
     avoidCursor: true,
     easyMode: true,
@@ -414,7 +414,7 @@ test("settings persist across reloads", async ({ page }) => {
     radius: 7,
   });
   expect(await page.evaluate(() => window.desktank.grid[0]), "the tank uses the saved scale").toBe(scale);
-  expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("co2");
+  expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("flow");
   expect(await page.evaluate(() => window.desktank.tank.radius())).toBe(7);
   expect(await page.evaluate(() => window.desktank.tank.easyMode()), "easy mode applies to the new tank").toBe(true);
   await expect(page.locator("#stats")).toBeHidden();

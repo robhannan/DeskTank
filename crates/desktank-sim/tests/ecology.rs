@@ -344,6 +344,39 @@ fn centroid_x(w: &World, m: MaterialId) -> f64 {
 }
 
 #[test]
+fn rising_bubbles_follow_the_signed_filter_current() {
+    for material in ["air_bubble", "co2_bubble"] {
+        for (outlet, sign) in [(Some(5), 1.0), (Some(122), -1.0), (None, 0.0)] {
+            // Isolate transport: dissolving CO₂ would also shift the centroid.
+            let table = MaterialTable::builtin().unwrap();
+            let ecology = Ecology::from_toml("", FIELDS, &table, false).unwrap();
+            let config = WorldConfig {
+                width: 128,
+                height: 80,
+                seed: 17,
+                water_level: 1.0,
+            };
+            let mut w = World::with_ecology(config, table, ecology).unwrap();
+            if let Some(x) = outlet {
+                w.place(Placeable::FilterOutlet, x, 40).unwrap();
+            }
+            let bubble = id(&w, material);
+            for x in (44..84).step_by(3) {
+                w.set_cell(x, 47, bubble).unwrap();
+            }
+            let start = centroid_x(&w, bubble);
+            run(&mut w, 10);
+            let drift = centroid_x(&w, bubble) - start;
+            if outlet.is_some() {
+                assert!(drift * sign > 1.0, "{material} drifted {drift}");
+            } else {
+                assert!(drift.abs() < 0.01);
+            }
+        }
+    }
+}
+
+#[test]
 fn the_current_carries_floating_and_liquid_cells_downstream() {
     // A liquid that neither reacts nor sinks: water-dense dye.
     let dye = "id = 70\nname = \"dye\"\nclass = \"liquid\"\ndensity = 1.0\ncolour = \"#ff00ff\"";
