@@ -217,3 +217,12 @@ fn breeding_scene_matches_reference() {
 fn breeding_scene_matches_reference_at_scale_4() {
     check_named("breeding", "breeding_x4", None, SIZE_X4);
 }
+
+/// 2.5D depth, part 2 (D21): fish swimming through a dense planted stand
+/// at scale 4. Plant cells nearer the glass hide the fish behind them,
+/// through the gaps their shapes leave; fish further back fade towards the
+/// water.
+#[test]
+fn depth_scene_matches_reference_at_scale_4() {
+    check_named("depth", "depth_x4", None, SIZE_X4);
+}

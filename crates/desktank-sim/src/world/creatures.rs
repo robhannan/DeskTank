@@ -1212,7 +1212,9 @@ impl World {
             }
         }
         for c in &mut list {
-            changed |= self.update_creature(c);
+            let z = c.z;
+            // A shift in depth alone changes how it is drawn (D21).
+            changed |= self.update_creature(c) || c.z != z;
         }
         self.creatures.list = list;
         changed |= self.finish_breeding(breeding);

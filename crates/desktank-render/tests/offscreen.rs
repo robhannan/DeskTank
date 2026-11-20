@@ -175,6 +175,16 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let table = tank.world().plant_species();
     let plant = table.get(table.id("hygrophila").unwrap()).unwrap();
     let ramp = &plant.colours.leaf;
+    // The cell's depth cue (tank.wgsl `depth_cue`: faded towards the haze
+    // and dimmed, by band).
+    let t = f32::from(tank.world().plant_band(4, 5).unwrap()) / 7.0;
+    let cue = |c: u8, haze: f32| {
+        let c = f32::from(c) / 255.0;
+        let v = (c + (haze - c) * 0.22 * t) * (1.0 - 0.1 * t);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let v = (v * 255.0).round() as u8;
+        v
+    };
     // A shade of the species' leaf ramp (resampled to the texture's eight
     // shades, so within half a ramp step of an entry).
     let nearest = ramp
@@ -182,8 +192,10 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
         .map(|shade| {
             shade
                 .iter()
+                .zip([0.11, 0.27, 0.42])
+                .map(|(&c, haze)| cue(c, haze))
                 .zip(before)
-                .map(|(&a, b)| a.abs_diff(b))
+                .map(|(a, b)| a.abs_diff(b))
                 .max()
                 .unwrap()
         })
@@ -207,4 +219,73 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let after = px(&starving, 25, 21);
     assert!(after[2] + 8 < before[2], "{before:?} -> {after:?}");
     assert!(after[0] >= before[0], "{before:?} -> {after:?}");
+}
+
+/// D21: a creature behind a plant cell (in a band nearer the glass) is
+/// hidden by it; one in front of plant cells is drawn over them. At scale 1
+/// every texel of a plant cell is covered, so the check is per cell.
+#[test]
+fn plants_in_front_hide_creatures_behind_them() {
+    let Some(gpu) = gpu() else { return };
+    let (mut hidden, mut shown) = (0, 0);
+    for seed in 1..=24 {
+        let materials = MaterialTable::builtin().unwrap();
+        let leaf = materials.id("leaf").unwrap();
+        // 80×32 cells in an 80×32 target: one pixel per cell.
+        let config = WorldConfig {
+            width: W as usize,
+            height: H as usize,
+            seed,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, materials).unwrap();
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: 20,
+                    y0: 6,
+                    x1: 60,
+                    y1: 26,
+                },
+                leaf,
+                desktank_sim::Brush::Replace,
+            )
+            .unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        // Placed in a band clear of the leaves it overlaps, or beside them.
+        let id = world.add_creature(tetra, 40, 16).unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let with = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+        let world = tank.world_mut();
+        let depth = world.creature(id).unwrap().depth();
+        let (cx, cy) = world.creature(id).unwrap().centre();
+        assert!(world.remove_creature(id));
+        tank.invalidate();
+        let without = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+        let world = tank.world();
+        let mut covered = 0;
+        for y in 0..H {
+            for x in 0..W {
+                let band = world.plant_band(x as usize, y as usize);
+                let in_front = band.is_some_and(|b| f32::from(b) + 0.5 < depth);
+                let changed = px(&with, x, y) != px(&without, x, y);
+                assert!(
+                    !(in_front && changed),
+                    "seed {seed}: creature at depth {depth} drawn over a band {band:?} cell at ({x}, {y})"
+                );
+                if changed && band.is_some() {
+                    covered += 1;
+                }
+            }
+        }
+        // A creature inside the leaf block is either hidden by them (no
+        // leaf pixel changed) or drawn over them.
+        let inside = (26.0..54.0).contains(&cx) && (10.0..22.0).contains(&cy);
+        if inside && covered == 0 {
+            hidden += 1;
+        } else if covered > 0 {
+            shown += 1;
+        }
+    }
+    assert!(hidden > 0 && shown > 0, "hidden {hidden}, shown {shown}");
 }
