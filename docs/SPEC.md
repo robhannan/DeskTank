@@ -1309,8 +1309,8 @@ over the keyguard while charging).
   rule (§3.5). A tank keeps its grid size when the display changes; it is
   drawn at the largest even scale that fits, letterboxed. The grid and
   scale come from the Dream's surface, not the panel: *A0:* both TV
-  devices tried have 4K panels but give the Dream a 1920×1080 surface
-  (their UI resolution).
+  devices tried have 4K panels but, with their UI at 1080p as found, give
+  the Dream a 1920×1080 surface.
 - **Screensaver** (the Dream):
   - full screen, non-interactive (`isInteractive = false`), so any key or
     touch ends it, as a screensaver should; no tools, inspect card or
@@ -1325,7 +1325,8 @@ over the keyguard while charging).
 - **Choosing the screensaver**: plain Android TV and phones list the
   Dream in Settings (Display → Screen saver). Google TV devices (Android
   TV 12 and later: Chromecast with Google TV, Google TV Streamer, and
-  Google TV sets) hide third-party screensavers from that picker. There,
+  Google TV sets) hide third-party screensavers from that picker, or
+  have none. There,
   the user grants `WRITE_SECURE_SETTINGS` once over ADB, after which the
   app's settings can set `screensaver_components` itself; the README and
   the settings screen give the one-line command. A launcher with a
@@ -1570,7 +1571,7 @@ Linux numbers are recorded and tracked, but not gated in v1.
 | Release binary size (stripped, assets embedded) | ≤ 20 MB | — | ≤ 20 MB |
 | Web transfer size (wasm + JS + assets, gzip, as reported by `scripts/build-web.ts`) | ≤ 3 MB | — | — |
 | Web on the reference phone (🔍 to be chosen in WB2: a 2021-era mid-range iPhone or Android) | p95 frame interval ≤ 50 ms, no thermal throttling within 10 min | — | — |
-| Android TV reference device (Chromecast with Google TV 4K: 2 GB RAM, Mali-G31, 32-bit userspace, Android 14; chosen in A0) and Android reference phone | Screensaver: p95 frame interval ≤ 40 ms at the 30 fps cap, no thermal throttling within 1 h, memory (PSS from `dumpsys meminfo`) ≤ 120 MB (A0's empty Dream on the reference device: 39–48 MB on Vulkan, 55 MB with GLES forced), start to first frame ≤ 1 s (A0: 208–257 ms cold); APK ≤ 25 MB per ABI | — | — |
+| Android TV reference device (Chromecast with Google TV 4K: 2 GB RAM, Mali-G31, 32-bit userspace, Android 14; chosen in A0) and Android reference phone | Screensaver: p95 frame interval ≤ 40 ms at the 30 fps cap, no thermal throttling within 1 h, memory (PSS from `dumpsys meminfo`) ≤ 120 MB (A0's empty Dream on the reference device: 39–48 MB on Vulkan, 55 MB with GLES forced), start to first frame ≤ 1 s (A0: 208–257 ms cold from `surfaceCreated`, not counting process and Dream start); APK ≤ 25 MB per ABI | — | — |
 | Cold start to first frame (including loading the save) | ≤ 500 ms | — | ≤ 500 ms |
 | Energy Impact (Activity Monitor) | "Low" while visible | — | "Low" |
 
