@@ -8,6 +8,7 @@
 
 use crate::save::{SaveError, v1};
 use crate::world::MAX_SIDE;
+use crate::world::hardscape::{FULL_MASK, quarter_bit};
 
 /// One cell in position units.
 pub(in crate::world) const ONE: i64 = 256;
@@ -99,6 +100,9 @@ pub(super) struct Shape {
     h: usize,
     /// Row-major: 0 for empty, else the cell's variant + 1.
     grid: Vec<u16>,
+    /// Row-major sub-cell outline masks of the cells (`world::hardscape`);
+    /// empty when every cell is whole.
+    masks: Vec<u16>,
     /// Number of cells.
     pub(super) n: i64,
     /// Centre of mass relative to the bitmap's top-left corner, in
@@ -113,17 +117,26 @@ pub(super) struct Shape {
 }
 
 impl Shape {
-    /// The shape of `cells` (world `(x, y, variant)`, non-empty); returns it
-    /// with the world cell of the bitmap's top-left corner.
-    pub(super) fn new(cells: &[(usize, usize, u8)]) -> (Self, (i64, i64)) {
+    /// The shape of `cells` (world `(x, y, variant, mask)`, non-empty);
+    /// returns it with the world cell of the bitmap's top-left corner.
+    pub(super) fn new(cells: &[(usize, usize, u8, u16)]) -> (Self, (i64, i64)) {
         let x0 = cells.iter().map(|c| c.0).min().unwrap_or(0);
         let y0 = cells.iter().map(|c| c.1).min().unwrap_or(0);
         let w = cells.iter().map(|c| c.0).max().unwrap_or(0) + 1 - x0;
         let h = cells.iter().map(|c| c.1).max().unwrap_or(0) + 1 - y0;
         let mut grid = vec![0; w * h];
+        let partial = cells.iter().any(|c| c.3 != FULL_MASK);
+        let mut masks = if partial {
+            vec![FULL_MASK; w * h]
+        } else {
+            Vec::new()
+        };
         let (mut sx, mut sy) = (0_i64, 0_i64);
-        for &(x, y, v) in cells {
+        for &(x, y, v, m) in cells {
             grid[(y - y0) * w + (x - x0)] = u16::from(v) + 1;
+            if partial {
+                masks[(y - y0) * w + (x - x0)] = m;
+            }
             sx += to_i64(x - x0);
             sy += to_i64(y - y0);
         }
@@ -135,7 +148,7 @@ impl Shape {
         );
         let mut inertia = n * ONE * ONE / 6;
         let mut r2max = 0;
-        for &(x, y, _) in cells {
+        for &(x, y, _, _) in cells {
             let cx = to_i64(x - x0) * ONE + ONE / 2 - com.0;
             let cy = to_i64(y - y0) * ONE + ONE / 2 - com.1;
             inertia += cx * cx + cy * cy;
@@ -147,6 +160,7 @@ impl Shape {
             w,
             h,
             grid,
+            masks,
             n,
             com,
             inertia,
@@ -192,11 +206,48 @@ impl Shape {
             w,
             h,
             grid: s.grid,
+            masks: Vec::new(),
             n: s.n,
             com: s.com,
             inertia: s.inertia,
             radius: s.radius,
         })
+    }
+
+    /// The outline masks of the shape's cells, row-major (empty when all
+    /// are whole), as saved (version 10).
+    pub(super) fn masks(&self) -> &[u16] {
+        &self.masks
+    }
+
+    /// Restores saved masks: one per bitmap cell, or none.
+    pub(super) fn set_masks(&mut self, masks: Vec<u16>) -> Result<(), SaveError> {
+        if !masks.is_empty() && masks.len() != self.grid.len() {
+            return Err(SaveError::Invalid(
+                "a body's outline masks don't fit its shape".to_owned(),
+            ));
+        }
+        self.masks = masks;
+        Ok(())
+    }
+
+    /// The mask of local cell `(i, j)` (inside the bitmap).
+    fn mask_at(&self, i: usize, j: usize) -> u16 {
+        self.masks.get(j * self.w + i).copied().unwrap_or(FULL_MASK)
+    }
+
+    /// Whether the local point `(u, v)` (position units) falls in a covered
+    /// quarter of a shape cell.
+    fn covers(&self, u: i64, v: i64) -> bool {
+        let (i, j) = (u.div_euclid(ONE), v.div_euclid(ONE));
+        if self.at(i, j) == 0 {
+            return false;
+        }
+        let (Ok(i), Ok(j)) = (usize::try_from(i), usize::try_from(j)) else {
+            return false;
+        };
+        let quarter = |f: i64| usize::try_from(f.rem_euclid(ONE) * 4 / ONE).unwrap_or(0);
+        self.mask_at(i, j) & quarter_bit(quarter(u), quarter(v)) != 0
     }
 
     /// The variant + 1 of local cell `(i, j)`, 0 if empty or outside.
@@ -215,22 +266,31 @@ impl Shape {
 
     /// The shape drawn with its bitmap corner at world cell `anchor`,
     /// turned by `angle` about its centre of mass: exactly `n` world cells
-    /// `(x, y, variant)`, sorted by `(y, x)`, or `None` if they can't be
-    /// found (never for a sane shape).
+    /// `(x, y, variant, mask)`, sorted by `(y, x)`, or `None` if they can't
+    /// be found (never for a sane shape).
     ///
     /// Each candidate cell's centre is mapped back into the shape. Cells
     /// that land inside it are ranked by how far they are from its edge,
     /// cells outside by how close; the best `n` are taken, ties by
     /// position. So the count is exact, interior cells are never dropped
     /// (no holes), and angle 0 gives back the shape itself.
-    pub(super) fn raster(&self, anchor: (i64, i64), angle: i64) -> Option<Vec<(i64, i64, u8)>> {
+    ///
+    /// Each cell's outline mask samples the turned shape at its quarters'
+    /// centres; one that covers none of them (a cell the count needed past
+    /// the outline) is whole.
+    pub(super) fn raster(
+        &self,
+        anchor: (i64, i64),
+        angle: i64,
+    ) -> Option<Vec<(i64, i64, u8, u16)>> {
         if angle.rem_euclid(TURN) == 0 {
             let mut out = Vec::with_capacity(self.grid.len());
             for j in 0..self.h {
                 for i in 0..self.w {
                     let v = self.grid[j * self.w + i];
                     if v != 0 {
-                        out.push((anchor.0 + to_i64(i), anchor.1 + to_i64(j), low_byte(v)));
+                        let m = self.mask_at(i, j);
+                        out.push((anchor.0 + to_i64(i), anchor.1 + to_i64(j), low_byte(v), m));
                     }
                 }
             }
@@ -259,9 +319,30 @@ impl Shape {
         }
         picks.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
         picks.truncate(n);
-        let mut out: Vec<_> = picks.into_iter().map(|(_, y, x, v)| (x, y, v)).collect();
-        out.sort_unstable_by_key(|&(x, y, _)| (y, x));
+        let mut out: Vec<_> = picks
+            .into_iter()
+            .map(|(_, y, x, v)| (x, y, v, self.turned_mask(pc, angle, x, y)))
+            .collect();
+        out.sort_unstable_by_key(|&(x, y, _, _)| (y, x));
         Some(out)
+    }
+
+    /// The outline mask of world cell `(x, y)` for the shape turned by
+    /// `angle` about its centre of mass at world position `pc`: each
+    /// quarter whose centre maps back into a covered quarter.
+    fn turned_mask(&self, pc: (i64, i64), angle: i64, x: i64, y: i64) -> u16 {
+        let mut m = 0;
+        for qy in 0..4 {
+            for qx in 0..4 {
+                let px = x * ONE + (2 * to_i64(qx) + 1) * ONE / 8;
+                let py = y * ONE + (2 * to_i64(qy) + 1) * ONE / 8;
+                let (lx, ly) = rotate(px - pc.0, py - pc.1, -angle);
+                if self.covers(lx + self.com.0, ly + self.com.1) {
+                    m |= quarter_bit(qx, qy);
+                }
+            }
+        }
+        if m == 0 { FULL_MASK } else { m }
     }
 
     /// How well the local point `(u, v)` (position units) belongs to the
@@ -349,14 +430,14 @@ mod tests {
         assert_eq!(cos(TURN / 2), -TRIG_ONE);
     }
 
-    fn disc_and_bar() -> Vec<(usize, usize, u8)> {
+    fn disc_and_bar() -> Vec<(usize, usize, u8, u16)> {
         let mut cells = Vec::new();
         for y in 0..20_usize {
             for x in 0..20_usize {
                 let (dx, dy) = (x.abs_diff(10), y.abs_diff(10));
                 if dx * dx + dy * dy <= 64 || (y == 10 && x < 20) {
                     #[allow(clippy::cast_possible_truncation)]
-                    cells.push((x + 5, y + 7, (x * 7 + y) as u8));
+                    cells.push((x + 5, y + 7, (x * 7 + y) as u8, FULL_MASK));
                 }
             }
         }
@@ -371,22 +452,22 @@ mod tests {
         let same = shape.raster(anchor, 0).unwrap();
         let mut want: Vec<_> = cells
             .iter()
-            .map(|&(x, y, v)| (to_i64(x), to_i64(y), v))
+            .map(|&(x, y, v, m)| (to_i64(x), to_i64(y), v, m))
             .collect();
-        want.sort_unstable_by_key(|&(x, y, _)| (y, x));
+        want.sort_unstable_by_key(|&(x, y, _, _)| (y, x));
         assert_eq!(same, want);
         for angle in (0..TURN).step_by(1000) {
             let r = shape.raster(anchor, angle).unwrap();
             assert_eq!(r.len(), cells.len(), "angle {angle}");
             // No duplicates.
-            let mut pos: Vec<_> = r.iter().map(|&(x, y, _)| (y, x)).collect();
+            let mut pos: Vec<_> = r.iter().map(|&(x, y, _, _)| (y, x)).collect();
             pos.dedup();
             assert_eq!(pos.len(), r.len());
             // No holes: every cell with all four neighbours filled around
             // an empty one would be a hole; check no empty cell is fully
             // enclosed.
             let filled = |x: i64, y: i64| pos.binary_search(&(y, x)).is_ok();
-            for &(x, y, _) in &r {
+            for &(x, y, _, _) in &r {
                 for (ex, ey) in [(x + 1, y), (x, y + 1)] {
                     if !filled(ex, ey) {
                         let around = [(ex - 1, ey), (ex + 1, ey), (ex, ey - 1), (ex, ey + 1)];
@@ -402,11 +483,71 @@ mod tests {
 
     #[test]
     fn a_quarter_turn_of_a_bar_stands_it_up() {
-        let cells: Vec<_> = (0..9).map(|x| (10 + x, 10, 0)).collect();
+        let cells: Vec<_> = (0..9).map(|x| (10 + x, 10, 0, FULL_MASK)).collect();
         let (shape, anchor) = Shape::new(&cells);
         let r = shape.raster(anchor, TURN / 4).unwrap();
-        assert!(r.iter().all(|&(x, _, _)| x == 14), "{r:?}");
+        assert!(r.iter().all(|&(x, _, _, _)| x == 14), "{r:?}");
         let ys: Vec<_> = r.iter().map(|c| c.1).collect();
         assert_eq!(ys, (6..15).collect::<Vec<_>>());
+    }
+
+    /// A disc's outline, as quarter rows: (first, last) covered quarter
+    /// column per quarter row.
+    fn outline(cells: &[(i64, i64, u8, u16)]) -> std::collections::BTreeMap<i64, (i64, i64)> {
+        let mut rows = std::collections::BTreeMap::new();
+        for &(x, y, _, m) in cells {
+            for qy in 0..4 {
+                for qx in 0..4 {
+                    if m & quarter_bit(qx, qy) != 0 {
+                        let (px, py) = (4 * x + to_i64(qx), 4 * y + to_i64(qy));
+                        let e = rows.entry(py).or_insert((px, px));
+                        e.0 = e.0.min(px);
+                        e.1 = e.1.max(px);
+                    }
+                }
+            }
+        }
+        rows
+    }
+
+    #[test]
+    fn masks_turn_with_the_shape() {
+        use crate::world::hardscape::disc_mask;
+        let r = 10_i64;
+        let mut cells = Vec::new();
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dy * dy <= r * r + r {
+                    let (x, y) = (
+                        usize::try_from(20 + dx).unwrap(),
+                        usize::try_from(20 + dy).unwrap(),
+                    );
+                    cells.push((x, y, 0, disc_mask(dx, dy, r)));
+                }
+            }
+        }
+        let (shape, anchor) = Shape::new(&cells);
+        let flat = outline(&shape.raster(anchor, 0).unwrap());
+        // A disc turned by any angle keeps a round outline: each quarter
+        // row spans about as wide as unturned.
+        for angle in [TURN / 16, TURN / 8, TURN / 5, TURN / 4] {
+            let turned = outline(&shape.raster(anchor, angle).unwrap());
+            let width = |o: &std::collections::BTreeMap<i64, (i64, i64)>| -> Vec<i64> {
+                o.values().map(|&(a, b)| b - a + 1).collect()
+            };
+            let (a, b) = (width(&flat), width(&turned));
+            assert!(
+                a.len().abs_diff(b.len()) <= 2,
+                "angle {angle}: {} vs {} rows",
+                a.len(),
+                b.len()
+            );
+            let wa: i64 = a.iter().sum();
+            let wb: i64 = b.iter().sum();
+            assert!(
+                (wa - wb).abs() * 50 <= wa,
+                "angle {angle}: area {wa} vs {wb}"
+            );
+        }
     }
 }

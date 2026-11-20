@@ -35,7 +35,7 @@ use shape::{Shape, TURN};
 
 use super::World;
 use super::persist::{rect_from_v1, rect_v1};
-use crate::save::{SaveError, v1};
+use crate::save::{SaveError, v1, v10};
 
 /// Ticks a body stays still after cells were last poured into it, so a
 /// stroke can draw a shape before it drops (2, so a host that runs two
@@ -330,7 +330,15 @@ impl World {
         let cells: Vec<_> = b
             .cells
             .iter()
-            .map(|&i| (i % w, i / w, self.cells[i].variant & !GLUED_VARIANT_BIT))
+            .map(|&i| {
+                let mask = self.masks.get(&i).copied().unwrap_or(super::FULL_MASK);
+                (
+                    i % w,
+                    i / w,
+                    self.cells[i].variant & !GLUED_VARIANT_BIT,
+                    mask,
+                )
+            })
             .collect();
         let (shape, anchor) = Shape::new(&cells);
         if let Some(b) = self.bodies.get_mut(&id) {
@@ -452,6 +460,36 @@ impl World {
                 still: b.still,
             })
             .collect()
+    }
+
+    /// The reference-shape masks of bodies that have partial ones, as
+    /// saved (version 10).
+    pub(super) fn save_shape_masks(&self) -> Vec<v10::ShapeMasks> {
+        self.bodies
+            .iter()
+            .filter(|(_, b)| !b.shape.masks().is_empty())
+            .map(|(&body, b)| v10::ShapeMasks {
+                body,
+                masks: b.shape.masks().to_vec(),
+            })
+            .collect()
+    }
+
+    /// Restores bodies' reference-shape masks (after [`World::load_bodies`]).
+    pub(super) fn load_shape_masks(
+        &mut self,
+        saved: Vec<v10::ShapeMasks>,
+    ) -> Result<(), SaveError> {
+        for s in saved {
+            let Some(b) = self.bodies.get_mut(&s.body) else {
+                return Err(SaveError::Invalid(format!(
+                    "outline masks for missing body {}",
+                    s.body
+                )));
+            };
+            b.shape.set_masks(s.masks)?;
+        }
+        Ok(())
     }
 
     /// Restores the body table from a save.

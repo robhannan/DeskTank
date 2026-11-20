@@ -199,7 +199,7 @@ impl Renderer {
         let (texture, bands) = (&self.cells, &self.bands);
         dirty.take(|r| {
             let r = r.unwrap_or(full);
-            grid::pack(cells, width, r, scratch);
+            grid::pack(cells, width, r, |i| world.rigid_mask(i), scratch);
             write_rect(gpu, texture, r, scratch, grid::TEXEL_BYTES);
             // A rectangle without plant cells leaves stale bands, which
             // the shader never reads.

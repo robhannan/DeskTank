@@ -8,6 +8,7 @@ use crate::grid::Cell;
 use crate::material::{GLUED_VARIANT_BIT, MovementClass};
 
 use super::super::World;
+use super::super::hardscape::FULL_MASK;
 use super::shape::{ONE, RASTER_STEP, TURN, isqrt, rotate, to_i64};
 
 /// Gravity, in 1/256 cell per tick² (1/8 cell/tick²).
@@ -475,12 +476,13 @@ impl World {
             return;
         };
         let w = self.width;
-        let new: Vec<(usize, u8)> = b
+        let new: Vec<(usize, u8, u16)> = b
             .cells
             .iter()
             .filter_map(|&i| {
                 let j = self.index(to_i64(i % w) + dx, to_i64(i / w) + dy)?;
-                Some((j, self.cells[i].variant))
+                let mask = self.masks.get(&i).copied().unwrap_or(FULL_MASK);
+                Some((j, self.cells[i].variant, mask))
             })
             .collect();
         if new.len() != b.cells.len() {
@@ -579,13 +581,13 @@ impl World {
             return false;
         };
         for lift in 0..=2 {
-            let probe = self.probe(id, cells.iter().map(|&(x, y, _)| (x, y - lift)));
+            let probe = self.probe(id, cells.iter().map(|&(x, y, _, _)| (x, y - lift)));
             if !probe.free() {
                 continue;
             }
-            let new: Vec<(usize, u8)> = cells
+            let new: Vec<(usize, u8, u16)> = cells
                 .iter()
-                .filter_map(|&(x, y, v)| Some((self.index(x, y - lift)?, v)))
+                .filter_map(|&(x, y, v, m)| Some((self.index(x, y - lift)?, v, m)))
                 .collect();
             self.relocate(id, new);
             if let Some(b) = self.bodies.get_mut(&id) {
@@ -602,19 +604,30 @@ impl World {
         false
     }
 
-    /// Moves body `id` onto the cells `new` (index, variant), as many as
-    /// it has. The fluid in cells it enters goes to the cells it leaves,
-    /// paired top row first, so air stays above water: every cell is
-    /// conserved.
-    pub(super) fn relocate(&mut self, id: u16, new: Vec<(usize, u8)>) {
+    /// Moves body `id` onto the cells `new` (index, variant, outline
+    /// mask), as many as it has. The fluid in cells it enters goes to the
+    /// cells it leaves, paired top row first, so air stays above water:
+    /// every cell is conserved.
+    pub(super) fn relocate(&mut self, id: u16, new: Vec<(usize, u8, u16)>) {
         let Some(b) = self.bodies.get_mut(&id) else {
             return;
         };
         let material = b.material;
         let old = core::mem::take(&mut b.cells);
+        // The masks go with the cells: clear where the body was, then set
+        // where it lands (marking cells whose outline alone changed).
+        for &k in &old {
+            self.masks.remove(&k);
+        }
+        for &(k, _, m) in &new {
+            if m != self.masks.get(&k).copied().unwrap_or(FULL_MASK) {
+                self.mark_changed(k % self.width, k / self.width);
+            }
+            self.set_mask(k, m);
+        }
         let new = new
             .into_iter()
-            .map(|(k, v)| {
+            .map(|(k, v, _)| {
                 let cell = Cell {
                     material,
                     variant: v & !GLUED_VARIANT_BIT,

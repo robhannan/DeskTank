@@ -103,29 +103,21 @@ fn draws_cells_scaled_and_letterboxed() {
         assert!(got.abs_diff(want) <= 1, "backdrop {backdrop:?}");
     }
     // The rock cell covers pixels 20..24 × 20..24, shaded at 4×4 sub-cell
-    // resolution. A lone cell faces open water on all four sides, so every
-    // corner is chamfered by two texels (`rigid_cut`): the rim texels show
-    // water and only the centre 2×2 is rock, its top lit and bottom shadowed.
+    // resolution (top edge lit, bottom edge shadowed, every pixel near rock):
+    // a cell set on its own is whole, so it stays square.
     for y in 20..24 {
         for x in 20..24 {
             let p = px(&img, x, y);
-            if (21..23).contains(&x) && (21..23).contains(&y) {
-                for (got, base) in p.iter().zip(rock_colour) {
-                    assert!(
-                        got.abs_diff(base) <= 32,
-                        "rock ({x},{y}) {p:?} vs {rock_colour:?}"
-                    );
-                }
-            } else {
+            for (got, base) in p.iter().zip(rock_colour) {
                 assert!(
-                    p[2] > p[0] + 16,
-                    "chamfered ({x},{y}) {p:?} should be water"
+                    got.abs_diff(base) <= 32,
+                    "rock ({x},{y}) {p:?} vs {rock_colour:?}"
                 );
             }
         }
     }
     assert!(
-        px(&img, 21, 21)[0] > px(&img, 21, 22)[0],
+        px(&img, 21, 20)[0] > px(&img, 21, 23)[0],
         "rock top bevel should be brighter than bottom edge"
     );
     // Water around it is blue.
