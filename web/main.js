@@ -88,6 +88,9 @@ const inspectEl = $("inspect");
 const cheatForm = $("cheat");
 const cheatInput = $("cheat-input");
 const cheatOut = $("cheat-out");
+const nameForm = $("name");
+const nameInput = $("name-input");
+const nameOut = $("name-out");
 const playBtn = $("play");
 const stepBtn = $("step");
 const seedInput = $("seed");
@@ -114,6 +117,7 @@ let frames = 0;
 let fps = 0;
 let fpsSince = 0;
 let inspectTimer = 0;
+let inspected = null; // the creature inspect last showed: { id, parts, name }
 let wheelRest = 0;
 let db = null; // IndexedDB, or null where there is none
 let ownership = null;
@@ -470,7 +474,10 @@ function showOwnership() {
   document.body.dataset.owner = String(owner);
   // A viewer's controls are inert: nothing it does would be saved.
   for (const el of document.querySelectorAll("[data-owner-only]")) el.inert = !active;
-  if (!active) closeCheat();
+  if (!active) {
+    closeCheat();
+    closeName();
+  }
 }
 
 function takeOver() {
@@ -842,14 +849,59 @@ function canvasPoint(e) {
   return [((e.clientX - rect.left) / rect.width) * canvas.width, ((e.clientY - rect.top) / rect.height) * canvas.height];
 }
 
-// Shows a line in the inspect readout for a few seconds.
+// Shows a line in the inspect readout for a few seconds (longer while its
+// name field is in use).
 function flash(text) {
   inspectEl.textContent = text;
   inspectEl.hidden = false;
   clearTimeout(inspectTimer);
-  inspectTimer = setTimeout(() => {
-    inspectEl.hidden = true;
-  }, INSPECT_SHOW_MS);
+  inspectTimer = setTimeout(fade, INSPECT_SHOW_MS);
+}
+
+function fade() {
+  if (document.activeElement === nameInput) {
+    inspectTimer = setTimeout(fade, INSPECT_SHOW_MS);
+    return;
+  }
+  inspectEl.hidden = true;
+  closeName();
+}
+
+// The name field (SPEC §2.4, T9): shown with a creature's card for the
+// owner; N or a click focuses it, Enter names the creature (blank removes
+// its name), Escape closes it.
+function closeName() {
+  nameForm.hidden = true;
+  if (document.activeElement === nameInput) nameInput.blur();
+}
+
+function runName(e) {
+  e.preventDefault();
+  if (!owner || handingOver || !inspected) return closeName();
+  try {
+    inspected.name = tank.nameCreature(inspected.id, nameInput.value);
+    nameInput.value = inspected.name;
+    nameOut.textContent = inspected.name ? "Named · Enter renames · Esc closes" : "No name · Esc closes";
+    nameInput.blur();
+    flash(creatureText(inspected));
+  } catch (err) {
+    nameOut.textContent = String(err);
+    inspected = null;
+  }
+}
+
+// A creature's card, from its inspect line's parts and its name.
+function creatureText({ parts, name }) {
+  const [species, id, over, x, y, stage, age, health, energy, sex, morph, carrying] = parts;
+  const days = Number(age);
+  const old = days === 0 ? "under a day old" : `${days} day${days === 1 ? "" : "s"} old`;
+  const card = [];
+  if (name) card.push(name);
+  card.push(`${label(species)} #${id}`, `${stage} ${sex}`, old, `health ${health}%`, `energy ${energy}%`);
+  if (morph !== "-") card.push(label(morph));
+  if (carrying !== "-") card.push(`carrying, ${carrying} day${carrying === "1" ? "" : "s"} to go`);
+  card.push(`over ${label(over)}`, `cell ${x}, ${y}`);
+  return card.join(" · ");
 }
 
 // The cheat field: the Konami code opens it, Enter runs the line (closing
@@ -895,11 +947,20 @@ function showInspection() {
     const old = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
     inspectEl.textContent = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
   } else if (kind === "creature") {
-    const [species, id, over, x, y] = rest;
-    inspectEl.textContent = `${label(species)} #${id} · over ${label(over)} · cell ${x}, ${y}`;
+    // The name is last and may hold spaces.
+    inspected = { id: Number(rest[1]), parts: rest.slice(0, 12), name: rest.slice(12).join(" ") };
+    flash(creatureText(inspected));
+    if (owner && !handingOver) {
+      nameInput.value = inspected.name;
+      nameOut.textContent = "N or click to name · Enter names it · Esc closes";
+      nameForm.hidden = false;
+    }
+    return;
   } else {
     return;
   }
+  inspected = null;
+  closeName();
   flash(inspectEl.textContent);
 }
 
@@ -1089,6 +1150,13 @@ function wireInput() {
   });
   $("take-over").addEventListener("click", takeOver);
   cheatForm.addEventListener("submit", runCheat);
+  nameForm.addEventListener("submit", runName);
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeName();
+    }
+  });
   cheatInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -1112,6 +1180,10 @@ function wireInput() {
       step();
     } else if (e.key === "[" || e.key === "]") {
       update({ radius: tank.resizeBrush(e.key === "]" ? 1 : -1) });
+    } else if ((e.key === "n" || e.key === "N") && !nameForm.hidden) {
+      e.preventDefault();
+      nameInput.focus();
+      nameInput.select();
     } else if (e.key === "f" || e.key === "F") {
       const next = FIELDS[(FIELDS.indexOf(settings.field) + 1) % FIELDS.length];
       update({ field: next });

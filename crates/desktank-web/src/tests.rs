@@ -356,11 +356,29 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
     down(&mut t, PRIMARY, 60, 40);
     t.pointer_up(PRIMARY);
     assert_eq!(t.creatures(), 1);
-    // Inspect names the species, the creature and the cell under it.
+    // Inspect shows its card and the cell under it: an adult just mature
+    // and well fed, the first of its species (a male), one morph, not
+    // carrying, no name yet.
     t.select(slot(&t, "tool inspect"));
     down(&mut t, PRIMARY, 60, 40);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.take_inspection(), "creature neon_tetra 1 water 60 40");
+    assert_eq!(
+        t.take_inspection(),
+        "creature neon_tetra 1 water 60 40 adult 180 100 100 male - - "
+    );
+    // Naming it is kept (cleaned) and marks the tank for saving.
+    let _ = t.save();
+    assert_eq!(
+        t.name_creature(1, "  Big   Blue "),
+        Ok("Big Blue".to_owned())
+    );
+    assert!(t.save_needed());
+    assert!(t.name_creature(9, "Nobody").is_err());
+    assert_eq!(t.creature_name(1).as_deref(), Some("Big Blue"));
+    assert_eq!(t.creature_name(9), None);
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    assert!(t.take_inspection().ends_with(" male - - Big Blue"));
     // The net carries it; let go in the water it stays, above it it's out.
     t.select(slot(&t, "tool net"));
     down(&mut t, PRIMARY, 60, 40);

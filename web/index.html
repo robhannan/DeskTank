@@ -17,7 +17,13 @@
     <div class="tank">
       <canvas id="tank" width="320" height="180" aria-label="Tank: drag to use the selected tool"></canvas>
       <p id="status" class="status" role="status">Loading the simulation…</p>
-      <p id="inspect" class="inspect" role="status" aria-live="polite" hidden></p>
+      <div class="card">
+        <p id="inspect" class="inspect" role="status" aria-live="polite" hidden></p>
+        <form id="name" class="name" data-owner-only hidden>
+          <label>Name <input id="name-input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="none yet" aria-describedby="name-out"></label>
+          <output id="name-out" aria-live="polite">Enter names it · Esc closes</output>
+        </form>
+      </div>
       <form id="cheat" class="cheat" data-owner-only hidden>
         <label>Cheat <input id="cheat-input" type="text" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="help" aria-describedby="cheat-out"></label>
         <output id="cheat-out" aria-live="polite">Enter runs · Esc closes</output>
@@ -87,7 +93,7 @@
 
     <p id="stats" class="stats" aria-live="off">fps – · tick – · awake chunks – · tick time –</p>
 
-    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush. Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>1</kbd>–<kbd>0</kbd> tools in the group · <kbd>G</kbd> / <kbd>Shift</kbd>+<kbd>G</kbd> next/previous group · <kbd>[</kbd> <kbd>]</kbd> brush · <kbd>F</kbd> field overlay · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
+    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush. Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>1</kbd>–<kbd>0</kbd> tools in the group · <kbd>G</kbd> / <kbd>Shift</kbd>+<kbd>G</kbd> next/previous group · <kbd>[</kbd> <kbd>]</kbd> brush · <kbd>F</kbd> field overlay · <kbd>N</kbd> names the creature just inspected · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
 
     <section class="about">
       <h2>What is this?</h2>

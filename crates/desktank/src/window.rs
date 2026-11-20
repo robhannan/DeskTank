@@ -28,7 +28,11 @@
 //!
 //! Creatures (T7a): the palette's creature slots add one per click; the net
 //! carries a creature and, let go above the water, lifts it out; inspect
-//! names the species in the title bar. `--fish N` stocks the tank with N
+//! shows its card in the title bar (T9: its name, species, stage, sex,
+//! age, health, energy, morph and how long a carrying female has to go;
+//! [`desktank_sim::CreatureCard`]). `N` then opens a name field for it in
+//! the title bar: Enter names it (a blank name removes it), Escape cancels.
+//! Names are saved with the tank. `--fish N` stocks the tank with N
 //! creatures to start with. Swimming creatures redraw the tank every tick
 //! (20 fps, under the cap) even when every chunk sleeps.
 //!
@@ -61,7 +65,7 @@ use desktank_render::{
 use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
-use desktank_sim::{FieldKind, MaterialTable, World, WorldConfig};
+use desktank_sim::{CreatureId, FieldKind, MAX_NAME_CHARS, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
@@ -262,8 +266,36 @@ struct Running {
     shown: Option<Shown>,
     /// Watches key presses for the code that opens the cheat field.
     konami: Konami,
-    /// The cheat field's text while it is open.
-    cheat: Option<String>,
+    /// The text field open in the title bar (cheat or name), if any.
+    field: Option<TextField>,
+    /// The creature inspect last showed, which `N` names; cleared when
+    /// another tool is picked.
+    inspected: Option<CreatureId>,
+}
+
+/// A one-line text field in the title bar.
+struct TextField {
+    purpose: Purpose,
+    line: String,
+}
+
+/// What a [`TextField`] is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Purpose {
+    /// A cheat ([`desktank_sim::cheats`]).
+    Cheat,
+    /// A name for this creature.
+    Name(CreatureId),
+}
+
+impl Purpose {
+    /// Longest line it takes, in characters.
+    fn max_chars(self) -> usize {
+        match self {
+            Self::Cheat => cheats::MAX_LINE,
+            Self::Name(_) => MAX_NAME_CHARS,
+        }
+    }
 }
 
 impl Running {
@@ -334,7 +366,8 @@ impl Running {
             scroll_lines: 0.0,
             shown: None,
             konami: Konami::new(),
-            cheat: None,
+            field: None,
+            inspected: None,
         };
         // Open the group holding the starting material.
         s.open = s.selection().map_or(0, |(g, _)| g);
@@ -438,8 +471,9 @@ impl Running {
         }
     }
 
-    /// Reports an inspection in the title bar (a drawn card comes later).
-    fn show(&self, out: Outcome) {
+    /// Reports an inspection in the title bar (the window's card; a drawn
+    /// one comes with the overlay, which has no title bar).
+    fn show(&mut self, out: Outcome) {
         let Outcome::Inspected(found) = out else {
             return;
         };
@@ -461,10 +495,10 @@ impl Running {
                 material,
             } => {
                 let world = self.tank.world();
-                let name = world
-                    .species()
-                    .get(species)
-                    .map_or("?", |s| s.name.as_str());
+                let Some(card) = world.creature_card(id) else {
+                    return;
+                };
+                self.inspected = Some(id);
                 let over = world
                     .materials()
                     .get(material)
@@ -476,7 +510,10 @@ impl Running {
                     Some(UnmetNeed::Air) => ", needs air at the surface".to_owned(),
                     None => String::new(),
                 };
-                format!("{name} #{}{need} over {over} at ({x}, {y})", id.0)
+                format!(
+                    "{}{need} · over {over} at ({x}, {y}) · N names it",
+                    card.summary()
+                )
             }
             Inspection::Plant { id, x, y, .. } => {
                 let world = self.tank.world();
@@ -503,22 +540,38 @@ impl Running {
         self.window.set_title(&format!("DeskTank — {text}"));
     }
 
-    /// Shows the open cheat field in the title bar, after `note` (the last
+    /// Shows the open text field in the title bar, after `note` (the last
     /// cheat's error) if any.
-    fn show_cheat(&self, note: Option<&str>) {
-        let Some(line) = &self.cheat else { return };
+    fn show_field(&self, note: Option<&str>) {
+        let Some(field) = &self.field else { return };
         let note = note.map_or(String::new(), |n| format!("{n} · "));
-        self.window.set_title(&format!(
-            "DeskTank — {note}cheat: {line}_ (Enter runs, Esc closes)"
-        ));
+        let line = &field.line;
+        let title = match field.purpose {
+            Purpose::Cheat => {
+                format!("DeskTank — {note}cheat: {line}_ (Enter runs, Esc closes)")
+            }
+            Purpose::Name(id) => {
+                let world = self.tank.world();
+                let species = world
+                    .creature(id)
+                    .and_then(|c| world.species().get(c.species()))
+                    .map_or("?".to_owned(), |s| s.name.replace('_', " "));
+                format!(
+                    "DeskTank — {note}name {species} #{}: {line}_ (Enter names it, Esc cancels)",
+                    id.0
+                )
+            }
+        };
+        self.window.set_title(&title);
     }
 
-    /// Gives a key press to the cheats first: the open cheat field takes
-    /// every key, and the press completing the Konami code opens the field
-    /// instead of doing its usual binding (A). Returns whether it took it.
-    fn cheat_input(&mut self, event: &KeyEvent) -> bool {
-        if self.cheat.is_some() {
-            self.cheat_key(event);
+    /// Gives a key press to the text fields first: an open field takes
+    /// every key, and the press completing the Konami code opens the cheat
+    /// field instead of doing its usual binding (A). Returns whether it
+    /// took it.
+    fn field_input(&mut self, event: &KeyEvent) -> bool {
+        if self.field.is_some() {
+            self.field_key(event);
             return true;
         }
         if let Some(key) = konami_key(&event.logical_key)
@@ -526,11 +579,29 @@ impl Running {
             && !self.command()
             && self.konami.key(key, false)
         {
-            self.cheat = Some(String::new());
-            self.show_cheat(None);
+            self.open_field(Purpose::Cheat, String::new());
             return true;
         }
         false
+    }
+
+    fn open_field(&mut self, purpose: Purpose, line: String) {
+        self.field = Some(TextField { purpose, line });
+        self.show_field(None);
+    }
+
+    /// Opens the name field for the creature inspect last showed (`N`),
+    /// holding its name so far.
+    fn open_name_field(&mut self) {
+        let world = self.tank.world();
+        if let Some(c) = self.inspected.and_then(|id| world.creature(id)) {
+            let (id, name) = (c.id(), c.name().unwrap_or("").to_owned());
+            self.open_field(Purpose::Name(id), name);
+        } else {
+            self.inspected = None;
+            self.window
+                .set_title("DeskTank — inspect a creature, then N names it");
+        }
     }
 
     /// Whether Ctrl or Command is held.
@@ -538,47 +609,61 @@ impl Running {
         self.modifiers.control_key() || self.modifiers.super_key()
     }
 
-    /// Takes a key press while the cheat field is open: Enter runs the
-    /// line (closing the field if it ran), Escape closes the field,
-    /// Backspace deletes, and text is typed in.
-    fn cheat_key(&mut self, event: &KeyEvent) {
+    /// Takes a key press while a text field is open: Enter runs the cheat
+    /// (closing the field if it ran) or names the creature, Escape closes
+    /// the field, Backspace deletes, and text is typed in.
+    fn field_key(&mut self, event: &KeyEvent) {
         let command = self.command();
-        let Some(line) = self.cheat.as_mut() else {
+        let Some(field) = self.field.as_mut() else {
             return;
         };
         match &event.logical_key {
             Key::Named(NamedKey::Escape) => {
-                self.cheat = None;
+                self.field = None;
                 self.window.set_title("DeskTank");
             }
             Key::Named(NamedKey::Enter) => {
                 // Kept on failure, to fix a typo.
-                let line = line.clone();
-                match cheats::run(self.tank.world_mut(), &line) {
-                    Ok(out) => {
-                        if out.cells_changed > 0 {
-                            self.tank.cells_edited();
+                let line = field.line.clone();
+                match field.purpose {
+                    Purpose::Cheat => match cheats::run(self.tank.world_mut(), &line) {
+                        Ok(out) => {
+                            if out.cells_changed > 0 {
+                                self.tank.cells_edited();
+                            }
+                            self.field = None;
+                            self.window
+                                .set_title(&format!("DeskTank — cheat: {}", out.message));
                         }
-                        self.cheat = None;
-                        self.window
-                            .set_title(&format!("DeskTank — cheat: {}", out.message));
+                        Err(e) => self.show_field(Some(&e.to_string())),
+                    },
+                    Purpose::Name(id) => {
+                        self.field = None;
+                        let world = self.tank.world_mut();
+                        let title = if world.set_creature_name(id, &line).is_some() {
+                            let card = world.creature_card(id).map(|c| c.summary());
+                            format!("DeskTank — {} · N renames it", card.unwrap_or_default())
+                        } else {
+                            "DeskTank — that creature has left the tank".to_owned()
+                        };
+                        self.window.set_title(&title);
                     }
-                    Err(e) => self.show_cheat(Some(&e.to_string())),
                 }
             }
             Key::Named(NamedKey::Backspace) => {
-                line.pop();
-                self.show_cheat(None);
+                field.line.pop();
+                self.show_field(None);
             }
             _ if command => {}
             _ => {
+                let max = field.purpose.max_chars();
                 let typed = event.text.as_ref().map_or("", |t| t.as_str());
                 for c in typed.chars().filter(|c| !c.is_control()) {
-                    if line.chars().count() < cheats::MAX_LINE {
-                        line.push(c);
+                    if field.line.chars().count() < max {
+                        field.line.push(c);
                     }
                 }
-                self.show_cheat(None);
+                self.show_field(None);
             }
         }
     }
@@ -676,6 +761,7 @@ impl Running {
             if self.shown.is_none_or(|(_, s, _)| s != selected) {
                 // A new tool clears the last inspection from the title.
                 self.window.set_title("DeskTank");
+                self.inspected = None;
             }
             self.shown = Some(shown);
             self.tank.set_palette(Some(Palette {
@@ -790,7 +876,7 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => s.modifiers = m.state(),
             WindowEvent::Focused(false) => s.konami.reset(),
             WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed && s.cheat_input(&event) => {}
+                if event.state == ElementState::Pressed && s.field_input(&event) => {}
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
@@ -835,6 +921,12 @@ impl ApplicationHandler for App {
                     // (Shift, not the letter's case: Caps Lock doesn't flip it).
                     Key::Character(c) if c.eq_ignore_ascii_case("g") => {
                         s.step_group(if s.modifiers.shift_key() { -1 } else { 1 });
+                    }
+                    // N names the creature inspect last showed.
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("n") && !event.repeat && !s.command() =>
+                    {
+                        s.open_name_field();
                     }
                     Key::Character(c) => {
                         // 1–9 are the open group's first nine slots, 0 the

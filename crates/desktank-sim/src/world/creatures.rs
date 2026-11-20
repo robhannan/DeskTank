@@ -48,10 +48,12 @@
 //!   and predation in [`breeding`].
 //! - **Habits** of a few species (waste, eating corpses, a home with a
 //!   carpet patch) are in [`habits`].
+//! - **Names** and the inspect card are in [`naming`].
 
 mod breeding;
 mod habits;
 mod lifecycle;
+mod naming;
 mod steering;
 
 use core::mem;
@@ -65,7 +67,7 @@ use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::rng::chunk_stream;
-use crate::save::{SaveError, v5};
+use crate::save::{SaveError, v6};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
 pub use breeding::{
     BREED_CHECK_SECONDS, CONCEIVE_ODDS, Clutch, MAX_CLUTCHES, MUTATION_PER_MILLE, PREY_ENERGY,
@@ -76,6 +78,7 @@ pub use lifecycle::{
     BITE_ENERGY, CORPSE_SINK, Corpse, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
     LifeStage, MAX_CORPSES, POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, STRESS_LIMIT,
 };
+pub use naming::{CreatureCard, MAX_NAME_CHARS, clean_name};
 
 /// The default population cap per display (SPEC §2.4), which protects the
 /// budget; [`World::set_creature_cap`] changes it.
@@ -227,6 +230,8 @@ pub struct Creature {
     /// The substrate cell `(x, y)` a home owning species picked as its
     /// home and planted its carpet patch on (see [`habits`]).
     home: Option<(u32, u32)>,
+    /// Its user-given name, cleaned (see [`naming`]); `None` until named.
+    name: Option<Box<str>>,
     /// Its sex (T9 part 2).
     female: bool,
     /// Its two colour-morph alleles, indices into its species' morphs.
@@ -774,6 +779,7 @@ impl World {
             sire: [0; 2],
             rest,
             home: None,
+            name: None,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -890,16 +896,16 @@ impl World {
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
     /// host's cursor isn't saved.
-    pub(super) fn save_creatures(&self) -> v5::Creatures {
+    pub(super) fn save_creatures(&self) -> v6::Creatures {
         let cr = &self.creatures;
-        v5::Creatures {
+        v6::Creatures {
             next_id: cr.next_id,
             cap: u32::try_from(cr.cap).unwrap_or(u32::MAX),
             easy: cr.easy,
             list: cr
                 .list
                 .iter()
-                .map(|c| v5::Creature {
+                .map(|c| v6::Creature {
                     id: c.id.0,
                     species: c.species.0,
                     x: c.x,
@@ -931,12 +937,13 @@ impl World {
                     sire: c.sire,
                     rest: c.rest,
                     home: c.home,
+                    name: c.name.as_deref().unwrap_or_default().to_owned(),
                 })
                 .collect(),
             corpses: cr
                 .corpses
                 .iter()
-                .map(|c| v5::Corpse {
+                .map(|c| v6::Corpse {
                     species: c.species.0,
                     cause: c.cause.code(),
                     x: c.x,
@@ -956,7 +963,7 @@ impl World {
             clutches: cr
                 .clutches
                 .iter()
-                .map(|c| v5::Clutch {
+                .map(|c| v6::Clutch {
                     id: c.id,
                     species: c.species.0,
                     mother: c.mother,
@@ -969,7 +976,7 @@ impl World {
     }
 
     /// Restores the creatures, corpses and life settings from a save.
-    pub(super) fn load_creatures(&mut self, saved: v5::Creatures) -> Result<(), SaveError> {
+    pub(super) fn load_creatures(&mut self, saved: v6::Creatures) -> Result<(), SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -1018,10 +1025,9 @@ impl World {
             for i in [c.food, c.ignore].into_iter().flatten() {
                 self.cell_index(i, "a creature's food")?;
             }
-            if !self.home_fits(k, c.home) {
-                return Err(invalid(
-                    "home outside the grid or for a species without one",
-                ));
+            // Names as `set_creature_name` keeps them.
+            if !self.home_fits(k, c.home) || clean_name(&c.name) != c.name {
+                return Err(invalid("home out of place, or a name not as kept"));
             }
             list.push(Creature {
                 id: CreatureId(c.id),
@@ -1055,6 +1061,7 @@ impl World {
                 sire: c.sire,
                 rest: c.rest,
                 home: c.home,
+                name: (!c.name.is_empty()).then(|| c.name.into_boxed_str()),
             });
         }
         let corpses = self.load_corpses(saved.corpses)?;
@@ -1071,7 +1078,7 @@ impl World {
     }
 
     /// The corpses from a save, as `corpse_of` makes them.
-    fn load_corpses(&self, saved: Vec<v5::Corpse>) -> Result<Vec<Corpse>, SaveError> {
+    fn load_corpses(&self, saved: Vec<v6::Corpse>) -> Result<Vec<Corpse>, SaveError> {
         let (w, h) = (
             to_i64(self.width) * i64::from(ONE),
             to_i64(self.height) * i64::from(ONE),
@@ -1157,6 +1164,11 @@ impl World {
             if let Some((x, y)) = c.home {
                 h.write(&x.to_le_bytes());
                 h.write(&y.to_le_bytes());
+            }
+            // Only named creatures hash their name, as with homes.
+            if let Some(name) = &c.name {
+                h.write(&(name.len() as u64).to_le_bytes());
+                h.write(name.as_bytes());
             }
         }
         self.hash_corpses(h);

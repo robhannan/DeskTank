@@ -1,13 +1,13 @@
 //! SPEC T8 acceptance tests (§2.6): a save round-trips to the same state
 //! hash, a loaded tank carries on exactly as the saved one would have
 //! (every part of the state that feeds later ticks is saved, including the
-//! rigid bodies the hash leaves out), and the version 1 to 5 fixtures
+//! rigid bodies the hash leaves out), and the version 1 to 6 fixtures
 //! load (version 1 migrated to 2, T9; version 2 to 3, T9 part 2; version
-//! 3 to 4, D21; version 4 to 5, the crabs' homes).
+//! 3 to 4, D21; version 4 to 5, the crabs' homes; version 5 to 6, names).
 //!
-//! The version 1 to 4 fixtures are frozen: this build no longer writes
+//! The version 1 to 5 fixtures are frozen: this build no longer writes
 //! them. `DESKTANK_BLESS=1 cargo test -p desktank-sim --test save` rewrites
-//! the version 5 fixture; only do that while version 5 is unreleased or its
+//! the version 6 fixture; only do that while version 6 is unreleased or its
 //! writer was wrong, since the point of a fixture is that old saves keep
 //! loading.
 
@@ -419,11 +419,7 @@ fn homely() -> World {
 
 #[test]
 fn a_version_5_fixture_loads() {
-    let path = fixture(5);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&homely())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(5)).unwrap();
     assert_eq!(save::check(&bytes), Ok(5));
     let mut w = save::decode(&bytes, table()).unwrap();
     assert_ne!(w.clutches().len(), 0);
@@ -433,6 +429,8 @@ fn a_version_5_fixture_loads() {
         assert_eq!(c.home().is_some(), c.species() == owner, "{:?}", c.id());
     }
     assert!(w.creatures().iter().any(|c| c.species() == owner));
+    // Version 6 migrates it with no names.
+    assert!(w.creatures().iter().all(|c| c.name().is_none()));
     // Homes and depth are saved: decoded, it matches the tank that wrote it.
     let fresh = homely();
     let saved = |w: &World| -> Vec<Saved> {
@@ -443,7 +441,9 @@ fn a_version_5_fixture_loads() {
     };
     assert_eq!(saved(&w), saved(&fresh));
     assert_eq!(w.state_hash(), fresh.state_hash());
-    // Pinned, so every platform decodes the same state.
+    // Pinned, so every platform decodes the same state. An unnamed
+    // creature hashes as before version 6, so this is the hash version 5
+    // pinned.
     assert_eq!(w.state_hash(), 0x38d9_9bb5_afdb_8907);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
@@ -452,6 +452,55 @@ fn a_version_5_fixture_loads() {
         again.tick();
     }
     assert_eq!(w.state_hash(), again.state_hash());
+}
+
+/// What the version 6 fixture holds: [`homely`] with three creatures
+/// named (one with a name outside ASCII) and one named and then unnamed.
+fn named() -> World {
+    let mut w = homely();
+    let ids: Vec<_> = w
+        .creatures()
+        .iter()
+        .map(desktank_sim::Creature::id)
+        .collect();
+    for (id, name) in ids.iter().zip(["Bubbles", "Señor Fin 🐟", "Dot", "Gone"]) {
+        assert!(w.set_creature_name(*id, name).is_some());
+    }
+    assert_eq!(w.set_creature_name(ids[3], "  "), Some(""));
+    w
+}
+
+#[test]
+fn a_version_6_fixture_loads() {
+    let path = fixture(6);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&named())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(6));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    // Names are saved: decoded, they match the tank that wrote it.
+    let fresh = named();
+    let names = |w: &World| -> Vec<(u32, Option<String>)> {
+        w.creatures()
+            .iter()
+            .map(|c| (c.id().0, c.name().map(str::to_owned)))
+            .collect()
+    };
+    assert_eq!(names(&w), names(&fresh));
+    let given: Vec<_> = w.creatures().iter().filter_map(|c| c.name()).collect();
+    assert_eq!(given, ["Bubbles", "Señor Fin 🐟", "Dot"]);
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Pinned, so every platform decodes the same state.
+    assert_eq!(w.state_hash(), 0x029c_0413_f990_0954);
+    let again = save::decode(&save::encode(&w), table()).unwrap();
+    let mut again = again;
+    for _ in 0..200 {
+        w.tick();
+        again.tick();
+    }
+    assert_eq!(w.state_hash(), again.state_hash());
+    assert_eq!(names(&w), names(&again));
 }
 
 /// A migrated tank's creatures rest whole bands deep, spread over them.
