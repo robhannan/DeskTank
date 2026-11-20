@@ -25,5 +25,5 @@
     "skipLibCheck": true
   },
   // web/hooks.d.ts types window.desktank for the tests.
-  "include": ["scripts/*.ts", "tests/web/*.ts", "playwright.config.ts", "web/hooks.d.ts"]
+  "include": ["scripts/*.ts", "tests/web/*.ts", "tests/android/*.ts", "playwright.config.ts", "tapsmith.config.ts", "web/hooks.d.ts"]
 }

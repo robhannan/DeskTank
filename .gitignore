@@ -37,3 +37,7 @@ node_modules/
 # Playwright output
 /test-results/
 /playwright-report/
+
+# Tapsmith output (Android tests)
+/tapsmith-results/
+/tapsmith-report/
