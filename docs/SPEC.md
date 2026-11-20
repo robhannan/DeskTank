@@ -1062,6 +1062,26 @@ stays a material film, not individuals.
     (light 0.65, nutrient 0.8: an aquasoil tank's 0.4 is lean for it)
     turns pink-red near the surface and stays green when fertilised;
     ludwigia (0.7, 0.6) deepens to crimson.
+    *T6d part 3:* night folding is render-only in `tank.wgsl`, driven by
+    the existing darkness uniform (`view.daylight.w`, 0 by day to 1 at
+    midnight): stem leaves tuck inward toward their stem and fold upward
+    as darkness rises, broad rosette/epiphyte blades and pads narrow, and
+    leaves dim slightly, with zero daytime cost or chunk wakes. Pearling
+    runs in `visit_plant_cell` on submerged leaf cells with water above
+    when `health >= 0.8` (`PEARL_HEALTH`), `light >= 0.65` (`PEARL_LIGHT`)
+    and `co2 >= 0.6` (`PEARL_CO2`), releasing `air_bubble` cells at a
+    hard tank-wide cap of 4 bubbles/s (`PEARL_MAX_PER_SECOND`: at most 1
+    bubble every 5 ticks, needing no extra saved state). Optional sway
+    is render-only (`view.target_size.zw` holds the world-time phase and
+    enable flag, keeping the 160-byte `View` uniform unchanged), gently
+    displacing leaves and upper stems (`pos >= 4`, keeping roots, runners,
+    rhizomes, floaters, crowns and mats anchored) in a smooth wave across
+    water cells and matching sprite occlusion (`hidden_by_plant`). It is
+    off by default (`Tank::set_sway`, `--sway` / `S` in `desktank window`,
+    `--sway` in `desktank capture` and `desktank bench`, web Settings
+    checkbox persisted in `localStorage`), capped at 10 fps
+    (`SWAY_MAX_FPS`), and automatically disabled on battery, in
+    screensaver mode, while hidden, or when the tank has no plants.
 - **Interaction.** The palette gets one plants slot with a species picker
   (the palette strip is short, §9 T4) in `desktank window` and on the
   web, and a propagule picker listing only that species' methods (seeds,
@@ -1999,7 +2019,7 @@ Each package depends only on the packages before it.
   rotala and ludwigia) and surface trailing along the top water row;
   seeding from mature healthy plants; reference image `plant_epiphytes`
   (2× and 4×); sixteen built-in plant species across every v1 form.
-- [ ] **T6d Plant appearance effects** (§2.7
+- [x] **T6d Plant appearance effects** (§2.7
   [Appearance](#plant-appearance)). Per-part colour ramps with age and
   position shades, health tints, colouration in strong light, night
   folding, pearling and the optional sway. *Accept:*
@@ -2012,7 +2032,7 @@ Each package depends only on the packages before it.
   - with sway off, a settled planted tank draws no extra frames (a
     frame-count test).
 
-  *Partly done (visual subset):* per-part species colour ramps with
+  *Part 1 (visual subset):* per-part species colour ramps with
   position shades and the health tint, drawn at two texels per cell side
   with per-species part shapes (`[look]` in the species TOML: leaf
   lanceolate, needle, round or feather; stem stalk or thick, fuzz or
@@ -2020,8 +2040,12 @@ Each package depends only on the packages before it.
   reference image of healthy plants. *Part 2:* colouration in strong
   light with low nutrients (`[colouration]`, saved, format version 8),
   dying plants brown and translucent, and the `plant_starving` and
-  `plant_lit` reference images (the first acceptance bullet is met).
-  Night folding, pearling and sway are open.
+  `plant_lit` reference images. *Part 3:* render-only night folding
+  (driven by `view.daylight.w`), capped pearling (`air_bubble` from
+  healthy leaves above `PEARL_LIGHT` / `PEARL_CO2`, ≤ 4/s), and optional
+  render-only sway (off by default, 10 fps cap, disabled on battery, in
+  saver mode and while hidden; `Tank` frame-count tests, window/web
+  settings, and 2560×1440 release bench).
 - [x] **T7 Creatures.** Species TOML (including depth and surface
   needs), the sprite atlas pipeline with placeholder art (D11), steering
   (wander, schooling, zones, bottom-walking, surface-grazing,
