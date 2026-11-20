@@ -233,6 +233,15 @@ pub struct Species {
     /// Added only by its own cheat (SPEC §2.5): left out of the palette,
     /// the `spawn` cheat and stocking, and it never breeds.
     pub cheat_only: bool,
+    /// Live food (bloodworms; SPEC §2.4 *Live food*): offered from the
+    /// Food palette group a pinch at a time, never stocked, bred or
+    /// counted against the population cap. It is eaten whole by any
+    /// species at least as long whose diet holds [`Species::food_as`],
+    /// and dies into a cell of that material.
+    pub live_food: bool,
+    /// The food material a live food counts as and dies into (`None` for
+    /// other species, or a live food whose material the table lacks).
+    pub food_as: Option<MaterialId>,
     /// Longest prey it eats, in cm (`None`: it eats no creatures). A
     /// hungry adult takes any smaller creature it touches: fry, shrimp
     /// (SPEC §2.4, T9 part 2).
@@ -265,6 +274,13 @@ pub struct Species {
 }
 
 impl Species {
+    /// Whether it is a pet the palette, `spawn` and stocking offer: neither
+    /// cheat-only nor live food.
+    #[must_use]
+    pub fn stocked(&self) -> bool {
+        !self.cheat_only && !self.live_food
+    }
+
     /// Body size in cells, `(width, height)`: the sprite's size in texels
     /// over [`TEXELS_PER_CELL`].
     #[must_use]
@@ -388,6 +404,9 @@ struct SpeciesDef {
     home_carpet: Option<String>,
     #[serde(default)]
     cheat_only: bool,
+    /// The food material a live food counts as (makes it live food).
+    #[serde(default)]
+    live_food: Option<String>,
     prey_cm: Option<f32>,
     #[serde(default)]
     territory_cm: Option<f32>,
@@ -502,6 +521,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/african_dwarf_frog.toml"),
     include_str!("../../../assets/species/axolotl.toml"),
     include_str!("../../../assets/species/common_frog.toml"),
+    include_str!("../../../assets/species/live_bloodworm.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -665,6 +685,33 @@ fn validate(
             }
         }
     }
+    let food_as = match &d.live_food {
+        None => None,
+        Some(food) => {
+            if d.cheat_only
+                || d.breeding.is_some()
+                || d.genetics.is_some()
+                || d.prey_cm.is_some()
+                || d.territory_cm.is_some()
+                || !d.diet.is_empty()
+            {
+                return Err(invalid(
+                    "live food has an empty diet, no breeding, genetics, prey or territory, \
+                     and isn't cheat-only",
+                ));
+            }
+            match materials.id(food) {
+                Some(id) => Some(id),
+                None if skip_unknown_food => None,
+                None => {
+                    return Err(SpeciesError::UnknownFood {
+                        name: d.name.clone(),
+                        food: food.clone(),
+                    });
+                }
+            }
+        }
+    };
     let sprite = sprite(&d.sprite).map_err(invalid)?;
     // Sprite sides are at most 64 texels: exact in f32.
     #[allow(clippy::cast_precision_loss)]
@@ -723,6 +770,8 @@ fn validate(
         eats_corpses: d.eats_corpses,
         home_carpet: d.home_carpet.clone(),
         cheat_only: d.cheat_only,
+        live_food: d.live_food.is_some(),
+        food_as,
         prey_cm: d.prey_cm,
         territory_cm: d.territory_cm,
         breeding,
@@ -1037,7 +1086,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 26);
+        assert_eq!(t.len(), 27);
         for name in [
             "neon_tetra",
             "corydoras",
@@ -1064,6 +1113,15 @@ mod tests {
             let id = m.id(food).unwrap();
             assert!(t.iter().any(|s| s.eats(id)), "nobody eats {food}");
         }
+        // Live bloodworms are live food counting as frozen bloodworms, eaten
+        // by every species that eats those, and not stocked.
+        let worm = t.get(t.id("live_bloodworm").unwrap()).unwrap();
+        assert!(worm.live_food && !worm.stocked() && !worm.cheat_only);
+        assert_eq!(worm.food_as, m.id("bloodworm"));
+        assert!(worm.breeding.is_none() && worm.diet.is_empty());
+        assert_eq!(worm.zone, Zone::Bottom);
+        assert!((1.0..=2.0).contains(&worm.length_cm));
+        assert_eq!(t.iter().filter(|s| s.live_food).count(), 1);
         let betta = t.get(t.id("betta").unwrap()).unwrap();
         assert!(betta.breathes_air);
         assert_eq!(betta.zone, Zone::Surface);
