@@ -42,6 +42,20 @@ pub fn tint(minute: u16) -> [f32; 3] {
     [0, 1, 2].map(|c| from[c] + (to[c] - from[c]) * along)
 }
 
+/// Brightness of a tint: Rec. 601 luma weights, rounded as the glow
+/// mock-ups used.
+const fn luma(tint: [f32; 3]) -> f32 {
+    0.3 * tint[0] + 0.59 * tint[1] + 0.11 * tint[2]
+}
+
+/// How dark the tank is under `tint` (a [`tint`] value), from 0 by day to
+/// 1 at night: what a glowing creature's emissive colour is scaled by, so
+/// it never shows by day and shows partly at dawn and dusk.
+#[must_use]
+pub fn darkness(tint: [f32; 3]) -> f32 {
+    ((luma(DAY) - luma(tint)) / (luma(DAY) - luma(NIGHT))).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,5 +80,24 @@ mod tests {
                 assert!((a[i] - b[i]).abs() < 0.02, "jump at {m}");
             }
         }
+    }
+
+    #[test]
+    fn darkness_is_zero_by_day_one_at_night_and_partial_at_dusk() {
+        assert!(darkness(tint(NOON)).abs() < 1e-6);
+        assert!(darkness(tint(450)).abs() < 1e-6);
+        assert!((darkness(tint(0)) - 1.0).abs() < 1e-6);
+        // Dusk's warm key: about a third dark.
+        let dusk = darkness(DUSK);
+        assert!((0.3..0.45).contains(&dusk), "{dusk}");
+        // Brighter than day or darker than night stays in range.
+        assert!(darkness([1.2; 3]).abs() < f32::EPSILON);
+        assert!((darkness([0.0; 3]) - 1.0).abs() < f32::EPSILON);
+        // It rises steadily through the evening.
+        let evening: Vec<f32> = (1170..=1290)
+            .step_by(10)
+            .map(|m| darkness(tint(m)))
+            .collect();
+        assert!(evening.windows(2).all(|w| w[0] <= w[1]), "{evening:?}");
     }
 }

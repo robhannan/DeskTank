@@ -14,6 +14,11 @@
 // plant the grid drew there stays in front; plant cells behind it are
 // simply drawn over. Creatures and plant cells fade a little towards the
 // water colour with depth.
+// Night glow (the blinker): a glowing creature's instance carries its glow
+// colour and strength; fs_sprite adds it after the daylight tint, scaled
+// by the darkness (view.daylight.w), weighted per texel (outline most, eye
+// whites less, body faintly, pupils not at all), and at night its quad
+// grows by HALO texels for a soft halo blended over the water.
 // WebGL2-safe: textureLoad on 8-bit unorm textures, one uniform buffer, a
 // per-instance vertex buffer, no storage buffers.
 
@@ -41,7 +46,8 @@ struct View {
     hud_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
-    // Day and night: a colour multiplier for the tank (rgb; 1 by day).
+    // Day and night: a colour multiplier for the tank (rgb; 1 by day), and
+    // how dark it is (w: 0 by day, 1 at night) for glowing creatures.
     daylight: vec4<f32>,
     // Target size in pixels (xy).
     target_size: vec4<f32>,
@@ -661,13 +667,27 @@ fn out(c: vec3<f32>) -> vec4<f32> {
 
 struct SpriteOut {
     @builtin(position) pos: vec4<f32>,
-    // Atlas texel coordinate, interpolated across the quad.
-    @location(0) texel: vec2<f32>,
+    // Texel coordinate within the frame, interpolated across the quad
+    // (outside 0..frame size in a glow halo).
+    @location(0) local: vec2<f32>,
     // 0 alive, 1 elder, 2 dead; how far a corpse has rotted (0..1).
     @location(1) @interpolate(flat) look: vec2<f32>,
     // Depth in bands from the front glass (D21).
     @location(2) @interpolate(flat) depth: f32,
+    // The sampled frame: its top-left atlas texel (xy) and size in texels
+    // (zw).
+    @location(3) @interpolate(flat) frame: vec4<f32>,
+    // Glow colour (rgb, sRGB-encoded) and strength times the darkness (w;
+    // 0 for none).
+    @location(4) @interpolate(flat) glow: vec4<f32>,
 };
+
+// Glow halo radius past the sprite's opaque texels, in texels.
+const HALO: f32 = 3.0;
+// Atlas alphas marking a glowing species' eye whites and unlit texels
+// (sprites.rs ALPHA_EYE and ALPHA_UNLIT; renderer.rs checks them).
+const ALPHA_EYE: f32 = 254.0;
+const ALPHA_UNLIT: f32 = 253.0;
 
 // One creature's quad: two triangles over its sprite, the top-left snapped
 // to a target pixel and each texel half a cell wide (a quarter from the fine
@@ -682,7 +702,8 @@ fn vs_sprite(
     // frame's size in texels (a growing creature's body is drawn smaller
     // than it), the look (see SpriteOut) and the fine frame's top-left texel
     // (the same pose at twice the size; negative for a body drawn smaller
-    // than its frame, which keeps the coarser art); its depth in bands.
+    // than its frame, which keeps the coarser art); its depth in bands; its
+    // night glow colour and strength (0 for none).
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
@@ -691,18 +712,26 @@ fn vs_sprite(
     @location(5) look: vec2<f32>,
     @location(6) fine_origin: vec2<f32>,
     @location(7) depth: f32,
+    @location(8) glow: vec4<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
         select(0.0, 1.0, i == 1u || i == 4u || i == 5u),
         select(0.0, 1.0, i == 2u || i == 3u || i == 5u),
     );
-    let top_left = round(view.offset + cell * view.scale);
-    let px = top_left + corner * size * view.scale;
+    let fine = fine_origin.x >= 0.0 && fine_scale();
+    let frame = frame_size * select(1.0, 2.0, fine);
+    let turn = u32(round(orient.y)) % 4u;
+    // A glow's halo, at night only: the quad grows by HALO texels a side
+    // (in cells: HALO times the cells per texel along each screen axis).
+    let k = glow.w * view.daylight.w;
+    let halo = select(0.0, HALO, k > 0.0);
+    let margin = halo * size / select(frame, frame.yx, turn % 2u == 1u);
+    let top_left = round(view.offset + cell * view.scale) - margin * view.scale;
+    let px = top_left + corner * (size + 2.0 * margin) * view.scale;
     let ndc = vec2<f32>(px.x / view.target_size.x * 2.0 - 1.0, 1.0 - px.y / view.target_size.y * 2.0);
     // Undo the turn: the frame point (0..1) this screen corner shows. One
     // clockwise turn takes frame (a, b) to screen (1 - b, a).
-    let turn = u32(round(orient.y)) % 4u;
     var q = corner;
     if turn == 1u {
         q = vec2<f32>(corner.y, 1.0 - corner.x);
@@ -716,10 +745,11 @@ fn vs_sprite(
     }
     var o: SpriteOut;
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    let fine = fine_origin.x >= 0.0 && fine_scale();
-    o.texel = select(origin, fine_origin, fine) + q * frame_size * select(1.0, 2.0, fine);
+    o.local = q * (frame + 2.0 * halo) - halo;
+    o.frame = vec4<f32>(select(origin, fine_origin, fine), frame);
     o.look = look;
     o.depth = depth;
+    o.glow = vec4<f32>(glow.rgb, k);
     return o;
 }
 
@@ -746,6 +776,57 @@ fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
     return plant_texel(at, t, part, quarter, band).a > 0.5;
 }
 
+// The atlas texel at `p` within `frame` (transparent outside it).
+fn frame_texel(frame: vec4<f32>, p: vec2<f32>) -> vec4<f32> {
+    if any(p < vec2<f32>(0.0)) || any(p >= frame.zw) {
+        return vec4<f32>(0.0);
+    }
+    return textureLoad(atlas, vec2<i32>(frame.xy + p), 0);
+}
+
+// The glow halo over transparent texel `p`: alpha by the rounded distance
+// to the nearest opaque texel within HALO (1, 2, 3: 0.42, 0.24, 0.11,
+// the faintest ring checker-dithered), times the glow; 0 past it.
+fn halo_alpha(frame: vec4<f32>, p: vec2<f32>, k: f32) -> f32 {
+    var best = 99;
+    for (var dy = -3; dy <= 3; dy++) {
+        for (var dx = -3; dx <= 3; dx++) {
+            let d2 = dx * dx + dy * dy;
+            if d2 < best && d2 <= 9 && frame_texel(frame, p + vec2<f32>(f32(dx), f32(dy))).a > 0.5 {
+                best = d2;
+            }
+        }
+    }
+    if best > 9 {
+        return 0.0;
+    }
+    let ring = round(sqrt(f32(best)));
+    var a = select(select(0.11, 0.24, ring < 2.5), 0.42, ring < 1.5);
+    let cell = vec2<i32>(p);
+    if ring > 2.5 && ((cell.x + cell.y) & 1) == 0 {
+        a = a * 0.4;
+    }
+    return min(1.0, a * k * 2.2);
+}
+
+// How strongly opaque texel `p` (atlas texel `t`) glows: none for an unlit
+// texel (a pupil), 0.45 for an eye white, 0.4 on the outline (a 4-neighbour
+// is transparent) and 0.07 for the rest of the body.
+fn glow_weight(frame: vec4<f32>, p: vec2<f32>, t: vec4<f32>) -> f32 {
+    let a = round(t.a * 255.0);
+    if a == ALPHA_UNLIT {
+        return 0.0;
+    }
+    if a == ALPHA_EYE {
+        return 0.45;
+    }
+    let edge = frame_texel(frame, p + vec2<f32>(1.0, 0.0)).a < 0.5
+        || frame_texel(frame, p - vec2<f32>(1.0, 0.0)).a < 0.5
+        || frame_texel(frame, p + vec2<f32>(0.0, 1.0)).a < 0.5
+        || frame_texel(frame, p - vec2<f32>(0.0, 1.0)).a < 0.5;
+    return select(0.07, 0.4, edge);
+}
+
 @fragment
 fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
     // The palette stays on top (where drawn: creatures show beside its
@@ -757,9 +838,22 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
             discard;
         }
     }
-    let texel = vec2<i32>(floor(v.texel));
-    let t = textureLoad(atlas, texel, 0);
-    if t.a < 0.5 || hidden_by_plant(v.pos.xy, v.depth) {
+    let p = floor(v.local);
+    let texel = vec2<i32>(v.frame.xy + p);
+    let t = frame_texel(v.frame, p);
+    let k = v.glow.w;
+    if t.a < 0.5 {
+        // Only a glowing creature at night draws past its texels: the halo.
+        if k <= 0.0 || hidden_by_plant(v.pos.xy, v.depth) {
+            discard;
+        }
+        let a = halo_alpha(v.frame, p, k);
+        if a <= 0.0 {
+            discard;
+        }
+        return vec4<f32>(out(v.glow.rgb).rgb, a);
+    }
+    if hidden_by_plant(v.pos.xy, v.depth) {
         discard;
     }
     var rgb = t.rgb;
@@ -774,5 +868,11 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
         // An elder: a little greyer.
         rgb = mix(rgb, grey, 0.3);
     }
-    return out(depth_cue(rgb, v.depth) * view.daylight.rgb);
+    var lit = depth_cue(rgb, v.depth) * view.daylight.rgb;
+    if k > 0.0 {
+        // Emissive, after the tint: greener than the glow colour itself.
+        let e = glow_weight(v.frame, p, t) * k * 1.6;
+        lit = min(lit + v.glow.rgb * e * vec3<f32>(0.55, 1.0, 0.55), vec3<f32>(1.0));
+    }
+    return out(lit);
 }

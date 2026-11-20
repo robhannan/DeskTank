@@ -20,8 +20,15 @@
 //! creatures, belly up on their first frame, desaturated and losing texels
 //! as they rot. Each creature or corpse is drawn in its look: the morph it
 //! shows, for its sex.
+//!
+//! Night glow: a species with a `[glow]` (the blinker) gives each of its
+//! instances its glow colour and strength (times a slow pulse); the shader
+//! adds it after the daylight tint, scaled by the darkness, rimming the
+//! outline and spilling a short halo past the frame. The atlas marks the
+//! texels that glow differently in their alpha (eye whites [`ALPHA_EYE`],
+//! pupils [`ALPHA_UNLIT`]; still opaque to every other test).
 
-use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, World};
+use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, TICKS_PER_SECOND, World};
 
 /// Atlas width in texels; species shelves stack downwards.
 pub const ATLAS_WIDTH: usize = 256;
@@ -33,8 +40,18 @@ const TICKS_PER_FRAME: u64 = 5;
 /// mirror and quarter turns clockwise (2), the frame's size in texels (2),
 /// the look: 0 alive, 1 elder, 2 dead, then how far a corpse has rotted
 /// (2), the fine frame's atlas origin (2), or -1 for a body drawn
-/// smaller than its frame, and the depth in bands (1, D21).
-pub const INSTANCE_FLOATS: usize = 15;
+/// smaller than its frame, the depth in bands (1, D21), and the night glow
+/// (4): its colour (sRGB-encoded) and strength times the pulse, 0 for none.
+pub const INSTANCE_FLOATS: usize = 19;
+/// Atlas alpha of a glowing species' eye-white texel: it glows brighter
+/// than the body.
+pub const ALPHA_EYE: u8 = 254;
+/// Atlas alpha of a glowing species' texel that doesn't glow (a pupil).
+pub const ALPHA_UNLIT: u8 = 253;
+/// Ticks in one slow glow pulse (6 seconds).
+const PULSE_TICKS: u64 = 6 * TICKS_PER_SECOND as u64;
+/// The pulse's dimmest point, as a fraction of full glow.
+const PULSE_LOW: f32 = 0.82;
 /// Look values (the instance's eleventh float).
 pub const LOOK_ALIVE: f32 = 0.0;
 /// An elder.
@@ -54,7 +71,7 @@ struct Entry {
 }
 
 /// The packed atlas image and where each species' looks are in it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Atlas {
     /// RGBA rows, [`ATLAS_WIDTH`] texels wide.
     pub image: Vec<u8>,
@@ -62,6 +79,9 @@ pub struct Atlas {
     pub size: (u32, u32),
     /// By species id, then look ([`desktank_sim::Species::look`]).
     entries: Vec<Vec<Entry>>,
+    /// By species id: the glow colour (sRGB-encoded, 0–1), strength and
+    /// whether it pulses, for species that glow.
+    glows: Vec<Option<([f32; 3], f32, bool)>>,
 }
 
 impl Atlas {
@@ -71,12 +91,17 @@ impl Atlas {
     #[allow(clippy::many_single_char_names)] // texel maths
     pub fn build(species: &SpeciesTable) -> Self {
         let mut entries = vec![Vec::new(); 256];
+        let mut glows = vec![None; 256];
         let mut placed = Vec::new();
         let mut y = 0;
         // Rows a shelf of `n` frames of `w × h` texels takes.
         let rows = |n: usize, (w, h): (usize, usize)| h * n.div_ceil((ATLAS_WIDTH / w).max(1));
         for s in species.iter() {
             let size = (s.sprite.width, s.sprite.height);
+            glows[usize::from(s.id.0)] = s
+                .glow
+                .as_ref()
+                .map(|g| (g.colour.map(|c| f32::from(c) / 255.0), g.strength, g.pulse));
             for look in &s.looks {
                 let n = look.frames.len();
                 let origin = (0, y);
@@ -89,12 +114,12 @@ impl Atlas {
                     size,
                     frames: n,
                 });
-                placed.push((look, size, origin, fine));
+                placed.push((look, size, origin, fine, s.glow.as_ref()));
             }
         }
         let height = y.max(1);
         let mut image = vec![0; ATLAS_WIDTH * height * 4];
-        for (look, (w, h), origin, fine) in placed {
+        for (look, (w, h), origin, fine, glow) in placed {
             for (frames, origin, size) in [
                 (&look.frames, origin, (w, h)),
                 (&look.fine_frames, fine, (w * 2, h * 2)),
@@ -105,6 +130,16 @@ impl Atlas {
                         let (x, y) = (fx + i % size.0, fy + i / size.0);
                         let o = (y * ATLAS_WIDTH + x) * 4;
                         image[o..o + 4].copy_from_slice(t);
+                        if let Some(g) = glow
+                            && t[3] > 0
+                        {
+                            let rgb = [t[0], t[1], t[2]];
+                            if g.unlit.contains(&rgb) {
+                                image[o + 3] = ALPHA_UNLIT;
+                            } else if g.eyes.contains(&rgb) {
+                                image[o + 3] = ALPHA_EYE;
+                            }
+                        }
                     }
                 }
             }
@@ -114,6 +149,7 @@ impl Atlas {
             image,
             size: (side(ATLAS_WIDTH), side(height)),
             entries,
+            glows,
         }
     }
 
@@ -171,6 +207,15 @@ impl Atlas {
                 LOOK_ALIVE
             };
             let (origin, fine) = Self::origins(&e, frame);
+            let glow =
+                self.glows[usize::from(c.species().0)].map_or([0.0; 4], |(rgb, k, pulse)| {
+                    let pulse = if pulse {
+                        glow_pulse(tick + 37 * u64::from(c.id().0))
+                    } else {
+                        1.0
+                    };
+                    [rgb[0], rgb[1], rgb[2], k * pulse]
+                });
             sprites.push(Sprite {
                 centre: c.centre(),
                 // On-screen size in cells: the body (half the frame's
@@ -183,6 +228,7 @@ impl Atlas {
                 turn: c.turn() % 4,
                 look: [look, 0.0],
                 depth: c.depth(),
+                glow,
             });
         }
         for c in world.corpses() {
@@ -205,6 +251,8 @@ impl Atlas {
                 turn: 2,
                 look: [LOOK_DEAD, c.decay()],
                 depth: f32::from(c.band()),
+                // The dead don't glow.
+                glow: [0.0; 4],
             });
         }
         // Stable, so equal depths keep the world's order.
@@ -233,6 +281,8 @@ pub struct Sprite {
     look: [f32; 2],
     /// Depth in bands from the front glass (D21).
     depth: f32,
+    /// Night glow colour and strength (0 for none).
+    glow: [f32; 4],
 }
 
 impl Sprite {
@@ -269,7 +319,20 @@ impl Sprite {
             fine[1],
             self.depth,
         ]);
+        out.extend_from_slice(&self.glow);
     }
+}
+
+/// The slow glow pulse at `tick`: a sine between [`PULSE_LOW`] and 1 over
+/// [`PULSE_TICKS`]. It follows the world clock, so a paused tank holds
+/// still and needs no redraw.
+#[must_use]
+pub fn glow_pulse(tick: u64) -> f32 {
+    // Under PULSE_TICKS: exact in f32.
+    #[allow(clippy::cast_precision_loss)]
+    let phase = (tick % PULSE_TICKS) as f32 / PULSE_TICKS as f32;
+    let mid = f32::midpoint(1.0, PULSE_LOW);
+    mid + (1.0 - mid) * (phase * std::f32::consts::TAU).sin()
 }
 
 /// Pixel `(x, y)` of an 8×8 palette icon for species `id`: its hand-drawn
@@ -444,9 +507,103 @@ mod tests {
             let width = s.sprite.width * 2;
             for (i, texel) in look.fine_frames[frame].iter().enumerate() {
                 let offset = ((oy + i / width) * ATLAS_WIDTH + ox + i % width) * 4;
-                assert_eq!(atlas.image[offset..offset + 4], *texel);
+                // The colour, and opaque where it is (a glowing species'
+                // alpha marks its eyes and pupils).
+                let at = &atlas.image[offset..offset + 4];
+                assert_eq!((&at[..3], at[3] > 0), (&texel[..3], texel[3] > 0));
             }
         }
+    }
+
+    /// The blinker's frames fit the atlas (two fine frames a row), its eye
+    /// whites and pupils are marked in their alpha, and its instances carry
+    /// its glow, pulsing; no other creature, nor its corpse, glows.
+    #[test]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::many_single_char_names
+    )]
+    fn the_blinker_glows_and_marks_its_eyes() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 120,
+                height: 60,
+                seed: 1,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let atlas = Atlas::build(w.species());
+        assert!(atlas.size.1 <= 2048, "{:?}", atlas.size);
+        let blinker = w.species().id("blinker").unwrap();
+        let tetra = w.species().id("neon_tetra").unwrap();
+        let b = w.add_creature(blinker, 30, 25).unwrap();
+        w.add_creature(tetra, 90, 25).unwrap();
+        let e = atlas.entries[usize::from(blinker.0)][0];
+        assert_eq!(e.size, (60, 44));
+        // Every frame's texels: eyes and pupils marked, the rest opaque.
+        let s = w.species().get(blinker).unwrap();
+        let glow = s.glow.as_ref().unwrap();
+        let (mut eyes, mut unlit) = (0, 0);
+        for f in 0..e.frames {
+            let (base, fine) = Atlas::origins(&e, f);
+            for ((ox, oy), width, texels) in [
+                (base, 60, &s.sprite.frames[f]),
+                (fine, 120, &s.sprite.fine_frames[f]),
+            ] {
+                assert!(ox + width <= ATLAS_WIDTH);
+                for (i, t) in texels.iter().enumerate() {
+                    let o = ((oy + i / width) * ATLAS_WIDTH + ox + i % width) * 4;
+                    let rgb = [t[0], t[1], t[2]];
+                    let want = match t[3] {
+                        0 => 0,
+                        _ if glow.unlit.contains(&rgb) => ALPHA_UNLIT,
+                        _ if glow.eyes.contains(&rgb) => ALPHA_EYE,
+                        _ => 255,
+                    };
+                    eyes += usize::from(want == ALPHA_EYE);
+                    unlit += usize::from(want == ALPHA_UNLIT);
+                    assert_eq!(atlas.image[o + 3], want);
+                }
+            }
+        }
+        assert!(eyes > 0 && unlit > 0);
+        // No other species is marked.
+        let t = atlas.entries[usize::from(tetra.0)][0];
+        for y in t.origin.1..t.fine.1 {
+            for x in 0..ATLAS_WIDTH {
+                let a = atlas.image[(y * ATLAS_WIDTH + x) * 4 + 3];
+                assert!(a == 0 || a == 255, "({x}, {y}): {a}");
+            }
+        }
+        let mut out = Vec::new();
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 2);
+        let bi = instance_at(&out, w.creature(b).unwrap().centre()).to_vec();
+        let colour = glow.colour.map(|c| f32::from(c) / 255.0);
+        assert_eq!(bi[15..18], colour);
+        assert!((0.35 * PULSE_LOW - 1e-4..=0.35 + 1e-4).contains(&bi[18]));
+        let ti = instance_at(&out, w.creatures()[1].centre());
+        assert_eq!(ti[15..19], [0.0; 4]);
+        // The pulse: within 82–100% over its period.
+        let pulses: Vec<f32> = (0..PULSE_TICKS).map(glow_pulse).collect();
+        let (lo, hi) = pulses
+            .iter()
+            .fold((1.0_f32, 0.0_f32), |(l, h), &p| (l.min(p), h.max(p)));
+        assert!(
+            (lo - PULSE_LOW).abs() < 1e-3 && (hi - 1.0).abs() < 1e-3,
+            "{lo} {hi}"
+        );
+        assert!((glow_pulse(0) - glow_pulse(PULSE_TICKS)).abs() < 1e-6);
+        // Dead, it doesn't glow.
+        let span = w.creature_lifespan(w.creature(b).unwrap());
+        w.set_creature_age(b, span);
+        w.tick();
+        assert_eq!(w.corpses().len(), 1);
+        atlas.instances(&w, &mut Vec::new(), &mut out);
+        let dead = instance_at(&out, w.corpses()[0].centre());
+        assert_eq!(dead[15..19], [0.0; 4]);
     }
 
     #[test]
