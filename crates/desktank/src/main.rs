@@ -12,7 +12,7 @@ mod window;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// Default screen pixels per simulation cell.
-const DEFAULT_CELL_SCALE: u32 = 4;
+const DEFAULT_CELL_SCALE: u32 = 2;
 
 /// A lightweight pixel-art aquarium for your desktop.
 #[derive(Debug, Parser)]
@@ -330,8 +330,8 @@ mod tests {
             };
             desktank_render::even_scale(w.scale)
         };
-        assert_eq!(win_scale(&[]), 4);
-        assert_eq!(win_scale(&["--scale", "2"]), 2);
+        assert_eq!(win_scale(&[]), 2);
+        assert_eq!(win_scale(&["--scale", "4"]), 4);
         assert_eq!(win_scale(&["--scale", "3"]), 2);
         assert_eq!(win_scale(&["--scale", "1"]), 1);
         assert_eq!(win_scale(&["--scale", "8"]), 8);
@@ -345,8 +345,8 @@ mod tests {
             };
             desktank_render::even_scale(b.scale)
         };
-        assert_eq!(bench_scale(&[]), 4);
-        assert_eq!(bench_scale(&["--scale", "2"]), 2);
+        assert_eq!(bench_scale(&[]), 2);
+        assert_eq!(bench_scale(&["--scale", "4"]), 4);
         assert_eq!(bench_scale(&["--scale", "5"]), 4);
         assert!(Cli::try_parse_from(["desktank", "bench", "--scale", "0"]).is_err());
         assert!(Cli::try_parse_from(["desktank", "bench", "--scale", "9"]).is_err());
