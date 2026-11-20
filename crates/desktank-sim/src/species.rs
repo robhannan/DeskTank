@@ -9,7 +9,8 @@
 //! covers and collides with (half its texel size). Every sprite also gives
 //! `fine_frames`: the same poses drawn at four texels per cell side (twice
 //! the width and height), which the renderer uses at display scales
-//! divisible by four.
+//! divisible by four. A species may also glow at night (`[glow]`): an
+//! emissive colour the renderer adds after the daylight tint.
 //!
 //! Units (SPEC §2.1): speeds are in cells per second of world time, depths
 //! in cells or as a fraction of the water column (0 the surface, 1 the
@@ -31,8 +32,9 @@ pub struct SpeciesId(pub u8);
 /// Sprite texels per cell side: creatures are drawn at twice the grid's
 /// resolution, so a 14×6-texel sprite has a 7×3-cell body.
 pub const TEXELS_PER_CELL: usize = 2;
-/// Largest sprite side, in texels (16 cells).
-pub const MAX_SPRITE_SIDE: usize = 32;
+/// Largest sprite side, in texels (32 cells, 16 cm; the fine frames are
+/// twice it).
+pub const MAX_SPRITE_SIDE: usize = 64;
 /// Cells per centimetre of real-world size: every species is drawn at this
 /// scale, so a 3.5 cm neon tetra is 7 cells long and sits beside a 2.5 cm
 /// cherry shrimp (5 cells) as it would in a tank.
@@ -102,6 +104,25 @@ pub struct Breeding {
     pub brood: [u8; 2],
     /// Days a female rests after a brood or clutch before she breeds again.
     pub rest_days: u32,
+}
+
+/// A species' night glow (`[glow]` in its TOML): an emissive colour the
+/// renderer adds after the daylight tint, scaled by how dark the tank is,
+/// so it shows at night, faintly at dusk and not at all by day.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Glow {
+    /// The glow colour (sRGB).
+    pub colour: [u8; 3],
+    /// How strongly it glows at full darkness, in `(0, 1]`.
+    pub strength: f32,
+    /// Whether it pulses slowly (between about 82% and 100%).
+    pub pulse: bool,
+    /// Sprite colours (from the keys in `eyes`) that glow as eye whites:
+    /// brighter than the body.
+    pub eyes: Vec<[u8; 3]>,
+    /// Sprite colours (from the keys in `unlit`) that don't glow, such as
+    /// pupils.
+    pub unlit: Vec<[u8; 3]>,
 }
 
 /// One look of a species: a colour morph (SPEC §2.4, D13), drawn for one
@@ -214,6 +235,8 @@ pub struct Species {
     pub prey_cm: Option<f32>,
     /// How it breeds, or `None` if it doesn't in a freshwater tank.
     pub breeding: Option<Breeding>,
+    /// Its night glow, or `None` (every species but the blinker).
+    pub glow: Option<Glow>,
     /// Its colour morphs by name, in allele order (append only: saves
     /// store the index). A species with no `[genetics]` has one, `"wild"`.
     pub morphs: Vec<String>,
@@ -360,6 +383,8 @@ struct SpeciesDef {
     breeding: Option<BreedingDef>,
     #[serde(default)]
     genetics: Option<GeneticsDef>,
+    #[serde(default)]
+    glow: Option<GlowDef>,
     sprite: SpriteDef,
 }
 
@@ -378,6 +403,21 @@ struct BreedingDef {
     days: u32,
     brood: [u8; 2],
     rest_days: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GlowDef {
+    colour: String,
+    strength: f32,
+    #[serde(default)]
+    pulse: bool,
+    /// Sprite colour keys that glow as eye whites.
+    #[serde(default)]
+    eyes: Vec<String>,
+    /// Sprite colour keys that don't glow.
+    #[serde(default)]
+    unlit: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -435,6 +475,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/otocinclus.toml"),
     include_str!("../../../assets/species/medical_crab.toml"),
     include_str!("../../../assets/species/home_owning_crab.toml"),
+    include_str!("../../../assets/species/blinker.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -599,7 +640,7 @@ fn validate(
         }
     }
     let sprite = sprite(&d.sprite).map_err(invalid)?;
-    // Sprite sides are at most 32 texels: exact in f32.
+    // Sprite sides are at most 64 texels: exact in f32.
     #[allow(clippy::cast_precision_loss)]
     let drawn_cm = sprite.width.max(sprite.height) as f32 / TEXELS_PER_CELL as f32 / CELLS_PER_CM;
     if !(d.length_cm.is_finite() && d.length_cm > 0.0 && d.length_cm <= drawn_cm) {
@@ -616,6 +657,12 @@ fn validate(
         .breeding
         .as_ref()
         .map(breeding)
+        .transpose()
+        .map_err(invalid)?;
+    let glow = d
+        .glow
+        .as_ref()
+        .map(|g| glow(g, &d.sprite.colours))
         .transpose()
         .map_err(invalid)?;
     let (morphs, wildtype, palette_morph, looks) = looks(d, &sprite).map_err(invalid)?;
@@ -643,6 +690,7 @@ fn validate(
         cheat_only: d.cheat_only,
         prey_cm: d.prey_cm,
         breeding,
+        glow,
         morphs,
         wildtype,
         palette_morph,
@@ -665,6 +713,34 @@ fn breeding(b: &BreedingDef) -> Result<Breeding, &'static str> {
         days: b.days,
         brood: b.brood,
         rest_days: b.rest_days,
+    })
+}
+
+fn glow(g: &GlowDef, colours: &BTreeMap<String, String>) -> Result<Glow, &'static str> {
+    let colour =
+        crate::material::parse_colour(&g.colour).ok_or("glow.colour must be \"#rrggbb\"")?;
+    if !(g.strength.is_finite() && g.strength > 0.0 && g.strength <= 1.0) {
+        return Err("glow.strength must be > 0 and at most 1");
+    }
+    let key = colour_key(colours)?;
+    let resolve = |keys: &[String]| {
+        keys.iter()
+            .map(|k| {
+                let mut chars = k.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) => key.get(&c).map(|c| [c[0], c[1], c[2]]),
+                    _ => None,
+                }
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or("glow.eyes and glow.unlit must be sprite colour keys")
+    };
+    Ok(Glow {
+        colour,
+        strength: g.strength,
+        pulse: g.pulse,
+        eyes: resolve(&g.eyes)?,
+        unlit: resolve(&g.unlit)?,
     })
 }
 
@@ -794,7 +870,7 @@ fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
     let height = first.len();
     let width = first.first().map_or(0, |r| r.chars().count());
     if !(2..=MAX_SPRITE_SIDE).contains(&width) || !(2..=MAX_SPRITE_SIDE).contains(&height) {
-        return Err("sprite sides must be 2..=32 texels");
+        return Err("sprite sides must be 2..=64 texels");
     }
     if width % TEXELS_PER_CELL != 0 || height % TEXELS_PER_CELL != 0 {
         return Err("sprite sides must be even (two texels per cell)");
@@ -924,8 +1000,8 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        // Eleven stocked species and the two cheat-only crabs.
-        assert_eq!(t.len(), 13);
+        // Eleven stocked species, the two cheat-only crabs and the blinker.
+        assert_eq!(t.len(), 14);
         for name in [
             "neon_tetra",
             "corydoras",
@@ -1036,6 +1112,158 @@ mod tests {
         }
         assert_eq!(crabs[0].home_carpet, None);
         assert_eq!(crabs[1].home_carpet.as_deref(), Some("dwarf_hairgrass"));
+    }
+
+    /// The cheat-only blinker (SPEC §2.5): a 15 cm goldfish-like mid-water
+    /// swimmer, the only species bigger than 16 cells and the only one
+    /// that glows. It eats fry and the smallest invertebrates but no adult
+    /// of the small schooling fish, and leaves the most waste.
+    #[test]
+    fn the_cheat_only_blinker() {
+        let m = materials();
+        let t = SpeciesTable::builtin_for(&m).unwrap();
+        let get = |name| t.get(t.id(name).unwrap()).unwrap();
+        let blinker = get("blinker");
+        assert!(blinker.cheat_only && blinker.breeding.is_none());
+        assert_eq!(
+            (blinker.zone, blinker.temperament, blinker.size()),
+            (Zone::Mid, Temperament::Peaceful, (30, 22))
+        );
+        assert_eq!((blinker.sprite.width, blinker.sprite.height), (60, 44));
+        assert!(blinker.sprite.width <= MAX_SPRITE_SIDE);
+        assert!((blinker.length_cm - 15.0).abs() < f32::EPSILON);
+        assert_eq!(blinker.sprite.frames.len(), 4);
+        // It needs more water than it is tall.
+        assert!(blinker.min_depth >= 2 * blinker.size().1);
+        for food in [
+            "flake_food",
+            "sinking_pellet",
+            "bloodworm",
+            "algae_wafer",
+            "algae",
+            "detritus",
+            "dead_plant",
+        ] {
+            assert!(blinker.eats(m.id(food).unwrap()), "eats {food}");
+        }
+        for food in ["leaf", "stem", "root", "waste"] {
+            assert!(!blinker.eats(m.id(food).unwrap()), "eats {food}");
+        }
+        assert!(blinker.eats_corpses);
+        // Prey: the micro crab, but no adult schooler or cherry shrimp.
+        let prey = blinker.prey_cm.unwrap();
+        assert!(get("thai_micro_crab").length_cm <= prey);
+        for name in ["neon_tetra", "harlequin_rasbora", "cherry_shrimp", "guppy"] {
+            assert!(get(name).length_cm > prey, "eats adult {name}");
+        }
+        // The heaviest bioload of all.
+        assert!(
+            t.iter()
+                .filter(|s| s.id != blinker.id)
+                .all(|s| s.bioload() < blinker.bioload())
+        );
+        // It alone glows: green, pulsing, eye whites bright, pupils dark.
+        let glow = blinker.glow.as_ref().unwrap();
+        assert_eq!(glow.colour, [0x7c, 0xff, 0x4f]);
+        assert!((glow.strength - 0.35).abs() < f32::EPSILON && glow.pulse);
+        assert_eq!(glow.eyes, [[0xe9, 0xf5, 0xfc], [0xa9, 0xca, 0xdd]]);
+        assert_eq!(glow.unlit, [[0x14, 0x14, 0x14]]);
+        assert_eq!(t.iter().filter(|s| s.glow.is_some()).count(), 1);
+        // Its outline is a dark shade of its orange, not near-black.
+        let outline = [0x8a, 0x42, 0x16];
+        assert!(blinker.sprite.frames[0].iter().any(|t| t[..3] == outline));
+    }
+
+    #[test]
+    fn glow_is_optional_and_checked() {
+        let m = materials();
+        let with = |glow: &str| OK.replacen("[sprite]", &format!("{glow}\n[sprite]"), 1);
+        let plain = SpeciesTable::from_toml_sources(&[OK], &m).unwrap();
+        assert_eq!(plain.iter().next().unwrap().glow, None);
+        let lit = with(
+            r##"[glow]
+            colour = "#7cff4f"
+            strength = 0.5
+            eyes = ["b"]
+            unlit = ["a"]"##,
+        );
+        let t = SpeciesTable::from_toml_sources(&[&lit], &m).unwrap();
+        let glow = t.iter().next().unwrap().glow.clone().unwrap();
+        assert_eq!(
+            glow,
+            Glow {
+                colour: [0x7c, 0xff, 0x4f],
+                strength: 0.5,
+                pulse: false,
+                eyes: vec![[0x40, 0x50, 0x60]],
+                unlit: vec![[0x10, 0x20, 0x30]],
+            }
+        );
+        for bad in [
+            r#"colour = "green"
+            strength = 0.5"#,
+            r##"colour = "#7cff4f"
+            strength = 0.0"##,
+            r##"colour = "#7cff4f"
+            strength = 1.5"##,
+            r##"colour = "#7cff4f"
+            strength = nan"##,
+            r##"colour = "#7cff4f"
+            strength = 0.5
+            eyes = ["z"]"##,
+            r##"colour = "#7cff4f"
+            strength = 0.5
+            unlit = ["ab"]"##,
+            r##"colour = "#7cff4f"
+            strength = 0.5
+            halo = 3"##,
+            "strength = 0.5",
+        ] {
+            let src = with(&format!("[glow]\n{bad}"));
+            assert!(
+                SpeciesTable::from_toml_sources(&[&src], &m).is_err(),
+                "accepted {bad}"
+            );
+        }
+    }
+
+    /// Sprites up to [`MAX_SPRITE_SIDE`] texels a side load (the blinker is
+    /// 60), and one texel pair more is refused.
+    #[test]
+    fn sprites_may_be_up_to_the_largest_side() {
+        let m = materials();
+        let sized = |side: usize| {
+            let row = format!("\"{}\"", "a".repeat(side));
+            let fine = format!("\"{}\"", "a".repeat(side * 2));
+            let rows = |r: &str, n: usize| vec![r; n].join(", ");
+            format!(
+                r##"
+                id = 9
+                name = "big"
+                zone = "mid"
+                depth = [0.2, 0.6]
+                min_depth = 10
+                temperament = "peaceful"
+                length_cm = 1.0
+                lifespan_days = 100
+                maturity_days = 10
+                speed = 2.0
+                max_speed = 4.0
+                diet = ["flake_food"]
+                [sprite]
+                colours = {{ a = "#102030" }}
+                frames = [[{}]]
+                icon = ["a"]
+                fine_frames = [[{}]]
+                "##,
+                rows(&row, 2),
+                rows(&fine, 4)
+            )
+        };
+        let ok = SpeciesTable::from_toml_sources(&[&sized(MAX_SPRITE_SIDE)], &m).unwrap();
+        assert_eq!(ok.iter().next().unwrap().size(), (MAX_SPRITE_SIDE / 2, 1));
+        let err = SpeciesTable::from_toml_sources(&[&sized(MAX_SPRITE_SIDE + 2)], &m).unwrap_err();
+        assert!(err.to_string().contains("2..=64"), "{err}");
     }
 
     /// The fish at [`CELLS_PER_CM`]: a male guppy's body is the shortest

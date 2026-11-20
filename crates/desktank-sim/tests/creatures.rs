@@ -206,7 +206,9 @@ fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
     w.paint(60, 70, 6, id(&w, "rock"), Brush::Replace).unwrap();
     let ids: Vec<_> = w.species().iter().map(|s| (s.id, s.name.clone())).collect();
     for (k, (s, _)) in ids.iter().enumerate() {
-        for j in 0..4_i64 {
+        // Four of each, but one blinker (30×22 cells).
+        let one = w.species().get(*s).unwrap().name == "blinker";
+        for j in 0..if one { 1 } else { 4_i64 } {
             // Start everyone mid-tank, out of most zones.
             let x = 20 + j * 36 + i64::try_from(k).unwrap() * 2;
             w.add_creature(*s, x, 60).unwrap();
@@ -535,9 +537,9 @@ fn the_palette_adds_creatures_of_each_species() {
             _ => None,
         })
         .collect();
-    // Every species but the cheat-only crabs.
+    // Every species but the cheat-only crabs and blinker.
     let stocked = w.species().iter().filter(|s| !s.cheat_only).count();
-    assert_eq!((adders.len(), w.species().len()), (stocked, stocked + 2));
+    assert_eq!((adders.len(), w.species().len()), (stocked, stocked + 3));
     let mut t = Tools::new(id(&w, "sand"));
     for (k, &s) in adders.iter().enumerate() {
         t.select(PaletteItem::Tool(Tool::AddCreature(s)));

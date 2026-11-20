@@ -655,7 +655,14 @@ target computes the same bits.
   stocked species has one), and the home owner picks a home on the
   substrate soon after it arrives, plants three dwarf hairgrass
   plantlets there once (species key `home_carpet`) and keeps within 12
-  cells of it. The home is saved (format version 5). The
+  cells of it. The home is saved (format version 5). A third phrase,
+  `radiation leak`, adds a blinker: a cheat-only 15 cm three-eyed mutant
+  fish (30×22 cells) that lives like a goldfish (mid water, peaceful,
+  eats every food, algae, detritus, dead plant matter and corpses,
+  swallows creatures up to 1.5 cm when hungry, a dropping every 3 s, the
+  heaviest bioload) and glows a faint pulsing green at night (species
+  key `[glow]`, drawn emissive after the daylight tint). A tank too
+  shallow or narrow for its body turns the cheat down. The
   detector and the registry are platform-free
   (`desktank_sim::cheats`); hosts feed key presses (no auto-repeats) and
   draw the field. Where it works:

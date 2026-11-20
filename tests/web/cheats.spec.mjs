@@ -51,5 +51,13 @@ test("the Konami code opens the cheat field and cheats run", async ({ page }) =>
   await field.press("Escape");
   await expect(field).toBeHidden();
   expect(await creatures(page)).toBe(before + 3);
+
+  // An easter egg: `radiation leak` adds a blinker, the big glowing fish.
+  await konami(page);
+  await field.fill("Radiation Leak");
+  await field.press("Enter");
+  await expect(field).toBeHidden();
+  await expect(page.locator("#inspect")).toHaveText("Cheat: spawned 1 blinker");
+  expect(await creatures(page)).toBe(before + 4);
   expect(errors).toEqual([]);
 });

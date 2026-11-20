@@ -1096,7 +1096,7 @@ mod tests {
             ["Place(Bubbler)", "Place(FilterOutlet)"]
         );
         // Every species, nerites included, has a slot in Creatures, but
-        // the cheat-only crabs, which come from their cheats.
+        // the cheat-only crabs and blinker, which come from their cheats.
         let creatures: Vec<_> = w
             .species()
             .iter()
@@ -1104,7 +1104,7 @@ mod tests {
             .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
             .collect();
         assert!(w.species().iter().any(|s| s.name == "nerite"));
-        assert_eq!(w.species().iter().filter(|s| s.cheat_only).count(), 2);
+        assert_eq!(w.species().iter().filter(|s| s.cheat_only).count(), 3);
         assert_eq!(
             groups
                 .iter()
