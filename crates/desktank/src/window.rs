@@ -2,9 +2,11 @@
 //!
 //! Pacing (SPEC §4.2, §6.2): no continuous redraw. The loop sleeps with
 //! `ControlFlow::WaitUntil` until the tank's next deadline (a 20 Hz
-//! simulation tick, frames capped at 30 fps and drawn only when the world
-//! changed). While the window is occluded or minimised the tank is paused
-//! and the loop waits on OS events only, with no timers.
+//! simulation tick, frames capped at 30 fps on AC or 15 fps on battery and
+//! drawn only when the world changed). While the window is occluded or
+//! minimised, the display sleeps, the session is locked, Low Power Mode is on,
+//! or battery drops below 20%, the tank is paused and the loop waits on OS
+//! events only, with no timers.
 //!
 //! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
 //! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
@@ -58,7 +60,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use desktank_platform::process_stats;
+use desktank_platform::{PowerDecision, PowerMonitor, PowerPolicy, process_stats};
 use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Palette, PaletteHit, Tank, TankConfig, TankSurface, wgpu,
 };
@@ -134,6 +136,10 @@ pub fn run(
         _ => None,
     };
     let event_loop = EventLoop::new().context("creating the event loop")?;
+    let proxy = event_loop.create_proxy();
+    let power = PowerMonitor::new(move || {
+        let _ = proxy.send_event(());
+    });
     let mut app = App {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
             Box::new(event_loop.owned_display_handle()),
@@ -142,6 +148,8 @@ pub fn run(
         time,
         fish,
         life,
+        power,
+        policy: PowerPolicy::default(),
         state: None,
         error: None,
         persist,
@@ -166,6 +174,8 @@ struct App {
     fish: usize,
     /// Life-cycle settings to apply to the tank.
     life: LifeSettings,
+    power: PowerMonitor,
+    policy: PowerPolicy,
     state: Option<Running>,
     error: Option<anyhow::Error>,
     /// The saved tank, unless saving is off.
@@ -242,8 +252,8 @@ struct Running {
     surface: TankSurface,
     tank: Tank,
     hidden: Hidden,
-    /// Visibility as of the last `about_to_wait`.
-    was_visible: bool,
+    /// Power/visibility decision as of the last `about_to_wait`.
+    last_decision: PowerDecision,
     /// Pointer position in physical pixels.
     cursor: Option<(f64, f64)>,
     avoid_cursor: bool,
@@ -355,7 +365,9 @@ impl Running {
             surface,
             tank: Tank::new(world, TankConfig::default()),
             hidden: Hidden::default(),
-            was_visible: true,
+            last_decision: PowerDecision::Run {
+                max_fps: TankConfig::default().max_fps,
+            },
             cursor: None,
             avoid_cursor: false,
             tools,
@@ -375,9 +387,13 @@ impl Running {
         Ok(s)
     }
 
-    fn visible(&self) -> bool {
+    fn surface_visible(&self) -> bool {
         let h = self.hidden;
         !h.occluded && !h.zero_size && !h.minimised
+    }
+
+    fn decision(&self, policy: &PowerPolicy, power: &PowerMonitor) -> PowerDecision {
+        policy.evaluate(power.signals(), !self.surface_visible())
     }
 
     fn resized(&mut self, size: PhysicalSize<u32>) {
@@ -387,9 +403,6 @@ impl Running {
         }
         self.surface.resize(&self.gpu, size.width, size.height);
         self.tank.invalidate();
-        if self.visible() {
-            self.window.request_redraw();
-        }
     }
 
     /// The cell under the cursor, unless the cursor is over the palette.
@@ -845,22 +858,37 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn user_event(&mut self, _: &ActiveEventLoop, (): ()) {}
+
     #[allow(clippy::too_many_lines)] // one arm per event and key binding
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let Some(s) = self.state.as_mut() else { return };
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => s.resized(size),
+            WindowEvent::Resized(size) => {
+                s.resized(size);
+                if matches!(
+                    s.decision(&self.policy, &self.power),
+                    PowerDecision::Run { .. }
+                ) {
+                    s.window.request_redraw();
+                }
+            }
             WindowEvent::Occluded(occluded) => {
                 s.hidden.occluded = occluded;
-                if s.visible() {
+                if matches!(
+                    s.decision(&self.policy, &self.power),
+                    PowerDecision::Run { .. }
+                ) {
                     s.tank.invalidate();
                     s.window.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
-                if s.visible()
-                    && let Err(e) = s.tank.draw(&s.gpu, &s.surface)
+                if matches!(
+                    s.decision(&self.policy, &self.power),
+                    PowerDecision::Run { .. }
+                ) && let Err(e) = s.tank.draw(&s.gpu, &s.surface)
                 {
                     self.error = Some(e.into());
                     event_loop.exit();
@@ -976,22 +1004,34 @@ impl ApplicationHandler for App {
         let Some(s) = self.state.as_mut() else { return };
         // Not every platform sends an event for minimising, so ask.
         s.hidden.minimised = s.window.is_minimized() == Some(true);
-        let visible = s.visible();
-        if visible != s.was_visible {
-            eprintln!(
-                "desktank window: {}",
-                if visible { "visible" } else { "hidden, paused" }
-            );
-            s.was_visible = visible;
-            s.tank.invalidate();
-            if !visible && let Some(p) = &mut self.persist {
-                // Paused from here on, so nothing changes until it shows
-                // again.
-                p.save(s.tank.world(), "saved while hidden");
+        let decision = s.decision(&self.policy, &self.power);
+        if decision != s.last_decision {
+            match (s.last_decision, decision) {
+                (PowerDecision::Run { .. }, PowerDecision::Pause(reason)) => {
+                    eprintln!("desktank window: {reason}, paused");
+                    if let Some(p) = &mut self.persist {
+                        // Paused from here on, so nothing changes until it runs
+                        // again.
+                        p.save(s.tank.world(), "saved while paused");
+                    }
+                }
+                (PowerDecision::Pause(_), PowerDecision::Run { max_fps }) => {
+                    eprintln!("desktank window: visible ({max_fps} fps)");
+                    s.tank.set_max_fps(max_fps);
+                    s.tank.invalidate();
+                }
+                (PowerDecision::Run { .. }, PowerDecision::Run { max_fps }) => {
+                    eprintln!("desktank window: frame cap {max_fps} fps");
+                    s.tank.set_max_fps(max_fps);
+                }
+                (PowerDecision::Pause(_), PowerDecision::Pause(reason)) => {
+                    eprintln!("desktank window: {reason}, paused");
+                }
             }
+            s.last_decision = decision;
         }
-        if !s.visible() {
-            // Hidden: world time stops and nothing wakes us but OS events.
+        if matches!(decision, PowerDecision::Pause(_)) {
+            // Paused: world time stops and nothing wakes us but OS events.
             s.tank.pause();
             event_loop.set_control_flow(ControlFlow::Wait);
             return;

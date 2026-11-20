@@ -1431,6 +1431,18 @@ Everything is event-driven except the idle polls (at most every 10 s)
 and the modifier poll (10 Hz, only while a tank is visible and interact
 by modifier is enabled).
 
+*O3 (`desktank_platform`, `desktank::window`):* `PowerPolicy::evaluate`
+turns `PowerSignals` plus surface visibility into `Run { max_fps }` (30
+on AC, 15 on battery) or `Pause(PauseReason)` (`Hidden`,
+`DisplayAsleep`, `SessionLocked` unless `allow_over_lock` for a saver
+host, `LowPowerMode`, or `LowBattery` below 20%). On macOS,
+`PowerMonitor` monitors `IOPSNotificationCreateRunLoopSource`,
+`NSProcessInfoPowerStateDidChangeNotification`, `NSWorkspace`
+screen sleep/wake notifications, and `NSDistributedNotificationCenter`
+`com.apple.screenIsLocked`/`Unlocked` with zero polling timers, waking
+the event loop via `EventLoopProxy`; Windows and Linux keep default `Ac`
+stubs until O1-Win and O1-Linux.
+
 ## 7. Quality, testing and CI
 
 - **Lints**: workspace `clippy::pedantic`, `unsafe_code = "deny"` except
@@ -1831,7 +1843,7 @@ Each package depends only on the packages before it.
 
 ### M2 — Power, overlay and control
 
-- [ ] **O3 Power policy and event sources** (§6.2), before any
+- [x] **O3 Power policy and event sources** (§6.2), before any
   always-on mode ships. *Accept:*
   - on battery the frame rate drops to 15 fps, and the tick is
     unchanged;
@@ -1839,6 +1851,11 @@ Each package depends only on the packages before it.
     time, except a saver host running over the lock;
   - hidden-state wake-ups stay within budget;
   - all verified on macOS, with Windows and Linux in their O1 PRs.
+
+  *O3:* implemented `PowerPolicy`, `PowerMonitor` and macOS event
+  sources in `desktank-platform` and wired them into `desktank window`;
+  Windows and Linux backends compile cleanly as stubs and are wired in
+  O1-Win and O1-Linux.
 - [ ] **O1-Mac / O1-Win / O1-Linux Overlay mode**, one PR per OS. The
   water is transparent or tinted and the substrate rests on the bottom
   edge. Each is accepted when:
