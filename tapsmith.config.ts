@@ -15,5 +15,6 @@ export default defineConfig({
   screenshot: "always",
   // The Dream makes no network requests: no proxy on the device.
   trace: { mode: "retain-on-failure", network: false },
+  telemetry: false,
   reporter: process.env.CI ? ["list", ["html", { open: "never" }]] : "list",
 });
