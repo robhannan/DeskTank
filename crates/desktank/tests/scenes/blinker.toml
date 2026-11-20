@@ -1,0 +1,33 @@
+# The cheat-only blinker (`radiation leak`): the 15 cm three-eyed mutant
+# in the starter tank beside a neon tetra school, guppies and corydoras,
+# for scale. Checked by day and at midnight, when it glows green.
+ticks = 300
+
+[world]
+starter = true
+
+[[creature]]
+species = "blinker"
+x = 80
+y = 40
+
+[[creature]]
+species = "neon_tetra"
+x = 20
+y = 30
+count = 7
+dx = 18
+
+[[creature]]
+species = "guppy"
+x = 30
+y = 22
+count = 3
+dx = 50
+
+[[creature]]
+species = "corydoras"
+x = 40
+y = 80
+count = 3
+dx = 40
