@@ -81,7 +81,15 @@ fn busy(seed: u64, ticks: u32) -> World {
         let m = id(&w, name);
         w.paint(100, 20, 2, m, Brush::Pour).unwrap();
     }
-    let species: Vec<_> = w.species().iter().map(|s| s.id).collect();
+    // Every species up to the home owning crab (id 13): species added
+    // since (the blinker, which has no state of its own) would move the
+    // pinned fixtures.
+    let species: Vec<_> = w
+        .species()
+        .iter()
+        .map(|s| s.id)
+        .filter(|s| s.0 <= 13)
+        .collect();
     let n = species.len() as i64;
     for (k, s) in species.into_iter().enumerate() {
         let (top, bottom) = w.zone_rows(s).unwrap();

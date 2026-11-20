@@ -524,7 +524,7 @@ impl Creatures {
             }
             let (cruise, top) = (per_tick(s.speed), per_tick(s.max_speed));
             kinds[usize::from(s.id.0)] = Some(Kind {
-                // Sprite sides are at most 16.
+                // Sprite sides are at most 32 cells.
                 w: i32::try_from(w).unwrap_or(1),
                 h: i32::try_from(h).unwrap_or(1),
                 cruise,
@@ -544,7 +544,7 @@ impl Creatures {
                 // Validated to at most 7300 days: far inside u32.
                 maturity: s.maturity_days.saturating_mul(LIFE_DAY_TICKS),
                 lifespan: s.lifespan_days.saturating_mul(LIFE_DAY_TICKS),
-                // Validated lengths fit the sprite: at most 8 cm.
+                // Validated lengths fit the sprite: at most 16 cm.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 length_mm: (s.length_cm * 10.0).round() as u32,
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
