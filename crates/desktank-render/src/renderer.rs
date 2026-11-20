@@ -300,7 +300,7 @@ impl Renderer {
                 byte(n[i] / FIELD_SHOW_MAX),
                 byte(c[i] / FIELD_SHOW_MAX),
                 byte(l[i]),
-                byte((128.0 + 127.0 * world.current()[i] / speed) / 255.0),
+                byte(world.current()[i].abs() / speed),
             ]
         }));
         gpu.queue.write_texture(

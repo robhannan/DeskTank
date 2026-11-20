@@ -289,3 +289,32 @@ fn plants_in_front_hide_creatures_behind_them() {
     }
     assert!(hidden > 0 && shown > 0, "hidden {hidden}, shown {shown}");
 }
+
+#[test]
+fn flow_tint_shows_speed_in_either_direction() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    for outlet_x in [5, 74] {
+        let config = WorldConfig {
+            width: W as usize,
+            height: H as usize,
+            seed: 4,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        world
+            .place(desktank_sim::Placeable::FilterOutlet, outlet_x, 20)
+            .unwrap();
+        world.tick();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let plain = render(&gpu, &mut tank, format);
+        tank.set_field_overlay(Some(desktank_render::FieldOverlay::Flow));
+        let tinted = render(&gpu, &mut tank, format);
+        let x = if outlet_x == 5 { 20 } else { 59 };
+        let gain = |y| i16::from(px(&tinted, x, y)[0]) - i16::from(px(&plain, x, y)[0]);
+        assert!(gain(20) > gain(16) && gain(16) > 0);
+        assert_eq!(px(&plain, x, 0), px(&tinted, x, 0));
+        tank.set_field_overlay(None);
+        assert_eq!(plain, render(&gpu, &mut tank, format));
+    }
+}
