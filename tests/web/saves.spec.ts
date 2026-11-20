@@ -99,6 +99,9 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   // No wall-clock window: on a loaded CI runner a frame drawn on SwiftShader
   // can hold the page's timers back by 400 ms and the pacer drops the
   // backlog, so a wall second holds anywhere from 5 to 20 ticks.
+  // The bound allows a tick per 50 ms since showing, so a catch-up is caught
+  // only when the first loop after showing runs within ~150 ms (it ran at
+  // 17 ms in the mutation check); a runner stalling it longer lets one by.
   const shownAt = await page.evaluate(() => performance.now());
   await setHidden(page, false);
   const samples: { ran: number; ms: number }[] = [];
