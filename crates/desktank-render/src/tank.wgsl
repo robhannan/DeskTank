@@ -565,65 +565,103 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
 
     if style == STYLE_GRAVEL {
-        // Staggered rounded river pebbles (5x4 texels at 4x, 3x2 at 2x) so
-        // stones interlock organically instead of forming a cell grid.
+        // Whole rounded river pebbles laid out per cell from its variant (so
+        // moving gravel carries them): mostly one stone filling the cell, else
+        // a stone beside a dark gap row or column, flipped at random so gaps
+        // don't line up. Each
+        // stone's top follows the trimmed contour (`loose_top`), so a sloped
+        // or rippled surface shows lit, rounded stones rather than sliced ones.
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let top_row = loose_top(at, mat, quarter, fine);
-        if select(sub.y, quarter.y, fine) < top_row {
+        let q = select(sub, quarter, fine);
+        if q.y < top_row {
             return water_bg(at, quarter, fine);
         }
+        // Cell-constant layout bits (glue bit dropped so gluing keeps the look).
+        let cv = hash(vec2<i32>(i32(v >> 1u), 0x4b1d));
+        let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
+        let spek = (hash_grain(p, v) & 7u) == 0u;
         var k: f32;
         var warm: vec3<f32>;
         if fine {
-            let ry = p.y / 4;
-            let shift = (ry & 1) * 2 + i32(hash(vec2<i32>(0, ry)) & 1u);
-            let sx = p.x + shift;
-            let rx = sx / 5;
-            let lx = sx - rx * 5;
-            let ly = p.y - ry * 4;
-            let ph = hash(vec2<i32>(rx, ry));
-            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
+            let fx = select(q.x, 3 - q.x, (cv & 4u) != 0u);
+            // Stone box (x0, y0, x1, y1) within the cell, or none (gap).
+            var b = vec4<i32>(0, 0, 3, 3);
+            switch cv & 7u {
+                case 4u: {
+                    // A wide stone over a gap row.
+                    b = vec4<i32>(0, 0, 3, 2);
+                }
+                case 5u: {
+                    // A tall stone beside a gap column.
+                    b = vec4<i32>(0, 0, 2, 3);
+                }
+                case 6u: {
+                    // A wide stone under a gap row.
+                    b = vec4<i32>(0, 1, 3, 3);
+                }
+                default: {
+                    // One stone filling the cell.
+                }
+            }
+            let inside_b = fx >= b.x && fx <= b.z && q.y >= b.y && q.y <= b.w;
+            // The stone's visible top in this column: its own top or the
+            // trimmed contour, whichever is lower.
+            let top = max(b.y, top_row);
+            if !inside_b {
+                // Dark grit between stones.
+                k = select(0.64, 0.70, spek) + cell_n;
+                warm = vec3<f32>(0.97, 0.98, 1.02);
+            } else {
+                let ph = hash(vec2<i32>(i32(cv >> 3u), 1));
+                k = 0.86 + f32(ph & 7u) * 0.04 + cell_n;
+                let tone = (ph >> 3u) & 3u;
+                warm = vec3<f32>(0.96, 0.99, 1.04);
+                if tone == 1u {
+                    warm = vec3<f32>(1.06, 1.00, 0.91);
+                } else if tone == 2u {
+                    warm = vec3<f32>(1.02, 1.00, 0.97);
+                }
+                let left = fx == b.x;
+                let right = fx == b.z;
+                let crown = q.y == top;
+                let bottom = q.y == b.w;
+                if right && bottom {
+                    k = k * 0.62;
+                } else if (left || right) && (crown || bottom) {
+                    // Rounded corners, nearly as dark as the gaps.
+                    k = k * select(0.68, 0.74, crown);
+                } else if bottom || right {
+                    k = k * 0.86;
+                } else if crown && fx == b.x + 1 {
+                    // Specular glint near the top-left.
+                    k = k * 1.18;
+                } else if (crown && fx == b.x + 2) || (q.y == top + 1 && fx == b.x + 1) {
+                    k = k * 1.08;
+                } else if spek {
+                    k = k * 0.95;
+                }
+                if crown && open_up {
+                    // Lit by the water above along the exposed contour.
+                    k = k * 1.06;
+                }
+            }
+        } else {
+            // 2x: one stone per cell, lit top-left and shadowed bottom-right;
+            // one cell in four leaves its bottom-right as a dark gap.
+            let ph = hash(vec2<i32>(i32(cv >> 3u), 0));
             k = 0.88 + f32(ph & 7u) * 0.032 + cell_n;
             warm = select(
                 vec3<f32>(0.96, 0.99, 1.04),
                 vec3<f32>(1.05, 1.00, 0.93),
                 ((ph >> 3u) & 1u) != 0u,
             );
-            let corner = (lx == 0 || lx == 4) && (ly == 0 || ly == 3);
-            let crown = (ly == 1 && (lx == 1 || lx == 2)) || (ly == 0 && lx == 2);
-            let rim = lx == 4 || ly == 3;
-            let spek = (hash(p) & 7u) == 0u;
-            if corner {
-                k = k * select(0.78, 0.72, lx == 4 && ly == 3);
-            } else if crown {
-                k = k * select(1.11, 1.17, lx == 1 && ly == 1);
-            } else if rim {
-                k = k * 0.87;
-            } else if spek {
-                k = k * 0.94;
-            }
-            if open_up && quarter.y == top_row {
-                k = k * 1.11;
-            }
-        } else {
-            let ry = p.y / 2;
-            let sx = p.x + (ry & 1);
-            let rx = sx / 3;
-            let lx = sx - rx * 3;
-            let ly = p.y - ry * 2;
-            let ph = hash(vec2<i32>(rx, ry));
-            let cell_n = (f32((v >> 3u) & 3u) - 1.5) * 0.025;
-            k = 0.89 + f32(ph & 7u) * 0.030 + cell_n;
-            warm = select(
-                vec3<f32>(0.96, 0.99, 1.04),
-                vec3<f32>(1.05, 1.00, 0.93),
-                ((ph >> 3u) & 1u) != 0u,
-            );
-            let tl = lx == 0 && ly == 0;
-            let br = lx == 2 && ly == 1;
-            k = k * select(select(1.0, 0.82, br), 1.12, tl);
-            if open_up && sub.y == top_row {
-                k = k * 1.09;
+            let flip = (cv & 4u) != 0u;
+            let lx = select(q.x, 1 - q.x, flip);
+            if q.y == top_row {
+                k = k * select(1.08, 1.14, open_up && lx == 0);
+            } else if lx == 1 && q.y == 1 {
+                k = k * select(0.84, 0.66, (cv & 3u) == 0u);
             }
         }
         if !open_up {
