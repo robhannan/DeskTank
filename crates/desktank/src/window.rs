@@ -477,6 +477,9 @@ impl Running {
         let Outcome::Inspected(found) = out else {
             return;
         };
+        // A new inspection replaces the last: N names only a creature
+        // shown now, and an open name field is for the one shown before.
+        self.forget_inspected();
         let text = match found {
             Inspection::Cell { x, y, material } => {
                 let name = self
@@ -588,6 +591,18 @@ impl Running {
     fn open_field(&mut self, purpose: Purpose, line: String) {
         self.field = Some(TextField { purpose, line });
         self.show_field(None);
+    }
+
+    /// Forgets the creature inspect last showed, closing its name field.
+    fn forget_inspected(&mut self) {
+        self.inspected = None;
+        if self
+            .field
+            .as_ref()
+            .is_some_and(|f| matches!(f.purpose, Purpose::Name(_)))
+        {
+            self.field = None;
+        }
     }
 
     /// Opens the name field for the creature inspect last showed (`N`),
@@ -761,7 +776,7 @@ impl Running {
             if self.shown.is_none_or(|(_, s, _)| s != selected) {
                 // A new tool clears the last inspection from the title.
                 self.window.set_title("DeskTank");
-                self.inspected = None;
+                self.forget_inspected();
             }
             self.shown = Some(shown);
             self.tank.set_palette(Some(Palette {

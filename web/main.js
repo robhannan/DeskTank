@@ -925,6 +925,8 @@ function runCheat(e) {
   try {
     const done = tank.cheat(cheatInput.value);
     closeCheat();
+    inspected = null;
+    closeName();
     flash(`Cheat: ${done}`);
     kick();
   } catch (err) {
