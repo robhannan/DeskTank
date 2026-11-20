@@ -188,6 +188,14 @@ fn plant_epiphytes_scene_matches_reference() {
     check("plant_epiphytes");
 }
 
+/// Issue #45: tiger lotus (mottled leaf pads on petioles of differing
+/// lengths, the longest floating on the surface) and marimo balls resting
+/// on the bed, grown for 25 minutes.
+#[test]
+fn plant_marimo_lotus_scene_matches_reference() {
+    check("plant_marimo_lotus");
+}
+
 /// Four-texel plant detail: the plant scenes at scale 4, where every leaf,
 /// stem and root shape is drawn with quarter-cell structure, against
 /// `<scene>_x4.png`.
@@ -201,6 +209,7 @@ fn plant_scenes_match_reference_at_scale_4() {
         "plant_carpets",
         "plant_floaters",
         "plant_epiphytes",
+        "plant_marimo_lotus",
     ] {
         check_named(scene, &format!("{scene}_x4"), None, SIZE_X4);
     }

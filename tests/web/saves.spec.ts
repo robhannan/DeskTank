@@ -186,7 +186,10 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await expect.poll(() => ticks(a)).toBeGreaterThan(20);
   const aWrites = await writes(a);
   await b.getByRole("button", { name: "Take over" }).click();
-  await expect.poll(() => owner(b), { timeout: 2000 }).toBe(true);
+  // The budget is `took` below, timed in the page. This poll only reads it:
+  // right after taking over, B opens the save and builds its renderer, which
+  // holds its main thread (and so this evaluate) ~1.7 s on CI's SwiftShader.
+  await expect.poll(() => owner(b), { timeout: 5000 }).toBe(true);
   const took = await b.evaluate(() => window.desktank.ownedAt - window.desktank.takeOverAt);
   console.log(`take over: ${took.toFixed(0)} ms`);
   expect(took).toBeLessThan(1000);
