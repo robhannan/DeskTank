@@ -25,10 +25,13 @@
 mod motion;
 mod shape;
 
+pub(in crate::world) use motion::{GRAVITY, MAX_SPEED, REST_SPEED, REST_TICKS, steps};
+pub(in crate::world) use shape::ONE;
+
 use crate::grid::Rect;
 use crate::material::{GLUED_VARIANT_BIT, MaterialId, MovementClass};
 
-use shape::{ONE, Shape, TURN};
+use shape::{Shape, TURN};
 
 use super::World;
 use super::persist::{rect_from_v1, rect_v1};
@@ -400,7 +403,7 @@ impl World {
 
     /// Whether a chunk overlapping `r` (grown by a cell each way) has work
     /// this tick, i.e. something changed within reach of the body.
-    fn work_touches(&self, r: Rect) -> bool {
+    pub(in crate::world) fn work_touches(&self, r: Rect) -> bool {
         if r.is_empty() {
             return false;
         }

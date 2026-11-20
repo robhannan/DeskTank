@@ -27,9 +27,18 @@
 //!   cell changes wake a chunk: health, energy and the per-plant tint live
 //!   in the table.
 //!
+//! - **Floaters** (T6c part 2, D22) are buoyant bodies: each floater plant
+//!   also has a raft ([`raft`]) holding its sub-cell offset and velocity,
+//!   and its cells move together each tick as a rigid body's do (T4c), held
+//!   at the surface by its floating leaves and carried by the current.
+//!
 //! The table is plain data (numbers, ids and a rectangle), so the save
 //! format (T8) can store it as it is; the samples and update bookkeeping
 //! can be reset on load.
+
+mod raft;
+
+pub(super) use raft::Raft;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -44,8 +53,8 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    COUNTED_PARTS, Factor, Form, Limit, Part, PlantSpecies, PlantSpeciesId, PlantSpeciesTable,
-    Propagule, RosetteForm, plant_position, plant_variant,
+    COUNTED_PARTS, Factor, FloaterForm, Form, Limit, Part, PlantSpecies, PlantSpeciesId,
+    PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
 };
 use crate::rng::splitmix64;
 use crate::save::{SaveError, v1};
@@ -90,6 +99,11 @@ const BLADE_WEIGHT: u32 = 8;
 const NEW_BLADE_WEIGHT: u32 = 3;
 const CROWN_WEIGHT: u32 = 3;
 const RUNNER_WEIGHT: u32 = 2;
+/// Floater growth weights per site (T6c part 2): a new frond like a leaf,
+/// a hanging root like a root, and a bud more slowly.
+const FROND_WEIGHT: u32 = 3;
+const HANGING_ROOT_WEIGHT: u32 = 2;
+const BUD_WEIGHT: u32 = 1;
 
 /// A plant's id, as stored in its cells' `state` (never 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -183,10 +197,14 @@ fn tint_step(health: f32) -> u8 {
 pub(super) struct Plants {
     species: Arc<PlantSpeciesTable>,
     table: BTreeMap<u16, Plant>,
+    /// Each floater's raft, by plant id (T6c part 2): a floater plant has
+    /// one, no other plant does.
+    rafts: BTreeMap<u16, Raft>,
     /// Per material id: 1 + the part index, or 0.
     part_of: Vec<u8>,
-    /// Material per part, in [`Part::ALL`] order (runners are optional).
-    parts: [Option<MaterialId>; 4],
+    /// Material per part, in [`Part::ALL`] order (runners and floating
+    /// leaves are optional).
+    parts: [Option<MaterialId>; 5],
     seed: Option<MaterialId>,
     cutting: Option<MaterialId>,
     dead: Option<MaterialId>,
@@ -220,7 +238,7 @@ impl Plants {
         if enabled {
             for (k, m) in parts.iter().enumerate() {
                 if let Some(m) = m {
-                    #[allow(clippy::cast_possible_truncation)] // 4 parts
+                    #[allow(clippy::cast_possible_truncation)] // 5 parts
                     let tag = k as u8 + 1;
                     part_of[usize::from(m.0)] = tag;
                 }
@@ -230,6 +248,7 @@ impl Plants {
         Ok(Self {
             species: Arc::new(species),
             table: BTreeMap::new(),
+            rafts: BTreeMap::new(),
             part_of,
             parts,
             seed: on("seed"),
@@ -351,7 +370,7 @@ impl World {
     /// shifts it by up to one band, so the plant has depth; a rosette's or
     /// carpet's blades shift it by up to two, by column, so they fan
     /// across the bands; a mat's cells shift it by up to one each, so it
-    /// is fuzzy.
+    /// is fuzzy; a floater lies in its own band.
     pub(super) fn plant_band_at(&self, i: usize) -> Option<u8> {
         self.plant_band_with(i, &mut None)
     }
@@ -395,7 +414,7 @@ impl World {
             },
             Some(Form::Rosette(_) | Form::Carpet(_)) => Shape::Blades,
             Some(Form::Mat(_)) => Shape::Mat,
-            None => Shape::Plain,
+            Some(Form::Floater(_)) | None => Shape::Plain,
         };
         PlantDepth { id, base, shape }
     }
@@ -608,6 +627,7 @@ impl World {
         }
         h.write(&self.plants.next_id.to_le_bytes());
         h.write(&self.plants.cursor.to_le_bytes());
+        self.hash_rafts(h);
     }
 
     /// Records that a cell of plant `id` was overwritten.
@@ -625,7 +645,15 @@ impl World {
         let id = match *group {
             Some(id) if self.plants.table.contains_key(&id) => id,
             _ => {
-                let Some(species) = self.plants.species.default_species().map(|s| s.id) else {
+                // A floating leaf starts a floater (the first floater
+                // species); any other part the default species.
+                let species = &self.plants.species;
+                let pick = if part == Part::Float {
+                    species.iter().find(|s| s.form.floater().is_some())
+                } else {
+                    species.default_species()
+                };
+                let Some(species) = pick.map(|s| s.id) else {
                     return 0;
                 };
                 let id = self.new_plant(species, i, None);
@@ -678,6 +706,17 @@ impl World {
                     pending: false,
                     idle: 0,
                 });
+                let floats = plants
+                    .species
+                    .get(species)
+                    .is_some_and(|s| s.form.floater().is_some());
+                if floats {
+                    // A bud or fragment starts moving as its parent does.
+                    let raft = parent
+                        .and_then(|p| plants.rafts.get(&p))
+                        .map_or_else(Raft::new, |r| r.child());
+                    plants.rafts.insert(id, raft);
+                }
                 plants.version += 1;
                 return id;
             }
@@ -731,6 +770,7 @@ impl World {
         let members = self.plant_members(id, bounds);
         if members.is_empty() {
             self.plants.table.remove(&id);
+            self.plants.rafts.remove(&id);
             self.plants.version += 1;
             return;
         }
@@ -748,8 +788,12 @@ impl World {
             if k == keeper {
                 continue;
             }
-            let stem = self.plants.material(Part::Stem);
-            let has_stem = piece.iter().any(|&i| Some(self.cells[i].material) == stem);
+            // A piece lives on if it holds a stem, or a floating leaf to
+            // hold it up.
+            let lives = [Part::Stem, Part::Float].map(|p| self.plants.material(p));
+            let has_stem = piece
+                .iter()
+                .any(|&i| lives.contains(&Some(self.cells[i].material)));
             let new = if fragments && has_stem {
                 self.new_plant(species, self.piece_base(piece), Some(id))
             } else {
@@ -782,6 +826,7 @@ impl World {
             p.pending = false;
             p.idle = 0;
         }
+        self.wake_raft(id);
     }
 
     /// Sets plant `id`'s part counts and bounds from its cells.
@@ -800,13 +845,20 @@ impl World {
         }
     }
 
-    /// Where a piece grows from: its lowest stem cell, else its first cell.
+    /// Where a piece grows from: its lowest stem cell, else its first
+    /// floating leaf, else its first cell.
     fn piece_base(&self, piece: &[usize]) -> usize {
         let stem = self.plants.material(Part::Stem);
+        let float = self.plants.material(Part::Float);
         piece
             .iter()
             .rev()
             .find(|&&i| Some(self.cells[i].material) == stem)
+            .or_else(|| {
+                piece
+                    .iter()
+                    .find(|&&i| float.is_some() && Some(self.cells[i].material) == float)
+            })
             .or(piece.first())
             .copied()
             .unwrap_or(0)
@@ -935,6 +987,14 @@ impl World {
         let below = self.at(x, y, 0, 1);
         let ready = match (&s.form, s.form.substrates()) {
             (Form::Mat(m), _) => self.touches_any(i, &m.on),
+            // A floater's plantlet opens in open water (water above it)
+            // and rises to the surface.
+            (Form::Floater(_), _) => {
+                self.plants.material(Part::Float).is_some()
+                    && self
+                        .at(x, y, 0, -1)
+                        .is_some_and(|j| Some(self.cells[j].material) == self.plants.water)
+            }
             (_, Some(subs)) => below.is_some_and(|j| subs.contains(&self.cells[j].material)),
             (_, None) => false,
         };
@@ -969,6 +1029,7 @@ impl World {
                 }
             }
             Form::Mat(_) => self.put_part(i, Part::Stem, id, 0),
+            Form::Floater(_) => self.put_part(i, Part::Float, id, 0),
         }
         true
     }
@@ -1011,6 +1072,8 @@ impl World {
             p.parts[part.count_slot()] += 1;
             p.bounds = p.bounds.union(point(x, y));
         }
+        // A floater that grew has a new weight to settle.
+        self.wake_raft(id);
     }
 
     /// Updates the next few plants that are due (see the module docs): in
@@ -1118,9 +1181,10 @@ impl World {
         let size = p.parts.iter().sum::<u32>();
         // At its mature size a plant stops growing, except a rosette's or
         // carpet's runners, which carry on to root the next plant (each is
-        // at most twice its spacing long).
+        // at most twice its spacing long), and a floater's buds.
         let mature = size >= s.growth.size;
-        if mature && !(s.propagation.runners && s.form.rosette().is_some()) {
+        let spreads = (s.propagation.runners && s.form.rosette().is_some()) || s.propagation.buds;
+        if mature && !spreads {
             return;
         }
         p.energy = (p.energy + s.growth.rate / 60.0 * response * dt).min(MAX_ENERGY);
@@ -1147,9 +1211,10 @@ impl World {
     }
 
     /// Grows up to `want` cells of plant `id` where its form allows (only
-    /// runners if `runners_only`), taking the species' nutrient cost from
-    /// the field at each. Returns how many it grew.
-    fn grow_plant(&mut self, id: u16, s: &PlantSpecies, want: usize, runners_only: bool) -> usize {
+    /// runners and buds if `spread_only`, at its mature size), taking the
+    /// species' nutrient cost from the field at each. Returns how many it
+    /// grew.
+    fn grow_plant(&mut self, id: u16, s: &PlantSpecies, want: usize, spread_only: bool) -> usize {
         let Some(p) = self.plants.table.get(&id) else {
             return 0;
         };
@@ -1160,9 +1225,10 @@ impl World {
             Form::Rosette(f) | Form::Carpet(f) => {
                 self.rosette_sites(id, p.base, f, s.propagation.runners, &members)
             }
+            Form::Floater(f) => self.floater_sites(id, p.base, f, spread_only, &members),
         };
-        if runners_only {
-            sites.retain(|s| s.part == Part::Runner);
+        if spread_only {
+            sites.retain(|s| s.part == Part::Runner || s.bud);
         }
         let mut grown = 0;
         while grown < want && !sites.is_empty() {
@@ -1177,11 +1243,20 @@ impl World {
                 pick -= site.weight;
             }
             let site = sites[chosen];
-            let sprouted = site.part == Part::Runner
-                && s.form.rosette().is_some_and(|f| site.position >= f.spacing)
-                && self.sprout(id, s.id, site.at);
-            if !sprouted {
-                self.put_part(site.at, site.part, id, site.position);
+            // Sites next to the new cell may break a spacing rule now.
+            sites.retain(|o| !near(o.at, site.at, self.width));
+            if site.bud {
+                // At the cap a bud doesn't open; the site is dropped.
+                if !self.bud(id, s.id, site.at) {
+                    continue;
+                }
+            } else {
+                let sprouted = site.part == Part::Runner
+                    && s.form.rosette().is_some_and(|f| site.position >= f.spacing)
+                    && self.sprout(id, s.id, site.at);
+                if !sprouted {
+                    self.put_part(site.at, site.part, id, site.position);
+                }
             }
             let (x, y) = (site.at % self.width, site.at / self.width);
             self.life
@@ -1189,8 +1264,6 @@ impl World {
                 .add_at_cell(x, y, -s.growth.cost);
             self.life.version += 1;
             grown += 1;
-            // Sites next to the new cell may break a spacing rule now.
-            sites.retain(|o| !near(o.at, site.at, self.width));
         }
         grown
     }
@@ -1492,6 +1565,102 @@ impl World {
         true
     }
 
+    /// Where a floater can grow (see [`FloaterForm`]): until it has all
+    /// its fronds, a new one in the water beside an end frond, if that cell
+    /// is open to the air above (so fronds keep to the top water row); a
+    /// root strand from under a frond, not beside another, up to `roots`
+    /// strands, each growing on down to `root_length`; once it has its
+    /// fronds (or reached its mature size, `mature`), a bud where a frond
+    /// would go.
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn floater_sites(
+        &self,
+        id: u16,
+        base: usize,
+        f: &FloaterForm,
+        mature: bool,
+        members: &[usize],
+    ) -> Vec<Site> {
+        let water = self.plants.water;
+        let is_water = |j: usize| Some(self.cells[j].material) == water;
+        // Water with a lighter fluid (air) above it.
+        let at_surface = |j: usize| {
+            let (x, y) = (j % self.width, j / self.width);
+            is_water(j)
+                && self.at(x, y, 0, -1).is_some_and(|a| {
+                    let m = self.cells[a].material;
+                    Some(m) != water && self.is_fluid(m)
+                })
+        };
+        let float = self.plants.material(Part::Float);
+        let root = self.plants.material(Part::Root);
+        let (mut fronds, mut strands) = (0u8, 0u8);
+        for &i in members {
+            let c = self.cells[i];
+            if Some(c.material) == float {
+                fronds = fronds.saturating_add(1);
+            } else if Some(c.material) == root && plant_position(c.variant) == 1 {
+                strands = strands.saturating_add(1);
+            }
+        }
+        let grow_fronds = fronds < f.fronds && !mature;
+        let budding = fronds >= f.fronds || mature;
+        let bx = base % self.width;
+        let mut sites = Vec::new();
+        for &i in members {
+            let c = self.cells[i];
+            let (x, y) = (i % self.width, i / self.width);
+            let pos = plant_position(c.variant);
+            match self.plants.part(c.material) {
+                Some(Part::Float) => {
+                    for dx in [-1, 1] {
+                        let Some(j) = self.at(x, y, dx, 0).filter(|&j| at_surface(j)) else {
+                            continue;
+                        };
+                        if grow_fronds {
+                            let out =
+                                u8::try_from((j % self.width).abs_diff(bx)).unwrap_or(u8::MAX);
+                            sites.push(Site::new(j, Part::Float, out, FROND_WEIGHT));
+                        } else if budding {
+                            sites.push(Site::bud(j));
+                        }
+                    }
+                    if strands < f.roots
+                        && let Some(j) = self.at(x, y, 0, 1)
+                        && is_water(j)
+                        && self.lone_root(j, i, id)
+                    {
+                        sites.push(Site::new(j, Part::Root, 1, HANGING_ROOT_WEIGHT));
+                    }
+                }
+                Some(Part::Root) if pos < f.root_length => {
+                    if let Some(j) = self.at(x, y, 0, 1)
+                        && is_water(j)
+                        && self.lone_root(j, i, id)
+                    {
+                        sites.push(Site::new(j, Part::Root, pos + 1, HANGING_ROOT_WEIGHT));
+                    }
+                }
+                _ => {}
+            }
+        }
+        sites.sort_unstable_by_key(|s| s.at);
+        sites.dedup_by_key(|s| s.at);
+        sites
+    }
+
+    /// Floater `parent` buds a new plant of `species` at the water cell
+    /// `at`: one floating leaf (parent id set, generation + 1), moving as
+    /// its parent does. Returns whether it did (not at the plant cap).
+    fn bud(&mut self, parent: u16, species: PlantSpeciesId, at: usize) -> bool {
+        let child = self.new_plant(species, at, Some(parent));
+        if child == 0 {
+            return false;
+        }
+        self.put_part(at, Part::Float, child, 0);
+        true
+    }
+
     /// Where a mat can grow: water next to its cells that touches what it
     /// clings to.
     fn mat_sites(&self, s: &PlantSpecies, members: &[usize]) -> Vec<Site> {
@@ -1524,7 +1693,16 @@ impl World {
             return;
         };
         let base_x = p.base % self.width;
-        let leaf = self.plants.material(Part::Leaf);
+        let floats = self
+            .plants
+            .species
+            .get(p.species)
+            .is_some_and(|s| s.form.floater().is_some());
+        // A floater's leaves are floating leaves; it loses its outermost
+        // first (sorted below as a stem plant's are: one row, furthest out).
+        let leaf = self
+            .plants
+            .material(if floats { Part::Float } else { Part::Leaf });
         let mut leaves: Vec<usize> = self
             .plant_members(id, self.clip_to_grid(p.bounds))
             .into_iter()
@@ -1563,6 +1741,7 @@ impl World {
         let Some(p) = self.plants.table.remove(&id) else {
             return;
         };
+        self.plants.rafts.remove(&id);
         self.plants.version += 1;
         let cells = self.plant_members(id, self.clip_to_grid(p.bounds));
         self.make_dead(&cells);
@@ -1609,7 +1788,8 @@ enum Shape {
     /// A rosette's or carpet's blades.
     Blades,
     Mat,
-    /// Not in the table (between an edit and its tidy).
+    /// One band: a floater, or a plant not in the table (between an edit
+    /// and its tidy).
     Plain,
 }
 
@@ -1620,6 +1800,8 @@ struct Site {
     part: Part,
     position: u8,
     weight: u32,
+    /// A floater's bud: a new plant starts here (T6c part 2).
+    bud: bool,
 }
 
 impl Site {
@@ -1629,6 +1811,14 @@ impl Site {
             part,
             position,
             weight,
+            bud: false,
+        }
+    }
+
+    fn bud(at: usize) -> Self {
+        Self {
+            bud: true,
+            ..Self::new(at, Part::Float, 0, BUD_WEIGHT)
         }
     }
 }

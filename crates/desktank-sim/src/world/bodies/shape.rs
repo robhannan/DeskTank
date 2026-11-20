@@ -10,7 +10,7 @@ use crate::save::{SaveError, v1};
 use crate::world::MAX_SIDE;
 
 /// One cell in position units.
-pub(super) const ONE: i64 = 256;
+pub(in crate::world) const ONE: i64 = 256;
 /// A full turn in angle units.
 pub(super) const TURN: i64 = 65_536;
 /// Angle units per raster step: the drawn angle moves in 1/256 turn
