@@ -7,6 +7,7 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
 use desktank_sim::cheats::{self, BLINKER, CheatError};
+use desktank_sim::save;
 use desktank_sim::{
     Brush, MaterialId, MaterialTable, Rect, SpeciesId, TICKS_PER_SECOND, World, WorldConfig,
     WorldError,
@@ -185,4 +186,21 @@ fn a_hungry_blinker_swallows_a_micro_crab_but_not_an_adult_tetra() {
     assert!(eaten.is_some(), "the blinker never ate the micro crab");
     assert!(w.creature(tetra).is_some(), "an adult tetra is too big");
     assert!(w.creature(blinker).unwrap().eaten() >= 1);
+}
+
+#[test]
+fn a_blinker_keeps_its_state_across_a_save() {
+    let mut w = world(9);
+    cheats::run(&mut w, "radiation leak").unwrap();
+    cheats::run(&mut w, "feed").unwrap();
+    run(&mut w, 30);
+    let mut loaded = save::decode(&save::encode(&w), MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(loaded.state_hash(), w.state_hash());
+    assert_eq!(loaded.creatures()[0].species(), species(&w, BLINKER));
+    // And it carries on tick for tick.
+    for _ in 0..200 {
+        w.tick();
+        loaded.tick();
+    }
+    assert_eq!(loaded.state_hash(), w.state_hash());
 }

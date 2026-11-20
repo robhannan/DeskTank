@@ -14,8 +14,9 @@
 //! stock, change the water), plus three easter eggs: the phrases `why not?`
 //! and `home owner!` each add one of the cheat-only crabs
 //! ([`MEDICAL_CRAB`], [`HOME_OWNING_CRAB`]) and `radiation leak` a
-//! three-eyed [`BLINKER`], which the palette and `spawn` don't offer. An unknown or malformed line returns a [`CheatError`] for
-//! the host to show, and never panics.
+//! three-eyed [`BLINKER`], which the palette and `spawn` don't offer. An
+//! unknown or malformed line returns a [`CheatError`] for the host to
+//! show, and never panics.
 
 use crate::{Brush, MaterialId, World, WorldError};
 

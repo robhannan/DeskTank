@@ -81,14 +81,14 @@ fn busy(seed: u64, ticks: u32) -> World {
         let m = id(&w, name);
         w.paint(100, 20, 2, m, Brush::Pour).unwrap();
     }
-    // Every species up to the home owning crab (id 13): species added
-    // since (the blinker, which has no state of its own) would move the
-    // pinned fixtures.
+    // Every species but the blinker, added after the pinned fixtures were
+    // written (it would move their hashes; `tests/blinker.rs` covers its
+    // save round trip).
     let species: Vec<_> = w
         .species()
         .iter()
+        .filter(|s| s.name != "blinker")
         .map(|s| s.id)
-        .filter(|s| s.0 <= 13)
         .collect();
     let n = species.len() as i64;
     for (k, s) in species.into_iter().enumerate() {
