@@ -96,3 +96,62 @@ jobs:
       # The renderer must build for the web and stay within WebGL2 (SPEC §3.5).
       - name: Clippy desktank-render (wasm32)
         run: cargo clippy -p desktank-render --target wasm32-unknown-unknown --locked -- -D warnings
+
+  # The Android host (SPEC §3.6, §7): libdesktank_android.so for every ABI
+  # with cargo-ndk, packaged into the debug APK by Gradle.
+  android:
+    name: android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Rust toolchain and Android targets
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk@4.1.2
+
+      # The exact NDK pinned in the version catalogue, which AGP also uses.
+      - name: Install the NDK
+        run: |
+          ndk=$(sed -n 's/^ndk = "\(.*\)"$/\1/p' android/gradle/libs.versions.toml)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+
+      # The JNI glue only compiles for Android, so desktop clippy never sees it.
+      - name: Clippy (Android)
+        run: |
+          cargo clippy -p desktank-android --target aarch64-linux-android --locked -- -D warnings
+          cargo clippy -p desktank-android --target armv7-linux-androideabi --locked -- -D warnings
+
+      # Validates the committed wrapper jar against Gradle's checksums.
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Build the debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: APK contents
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$apk" | grep -E 'lib/|classes'
+          ls -l "$apk"
+          # 16 KB page alignment (required by Android 15+ devices with 16 KB pages).
+          for so in android/app/build/rustJniLibs/*/libdesktank_android.so; do
+            echo "$so"; "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -lW "$so" | grep LOAD
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktank-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
