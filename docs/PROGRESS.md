@@ -6,6 +6,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 
 ## Done
 
+- Hungry guppies seek and eat live duckweed fronds. A bite damages the owning plant and feeds the fish.
+
 - Repository, licences (MIT OR Apache-2.0), README.
 - DeskTank developer skill (`.agents/skills/desktank-developer/SKILL.md`) and `AGENTS.md`. Codex, Antigravity and Claude Code (`.claude/agents/`, Opus developer, Haiku reviewer; `CLAUDE.md` imports `AGENTS.md`) each provide a named developer and a lower-cost adversarial reviewer. PRs use `.github/pull_request_template.md`.
 - Plan and spec (`docs/SPEC.md` v0.5): pixel-art falling-sand aquarium + pet sim; owner decisions logged in SPEC §11.
@@ -243,9 +245,8 @@ M0 in progress: F1 workspace scaffold and CI done. M1: T1 (grid, chunks, movemen
 - T6d: leaf and stem shades use the stem position against the species' full `height`, so a young plant is mostly the lower ramp; the plant's current height (a plant texel byte, bumping `plants_version` on growth) would shade by relative height instead.
 - T6d: plant shader cost is measured on native Metal only; measure a plant-heavy page with `pnpm bench:web` on WebGL2, and skip the shape reads below scale 2, where shapes are filled anyway (PR #25 review).
 - `desktank bench` GPU timestamps read as 0 for most frames on the M3 Max (p95 0.000 ms); render timing needs another source (for example, wall time to `poll` completion) to be useful on Apple GPUs.
-- T6b: T7b's grazers eat algae and detritus only; grazing plant cells (removing cells and costing health, by palatability) is open.
 - T6b: a fragment cut from a stem plant keeps its place instead of drifting or sinking like a cutting until it roots (SPEC §2.7). Floater fragments now float on as buoyant bodies (D22); the same raft could carry other fragments (sinking by their density until they root), or they could turn back into cuttings (PR #22 review).
-- Floaters (T6c part 2): frogbit's real plantlets come on short stolons and its roots are feathery; here a bud opens straight beside an end frond and roots are one-cell strands. Fish don't graze or shelter under floaters yet (palatability, T7). Rafts don't tip or spin (no angle, unlike rigid bodies), and two rafts touching stop each other rather than pushing.
+- Floaters (T6c part 2): frogbit's real plantlets come on short stolons and its roots are feathery; here a bud opens straight beside an end frond and roots are one-cell strands. Guppies graze duckweed. Shelter under floaters is open. Rafts don't tip or spin (no angle, unlike rigid bodies), and two rafts touching stop each other rather than pushing.
 - Floater rafts (PR #54 review): `update_rafts` collects every raft that is due and `step_raft` builds a member list per raft each tick (an allocation per awake raft; measured 27 µs with a surface of drifting floaters); a member cache kept with the raft would avoid it. Budding has no per-plant limit beyond the plant cap and the surface's length, so an unattended tank fills its surface (real duckweed does; a thinning rule or a per-species density limit is a design choice). `load_rafts` accepts a raft whose `still` count disagrees with its `awake` flag (harmless: it settles on its next step).
 - T6b: the plant update and tidy scan a plant's whole bounding box for its cells, so a mat spread thinly over a wide area costs more per update than its cell count; a per-plant cell list would bound it (PR #22 review).
 - Plant propagule: for a species listing both cuttings and fragments (hygrophila) the two picks pour the same `cutting` material; a fragment material that drifts or sinks like a cut piece (see the T6b fragment item above) would tell them apart. Script pours check a propagule against its species only when they apply, like unknown species; a parse-time check would need the species table (PR #27 review).

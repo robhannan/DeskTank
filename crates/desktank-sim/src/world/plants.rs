@@ -702,6 +702,22 @@ impl World {
         self.hash_rafts(h);
     }
 
+    pub(super) fn palatable_plant(&self, id: u16) -> bool {
+        self.plants
+            .table
+            .get(&id)
+            .and_then(|p| self.plants.species.get(p.species))
+            .is_some_and(|s| s.palatable)
+    }
+
+    /// A bite costs five percent of the individual’s maximum health.
+    pub(super) fn graze_plant(&mut self, id: u16) {
+        if let Some(plant) = self.plants.table.get_mut(&id) {
+            plant.health = (plant.health - 0.05).max(0.0);
+            self.plants.version += 1;
+        }
+    }
+
     /// Records that a cell of plant `id` was overwritten.
     pub(super) fn plant_removed(&mut self, id: u16) {
         if let Some(p) = self.plants.table.get_mut(&id) {

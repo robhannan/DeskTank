@@ -686,6 +686,8 @@ pub struct PlantSpecies {
     pub hardiness: Hardiness,
     /// How it spreads.
     pub propagation: Propagation,
+    /// Whether creatures whose diet includes this part may eat it.
+    pub palatable: bool,
     /// Colour ramps.
     pub colours: Ramps,
     /// Drawn shapes.
@@ -856,6 +858,8 @@ struct SpeciesDef {
     growth: GrowthDef,
     hardiness: HardinessDef,
     propagation: Vec<Propagule>,
+    #[serde(default)]
+    palatable: bool,
     colours: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     look: LookDef,
@@ -1392,6 +1396,7 @@ fn validate(
             recovery: h.recovery,
         },
         propagation,
+        palatable: d.palatable,
         colours: Ramps { root, stem, leaf },
         look,
         colouration,
