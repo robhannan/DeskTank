@@ -1,7 +1,8 @@
 //! Simulation tick benches (SPEC §6.1, T1, T5, T6, T6b, T7a): a heavy pour
 //! must tick in ≤ 5 ms and a settled scene in ≤ 0.5 ms on the reference
 //! machine, also with living cells (random ticks) and fields active, with
-//! grown plants (and 500 of them, of every species), and with the reference
+//! grown plants (and 500 of them, of every species), with floaters covering
+//! the surface (at rest, and drifting in a current), and with the reference
 //! tank's 30 creatures swimming (in open water, and among the 500 plants).
 //!
 //! `cargo bench -p desktank-sim`
@@ -11,7 +12,7 @@
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use desktank_sim::{Brush, MaterialTable, Propagule, Rect, World, WorldConfig};
+use desktank_sim::{Brush, MaterialTable, Placeable, Propagule, Rect, World, WorldConfig};
 
 /// The default 640×360 tank with a sand column covering 20% of the grid
 /// (160×288 cells) dropped into the middle, above 72 rows of water.
@@ -162,6 +163,30 @@ fn five_hundred_plants() -> World {
     w
 }
 
+/// T6c part 2: the living tank with duckweed and frogbit plantlets every
+/// 40 cells along the surface, grown for 20 minutes, until they cover much
+/// of it, and left until every chunk sleeps (or 10 more minutes pass):
+/// every floater at rest.
+fn floating() -> World {
+    let mut w = settled_living();
+    let ids = |n| w.plant_species().id(n).expect("species");
+    let (duckweed, frogbit) = (ids("duckweed"), ids("frogbit"));
+    let row = i64::try_from(w.surface_row()).expect("row") + 4;
+    for (k, x) in (10..640).step_by(40).enumerate() {
+        let s = if k % 2 == 0 { duckweed } else { frogbit };
+        w.paint_plant(x, row, 0, s, Propagule::Buds)
+            .expect("plantlet");
+    }
+    let mut w = advance(w, 20 * 60 * 20);
+    for _ in 0..10 * 60 * 20 {
+        if w.awake_chunks() == 0 {
+            break;
+        }
+        w.tick();
+    }
+    w
+}
+
 fn advance(mut w: World, ticks: u32) -> World {
     for _ in 0..ticks {
         w.tick();
@@ -248,6 +273,35 @@ fn tick_fed(w: &mut World, since_fed: &mut u32) {
         }
     }
     black_box(w).tick();
+}
+
+/// T6c part 2: floaters covering the surface, at rest and drifting.
+fn bench_floaters(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
+    // T6c part 2: floaters covering the surface, at rest: each sleeping
+    // raft costs a check of its chunks per tick.
+    let mut floating = floating();
+    println!(
+        "settled_floaters: {} plants, {} cells, {} awake chunks",
+        floating.plant_count(),
+        floating.plant_cells(),
+        floating.awake_chunks()
+    );
+    g.bench_function("settled_floaters", |b| {
+        b.iter(|| black_box(&mut floating).tick());
+    });
+    // The same floaters a few seconds after a filter outlet near the
+    // surface starts a current: the rafts in its jet drift, each stepped
+    // every tick. Each sample ticks a fresh copy, so they never all fetch
+    // up against the far glass.
+    let mut drifting = floating.clone();
+    let row = i64::try_from(drifting.surface_row()).expect("row") + 3;
+    drifting
+        .place(Placeable::FilterOutlet, 1, row)
+        .expect("outlet");
+    let drifting = advance(drifting, 5 * 20);
+    g.bench_function("drifting_floaters", |b| {
+        b.iter_batched_ref(|| drifting.clone(), World::tick, BatchSize::LargeInput);
+    });
 }
 
 fn bench_tick(c: &mut Criterion) {
@@ -338,6 +392,7 @@ fn bench_tick(c: &mut Criterion) {
     g.bench_function("settled_500_plants", |b| {
         b.iter(|| black_box(&mut plants).tick());
     });
+    bench_floaters(&mut g);
     // D21: the 500 plants with 30 swimmers of every swimming species among
     // them, so collision checks meet plant cells (and their depth bands)
     // on most ticks.

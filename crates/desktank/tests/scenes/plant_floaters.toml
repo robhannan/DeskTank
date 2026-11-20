@@ -1,0 +1,48 @@
+# Floaters (T6c part 2): duckweed on the left and Amazon frogbit on the
+# right over an aquasoil bed, with hygrophila growing up under the
+# frogbit, grown for 8 minutes: plantlets rise to the surface, spread
+# their leaves along the top water row, hang roots and bud new plants,
+# and the frogbit shades the stem plant below it.
+ticks = 9600
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 20
+y = 40
+radius = 0
+plant = "duckweed"
+
+[[pour]]
+x = 45
+y = 30
+radius = 0
+plant = "duckweed"
+
+[[pour]]
+x = 100
+y = 40
+radius = 0
+plant = "frogbit"
+
+[[pour]]
+x = 130
+y = 30
+radius = 0
+plant = "frogbit"
+
+[[pour]]
+x = 115
+y = 20
+radius = 0
+plant = "hygrophila"

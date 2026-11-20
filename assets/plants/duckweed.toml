@@ -1,0 +1,42 @@
+# Duckweed (Lemna minor): tiny paired fronds floating at the surface, each
+# with one short root hanging below. It buds new fronds fast in bright
+# light and rich water, and soon covers the surface if left alone. Floaters
+# take CO₂ from the air, so the water's CO₂ hardly limits them.
+id = 13
+name = "duckweed"
+description = "Tiny floating fronds that bud fast and cover the surface."
+form = "floater"
+propagation = ["buds", "fragments"]
+
+# Floating leaf cells side by side, root strands hanging from them, and
+# the longest root in cells. Once it has all its fronds it buds a new
+# plant beside them.
+[floater]
+fronds = 2
+roots = 1
+root_length = 3
+
+[prefer]
+light = { min = 0.05, optimum = 1.0, max = 3.0 }
+nutrient = { min = -1.0, optimum = 0.6, max = 3.0 }
+co2 = { min = -3.0, optimum = 1.0, max = 4.0 }
+
+[growth]
+rate = 6.0
+size = 5
+cost = 0.01
+
+[hardiness]
+tolerance = 20.0
+decline = 0.015
+recovery = 0.03
+
+# Bright lime fronds; pale, thread-like roots.
+[colours]
+root = ["#b9b38f", "#d8d2ae", "#ece6c8"]
+stem = ["#4c8a2c", "#5ea53b"]
+leaf = ["#3f8a24", "#4e9e2c", "#62b538", "#78c946", "#91da5a", "#b0e87c"]
+
+[look]
+leaf = "lens"
+root = "strand"

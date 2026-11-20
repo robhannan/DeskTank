@@ -1,0 +1,9 @@
+# A floater's leaf (T6c part 2): spongy with air, so lighter than water,
+# and nearly opaque, so a floating mat shades the water below it. Floater
+# cells are solid; the plant moves them as one buoyant body.
+id = 79
+name = "floating_leaf"
+class = "solid"
+density = 0.75
+opacity = 0.95
+colour = "#5fae3c"

@@ -197,6 +197,9 @@ test("the propagule picker offers the species' own methods and pours seeds", asy
   await species.selectOption({ label: "Vallisneria" });
   await expect(way.locator("option")).toHaveText(["Runners"]);
   await species.selectOption({ label: "Monte Carlo" });
+  // Floaters bud new plants (T6c part 2).
+  await species.selectOption({ label: "Duckweed" });
+  await expect(way.locator("option")).toHaveText(["Fragments", "Buds"]);
   // Back on hygrophila the seeds pick still holds; it survives a reset,
   // even one made while on a species without seeds.
   await species.selectOption({ label: "Hygrophila" });
