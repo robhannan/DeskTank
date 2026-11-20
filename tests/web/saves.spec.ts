@@ -20,6 +20,9 @@ const NATIVE_HASH = "0b5b1fa4ab04c681";
 const SCENE = path.join(root, "crates/desktank/tests/scenes/layers.toml");
 const SCENE_SAVE = path.join(root, "crates/desktank-web/tests/fixtures/layers-seed1.dtank");
 
+// The tank's simulation tick (desktank_sim::TICKS_PER_SECOND, 20 Hz).
+const TICK_MS = 50;
+
 const ticks = (page: Page) => page.evaluate(() => window.desktank.tank.tickCount());
 const owner = (page: Page) => page.evaluate(() => window.desktank.owner);
 const writes = (page: Page) => page.evaluate(() => window.desktank.writes);
@@ -90,13 +93,30 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   expect(await ticks(page), "no ticks while hidden").toBe(hiddenAt);
   expect(await stateHash(page)).toBe(hash);
 
-  // Shown again, world time carries on from where it stopped (no catch-up).
+  // Shown again, world time carries on from where it stopped: it resumes,
+  // and never runs more ticks than the page's own clock allows since it was
+  // shown (catching up the hidden 1.5 s would run 4 at once, MAX_CATCH_UP).
+  // No wall-clock window: on a loaded CI runner a frame drawn on SwiftShader
+  // can hold the page's timers back by 400 ms and the pacer drops the
+  // backlog, so a wall second holds anywhere from 5 to 20 ticks.
+  const shownAt = await page.evaluate(() => performance.now());
   await setHidden(page, false);
-  await page.waitForTimeout(1000);
-  const ran = (await ticks(page)) - hiddenAt;
-  expect(ran).toBeGreaterThan(5);
-  // 1.5 s hidden caught up would add 30 ticks to the ~20 of 1 s shown.
-  expect(ran, "the hidden time isn't caught up").toBeLessThan(45);
+  const samples: { ran: number; ms: number }[] = [];
+  await expect
+    .poll(async () => {
+      const s = await page.evaluate(
+        ([hiddenAt, shownAt]) => ({ ran: window.desktank.tank.tickCount() - hiddenAt, ms: performance.now() - shownAt }),
+        [hiddenAt, shownAt],
+      );
+      samples.push(s);
+      return s.ran;
+    })
+    .toBeGreaterThan(5);
+  for (const { ran, ms } of samples) {
+    // The clock re-anchors at the first frame after showing, which can be
+    // stamped up to a vsync before `shownAt`: one tick of slack.
+    expect(ran, `${ran} ticks ${ms.toFixed(0)} ms after showing: the hidden time was caught up`).toBeLessThanOrEqual(Math.floor(ms / TICK_MS) + 1);
+  }
 
   await setHidden(page, true);
   await page.evaluate(() => window.desktank.saving);
@@ -109,25 +129,18 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   expect(errors).toEqual([]);
 });
 
-test("a slow compositor doesn't hold world time back after the tab is shown", async ({ page }) => {
-  // CI's SwiftShader on a busy runner can take most of a second to run the
-  // first animation frame after a tab is shown; ticks must not wait for it.
+test("a compositor that holds animation frames back doesn't hold world time back", async ({ page }) => {
+  // CI's SwiftShader on a busy runner can hold the first animation frame
+  // after a tab is shown for most of a second; ticks must not wait for it.
+  // Once shown here, no frame comes at all: a loop gated on rAF never ticks
+  // again, whatever the machine's speed.
   await page.addInitScript(() => {
     const raf = window.requestAnimationFrame.bind(window);
     const cancel = window.cancelAnimationFrame.bind(window);
-    const late = new Map<number, number>();
-    let next = 0;
-    window.requestAnimationFrame = (cb) => {
-      const id = ++next;
-      late.set(id, window.setTimeout(() => late.set(id, -raf(cb)), 800));
-      return id;
-    };
+    let held = 0;
+    window.requestAnimationFrame = (cb) => (document.documentElement.dataset.holdFrames ? --held : raf(cb));
     window.cancelAnimationFrame = (id) => {
-      const t = late.get(id);
-      late.delete(id);
-      if (t === undefined) return;
-      if (t > 0) window.clearTimeout(t);
-      else cancel(-t);
+      if (id > 0) cancel(id);
     };
   });
   const errors = watchErrors(page);
@@ -136,10 +149,9 @@ test("a slow compositor doesn't hold world time back after the tab is shown", as
   await expect.poll(() => ticks(page)).toBeGreaterThan(20);
   await setHidden(page, true);
   const hiddenAt = await ticks(page);
+  await page.evaluate(() => (document.documentElement.dataset.holdFrames = "1"));
   await setHidden(page, false);
-  await page.waitForTimeout(1000);
-  // ~20 at 20 Hz; a loop gated on the late frame ran ~4.
-  expect((await ticks(page)) - hiddenAt).toBeGreaterThan(12);
+  await expect.poll(async () => (await ticks(page)) - hiddenAt).toBeGreaterThan(12);
   expect(errors).toEqual([]);
 });
 
