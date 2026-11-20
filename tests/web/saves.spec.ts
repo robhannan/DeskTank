@@ -109,6 +109,26 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   expect(errors).toEqual([]);
 });
 
+test("a slow compositor doesn't hold world time back after the tab is shown", async ({ page }) => {
+  // CI's SwiftShader on a busy runner can take most of a second to run the
+  // first animation frame after a tab is shown; ticks must not wait for it.
+  await page.addInitScript(() => {
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (cb) => window.setTimeout(() => raf(cb), 800);
+  });
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  await pour(page);
+  await expect.poll(() => ticks(page)).toBeGreaterThan(20);
+  await setHidden(page, true);
+  const hiddenAt = await ticks(page);
+  await setHidden(page, false);
+  await page.waitForTimeout(1000);
+  // ~20 at 20 Hz; a loop gated on the late frame ran ~4.
+  expect((await ticks(page)) - hiddenAt).toBeGreaterThan(12);
+  expect(errors).toEqual([]);
+});
+
 test("a second tab is read-only until it takes over, within 1 s and without losing state", async ({ context }) => {
   const a = await context.newPage();
   const errors = watchErrors(a);

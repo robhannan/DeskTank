@@ -45,6 +45,8 @@ const DREW = 1;
 const WANTED = 2;
 const LOST = 4;
 const TICKS_SHIFT = 8;
+// The tank's simulation tick (desktank_sim::TICKS_PER_SECOND, 20 Hz).
+const TICK_MS = 50;
 // Pointer buttons WebTank takes: primary uses the tool, secondary scoops.
 const PRIMARY = 0;
 const SECONDARY = 2;
@@ -587,7 +589,12 @@ function updateStats() {
 // One callback: the tank decides whether a tick or a frame is due, and when
 // it next needs us.
 function loop(now: number) {
+  // Whichever of the vsync and the tick deadline came first runs; drop the
+  // other, as this call reschedules.
+  cancelAnimationFrame(rafId);
+  clearTimeout(timerId);
   rafId = 0;
+  timerId = 0;
   if (hidden || !tank) return;
   if (now >= nextAutosave) persist("autosave");
   if (bench) hooks.rafTimes.push(now);
@@ -618,11 +625,14 @@ function loop(now: number) {
   else updateStats();
 }
 
+// Runs the loop on the next vsync. A running tank also keeps its tick
+// deadline: a compositor that holds rAF back (SwiftShader on a busy machine,
+// a slow first frame after the tab is shown) must not hold world time back
+// with it, so whichever comes first runs the loop.
 function kick() {
-  if (rafId || hidden || restoring || contextLost) return;
-  clearTimeout(timerId);
-  timerId = 0;
-  rafId = requestAnimationFrame(loop);
+  if (hidden || restoring || contextLost) return;
+  if (!rafId) rafId = requestAnimationFrame(loop);
+  if (!timerId && tank?.running()) sleepUntil(performance.now() + TICK_MS);
 }
 
 // Sleeps on a timer and then runs the loop directly (not through rAF, whose
@@ -632,7 +642,7 @@ function sleepUntil(t: number) {
   clearTimeout(timerId);
   timerId = setTimeout(() => {
     timerId = 0;
-    if (!rafId && !hidden && !restoring && !contextLost) loop(performance.now());
+    if (!hidden && !restoring && !contextLost) loop(performance.now());
   }, Math.max(0, Math.ceil(t - performance.now())));
 }
 
