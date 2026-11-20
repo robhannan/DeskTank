@@ -1292,8 +1292,9 @@ over the keyguard while charging).
   gets Vulkan 1.3 and draws with it, so its Vulkan driver is usable;
   forced GLES 3.2 draws too. On an NVIDIA SHIELD (64-bit, Tegra X1+)
   Vulkan draws but forced GLES fails to open the device ("Parent device
-  is lost", cause not yet known), so A1 must verify the fallback there
-  (PROGRESS).
+  is lost"). *A1:* its EGL gives a desktop GL 3.3 context, on which
+  wgpu-core's indirect-draw validation can't build its compute pipeline,
+  so A1 must still make the fallback work there (PROGRESS).
 - **Builds**: `cargo-ndk` builds the `cdylib` for `arm64-v8a`,
   `armeabi-v7a` (many TV devices run a 32-bit userspace on a 64-bit CPU,
   including Chromecast with Google TV and the Google TV Streamer; wgpu

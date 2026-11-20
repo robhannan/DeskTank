@@ -7,7 +7,6 @@ use std::process::ExitCode;
 mod bench;
 mod capture;
 mod persist;
-mod scene;
 mod window;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
