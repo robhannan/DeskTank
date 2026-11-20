@@ -19,6 +19,8 @@ brood = [3, 8]
 rest_days = 28
 
 [sprite]
+# Silhouette traced from a photo of a common goldfish supplied by the owner, shaded in the house style:
+# dark-shade outline, dithered back highlight, fin rays, small glinting eye.
 colours = { A = "#b8441a", B = "#d9551e", C = "#f07a2a", D = "#ffa24a", E = "#8f2a0c", F = "#ff8f34", G = "#ec6a1e", H = "#c8461a", I = "#f7a040", J = "#0c1016", K = "#ffc560", L = "#ffffff" }
 frames = [
     [
