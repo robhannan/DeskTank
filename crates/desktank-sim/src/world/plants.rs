@@ -116,6 +116,20 @@ const MAT_LAYER_WEIGHT: u32 = 1;
 /// that a healthy plant of a seeding species drops a seed into adjacent water.
 const SEED_DROP_CHANCE: f64 = 0.05;
 
+/// Minimum light level for a healthy leaf to pearl (T6d, SPEC §2.7).
+pub const PEARL_LIGHT: f32 = 0.65;
+/// Minimum CO₂ level for a healthy leaf to pearl (T6d, SPEC §2.7).
+pub const PEARL_CO2: f32 = 0.6;
+/// Minimum plant health for pearling (matches the vigorous threshold).
+pub const PEARL_HEALTH: f32 = 0.8;
+/// Hard cap on oxygen bubbles released by pearling per second of world time
+/// across the whole tank (1 bubble every `TICKS_PER_SECOND / PEARL_MAX_PER_SECOND` ticks).
+pub const PEARL_MAX_PER_SECOND: u32 = 4;
+/// Ticks between eligible pearling ticks (5 ticks = 0.25 s at 20 Hz).
+const PEARL_TICK_STRIDE: u64 = (super::TICKS_PER_SECOND / PEARL_MAX_PER_SECOND) as u64;
+/// Per-cell pearling rate (per second on eligible ticks) when thresholds are met.
+const PEARL_RATE: f32 = 0.25;
+
 /// A plant's id, as stored in its cells' `state` (never 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PlantId(pub u16);
@@ -235,6 +249,7 @@ pub(super) struct Plants {
     cutting: Option<MaterialId>,
     dead: Option<MaterialId>,
     water: Option<MaterialId>,
+    air_bubble: Option<MaterialId>,
     next_id: u16,
     /// Some plant is marked for a tidy.
     any_pending: bool,
@@ -246,6 +261,11 @@ pub(super) struct Plants {
     keep_seed: f64,
     keep_cutting: f64,
     keep_falling: f64,
+    keep_pearl: f64,
+    /// Whether a leaf has already released a pearling bubble on this tick
+    /// (reset at the start of every tick; caps pearling to
+    /// [`PEARL_MAX_PER_SECOND`] bubbles/s with no persistent state).
+    pub(super) pearled_this_tick: bool,
 }
 
 impl Plants {
@@ -281,6 +301,7 @@ impl Plants {
             cutting: on("cutting"),
             dead,
             water,
+            air_bubble: on("air_bubble"),
             next_id: 1,
             any_pending: false,
             cursor: 0,
@@ -289,6 +310,8 @@ impl Plants {
             keep_seed: keep_per_tick(SEED_ROOTING),
             keep_cutting: keep_per_tick(CUTTING_ROOTING),
             keep_falling: keep_per_tick(MAT_FALLING),
+            keep_pearl: keep_per_tick(PEARL_RATE),
+            pearled_this_tick: false,
         })
     }
 
@@ -1081,6 +1104,7 @@ impl World {
         let Some(p) = self.plants.table.get(&cell.state) else {
             return;
         };
+        let health = p.health;
         let (x, y) = (i % self.width, i / self.width);
         let species = Arc::clone(&self.plants.species);
         let s = species.get(p.species);
@@ -1114,6 +1138,24 @@ impl World {
                     p.counts[k] += 1;
                 }
             }
+        }
+        // Pearling (SPEC §2.7, T6d): under strong light and high CO₂, a
+        // healthy plant releases small oxygen bubbles (`air_bubble`) from
+        // submerged leaf cells into water above, capped at
+        // `PEARL_MAX_PER_SECOND` bubbles per second across the tank.
+        if part == Part::Leaf
+            && !self.plants.pearled_this_tick
+            && self.tick.is_multiple_of(PEARL_TICK_STRIDE)
+            && health >= PEARL_HEALTH
+            && light.is_some_and(|l| l >= PEARL_LIGHT)
+            && co2 >= PEARL_CO2
+            && let Some(bubble) = self.plants.air_bubble
+            && let Some(above) = self.at(x, y, 0, -1)
+            && Some(self.cells[above].material) == self.plants.water
+            && self.life.chance(1.0 - powu(self.plants.keep_pearl, k))
+        {
+            self.write_cell(x, y - 1, bubble, &mut None);
+            self.plants.pearled_this_tick = true;
         }
     }
 
