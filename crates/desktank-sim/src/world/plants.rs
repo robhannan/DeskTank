@@ -1397,6 +1397,20 @@ impl World {
         if neighbours >= 1 {
             return;
         }
+        // Also skip if an ungerminated seed of this species is already
+        // sinking or waiting to germinate in the same window.
+        let x0 = bx.saturating_sub(16);
+        let x1 = (bx + 17).min(self.width);
+        let sp_state = u16::from(species.0);
+        for y in 0..self.height {
+            let row = y * self.width;
+            if self.cells[row + x0..row + x1]
+                .iter()
+                .any(|c| c.material == seed && c.state == sp_state)
+            {
+                return;
+            }
+        }
         let bounds = self.clip_to_grid(p.bounds);
         let mid_y = usize::midpoint(bounds.y0, bounds.y1);
         let members = self.plant_members(id, bounds);
@@ -1568,7 +1582,7 @@ impl World {
                 _ => {}
             }
         }
-        sites.sort_unstable_by_key(|s| s.at);
+        sites.sort_unstable_by_key(|s| (s.at, core::cmp::Reverse(s.weight), s.position));
         sites.dedup_by_key(|s| s.at);
         sites
     }
@@ -1738,7 +1752,7 @@ impl World {
                 }
             }
         }
-        sites.sort_unstable_by_key(|s| s.at);
+        sites.sort_unstable_by_key(|s| (s.at, core::cmp::Reverse(s.weight), s.position));
         sites.dedup_by_key(|s| s.at);
         sites
     }
@@ -1905,7 +1919,7 @@ impl World {
                 _ => {}
             }
         }
-        sites.sort_unstable_by_key(|s| s.at);
+        sites.sort_unstable_by_key(|s| (s.at, core::cmp::Reverse(s.weight), s.position));
         sites.dedup_by_key(|s| s.at);
         sites
     }
@@ -1956,7 +1970,8 @@ impl World {
                             }
                         }
                     }
-                    if (pos == 1 || pos.is_multiple_of(f.spacing))
+                    if pos > 0
+                        && (pos - 1).is_multiple_of(f.spacing)
                         && let Some(j) = self.at(x, y, 0, -1)
                         && is_water(j)
                     {
@@ -1982,7 +1997,7 @@ impl World {
                 _ => {}
             }
         }
-        sites.sort_unstable_by_key(|s| s.at);
+        sites.sort_unstable_by_key(|s| (s.at, core::cmp::Reverse(s.weight), s.position));
         sites.dedup_by_key(|s| s.at);
         sites
     }
@@ -2011,7 +2026,7 @@ impl World {
                 }
             }
         }
-        sites.sort_unstable_by_key(|s| s.at);
+        sites.sort_unstable_by_key(|s| (s.at, s.position));
         sites.dedup_by_key(|s| s.at);
         sites
     }

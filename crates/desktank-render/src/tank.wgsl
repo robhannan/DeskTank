@@ -648,11 +648,21 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
             let tip = !up_stem && (!horiz || (left.x == PART_STEM && right.x != PART_STEM) || (right.x == PART_STEM && left.x != PART_STEM));
             step += 1 + i32(round(f32(pos) / max(sizes.x, 1.0) * 5.0)) - select(0, 1, node) + select(0, 2, tip);
             if shape == STEM_THICK {
-                if fine {
+                if horiz {
+                    if fine {
+                        let shoulder = tip && (quarter.y == 0 || quarter.y == 3)
+                            && ((left.x == PART_STEM && quarter.x == 3)
+                                || (right.x == PART_STEM && quarter.x == 0));
+                        covered = !shoulder;
+                        step += select(0, 1, quarter.y == 1) - select(0, 1, quarter.y == 3);
+                    } else {
+                        step -= select(0, 1, !top);
+                    }
+                } else if fine {
                     // A round stem, brightest left of centre and darkest on
                     // the right, a dark joint line at each node and a
                     // rounded growing tip.
-                    let shoulder = tip && !horiz && quarter.y == 0 && (quarter.x == 0 || quarter.x == 3);
+                    let shoulder = tip && quarter.y == 0 && (quarter.x == 0 || quarter.x == 3);
                     covered = !shoulder;
                     step += select(0, 1, quarter.x == 1) - select(0, 1, quarter.x == 3)
                         - select(0, 1, node && quarter.y == 3);
