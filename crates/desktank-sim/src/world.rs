@@ -34,7 +34,7 @@ pub use creatures::{
     ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS, LifeStage, MAX_CLUTCHES, MAX_CORPSES,
     MAX_CREATURE_CAP, MAX_NAME_CHARS, MUTATION_PER_MILLE, POOR_QUALITY, PREY_ENERGY,
     REVERSION_PER_MILLE, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, SETTLE_TICKS, STRESS_LIMIT,
-    STRIKE_ODDS, Traits, UnmetNeed, clean_name,
+    STRIKE_ODDS, Traits, UnmetNeed, clean_name, pursuit,
 };
 use life::Life;
 pub use life::{Ecosystem, RANDOM_TICK_BUDGET, RandomTickStats};

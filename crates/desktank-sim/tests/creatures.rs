@@ -202,6 +202,9 @@ fn a_creature_buried_by_a_pour_hops_out() {
 /// `minutes`, with no food in the tank.
 fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
     let mut w = world(160, 120, seed);
+    // Easy mode: predators hunting the small species down would leave
+    // them too few ticks to count.
+    w.set_easy_mode(true);
     sand_bed(&mut w, 12);
     w.paint(60, 70, 6, id(&w, "rock"), Brush::Replace).unwrap();
     let ids: Vec<_> = w.species().iter().map(|s| (s.id, s.name.clone())).collect();

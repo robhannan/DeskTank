@@ -42,8 +42,9 @@
 //!   that, of any species including its own young, within [`BAND_REACH`]
 //!   of its depth band (D21), eats it with a chance
 //!   of 1 in [`STRIKE_ODDS`]: the prey is gone (no corpse) and the
-//!   predator is fed. Not in easy mode, and not while either is in the
-//!   net.
+//!   predator is fed. Not in easy mode, not while either is in the net,
+//!   and not prey in cover among plants. Predators hunt down prey and prey
+//!   flees in [`super::pursuit`].
 //!
 //! Randomness comes from streams per creature or clutch per tick, so it
 //! never depends on update order.
@@ -628,6 +629,7 @@ impl World {
                     && self.length_mm(q) <= k.prey_mm
                     && q.band().abs_diff(p.band()) <= BAND_REACH
                     && !reach.intersect(self.creature_body(q)).is_empty()
+                    && !self.creature_in_cover(q)
             });
             let Some(j) = prey else {
                 continue;
@@ -655,7 +657,7 @@ impl World {
 
     /// A creature's body length in mm as grown so far (its species' length
     /// at its size).
-    fn length_mm(&self, c: &Creature) -> u32 {
+    pub(super) fn length_mm(&self, c: &Creature) -> u32 {
         self.kind(c.species).map_or(0, |k| {
             let percent = super::lifecycle::grown_percent(c.growth, k.maturity);
             // At most a few hundred mm.
