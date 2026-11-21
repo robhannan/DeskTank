@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build:web": "node scripts/build-web.ts",
+    "build:web:webos": "node scripts/build-web.ts --legacy",
+    "check:webos": "node scripts/check-webos.ts",
     "serve:web": "node scripts/serve-web.ts",
     "test:web": "playwright test",
     "bench:web": "node scripts/bench-web.ts",
@@ -18,6 +20,9 @@
   "devDependencies": {
     "@playwright/test": "1.65.1",
     "@types/node": "26.6.6",
+    "acorn": "8.19.0",
+    "binaryen": "132.0.0",
+    "esbuild": "0.28.2",
     "tapsmith": "0.8.0",
     "typescript": "7.0.2",
     "zx": "8.8.5"

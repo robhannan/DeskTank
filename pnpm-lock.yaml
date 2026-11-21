@@ -172,6 +172,15 @@ importers:
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
+      acorn:
+        specifier: 8.19.0
+        version: 8.19.0
+      binaryen:
+        specifier: 132.0.0
+        version: 132.0.0
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       tapsmith:
         specifier: 0.8.0
         version: 0.8.0
@@ -590,6 +599,10 @@ packages:
   balanced-match@4.0.4:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
     engines: {node: 18 || 20 || >=22}
+
+  binaryen@132.0.0:
+    resolution: {integrity: sha512-4Usg7yEvwO3FMso3Oov6qkOOHSod1IEv+boKkh77kTljM+eNBouqCTbqWswGzbG+vDNO/b/v2C4gfEh1WgB9Lg==}
+    hasBin: true
 
   body-parser@2.4.0:
     resolution: {integrity: sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==}
@@ -1433,6 +1446,8 @@ snapshots:
       color-convert: 2.0.1
 
   balanced-match@4.0.4: {}
+
+  binaryen@132.0.0: {}
 
   body-parser@2.4.0:
     dependencies:
