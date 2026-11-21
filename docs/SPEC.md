@@ -1431,8 +1431,21 @@ modes; it is a "window mode" in a page.
   - **Diagnostics**: startup steps are named; a step stalled for 10 s is
     reported in the status line, and `?debug=1` lists the steps, visibility
     and errors on screen, for a browser with no developer tools at hand.
+  - **Graphics**: Chrome 68's GPU stack can't compile the one-pass grid
+    shader (its 2018 SwiftShader allows 4096 temporary registers per
+    fragment shader, and the TV showed a black tank), so the webOS build
+    draws with the *split grid*: the ground first, then leafy and other
+    plant parts in two blended passes, and the sprites in two passes split
+    by the plant part under each pixel, each shader reaching only its own
+    code. It draws the same picture (the render tests check every scene
+    both ways). Its canvas is non-sRGB, which WebGL2 presents with a blit
+    rather than wgpu's sRGB present shader (which draws nothing on that
+    SwiftShader). `?grid=split|single` and `?srgb=1|0` override both on
+    any build, and a GPU error (such as a rejected shader) is shown on
+    screen rather than leaving the tank black.
   - CI builds it, checks it (`scripts/check-webos.ts`: MVP wasm, Chrome 68
-    syntax) and loads it in the web tests. It stays within the §6.1 budget.
+    syntax), loads it in the web tests and runs it in a real Chromium 68
+    (`scripts/check-chrome68.ts`). It stays within the §6.1 budget.
 
 ### 3.6 Android (D23)
 

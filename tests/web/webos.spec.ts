@@ -5,10 +5,12 @@
 // the canvas stays at 1 device pixel per CSS pixel on a DPR 2 screen like
 // the TV's. scripts/check-webos.ts checks the build is Chrome 68 code.
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { checkJs } from "../../scripts/check-webos.ts";
-import { framesDrawn, watchErrors } from "./support.ts";
+import { compare } from "./delta-e.ts";
+import { decodePng, framesDrawn, watchErrors } from "./support.ts";
 
 const built = existsSync(path.join(import.meta.dirname, "..", "..", "target", "site-webos", "index.html"));
 
@@ -49,6 +51,28 @@ test.describe("webOS build", () => {
     const steps = await page.evaluate(() => window.desktank.startup);
     expect(steps.some((s) => s.includes("first frame drawn")), steps.join("\n")).toBe(true);
     await expect(page.locator("#debug")).toContainText("opening graphics");
+    expect(errors).toEqual([]);
+  });
+
+  // The split grid (smaller shaders in three passes, for Chrome 68's
+  // register limit) on a non-sRGB canvas draws like the native one-pass
+  // capture, within the render tests' tolerance (SPEC §7). Chrome 68 itself
+  // runs it in scripts/check-chrome68.ts.
+  test("draws with the split grid like the native capture", async ({ page }) => {
+    const errors = watchErrors(page);
+    // ?dpr=2 lifts the TV's cap, so the scene is drawn at this page's DPR.
+    await ready(page, "/webos/?debug=1&dpr=2");
+    await expect(page.locator("#debug")).toContainText("split grid, non-sRGB");
+    await page.evaluate(() => document.getElementById("debug")!.remove());
+    const crate = path.join(import.meta.dirname, "..", "..", "crates", "desktank", "tests");
+    const toml = await readFile(path.join(crate, "scenes", "depth.toml"), "utf8");
+    await page.evaluate((src) => window.desktank.loadScene(src, 7, 640, 360), toml);
+    const got = await decodePng(page, await page.locator("#tank").screenshot());
+    const want = await decodePng(page, await readFile(path.join(crate, "reference", "depth_x4.png")));
+    expect([got.width, got.height]).toEqual([want.width, want.height]);
+    const diff = compare(got.rgba, want.rgba, 2);
+    console.log(`depth_x4 on the webOS build: ${diff.over} of ${diff.total} pixels over ΔE 2, max ΔE ${diff.max.toFixed(2)}`);
+    expect(diff.over / diff.total).toBeLessThanOrEqual(0.005);
     expect(errors).toEqual([]);
   });
 
