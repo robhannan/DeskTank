@@ -16,6 +16,8 @@ impl World {
         if !(self.tick + u64::from(c.id.0)).is_multiple_of(interval) {
             return;
         }
+        // Landed from a swim: back onto whole cells, heading along a face.
+        self.settle(k, c);
         let (turn, band) = (c.turn, c.band());
         let free = |dx, dy| self.fits(k, turn, c.x + dx * ONE, c.y + dy * ONE, band);
         let face = self.support_face(k, turn, c.x, c.y, band);

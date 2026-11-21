@@ -9,6 +9,8 @@ maturity_days = 300
 temperament = "peaceful"
 speed = 2.0
 max_speed = 5.0
+# Would rather stay on the bottom, but lifts off for a short swim now and then.
+swim_every = 40.0
 diet = ["algae", "algae_wafer", "detritus"]
 
 
