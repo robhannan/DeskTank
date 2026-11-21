@@ -166,6 +166,12 @@ jobs:
       # Same build as the Pages deploy, so a broken demo fails the PR.
       - uses: ./.github/actions/build-web
 
+      # The legacy-Chromium variant for webOS 5 TVs (Chrome 68, SPEC D26)
+      # into target/site-webos/. The build fails unless scripts/check-webos.ts
+      # finds MVP-only wasm and Chrome 68 JS; the web tests then load it.
+      - name: Build webOS site (MVP wasm, Chrome 68 JS)
+        run: pnpm build:web:webos
+
       # Strict tsc over the scripts, tests and page (after the build, which
       # writes wasm-bindgen's declarations).
       - name: Typecheck
