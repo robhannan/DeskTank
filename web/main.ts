@@ -133,6 +133,8 @@ const nameOut = $<HTMLOutputElement>("name-out");
 const playBtn = $<HTMLButtonElement>("play");
 const stepBtn = $<HTMLButtonElement>("step");
 const seedInput = $<HTMLInputElement>("seed");
+const capInput = $<HTMLInputElement>("set-creature-cap");
+const capStockOut = $<HTMLOutputElement>("set-creature-cap-stock");
 const brushInput = $<HTMLInputElement>("brush");
 const paletteEl = $("palette");
 const groupsEl = $("groups");
@@ -284,8 +286,21 @@ function showSettings() {
     tank.setOnBattery(onBattery);
     tank.setHidden(hidden);
     tank.setRadius(settings.radius);
+    showCreatureCap();
     kick();
   }
+}
+
+// Mirrors the tank's own population cap (saved in .dtank, not localStorage)
+// into the Settings field and stock readout.
+function showCreatureCap(forceValue = false) {
+  if (!tank) return;
+  const stock = tank.stockCount();
+  const cap = tank.creatureCap();
+  capInput.min = String(Math.max(1, stock));
+  capInput.max = String(tank.maxCreatureCap());
+  if (forceValue || document.activeElement !== capInput) capInput.value = String(cap);
+  capStockOut.value = `(${stock}/${cap})`;
 }
 
 function maxFps() {
@@ -350,6 +365,7 @@ function replaceTank(next: WebTank) {
   tank = next;
   tank.select(selected);
   showSettings();
+  showCreatureCap(true);
   setRunning(tank.running());
   buildPlantPicker();
   buildPalette();
@@ -558,6 +574,7 @@ function showOwnership() {
   document.body.dataset.owner = String(owner);
   // A viewer's controls are inert: nothing it does would be saved.
   for (const el of document.querySelectorAll<HTMLElement>("[data-owner-only]")) el.inert = !active;
+  capInput.disabled = !active;
   if (!active) {
     closeCheat();
     closeName();
@@ -635,11 +652,12 @@ async function loadScene(toml: string, sceneSeed: number, width: number, height:
 }
 
 function updateStats() {
+  showCreatureCap();
   if (!settings.stats || !tank) return;
   const [scale, w, h] = hooks.grid;
   statsEl.textContent =
     `${backend || "no GPU"} · fps ${fps} · tick ${tank.tickCount()} · awake chunks ` +
-    `${tank.awakeChunks()}/${tank.chunkCount()} · tick time ${tickMs.toFixed(2)} ms` +
+    `${tank.awakeChunks()}/${tank.chunkCount()} · creatures ${tank.stockCount()}/${tank.creatureCap()} · tick time ${tickMs.toFixed(2)} ms` +
     ` · ${w}×${h} cells at ${scale}×`;
 }
 
@@ -1101,6 +1119,7 @@ function runCheat(e: SubmitEvent) {
     inspected = null;
     closeName();
     flash(`Cheat: ${done}`);
+    showCreatureCap();
     kick();
   } catch (err) {
     cheatOut.textContent = String(err);
@@ -1139,8 +1158,33 @@ function showInspection() {
   flash(inspectEl.textContent);
 }
 
+// Shows why adding a creature or live food was refused.
+function showRefusal() {
+  const refused = tank.takeRefusal();
+  if (!refused) return;
+  const [kind, ...rest] = refused.split(" ");
+  let message = "";
+  if (kind === "cap") {
+    const [stock, cap] = rest;
+    message = `Tank full (${stock}/${cap} creatures) — raise Creature cap in Settings or net one out`;
+  } else if (kind === "live_cap") {
+    const [, cap, species] = rest;
+    message = `${label(species)} limit reached (${cap} max)`;
+  } else if (kind === "no_room") {
+    const [species] = rest;
+    message = `No room for ${label(species)} there — click open water`;
+  } else {
+    return;
+  }
+  inspected = null;
+  closeName();
+  flash(message);
+}
+
 function after() {
   showInspection();
+  showRefusal();
+  showCreatureCap();
   kick();
 }
 
@@ -1416,10 +1460,41 @@ function wireSettings(resetTank: () => void) {
     update({ seed: s });
     resetTank();
   });
+  capInput.addEventListener("change", () => {
+    if (!owner || handingOver || !tank) {
+      showCreatureCap(true);
+      return;
+    }
+    const raw = capInput.value.trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isFinite(parsed)) {
+      showCreatureCap(true);
+      return;
+    }
+    const requested = Math.max(0, Math.floor(parsed));
+    const applied = tank.setCreatureCap(requested);
+    showCreatureCap(true);
+    updateStats();
+    if (applied !== requested) {
+      const stock = tank.stockCount();
+      if (requested < Math.max(1, stock)) {
+        flash(stock > 0 ? `Creature cap kept at ${applied} (tank has ${stock} creatures)` : `Creature cap must be at least ${applied}`);
+      } else {
+        flash(`Creature cap clamped to max ${applied}`);
+      }
+    }
+  });
   $("set-defaults").addEventListener("click", () => {
+    if (!owner || handingOver) return;
     const rescale = settings.scale !== DEFAULTS.scale || settings.seed !== DEFAULTS.seed;
     update({ ...DEFAULTS });
-    if (rescale) resetTank();
+    if (rescale) {
+      resetTank();
+    } else if (tank) {
+      tank.setCreatureCap(tank.defaultCreatureCap());
+      showCreatureCap(true);
+      updateStats();
+    }
   });
 }
 

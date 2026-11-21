@@ -447,3 +447,92 @@ test("settings persist across reloads", async ({ page }) => {
   expect(await page.evaluate(() => window.desktank.settings.scale)).toBe(0);
   expect(errors).toEqual([]);
 });
+
+test("creature cap setting and refused spawn messages", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const [w, h] = await gridSize(page);
+  const waterY = Math.round(h * 0.5);
+  const stock = () => page.evaluate(() => window.desktank.tank.stockCount());
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  const capInput = page.locator("#set-creature-cap");
+  const capStock = page.locator("#set-creature-cap-stock");
+  await expect(capInput).toHaveValue("60");
+  await expect(capStock).toHaveText("(0/60)");
+
+  // Deep inside a solid block reports no room.
+  const [bx, by] = [Math.round(w * 0.15), Math.round(h * 0.8)];
+  await choose(page, "Rock");
+  await page.locator("#brush").fill("24");
+  await page.locator("#brush").dispatchEvent("input");
+  let blocked = await cellPoint(page, bx, by);
+  await page.mouse.click(blocked.x, blocked.y);
+  await choose(page, "Neon tetra");
+  blocked = await cellPoint(page, bx, by);
+  await page.mouse.click(blocked.x, blocked.y);
+  await expect(page.locator("#inspect")).toHaveText(/No room for Neon tetra/);
+  expect(await stock()).toBe(0);
+
+  // Lowering the cap to 2 refuses a third creature with a clear message.
+  await capInput.fill("2");
+  await capInput.dispatchEvent("change");
+  expect(await page.evaluate(() => window.desktank.tank.creatureCap())).toBe(2);
+  await expect(capStock).toHaveText("(0/2)");
+
+  for (const fx of [0.3, 0.5]) {
+    const p = await cellPoint(page, Math.round(w * fx), waterY);
+    await page.mouse.click(p.x, p.y);
+  }
+  expect(await stock()).toBe(2);
+  await expect(capStock).toHaveText("(2/2)");
+
+  const p3 = await cellPoint(page, Math.round(w * 0.7), waterY);
+  await page.mouse.click(p3.x, p3.y);
+  await expect(page.locator("#inspect")).toHaveText(/Tank full \(2\/2 creatures\)/);
+  expect(await stock()).toBe(2);
+
+  // Lowering below current stock clamps back and informs the user.
+  await capInput.fill("1");
+  await capInput.dispatchEvent("change");
+  await expect(capInput).toHaveValue("2");
+  await expect(page.locator("#inspect")).toHaveText(/Creature cap kept at 2/);
+
+  // Raising the cap to 3 immediately allows spawning another creature.
+  await capInput.fill("3");
+  await capInput.dispatchEvent("change");
+  await expect(capInput).toHaveValue("3");
+  const p3After = await cellPoint(page, Math.round(w * 0.7), waterY);
+  await page.mouse.click(p3After.x, p3After.y);
+  expect(await stock()).toBe(3);
+  await expect(capStock).toHaveText("(3/3)");
+
+  // Live food has its own cap and reports when full.
+  await choose(page, "Live bloodworms");
+  const mid = await cellPoint(page, Math.round(w * 0.5), waterY);
+  for (let i = 0; i < 7; i++) await page.mouse.click(mid.x, mid.y);
+  await page.mouse.click(mid.x, mid.y);
+  await expect(page.locator("#inspect")).toHaveText(/Live bloodworms limit reached \(32 max\)/);
+
+  // Save (via visibilitychange) and reload: the tank's cap persists.
+  await page.evaluate(async () => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await window.desktank.saving;
+  });
+  await page.reload();
+  await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
+  expect(await page.evaluate(() => window.desktank.tank.creatureCap())).toBe(3);
+  expect(await stock()).toBe(3);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(capInput).toHaveValue("3");
+  await expect(capStock).toHaveText("(3/3)");
+
+  // Defaults resets the cap back to 60.
+  await page.getByRole("button", { name: "Defaults" }).click();
+  expect(await page.evaluate(() => window.desktank.tank.creatureCap())).toBe(60);
+  await expect(capInput).toHaveValue("60");
+  await expect(capStock).toHaveText("(3/60)");
+  expect(errors).toEqual([]);
+});

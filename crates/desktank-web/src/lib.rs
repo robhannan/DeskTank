@@ -41,10 +41,11 @@ use core::time::Duration;
 
 use desktank_render::{BrushPreview, FieldOverlay, Layout, Tank, TankConfig};
 use desktank_sim::tools::{
-    self, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
+    self, AddRefused, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureCard, CreatureId, MaterialTable, Propagule, Script, World, WorldConfig, cheats, save,
+    CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, MAX_CREATURE_CAP, MaterialTable, Propagule,
+    Script, World, WorldConfig, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -124,6 +125,9 @@ pub struct WebTank {
     running: bool,
     /// What inspect found, not yet taken by [`WebTank::take_inspection`].
     inspection: String,
+    /// Why adding a creature was refused, not yet taken by
+    /// [`WebTank::take_refusal`].
+    refusal: String,
     /// When the page should call [`WebTank::frame`] again, on its clock.
     wake_at: Duration,
     /// Canvas size in device pixels.
@@ -456,6 +460,51 @@ impl WebTank {
         count(self.tank.world().creatures().len())
     }
 
+    /// Stocked creatures in the tank (all but live food, counted against
+    /// [`WebTank::creature_cap`]).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = stockCount))]
+    #[must_use]
+    pub fn stock_count(&self) -> u32 {
+        count(self.tank.world().stock_count())
+    }
+
+    /// The population cap: most stocked creatures the tank holds (saved with
+    /// the tank).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = creatureCap))]
+    #[must_use]
+    pub fn creature_cap(&self) -> u32 {
+        count(self.tank.world().creature_cap())
+    }
+
+    /// Sets the population cap, clamped to
+    /// `stock_count().max(1)..=max_creature_cap()`. Marks the tank dirty
+    /// when the cap changes and returns the cap set.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setCreatureCap))]
+    pub fn set_creature_cap(&mut self, cap: u32) -> u32 {
+        let prev = self.tank.world().creature_cap();
+        let set = self.tank.world_mut().set_creature_cap(cap as usize);
+        if set != prev {
+            self.dirty = true;
+        }
+        count(set)
+    }
+
+    /// Largest population cap [`WebTank::set_creature_cap`] allows.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = maxCreatureCap))]
+    #[must_use]
+    pub fn max_creature_cap(&self) -> u32 {
+        let _ = self;
+        count(MAX_CREATURE_CAP)
+    }
+
+    /// Default population cap of a new tank.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = defaultCreatureCap))]
+    #[must_use]
+    pub fn default_creature_cap(&self) -> u32 {
+        let _ = self;
+        count(DEFAULT_CREATURE_CAP)
+    }
+
     /// Index of the selected palette item.
     #[must_use]
     pub fn selected(&self) -> u32 {
@@ -601,6 +650,14 @@ impl WebTank {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
     pub fn take_inspection(&mut self) -> String {
         core::mem::take(&mut self.inspection)
+    }
+
+    /// Why adding a creature was refused since the last call, once:
+    /// `"cap <stock> <cap> <species>"`, `"live_cap <live> <cap> <species>"`,
+    /// `"no_room <species>"`, or `""` if nothing was refused.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeRefusal))]
+    pub fn take_refusal(&mut self) -> String {
+        core::mem::take(&mut self.refusal)
     }
 
     /// Names creature `id` `name` (cleaned as [`desktank_sim::clean_name`]
@@ -927,6 +984,7 @@ impl WebTank {
             groups,
             running: true,
             inspection: String::new(),
+            refusal: String::new(),
             wake_at: Duration::ZERO,
             size: (size.0.max(1), size.1.max(1)),
             frames: 0,
@@ -1050,6 +1108,25 @@ impl WebTank {
             // Creatures aren't cells: their frames follow the sprites.
             Outcome::Caught(_) | Outcome::Dropped(_) | Outcome::Removed(_) | Outcome::Added(_) => {
                 self.dirty = true;
+                0
+            }
+            Outcome::AddRefused { species, reason } => {
+                let world = self.tank.world();
+                let name = world
+                    .species()
+                    .get(species)
+                    .map_or("creature", |s| s.name.as_str());
+                self.refusal = match reason {
+                    AddRefused::PopulationCap {
+                        cap,
+                        live_food: true,
+                    } => format!("live_cap {} {cap} {name}", world.live_food_count()),
+                    AddRefused::PopulationCap {
+                        cap,
+                        live_food: false,
+                    } => format!("cap {} {cap} {name}", world.stock_count()),
+                    AddRefused::NoRoom => format!("no_room {name}"),
+                };
                 0
             }
             Outcome::None => 0,

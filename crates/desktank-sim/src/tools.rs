@@ -26,6 +26,7 @@
 pub use crate::CreatureId;
 use crate::{
     BodyId, Brush, MaterialId, Placeable, PlantId, PlantSpeciesId, Propagule, SpeciesId, World,
+    WorldError,
 };
 
 /// Smallest brush radius in cells (a single cell).
@@ -193,6 +194,22 @@ pub enum Inspection {
     },
 }
 
+/// Why adding a creature with [`Tool::AddCreature`] was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddRefused {
+    /// The tank is already at its population cap (`cap` stocked creatures,
+    /// or [`crate::MAX_LIVE_FOOD`] live foods when `live_food` is true).
+    PopulationCap {
+        /// The limit that was reached.
+        cap: usize,
+        /// Whether the species is live food (capped at [`crate::MAX_LIVE_FOOD`]
+        /// rather than [`World::creature_cap`]).
+        live_food: bool,
+    },
+    /// No free water near the pointer to fit the creature.
+    NoRoom,
+}
+
 /// The result of a pointer event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -212,6 +229,13 @@ pub enum Outcome {
     Removed(CreatureId),
     /// A creature was added.
     Added(CreatureId),
+    /// Adding a creature was refused (tank full or no room there).
+    AddRefused {
+        /// The species the tool tried to add.
+        species: SpeciesId,
+        /// Why it was refused.
+        reason: AddRefused,
+    },
 }
 
 /// A stroke in progress: which button, what it does, where it last was.
@@ -545,10 +569,22 @@ impl Tools {
                 // The device material is in the table: the palette only
                 // offers placeables it has.
                 Tool::Place(p) => Outcome::Painted(world.place(p, cell.0, cell.1).unwrap_or(0)),
-                // No room (solid there) or a full tank adds nothing.
-                Tool::AddCreature(s) => world
-                    .add_palette_creature(s, cell.0, cell.1)
-                    .map_or(Outcome::None, Outcome::Added),
+                // No room (solid/air there) or a full tank reports why.
+                Tool::AddCreature(s) => match world.add_palette_creature(s, cell.0, cell.1) {
+                    Ok(id) => Outcome::Added(id),
+                    Err(WorldError::PopulationCap(cap)) => Outcome::AddRefused {
+                        species: s,
+                        reason: AddRefused::PopulationCap {
+                            cap,
+                            live_food: world.species().get(s).is_some_and(|sp| sp.live_food),
+                        },
+                    },
+                    Err(WorldError::NoRoom) => Outcome::AddRefused {
+                        species: s,
+                        reason: AddRefused::NoRoom,
+                    },
+                    Err(_) => Outcome::None,
+                },
                 _ => Outcome::None,
             },
             Action::Net(Some((id, _))) => {
@@ -1196,5 +1232,92 @@ mod tests {
         assert!(!t.resize(1));
         t.resize(-1000);
         assert_eq!(t.radius(), MIN_RADIUS);
+    }
+
+    #[test]
+    fn add_creature_reports_population_cap_and_no_room() {
+        let mut w = world();
+        let neon = w.species().id("neon_tetra").unwrap();
+        let sand = id(&w, "sand");
+        let mut t = Tools::new(sand);
+        t.select(PaletteItem::Tool(Tool::AddCreature(neon)));
+
+        // Deep inside a solid block there is no open water within PLACE_RADIUS.
+        w.fill_rect(
+            crate::Rect {
+                x0: 0,
+                y0: 55,
+                x1: 128,
+                y1: 96,
+            },
+            sand,
+            Brush::Replace,
+        )
+        .unwrap();
+        assert_eq!(
+            t.press(&mut w, Button::Primary, (64, 80)),
+            Outcome::AddRefused {
+                species: neon,
+                reason: AddRefused::NoRoom,
+            }
+        );
+        t.release(&mut w, Button::Primary);
+
+        // Filling the tank to its cap reports PopulationCap (not live food).
+        assert_eq!(w.set_creature_cap(2), 2);
+        for x in [40, 80] {
+            assert!(matches!(
+                t.press(&mut w, Button::Primary, (x, 40)),
+                Outcome::Added(_)
+            ));
+            t.release(&mut w, Button::Primary);
+        }
+        assert_eq!(
+            t.press(&mut w, Button::Primary, (60, 40)),
+            Outcome::AddRefused {
+                species: neon,
+                reason: AddRefused::PopulationCap {
+                    cap: 2,
+                    live_food: false,
+                },
+            }
+        );
+        t.release(&mut w, Button::Primary);
+
+        // Raising the cap lets another creature be added immediately.
+        assert_eq!(w.set_creature_cap(3), 3);
+        assert!(matches!(
+            t.press(&mut w, Button::Primary, (60, 40)),
+            Outcome::Added(_)
+        ));
+        t.release(&mut w, Button::Primary);
+    }
+
+    #[test]
+    fn add_live_food_reports_live_food_cap() {
+        let mut w = world();
+        let worm = w.species().id("live_bloodworm").unwrap();
+        let mut t = Tools::new(id(&w, "sand"));
+        t.select(PaletteItem::Tool(Tool::AddCreature(worm)));
+
+        // Pinches add up to MAX_LIVE_FOOD, then refuse with live_food: true.
+        while w.live_food_count() < crate::MAX_LIVE_FOOD {
+            assert!(matches!(
+                t.press(&mut w, Button::Primary, (64, 40)),
+                Outcome::Added(_)
+            ));
+            t.release(&mut w, Button::Primary);
+        }
+        assert_eq!(
+            t.press(&mut w, Button::Primary, (64, 40)),
+            Outcome::AddRefused {
+                species: worm,
+                reason: AddRefused::PopulationCap {
+                    cap: crate::MAX_LIVE_FOOD,
+                    live_food: true,
+                },
+            }
+        );
+        t.release(&mut w, Button::Primary);
     }
 }
