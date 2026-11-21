@@ -1774,7 +1774,7 @@ impl World {
     /// Whether a `w × h`-cell box centred at `(x, y)` (fixed point) lies
     /// inside the grid on cells it may overlap: swimmable ones, plant
     /// cells further than [`BAND_REACH`] from `band` (`None`: none) and,
-    /// if `soft`, a floater's hanging roots in any band.
+    /// if `soft` and in a band, a floater's hanging roots in any band.
     fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>, soft: bool) -> bool {
         let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
@@ -2057,5 +2057,42 @@ mod tests {
         c.ignore = Some(near);
         let next = w.nearest_food(&k, &c).unwrap();
         assert!(xy(next).0 > 40, "the far flake next: {:?}", xy(next));
+    }
+
+    #[test]
+    fn only_crawlers_hold_a_floaters_roots() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 60,
+                height: 40,
+                seed: 2,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let duckweed = w.plant_species().id("duckweed").unwrap();
+        let top = i64::try_from(w.surface_row()).unwrap();
+        w.paint_plant(30, top + 2, 0, duckweed, crate::Propagule::Buds)
+            .unwrap();
+        for _ in 0..3000 {
+            w.tick();
+        }
+        let root = w.materials().id("root").unwrap();
+        let i = (0..w.cells.len())
+            .find(|&i| w.cells[i].material == root)
+            .expect("the duckweed hangs a root");
+        let band = w.plant_band_at(i).unwrap();
+        let (x, y) = (to_i64(i % w.width), to_i64(i / w.width));
+        // One-cell bodies, so only the root cell is tested.
+        let body = |name: &str| {
+            let mut kind = *w.kind(w.species().id(name).unwrap()).unwrap();
+            (kind.w, kind.h) = (1, 1);
+            kind
+        };
+        let (guppy, snail) = (body("guppy"), body("ramshorn_snail"));
+        assert!(w.fits(&guppy, 0, centre_of(x), centre_of(y), band));
+        assert!(!w.fits(&snail, 0, centre_of(x), centre_of(y), band));
+        assert!(w.blocks(i, Some(band)), "a crawler holds it");
     }
 }
