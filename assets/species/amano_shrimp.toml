@@ -57,7 +57,7 @@ frames = [
         "........dd..dd....a.",
     ],
     [
-        ".....hhhhpphhh..t.a.",
+        ".....hhhhpphhh..t.aa",
         ".hhhhggggggggkht.a..",
         "tttgdgdgdgdgdgta....",
         "t...tggggggggt...a..",
@@ -65,7 +65,7 @@ frames = [
         ".......d..dd..d....a",
     ],
     [
-        ".....hhhhpphhh..t.a.",
+        ".....hhhhpphhh..t.aa",
         ".hhhhggggggggkht.a..",
         "tttgdgdgdgdgdgta....",
         "t...tggggggggt...a..",
