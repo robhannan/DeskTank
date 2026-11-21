@@ -17,6 +17,8 @@ maturity_days = 75
 temperament = "peaceful"
 speed = 2.0
 max_speed = 6.0
+# Would rather stay on the bottom, but lifts off for a short swim now and then.
+swim_every = 30.0
 # Seconds between hops: it pushes off and drifts back down a few cells away.
 hop_every = 6.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "flake_food"]

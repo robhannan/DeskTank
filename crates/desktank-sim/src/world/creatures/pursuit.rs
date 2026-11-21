@@ -113,6 +113,7 @@ pub(super) struct Near {
     adult: bool,
     /// A surface or mid-water species (one a territory is kept against).
     swimmer: bool,
+    /// Held in the net or burrowed in the bed: no one chases it.
     held: bool,
     /// Live food (see [`super::live`]).
     live: bool,
@@ -155,7 +156,8 @@ impl World {
                     female: c.female,
                     adult: c.growth >= k.maturity,
                     swimmer: matches!(k.zone, Zone::Surface | Zone::Mid),
-                    held: c.held_until >= self.tick,
+                    // In the net, or burrowed in the bed: out of reach.
+                    held: c.held_until >= self.tick || self.sunk_depth(c) > 0,
                     live: k.live,
                 });
             }

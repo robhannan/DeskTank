@@ -2,11 +2,11 @@
 
 use rand_pcg::Pcg32;
 
-use super::quirks::{Quirks, salt};
+use super::quirks::Quirks;
 
 use super::{
-    BETWEEN_BREATHS, Creature, FEET, Kind, ONE, REACHED, SKIM, World, Zone, body, centre_of, dist,
-    extent, school, to_i64, zone,
+    Creature, FEET, Kind, ONE, REACHED, World, Zone, body, centre_of, dist, extent, school, to_i64,
+    zone,
 };
 
 impl World {
@@ -19,6 +19,8 @@ impl World {
         if !(self.tick + u64::from(c.id.0)).is_multiple_of(interval) {
             return;
         }
+        // Landed from a swim: back onto whole cells, heading along a face.
+        self.settle(k, c);
         let (turn, band) = (c.turn, c.band());
         let free = |dx, dy| self.fits(k, turn, c.x + dx * ONE, c.y + dy * ONE, band);
         let face = self.support_face(k, turn, c.x, c.y, band);
@@ -146,7 +148,6 @@ impl World {
         }
 
         if k.breathes_air
-            && self.surface_row > 0
             && let Some(target) = self.air_target(k, c)
         {
             return target;
@@ -174,42 +175,6 @@ impl World {
             if k.zone == Zone::Bottom { c.y } else { c.ty },
             k.cruise,
         )
-    }
-
-    fn air_target(&self, k: &Kind, c: &mut Creature) -> Option<(i32, i32, i32)> {
-        // Its own rhythm: 80–125% of the time between breaths, and a skim
-        // of 2–4 s.
-        let q = self.quirks(c);
-        let between = q.scale(salt::BREATH, 80, 125, BETWEEN_BREATHS);
-        let skim = q.scale(salt::SKIM, 67, 133, SKIM);
-        if self.tick >= c.next_breath {
-            let b = self.creature_body(c);
-            if b.y0 > 0
-                && (b.x0..b.x1)
-                    .any(|x| self.cells[(b.y0 - 1) * self.width + x].material == self.creatures.air)
-            {
-                c.next_breath = self.tick + between;
-            } else {
-                // Rise vertically, moving sideways under ledges until
-                // there is open water overhead.
-                let tx = if self.fits(k, c.turn, c.x, c.y - ONE, c.band()) {
-                    c.x
-                } else {
-                    c.tx
-                };
-                return Some((tx, c.y - 8 * ONE, k.top));
-            }
-        }
-        // A skim is optional: a chase (an intruder to drive off, prey)
-        // breaks it off.
-        if c.quarry.is_none() && c.next_breath.saturating_sub(self.tick) > between - skim {
-            // Skim the interface for floating food before diving again.
-            let tx = c
-                .food
-                .map_or(c.tx, |i| centre_of(to_i64(i as usize % self.width)));
-            return Some((tx, c.y - ONE, k.top));
-        }
-        None
     }
 
     /// The first free schoolmate wanders; the others swim loosely around

@@ -51,10 +51,18 @@ pub const MAX_SPEED: f32 = 16.0;
 pub const MAX_REACH: u8 = 4;
 /// Longest lifespan a species may give, in real days (20 years).
 pub const MAX_LIFESPAN_DAYS: u32 = 7300;
+/// The range of [`Species::air_tolerance_seconds`]: half a minute to two
+/// hours.
+const AIR_TOLERANCE_SECONDS: std::ops::RangeInclusive<u32> = 30..=7200;
 /// Most colour morphs a species may have (SPEC §2.4, D13).
 pub const MAX_MORPHS: usize = 8;
 /// Most young in one brood or clutch.
 pub const MAX_BROOD: u8 = 16;
+/// Shortest `swim_every` a species may give, in seconds (over twice a
+/// swim, so a bottom dweller spends most of its time on the bottom).
+pub const MIN_SWIM_EVERY: f32 = 10.0;
+/// Shortest `burrow_every` a species may give, in seconds (twice a burrow).
+pub const MIN_BURROW_EVERY: f32 = 32.0;
 
 /// The part of the tank a species lives in (SPEC §2.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -196,6 +204,12 @@ pub struct Species {
     pub min_depth: usize,
     /// Whether it needs to reach air at the surface to breathe.
     pub breathes_air: bool,
+    /// For an air-breather, world seconds it lasts once a breath is due
+    /// and it can't reach air (0 for the rest): it builds up stress
+    /// towards [`crate::STRESS_LIMIT`] over this time and dies of
+    /// suffocation at the end. Short for obligate air-breathers (frogs),
+    /// long for labyrinth fish, whose gills still take some oxygen.
+    pub air_tolerance_seconds: u32,
     /// Temperament.
     pub temperament: Temperament,
     /// Cruising speed, cells per second.
@@ -215,6 +229,14 @@ pub struct Species {
     /// Seconds between a bottom walker's hops off the substrate (shrimp),
     /// or `None` if it never hops.
     pub hop_every: Option<f32>,
+    /// Seconds between a bottom dweller's chances to swim (`None`: it can't
+    /// swim, like a snail). A bottom walker or surface crawler that can
+    /// swim but would rather not (shrimp, plecos, loaches) lifts off at
+    /// one chance in two, swims a short way and settles again.
+    pub swim_every: Option<f32>,
+    /// Seconds between a bottom walker's chances to burrow into loose
+    /// substrate (`None`: it never burrows; the kuhli loach does).
+    pub burrow_every: Option<f32>,
     /// Real-world lifespan in days (1..=[`MAX_LIFESPAN_DAYS`]), on the life
     /// clock (SPEC §2.4, T9: a day per `LIFE_DAY_SECONDS` of world time).
     /// Each creature's own lifespan is within ±10% of it.
@@ -385,6 +407,8 @@ struct SpeciesDef {
     min_depth: usize,
     #[serde(default)]
     breathes_air: bool,
+    #[serde(default)]
+    air_tolerance_seconds: Option<u32>,
     temperament: Temperament,
     speed: f32,
     max_speed: f32,
@@ -394,6 +418,10 @@ struct SpeciesDef {
     reach: u8,
     #[serde(default)]
     hop_every: Option<f32>,
+    #[serde(default)]
+    swim_every: Option<f32>,
+    #[serde(default)]
+    burrow_every: Option<f32>,
     lifespan_days: u32,
     maturity_days: u32,
     #[serde(default)]
@@ -656,6 +684,24 @@ fn validate(
             return Err(invalid("hop_every must be 1..=600 seconds"));
         }
     }
+    if let Some(every) = d.swim_every {
+        if !matches!(d.zone, Zone::Bottom | Zone::Surfaces) {
+            return Err(invalid(
+                "only bottom walkers and surface crawlers swim now and then",
+            ));
+        }
+        if !(every.is_finite() && (MIN_SWIM_EVERY..=600.0).contains(&every)) {
+            return Err(invalid("swim_every must be 10..=600 seconds"));
+        }
+    }
+    if let Some(every) = d.burrow_every {
+        if d.zone != Zone::Bottom {
+            return Err(invalid("only bottom walkers burrow"));
+        }
+        if !(every.is_finite() && (MIN_BURROW_EVERY..=600.0).contains(&every)) {
+            return Err(invalid("burrow_every must be 32..=600 seconds"));
+        }
+    }
     if !(1..=MAX_LIFESPAN_DAYS).contains(&d.lifespan_days)
         || d.maturity_days == 0
         || d.maturity_days >= d.lifespan_days
@@ -668,6 +714,15 @@ fn validate(
         && !(every.is_finite() && (1.0..=600.0).contains(&every))
     {
         return Err(invalid("waste_every must be 1..=600 seconds"));
+    }
+    match (d.breathes_air, d.air_tolerance_seconds) {
+        (true, Some(t)) if AIR_TOLERANCE_SECONDS.contains(&t) => {}
+        (false, None) => {}
+        _ => {
+            return Err(invalid(
+                "an air-breather needs air_tolerance_seconds (30..=7200), and only an air-breather",
+            ));
+        }
     }
     if d.home_carpet.is_some() && d.zone != Zone::Bottom {
         return Err(invalid("only bottom walkers keep a home"));
@@ -757,6 +812,7 @@ fn validate(
         bands: d.bands,
         min_depth: d.min_depth,
         breathes_air: d.breathes_air,
+        air_tolerance_seconds: d.air_tolerance_seconds.unwrap_or(0),
         temperament: d.temperament,
         speed: d.speed,
         max_speed: d.max_speed,
@@ -764,6 +820,8 @@ fn validate(
         length_cm: d.length_cm,
         reach: d.reach,
         hop_every: d.hop_every,
+        swim_every: d.swim_every,
+        burrow_every: d.burrow_every,
         lifespan_days: d.lifespan_days,
         maturity_days: d.maturity_days,
         waste_every: d.waste_every,
@@ -1119,6 +1177,8 @@ mod tests {
         assert!(worm.live_food && !worm.stocked() && !worm.cheat_only);
         assert_eq!(worm.food_as, m.id("bloodworm"));
         assert!(worm.breeding.is_none() && worm.diet.is_empty());
+        // Live food lives on the bed: it never rises for air or suffocates.
+        assert!(!worm.breathes_air && worm.air_tolerance_seconds == 0);
         assert_eq!(worm.zone, Zone::Bottom);
         assert!((1.0..=2.0).contains(&worm.length_cm));
         assert_eq!(t.iter().filter(|s| s.live_food).count(), 1);
@@ -1151,6 +1211,12 @@ mod tests {
         assert!(gourami.breathes_air);
         assert_eq!(gourami.zone, Zone::Surface);
         assert!(gourami.speed < betta.speed && gourami.depth[1] > betta.depth[1]);
+        // Frogs need air far sooner than the labyrinth fish.
+        for frog in ["african_dwarf_frog", "common_frog"] {
+            let frog = t.get(t.id(frog).unwrap()).unwrap();
+            assert!(frog.air_tolerance_seconds * 4 <= gourami.air_tolerance_seconds);
+            assert!(frog.air_tolerance_seconds * 4 <= betta.air_tolerance_seconds);
+        }
         let guppy = t.get(t.id("guppy").unwrap()).unwrap();
         assert_ne!(guppy.temperament, Temperament::Schooling);
         let rasbora = t.get(t.id("harlequin_rasbora").unwrap()).unwrap();
@@ -1523,6 +1589,38 @@ mod tests {
     }
 
     #[test]
+    fn only_an_air_breather_has_an_air_tolerance() {
+        let m = materials();
+        let with = |extra: &str| {
+            SpeciesTable::from_toml_sources(
+                &[&OK.replace("diet = [", &format!("{extra}\ndiet = ["))],
+                &m,
+            )
+        };
+        let frog = with("breathes_air = true\nair_tolerance_seconds = 180").unwrap();
+        assert_eq!(frog.get(SpeciesId(9)).unwrap().air_tolerance_seconds, 180);
+        assert_eq!(
+            with("")
+                .unwrap()
+                .get(SpeciesId(9))
+                .unwrap()
+                .air_tolerance_seconds,
+            0
+        );
+        for bad in [
+            "breathes_air = true",
+            "breathes_air = true\nair_tolerance_seconds = 10",
+            "breathes_air = true\nair_tolerance_seconds = 9000",
+            "air_tolerance_seconds = 180",
+        ] {
+            assert!(
+                matches!(with(bad), Err(SpeciesError::Invalid { .. })),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn a_territory_is_only_for_a_territorial_species() {
         let m = materials();
         // 2–50 cm across.
@@ -1773,6 +1871,49 @@ mod tests {
         // Every built-in species uses every band.
         for s in SpeciesTable::builtin_for(&m).unwrap().iter() {
             assert_eq!(s.bands, [0, DEPTH_BANDS - 1], "{}", s.name);
+        }
+    }
+
+    #[test]
+    fn rejects_bad_swims_and_burrows() {
+        let m = materials();
+        let bad = |from: &str, to: &str| {
+            let src = OK.replace(from, to);
+            assert_ne!(src, OK, "{from:?} not in the template");
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        let walker = |extra: &str| {
+            let src = OK
+                .replace("zone = \"mid\"", "zone = \"bottom\"")
+                .replace("min_depth = 10", &format!("min_depth = 10\n{extra}"));
+            SpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        // Only bottom dwellers swim now and then, every 10..=600 s, and only
+        // walkers burrow, every 32..=600 s.
+        assert!(matches!(
+            bad("min_depth = 10", "min_depth = 10\nswim_every = 20.0"),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        assert!(walker("swim_every = 20.0\nburrow_every = 40.0").is_ok());
+        let crawler = OK
+            .replace("zone = \"mid\"", "zone = \"surfaces\"")
+            .replace("min_depth = 10", "min_depth = 10\nswim_every = 20.0");
+        assert!(SpeciesTable::from_toml_sources(&[&crawler], &m).is_ok());
+        assert!(matches!(
+            SpeciesTable::from_toml_sources(&[&crawler.replace("swim_every", "burrow_every")], &m),
+            Err(SpeciesError::Invalid { .. })
+        ));
+        for extra in [
+            "swim_every = 9.0",
+            "swim_every = 601.0",
+            "swim_every = nan",
+            "burrow_every = 31.0",
+            "burrow_every = inf",
+        ] {
+            assert!(
+                matches!(walker(extra), Err(SpeciesError::Invalid { .. })),
+                "{extra}"
+            );
         }
     }
 
