@@ -200,7 +200,9 @@ impl World {
                 return Some((tx, c.y - 8 * ONE, k.top));
             }
         }
-        if c.next_breath.saturating_sub(self.tick) > between - skim {
+        // A skim is optional: a chase (an intruder to drive off, prey)
+        // breaks it off.
+        if c.quarry.is_none() && c.next_breath.saturating_sub(self.tick) > between - skim {
             // Skim the interface for floating food before diving again.
             let tx = c
                 .food

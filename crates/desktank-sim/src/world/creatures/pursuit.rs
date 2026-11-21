@@ -338,9 +338,11 @@ impl World {
             return;
         }
         let length = self.length_mm(c);
-        // And lets a hunter closer: 80–100% of the range.
+        // And lets a hunter closer: 80–100% of the range. A fish chasing it
+        // off its territory it notices at the full range.
         let bold = i64::try_from(self.quirks(c).percent(salt::BOLD, 60, 100)).unwrap_or(100);
-        let sense = i64::from(FLEE_SENSE * ONE) * (50 + bold / 2) / 100;
+        let full = i64::from(FLEE_SENSE * ONE);
+        let bold_sense = full * (50 + bold / 2) / 100;
         let mut threat: Option<(i64, i32, i32, bool)> = None;
         for n in &self.creatures.near {
             let hunter = n.hunts_mm >= length && n.hunts_mm > 0;
@@ -349,6 +351,7 @@ impl World {
                 continue;
             }
             let d = dist(n.x - c.x, n.y - c.y);
+            let sense = if chaser { full } else { bold_sense };
             if d <= sense && threat.is_none_or(|(td, ..)| d < td) {
                 threat = Some((d, n.x, n.y, hunter));
             }
