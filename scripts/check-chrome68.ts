@@ -40,7 +40,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // A small DevTools protocol client: commands, and console lines collected.
 class Cdp {
   private id = 0;
-  private pending = new Map<number, (m: { result?: unknown; error?: { message: string } }) => void>();
+  readonly pending = new Map<number, (m: { result?: unknown; error?: { message: string } }) => void>();
   readonly log: string[] = [];
   private ws: WebSocket;
   private constructor(ws: WebSocket) {
@@ -60,15 +60,22 @@ class Cdp {
       ws.addEventListener("error", reject);
     });
     const cdp = new Cdp(ws);
+    ws.addEventListener("close", () => {
+      for (const reply of [...cdp.pending.values()]) reply({ error: { message: "the browser closed the connection" } });
+    });
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
     return cdp;
   }
+  // A command's result; fails after 60 s or if the browser goes away, so a
+  // crashed browser can't hang the check.
   send(method: string, params: object = {}): Promise<Record<string, unknown>> {
     const id = ++this.id;
     this.ws.send(JSON.stringify({ id, method, params }));
     return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => this.pending.get(id)?.({ error: { message: "no reply in 60 s" } }), 60_000);
       this.pending.set(id, (m) => {
+        clearTimeout(timer);
         this.pending.delete(id);
         if (m.error) reject(new Error(`${method}: ${m.error.message}`));
         else resolve(m.result as Record<string, unknown>);
@@ -173,8 +180,20 @@ try {
     }
   }
   if (!target) throw new Error("Chromium 68 didn't open its DevTools port");
+  for (let i = 0; ; i++) {
+    try {
+      if ((await fetch(`http://127.0.0.1:${PORT}/webos/`)).ok) break;
+    } catch {
+      // Not listening yet.
+    }
+    if (i > 60) throw new Error("the web server didn't start (is target/site-webos/ built?)");
+    await sleep(250);
+  }
   const cdp = await Cdp.connect(target);
-  console.log(`browser: ${await cdp.eval<string>("navigator.userAgent")}`);
+  // The fixed port could be another browser's: make sure it is ours.
+  const agent = await cdp.eval<string>("navigator.userAgent");
+  console.log(`browser: ${agent}`);
+  if (!/Chrome\/68\./.test(agent)) throw new Error("the DevTools port isn't Chromium 68's");
 
   // 1. The webOS build starts and draws with the split grid, no GPU error.
   await openPage(cdp, "?debug=1");

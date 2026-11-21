@@ -364,6 +364,8 @@ async function attachGraphics(): Promise<boolean> {
     const losses = lossCount;
     const g = await Graphics.open(canvas, backend || wantBackend, splitGrid, srgbCanvas);
     if (losses === lossCount && !contextLost) {
+      // New graphics report their own errors.
+      gpuErrorShown = false;
       backend = g.backend();
       adapter = g.adapterName();
       tank.attach(g);

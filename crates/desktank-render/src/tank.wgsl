@@ -1651,7 +1651,8 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
     return vec2<i32>(select(0, 1, covered), step);
 }
 
-// leaf_cover for stems, runners, rhizomes and roots.
+// Whether a stem's, runner's, rhizome's or root's texel is covered (x: 1
+// or 0) and its ramp shade before clamping (y), as leaf_cover.
 fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
     let sub = quarter / 2;
     let species = i32(round(plant.a * 255.0));

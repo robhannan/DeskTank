@@ -194,16 +194,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/chrome68
-          key: chromium-linux-561732
+          key: chromium-linux-561732-6933d0af
 
       - name: Chromium 68 check (webOS build)
+        timeout-minutes: 15
         env:
           CHROMIUM_ZIP: https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/561732/chrome-linux.zip
           CHROMIUM_SHA256: 6933d0afce6e17304b62029fbbd246cbe9e130eb0d90d7682d3765d3dbc8e1c8
         run: |
           if [ ! -x target/chrome68/chrome-linux/chrome ]; then
             mkdir -p target/chrome68
-            curl -sSfL --retry 3 -o target/chrome68/chrome-linux.zip "$CHROMIUM_ZIP"
+            curl -sSfL --retry 3 --max-time 600 -o target/chrome68/chrome-linux.zip "$CHROMIUM_ZIP"
             echo "$CHROMIUM_SHA256  target/chrome68/chrome-linux.zip" | sha256sum -c -
             unzip -q target/chrome68/chrome-linux.zip -d target/chrome68
             rm target/chrome68/chrome-linux.zip
