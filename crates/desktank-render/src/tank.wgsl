@@ -2304,7 +2304,7 @@ fn fs_lens_frame(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if dist < r {
         let rel = floor(pos.xy) - view.lens.xy;
         let dc = abs(rel);
-        let gap = max(3.0, floor(view.scale * 0.5) + 2.0);
+        let gap = min(max(3.0, view.lens.z - 5.0), max(3.0, floor(view.scale * 0.5) + 2.0));
         let tick = gap + 4.0;
         let on_x = dc.y < 0.5 && dc.x >= gap && dc.x < tick;
         let on_y = dc.x < 0.5 && dc.y >= gap && dc.y < tick;

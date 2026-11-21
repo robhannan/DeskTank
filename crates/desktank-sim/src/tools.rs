@@ -726,8 +726,9 @@ impl Tools {
 
     /// `button` was released. Ends the stroke it started. A netted creature
     /// is let go where it is, or lifted out of the tank if the pointer is
-    /// above the water or outside the grid. A click (without moving) with
-    /// [`Tool::Magnify`] cycles the magnification level.
+    /// above the water or outside the grid. A click (without crossing into
+    /// another simulation cell) with [`Tool::Magnify`] cycles the
+    /// magnification level.
     pub fn release(&mut self, world: &mut World, button: Button) -> Outcome {
         let Some(stroke) = self.stroke.filter(|s| s.button == button) else {
             return Outcome::None;
