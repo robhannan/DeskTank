@@ -665,12 +665,13 @@ fn a_version_9_fixture_loads() {
     };
     assert!(w.creatures().iter().any(|c| c.quarry().is_some()));
     assert!(w.creatures().iter().any(|c| c.fear() > 0));
-    // Version 10 migrates its rigid cells whole: the tank that wrote it
-    // has round outlines on its poured stones, which change no physics,
-    // so it hunts on exactly as that tank does.
-    let mut fresh = hunting();
-    assert_eq!(pursuit(&w), pursuit(&fresh));
+    // Version 10 migrates its rigid cells whole (round outlines change no
+    // physics). The tank that wrote it no longer plays out the same since
+    // bottom dwellers swim and burrow, so the migrated tank is checked
+    // against itself re-saved in the current version: it hunts on the same.
     assert!((0..w.width() * w.height()).all(|i| w.rigid_mask(i).is_none_or(|m| m == FULL_MASK)));
+    let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(pursuit(&w), pursuit(&fresh));
     for _ in 0..400 {
         w.tick();
         fresh.tick();

@@ -16,6 +16,8 @@ maturity_days = 300
 temperament = "peaceful"
 speed = 3.0
 max_speed = 3.0
+# Would rather stay on the bottom, but lifts off for a short swim now and then.
+swim_every = 30.0
 diet = ["algae", "detritus", "algae_wafer"]
 
 # Rarely spawns in a tank; eggs on leaves hatch in 2–3 days.
