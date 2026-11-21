@@ -59,86 +59,89 @@ colours = { r = "#e0b020", h = "#f4d660", d = "#a87a10", a = "#f0d070", l = "#c4
 # Facing right; two texels per cell side. The body is 10 texels (5 cells,
 # 2.5 cm at two cells per cm) from tail fan to rostrum, with the antennae
 # reaching 2 texels past it: a 6x2-cell sprite. Traced from a side-on
-# photo: a humped carapace, tallest just behind the stalked eye, with a
-# short rostrum; a segmented abdomen tapering to a flared tail fan; legs
-# under the carapace and swimmerets under the abdomen. Outlined in a dark
-# shade of the body, never black. Four frames: the legs step while the
-# tail fan and antennae flick.
+# photo: a comma that tapers front to back. The carapace domes up steeply
+# behind the eye to its highest point over its rear; the abdomen's back
+# steps down a segment at a time to a narrow tail stalk and a flared,
+# upturned tail fan; the underside is nearly straight, with walking legs
+# under the carapace and swimmerets under the abdomen; the head is lower
+# than the hump, with a short pointed rostrum at eye level. Outlined in a
+# dark shade of the body, never black. Four frames: the legs step while
+# the tail fan and antennae flick.
 colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430", w = "#ffd6cc", m = "#7a121c", s = "#e34a44" }
 frames = [
     [
-        "d...rhhhd.aa",
-        "dlrhrsrrrkd.",
-        "d.drrrlrrd.a",
-        ".....l.l.l..",
+        "d..rrrhhd.aa",
+        "ddrrrrsrkda.",
+        "..drrrrld..a",
+        "....l.l.l...",
     ],
     [
-        "d...rhhhd.aa",
-        "dlrhrsrrrkd.",
-        "d.drrrlrrd.a",
-        "....l.l.l.l.",
+        "d..rrrhhd.aa",
+        "ddrrrrsrkda.",
+        "..drrrrld..a",
+        ".....l.ll...",
     ],
     [
-        "....rhhhd.a.",
-        "dlrhrsrrrkda",
-        "d.drrrlrrd.a",
-        "d....l.l.l..",
+        "...rrrhhd.a.",
+        "ddrrrrsrkdaa",
+        "d.drrrrld...",
+        "....l.l.l...",
     ],
     [
-        "....rhhhd.a.",
-        "dlrhrsrrrkda",
-        "d.drrrlrrd.a",
-        "d...l.l.l.l.",
+        "...rrrhhd.a.",
+        "ddrrrrsrkdaa",
+        "d.drrrrld...",
+        ".....l.ll...",
     ],
 ]
 # The palette icon, at one pixel per cell.
 icon = [
-    "..rhra",
-    "drrrka",
-    ".l.l..",
+    "...rhhd.",
+    "ddrrrrka",
+    "..drrld.",
 ]
 
 # The same four poses at four texels per cell side (24x8), used at
 # display scales divisible by four.
 fine_frames = [
     [
-        "...........dddd........a",
-        "d.......ddhhhhhdd.....a.",
-        "dd.dddddhshssssrrrk..a..",
-        "dldhshlrlrlrsrrrrrrdd...",
-        "dd.dddrlrlrlrlrlrrrd.aa.",
-        "d....l.ddddddddddddl...a",
-        "..........l.l..l.l.l....",
-        ".........l..l.l..l..l...",
+        "............ddddd.....aa",
+        "dd....ddddddhhhhhd..aa..",
+        "shddddhhshshhsssskdd....",
+        "ddddrlrrrrrrrrrrrrd.aa..",
+        "....ddddllllllllld....aa",
+        ".......lddddddddd.......",
+        ".........ll.l.l.l.......",
+        "...........l.l.l.l......",
     ],
     [
-        "...........dddd........a",
-        "d.......ddhhhhhdd.....a.",
-        "dd.dddddhshssssrrrk..a..",
-        "dldhshlrlrlrsrrrrrrdd...",
-        "dd.dddrlrlrlrlrlrrrd.aa.",
-        "d....l.ddddddddddddl...a",
-        "..........l.l..l.l.l....",
-        "..........l..l.l..l.l...",
+        "............ddddd.....aa",
+        "dd....ddddddhhhhhd..aa..",
+        "shddddhhshshhsssskdd....",
+        "ddddrlrrrrrrrrrrrrd.aa..",
+        "....ddddllllllllld....aa",
+        "......l.ddddddddd.......",
+        "........ll..l.l.ll......",
+        "............l.l.l.......",
     ],
     [
-        "........................",
-        "........ddhhhhhdd.....aa",
-        "dd.dddddhshssssrrrk..a..",
-        "dldhshlrlrlrsrrrrrrdd...",
-        "dd.dddrlrlrlrlrlrrrd.aa.",
-        "d....l.ddddddddddddl...a",
-        "d.........l.l..l.l.l....",
-        ".........l..l.l..l..l...",
+        "............ddddd....aa.",
+        "......ddddddhhhhhd..a...",
+        "ddddddhhshshhsssskdd....",
+        "shddrlrrrrrrrrrrrrd.a...",
+        "dd..ddddllllllllld...aa.",
+        ".......lddddddddd......a",
+        ".........ll.l.l.l.......",
+        "...........l.l.l.l......",
     ],
     [
-        "........................",
-        "........ddhhhhhdd.....aa",
-        "dd.dddddhshssssrrrk..a..",
-        "dldhshlrlrlrsrrrrrrdd...",
-        "dd.dddrlrlrlrlrlrrrd.aa.",
-        "d....l.ddddddddddddl...a",
-        "d.........l.l..l.l.l....",
-        "..........l..l.l..l.l...",
+        "............ddddd....aa.",
+        "......ddddddhhhhhd..a...",
+        "ddddddhhshshhsssskdd....",
+        "shddrlrrrrrrrrrrrrd.a...",
+        "dd..ddddllllllllld...aa.",
+        "......l.ddddddddd......a",
+        "........ll..l.l.ll......",
+        "............l.l.l.......",
     ],
 ]
