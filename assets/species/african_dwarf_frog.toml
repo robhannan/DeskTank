@@ -11,8 +11,8 @@ speed = 3.5
 max_speed = 12.0
 diet = ["bloodworm", "sinking_pellet"]
 breathes_air = true
-# World seconds it lasts without air once a breath is due (it then dies of
-# suffocation). An obligate air-breather: Hymenochirus has lungs and only
+# World seconds it lasts without air past a breath it misses (after a
+# 45-second grace for the trip up, it then dies of suffocation). An obligate air-breather: Hymenochirus has lungs and only
 # a little skin breathing, surfaces every few minutes and drowns when kept
 # from the surface, so it goes quickly here, on the sim's 20-second breath
 # rhythm: two minutes, about six missed breaths.

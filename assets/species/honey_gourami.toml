@@ -18,8 +18,8 @@ maturity_days = 150
 # touches (T9 part 2).
 prey_cm = 1.2
 breathes_air = true
-# World seconds it lasts without air once a breath is due (it then dies of
-# suffocation). A labyrinth fish like the betta: its gills cover part of
+# World seconds it lasts without air past a breath it misses (after a
+# 45-second grace for the trip up, it then dies of suffocation). A labyrinth fish like the betta: its gills cover part of
 # its needs, so it fades slowly without air. Fifteen minutes here.
 air_tolerance_seconds = 900
 temperament = "peaceful"

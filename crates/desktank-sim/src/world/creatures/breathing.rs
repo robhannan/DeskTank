@@ -34,12 +34,15 @@ const BETWEEN_BREATHS: u64 = 20 * TICKS_PER_SECOND as u64;
 const SKIM: u64 = 3 * TICKS_PER_SECOND as u64;
 /// Ticks of each [`RETRY`] cycle, from the breath falling due, that it
 /// spends looking for air.
-const SEEK: u64 = 45 * TICKS_PER_SECOND as u64;
+const SEEK: u64 = 60 * TICKS_PER_SECOND as u64;
 /// Ticks between the starts of searches while a breath is overdue.
 const RETRY: u64 = 90 * TICKS_PER_SECOND as u64;
 /// Ticks a breath may be overdue before it suffocates: long enough to
 /// rise through the tallest water column.
-const GRACE: u64 = SEEK;
+const GRACE: u64 = 45 * TICKS_PER_SECOND as u64;
+/// Most gaps it weighs per tick, nearest first, when none near it has a
+/// clear shaft: bounds the cost under a mat broken into many small gaps.
+const MAX_GAPS: usize = 8;
 /// Rows of open water a gap needs straight below it to be swum up into
 /// from below whatever hangs from the surface around it (roots).
 const SHAFT: i32 = 20;
@@ -177,7 +180,11 @@ impl World {
     fn gap_target(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, i32)> {
         let (half_w, half_h) = (k.w * ONE / 2, k.h * ONE / 2);
         let spot = |g: &Gap| {
+            // Half a cell in from each edge where the gap allows, so a
+            // body easing to a stop on arrival still lies wholly inside.
             let (lo, hi) = (cell_fixed(g.x0) + half_w, cell_fixed(g.x1) - half_w);
+            let margin = ((hi - lo) / 2).clamp(0, ONE / 2);
+            let (lo, hi) = (lo + margin, hi - margin);
             // A gap narrower than the body: its middle.
             let x = if lo <= hi {
                 c.x.clamp(lo, hi)
@@ -222,7 +229,12 @@ impl World {
         let mut left = gaps[..split].iter().rev().map(spot).peekable();
         let mut right = gaps[split..].iter().map(spot).peekable();
         let (mut fitting, mut nearest) = (None, None);
+        let mut weighed = 0;
         let direct = loop {
+            if weighed == MAX_GAPS {
+                break fitting.or(nearest)?;
+            }
+            weighed += 1;
             let next = match (left.peek(), right.peek()) {
                 (Some(l), Some(r)) if far(l) <= far(r) => left.next(),
                 (Some(_) | None, Some(_)) => right.next(),
@@ -231,16 +243,12 @@ impl World {
             }?;
             if shaft(next) {
                 let (x, y) = next;
-                let dx = (x - c.x).abs();
-                if dx < ONE {
-                    return Some(self.rise(k, c));
-                }
                 // Across to the shaft, below it while not yet under it
-                // (clear of hanging roots), then up it.
-                let depth = if dx > half_w {
+                // (clear of hanging roots), then up it to the spot.
+                let depth = if (x - c.x).abs() > half_w {
                     c.y.max(y + SHAFT * ONE)
                 } else {
-                    c.y
+                    y
                 };
                 return Some((x, depth, k.top));
             }

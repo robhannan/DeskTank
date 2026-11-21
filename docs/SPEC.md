@@ -2137,11 +2137,11 @@ Each package depends only on the packages before it.
   20 simulated seconds and skim there for 3 seconds. Where floating
   plants cover the surface, an air-breather heads for the nearest gap
   of open water with air above it (one with a clear shaft below first);
-  it searches for 45 s of every 90 s while a breath is overdue and
+  it searches for 60 s of every 90 s while a breath is overdue and
   wanders and feeds in between, so it never freezes under a mat. Once a
   breath is 45 s overdue it builds up stress towards the limit over its
   species' `air_tolerance_seconds` (required for an air-breather) and
-  dies of suffocation there: two to three minutes for the frogs,
+  dies of suffocation there: two to three minutes more for the frogs,
   fifteen for the labyrinth fish, whose gills still take some oxygen.
   A breath lets the stress recover. A surface with no gap a species
   fits through is an unmet need (the inspect card's "needs air"). Grazing a cell gives
