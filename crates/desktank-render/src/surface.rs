@@ -35,12 +35,30 @@ impl TankSurface {
         width: u32,
         height: u32,
     ) -> Result<Self, SurfaceError> {
+        Self::with_srgb(gpu, surface, (width, height), true)
+    }
+
+    /// [`TankSurface::new`], preferring a non-sRGB format if `srgb` is
+    /// false. The colours are the same either way (the shader encodes for
+    /// the target), but on WebGL2 wgpu presents an sRGB surface with a
+    /// shader pass that Chrome 68's `SwiftShader` draws nothing with, and
+    /// a non-sRGB one with a plain blit (webOS, D26).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the adapter can't present to the surface.
+    pub fn with_srgb(
+        gpu: &Gpu,
+        surface: wgpu::Surface<'static>,
+        (width, height): (u32, u32),
+        srgb: bool,
+    ) -> Result<Self, SurfaceError> {
         let caps = surface.get_capabilities(&gpu.adapter);
         let format = caps
             .formats
             .iter()
             .copied()
-            .find(wgpu::TextureFormat::is_srgb)
+            .find(|f| f.is_srgb() == srgb)
             .or_else(|| caps.formats.first().copied())
             .ok_or(SurfaceError::Unsupported)?;
         let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {

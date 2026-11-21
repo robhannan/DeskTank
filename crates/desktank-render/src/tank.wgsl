@@ -183,43 +183,41 @@ fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
 }
 
-@fragment
-fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+// Where a grid fragment's plant art comes from: its own cell, or a swaying
+// neighbour's leaf drawn over it (`from_sway`); `swayed_away` when its own
+// swaying leaf moved off it, revealing what is behind. `part` is -1 when no
+// plant is drawn here.
+struct GridSource {
+    at: vec2<i32>,
+    texel: vec4<f32>,
+    part: i32,
+    quarter: vec2<i32>,
+    from_sway: bool,
+    swayed_away: bool,
+};
+
+// The palette pixel at `pos` if the palette is shown and covers it (alpha
+// above 0.5), else alpha 0.
+fn hud_at(pos: vec2<f32>) -> vec4<f32> {
     if view.hud.w > 0.5 {
-        let p = floor((pos.xy - view.hud.xy) / view.hud.z);
+        let p = floor((pos - view.hud.xy) / view.hud.z);
         if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy) {
-            let h = textureLoad(hud, vec2<i32>(p), 0);
-            if h.a > 0.5 {
-                return out(h.rgb);
-            }
+            return textureLoad(hud, vec2<i32>(p), 0);
         }
     }
-    let grid_pos = (pos.xy - view.offset) / view.scale;
-    let cell = floor(grid_pos);
-    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
-        return out(view.backdrop.rgb);
-    }
-    let at = vec2<i32>(cell);
-    let texel = textureLoad(cells, at, 0);
-    let quarter = clamp(
-        vec2<i32>(floor((grid_pos - cell) * 4.0)),
-        vec2<i32>(0),
-        vec2<i32>(3),
-    );
-    var rgb = vec3<f32>(0.0);
-    var ground_texel = texel;
-    var need_ground = true;
-    var plant_rgb = vec3<f32>(0.0);
-    var plant_alpha = 0.0;
+    return vec4<f32>(0.0);
+}
+
+// The quarter of its cell that grid position `g` falls in.
+fn quarter_of(g: vec2<f32>, cell: vec2<f32>) -> vec2<i32> {
+    return clamp(vec2<i32>(floor((g - cell) * 4.0)), vec2<i32>(0), vec2<i32>(3));
+}
+
+fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: vec2<i32>) -> GridSource {
     let part = part_of(texel);
+    var src = GridSource(at, texel, part, quarter, false, false);
     let sway_on = view.target_size.w > 0.5;
     let self_sways = sway_on && part >= 0 && is_swaying_part(part, texel);
-    var src_at = at;
-    var src_texel = texel;
-    var src_part = part;
-    var src_quarter = quarter;
-    var from_sway = false;
-    var swayed_away = false;
     if sway_on && (part < 0 || self_sways) {
         let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
         let s_cell = floor(s_grid);
@@ -233,56 +231,21 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
         }
         if s_sways && (self_sways || style_of(texel) == STYLE_WATER) {
-            src_at = s_at;
-            src_texel = s_texel;
-            src_part = s_part;
-            src_quarter = clamp(
-                vec2<i32>(floor((s_grid - s_cell) * 4.0)),
-                vec2<i32>(0),
-                vec2<i32>(3),
-            );
-            from_sway = !self_sways;
+            src = GridSource(s_at, s_texel, s_part, quarter_of(s_grid, s_cell), !self_sways, false);
         } else if self_sways {
-            src_part = -1;
-            swayed_away = true;
+            src.part = -1;
+            src.swayed_away = true;
         }
     }
-    if src_part >= 0 {
-        let band = band_at(src_at);
-        let pt = plant_texel(src_at, src_texel, src_part, src_quarter, band);
-        if pt.a >= 0.999 {
-            rgb = pt.rgb;
-            need_ground = false;
-        } else if from_sway {
-            plant_rgb = pt.rgb;
-            plant_alpha = pt.a;
-        } else {
-            let nbr = behind_cell(at, quarter);
-            if nbr.x >= 0 {
-                ground_texel = textureLoad(cells, nbr, 0);
-                plant_rgb = pt.rgb;
-                plant_alpha = pt.a;
-            } else {
-                let shadow = plant_shadow_of(src_texel, src_part, band);
-                rgb = mix(shadow, pt.rgb, pt.a);
-                need_ground = false;
-            }
-        }
-    } else if swayed_away {
-        // The swaying leaf moved away from `at`, revealing what is behind.
-        let nbr = behind_cell(at, quarter);
-        if nbr.x >= 0 {
-            ground_texel = textureLoad(cells, nbr, 0);
-        } else {
-            rgb = water_bg(at, quarter, FINE_PLANTS && fine_scale());
-            need_ground = false;
-        }
-    }
-    if need_ground {
-        let bg = ground(at, ground_texel, quarter);
-        rgb = mix(bg, plant_rgb, plant_alpha);
-    }
-    rgb = rgb * view.daylight.rgb;
+    return src;
+}
+
+// What every grid colour gets last: the time of day, the field overlay and
+// the brush outline. Each is affine in `rgb` with weights that depend only
+// on the cell, so it commutes with blending a plant over the ground (the
+// split grid relies on this).
+fn grid_post(rgb_in: vec3<f32>, cell: vec2<f32>) -> vec3<f32> {
+    var rgb = rgb_in * view.daylight.rgb;
     // Debug overlay: tint by a field's value.
     let mode = view.hud_size.z;
     if mode > 0.5 {
@@ -306,7 +269,161 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             rgb = mix(rgb, vec3<f32>(1.0), 0.6);
         }
     }
-    return out(rgb);
+    return rgb;
+}
+
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let h = hud_at(pos.xy);
+    if h.a > 0.5 {
+        return out(h.rgb);
+    }
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return out(view.backdrop.rgb);
+    }
+    let at = vec2<i32>(cell);
+    let texel = textureLoad(cells, at, 0);
+    let quarter = quarter_of(grid_pos, cell);
+    var rgb = vec3<f32>(0.0);
+    var ground_texel = texel;
+    var need_ground = true;
+    var plant_rgb = vec3<f32>(0.0);
+    var plant_alpha = 0.0;
+    let src = grid_source(grid_pos, at, texel, quarter);
+    if src.part >= 0 {
+        let band = band_at(src.at);
+        let pt = plant_texel(src.at, src.texel, src.part, src.quarter, band);
+        if pt.a >= 0.999 {
+            rgb = pt.rgb;
+            need_ground = false;
+        } else if src.from_sway {
+            plant_rgb = pt.rgb;
+            plant_alpha = pt.a;
+        } else {
+            let nbr = behind_cell(at, quarter);
+            if nbr.x >= 0 {
+                ground_texel = textureLoad(cells, nbr, 0);
+                plant_rgb = pt.rgb;
+                plant_alpha = pt.a;
+            } else {
+                let shadow = plant_shadow_of(src.texel, src.part, band);
+                rgb = mix(shadow, pt.rgb, pt.a);
+                need_ground = false;
+            }
+        }
+    } else if src.swayed_away {
+        // The swaying leaf moved away from `at`, revealing what is behind.
+        let nbr = behind_cell(at, quarter);
+        if nbr.x >= 0 {
+            ground_texel = textureLoad(cells, nbr, 0);
+        } else {
+            rgb = water_bg(at, quarter, FINE_PLANTS && fine_scale());
+            need_ground = false;
+        }
+    }
+    if need_ground {
+        let bg = ground(at, ground_texel, quarter);
+        rgb = mix(bg, plant_rgb, plant_alpha);
+    }
+    return out(grid_post(rgb, cell));
+}
+
+// The split grid (`GpuOptions::split_grid`, for GPUs that can't compile
+// fs_main in one piece, such as Chrome 68's SwiftShader with its 4096
+// temporary registers): fs_ground draws everything but the plant art, then
+// fs_leaves and fs_stems blend the plant cells over it. Together they draw what fs_main
+// draws: blending in the target (linear on sRGB targets) instead of in
+// encoded space differs only where a plant texel is translucent.
+
+// Pass 1: the palette, the letterbox, and the ground or water each pixel
+// shows behind any plant art (or anything, where a plant pass draws opaque).
+@fragment
+fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let h = hud_at(pos.xy);
+    if h.a > 0.5 {
+        return out(h.rgb);
+    }
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return out(view.backdrop.rgb);
+    }
+    let at = vec2<i32>(cell);
+    let texel = textureLoad(cells, at, 0);
+    let quarter = quarter_of(grid_pos, cell);
+    var ground_texel = texel;
+    let src = grid_source(grid_pos, at, texel, quarter);
+    if (src.part >= 0 && !src.from_sway) || src.swayed_away {
+        let nbr = behind_cell(at, quarter);
+        if nbr.x >= 0 {
+            ground_texel = textureLoad(cells, nbr, 0);
+        } else if src.swayed_away {
+            return out(grid_post(water_bg(at, quarter, FINE_PLANTS && fine_scale()), cell));
+        }
+    }
+    return out(grid_post(ground(at, ground_texel, quarter), cell));
+}
+
+// Passes 2 and 3: plant art in leafy parts (fs_leaves) and the others
+// (fs_stems), each with its coverage as alpha, blended over fs_ground's
+// colour. A fragment shows one part, so at most one of them draws it; the
+// rest are discarded.
+@fragment
+fn fs_leaves(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let src = plant_source(pos.xy);
+    if src.part < 0 || !is_leafy(src.part) {
+        discard;
+    }
+    let band = band_at(src.at);
+    return plant_pass_colour(pos.xy, src, leaf_texel(src.at, src.texel, src.part, src.quarter, band), band);
+}
+
+@fragment
+fn fs_stems(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let src = plant_source(pos.xy);
+    if src.part < 0 || is_leafy(src.part) {
+        discard;
+    }
+    let band = band_at(src.at);
+    return plant_pass_colour(pos.xy, src, stem_texel(src.at, src.texel, src.part, src.quarter, band), band);
+}
+
+// The plant art the grid shows at pixel `pos`, as fs_main finds it; part -1
+// where there is none (or the palette or letterbox is there).
+fn plant_source(pos: vec2<f32>) -> GridSource {
+    let none = GridSource(vec2<i32>(0), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
+    if hud_at(pos).a > 0.5 {
+        return none;
+    }
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return none;
+    }
+    let at = vec2<i32>(cell);
+    return grid_source(grid_pos, at, textureLoad(cells, at, 0), quarter_of(grid_pos, cell));
+}
+
+// Plant texel `pt` from `src` as the plant passes blend it: opaque where
+// fs_main draws it opaque (over its shadow where nothing is behind), else
+// with its alpha over the ground. Transparent fragments are discarded.
+fn plant_pass_colour(pos: vec2<f32>, src: GridSource, pt: vec4<f32>, band: f32) -> vec4<f32> {
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    var rgb = pt.rgb;
+    var alpha = pt.a;
+    if pt.a >= 0.999 {
+        alpha = 1.0;
+    } else if !src.from_sway && behind_cell(vec2<i32>(cell), quarter_of(grid_pos, cell)).x < 0 {
+        rgb = mix(plant_shadow_of(src.texel, src.part, band), pt.rgb, pt.a);
+        alpha = 1.0;
+    }
+    if alpha <= 0.0 {
+        discard;
+    }
+    return vec4<f32>(out(grid_post(rgb, cell)).rgb, alpha);
 }
 
 // Ground style of a cell texel (from the palette alpha byte).
@@ -1160,8 +1277,43 @@ fn fine_scale() -> bool {
 // covered, 0 where it shows what is behind (fs_sprite draws a creature
 // there even when the plant cell is in front of it).
 fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
+    let plant = plant_of(me);
+    var cover: vec2<i32>;
+    if is_leafy(part) {
+        cover = leaf_cover(at, me, part, quarter, plant);
+    } else {
+        cover = stem_cover(at, me, part, quarter, plant);
+    }
+    return plant_colour(plant, part, cover, band);
+}
+
+// The split grid's plant passes draw leafy and other parts separately, each
+// reaching only its own shape code (fs_leaves, fs_stems).
+fn leaf_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
+    let plant = plant_of(me);
+    return plant_colour(plant, part, leaf_cover(at, me, part, quarter, plant), band);
+}
+
+fn stem_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
+    let plant = plant_of(me);
+    return plant_colour(plant, part, stem_cover(at, me, part, quarter, plant), band);
+}
+
+// The plant texture's texel for plant cell `me`: health (r), colouration
+// (g) and species id (a).
+fn plant_of(me: vec4<f32>) -> vec4<f32> {
+    return textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
+}
+
+// Leaves and floating leaves, drawn from the leaf ramp.
+fn is_leafy(part: i32) -> bool {
+    return part == PART_LEAF || part == PART_FLOAT;
+}
+
+// Whether a leafy part's texel is covered (x: 1 or 0) and its ramp shade
+// before clamping (y), from the species' leaf shape.
+fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
     let sub = quarter / 2;
-    let plant = textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
     let species = i32(round(plant.a * 255.0));
     let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
     let sizes = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0) * 255.0);
@@ -1381,42 +1533,7 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
         if lotus && ((hash(at * 2 + sub) & 7u) < 2u || (hash(at) & 7u) == 0u) {
             step = 1 + i32(top) + i32(hash(at) >> 9u) % 2;
         }
-    } else if part == PART_RHIZOME {
-        // A creeping epiphyte rhizome hugging rock or wood: thick, slightly
-        // rounded along its run, darker underneath, with tiny gripping
-        // rootlets at 4x.
-        let up = kin(at, vec2<i32>(0, -1), me).x >= 0;
-        let down = kin(at, vec2<i32>(0, 1), me).x == PART_RHIZOME;
-        let left = kin(at, vec2<i32>(-1, 0), me).x == PART_RHIZOME;
-        let right = kin(at, vec2<i32>(1, 0), me).x == PART_RHIZOME;
-        let end_l = !left && !up && !down;
-        let end_r = !right && !up && !down;
-        covered = !(top && ((end_l && sub.x == 0) || (end_r && sub.x == 1)));
-        step += 2 + select(-1, 1, top) + select(0, 1, up);
-        if fine {
-            let rootlet = !down && ((hash(at) & 1u) == 0u) && quarter.y == 3
-                && (quarter.x == 1 || quarter.x == 2);
-            let body = (quarter.y >= 1 && quarter.y <= 2)
-                || (up && quarter.y == 0 && (quarter.x == 1 || quarter.x == 2))
-                || (down && quarter.y == 3 && (quarter.x == 1 || quarter.x == 2));
-            covered = body || rootlet;
-            step += select(0, 1, quarter.y == 1) - select(0, 2, rootlet);
-        }
-    } else if part == PART_RUNNER {
-        // A stolon along the top of its cell, joining runner cells above or
-        // below where it climbs or drops, lighter where it pokes out.
-        let up = kin(at, vec2<i32>(0, -1), me).x == PART_RUNNER;
-        let down = kin(at, vec2<i32>(0, 1), me).x == PART_RUNNER;
-        covered = top || (sub.x == 0 && (up || down));
-        step += 2 + select(0, 1, is_water(at + vec2<i32>(0, -1)));
-        if fine {
-            // A rounded stolon, lit along its top, dropping a thin link to
-            // the runner below; every few cells a node puts out a root hair.
-            let hair = !down && (hash(at) & 3u) == 0u && quarter.x == 2 && quarter.y == 2;
-            covered = quarter.y <= 1 || (quarter.x == 1 && down) || hair;
-            step += select(0, 1, quarter.y == 0) - select(0, 2, hair);
-        }
-    } else if part == PART_LEAF {
+    } else {
         let left = kin(at, vec2<i32>(-1, 0), me);
         let right = kin(at, vec2<i32>(1, 0), me);
         // Leaves grow sideways from a stem node; the side it grows from
@@ -1529,6 +1646,56 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
                     covered = false;
                 }
             }
+        }
+    }
+    return vec2<i32>(select(0, 1, covered), step);
+}
+
+// leaf_cover for stems, runners, rhizomes and roots.
+fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
+    let sub = quarter / 2;
+    let species = i32(round(plant.a * 255.0));
+    let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
+    let sizes = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0) * 255.0);
+    let pos = position_of(me);
+    let fine = FINE_PLANTS && fine_scale();
+    let top = sub.y == 0;
+    var covered = true;
+    var step = noise_step(me);
+    if part == PART_RHIZOME {
+        // A creeping epiphyte rhizome hugging rock or wood: thick, slightly
+        // rounded along its run, darker underneath, with tiny gripping
+        // rootlets at 4x.
+        let up = kin(at, vec2<i32>(0, -1), me).x >= 0;
+        let down = kin(at, vec2<i32>(0, 1), me).x == PART_RHIZOME;
+        let left = kin(at, vec2<i32>(-1, 0), me).x == PART_RHIZOME;
+        let right = kin(at, vec2<i32>(1, 0), me).x == PART_RHIZOME;
+        let end_l = !left && !up && !down;
+        let end_r = !right && !up && !down;
+        covered = !(top && ((end_l && sub.x == 0) || (end_r && sub.x == 1)));
+        step += 2 + select(-1, 1, top) + select(0, 1, up);
+        if fine {
+            let rootlet = !down && ((hash(at) & 1u) == 0u) && quarter.y == 3
+                && (quarter.x == 1 || quarter.x == 2);
+            let body = (quarter.y >= 1 && quarter.y <= 2)
+                || (up && quarter.y == 0 && (quarter.x == 1 || quarter.x == 2))
+                || (down && quarter.y == 3 && (quarter.x == 1 || quarter.x == 2));
+            covered = body || rootlet;
+            step += select(0, 1, quarter.y == 1) - select(0, 2, rootlet);
+        }
+    } else if part == PART_RUNNER {
+        // A stolon along the top of its cell, joining runner cells above or
+        // below where it climbs or drops, lighter where it pokes out.
+        let up = kin(at, vec2<i32>(0, -1), me).x == PART_RUNNER;
+        let down = kin(at, vec2<i32>(0, 1), me).x == PART_RUNNER;
+        covered = top || (sub.x == 0 && (up || down));
+        step += 2 + select(0, 1, is_water(at + vec2<i32>(0, -1)));
+        if fine {
+            // A rounded stolon, lit along its top, dropping a thin link to
+            // the runner below; every few cells a node puts out a root hair.
+            let hair = !down && (hash(at) & 3u) == 0u && quarter.x == 2 && quarter.y == 2;
+            covered = quarter.y <= 1 || (quarter.x == 1 && down) || hair;
+            step += select(0, 1, quarter.y == 0) - select(0, 2, hair);
         }
     } else if part == PART_STEM {
         let shape = shapes.y;
@@ -1710,6 +1877,15 @@ fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band
             step += select(0, 1, core) - select(0, 1, free_x || free_y);
         }
     }
+    return vec2<i32>(select(0, 1, covered), step);
+}
+
+// A plant texel's colour from its coverage and shade (`cover`, see
+// leaf_cover), or alpha 0 where uncovered.
+fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec4<f32> {
+    let species = i32(round(plant.a * 255.0));
+    let covered = cover.x != 0;
+    let step = cover.y;
     // Runners and rhizomes are drawn from the stem's ramp, floating leaves
     // from the leaf's.
     let ramp = select(
@@ -1889,52 +2065,38 @@ fn vs_sprite(
 // fragment behind it is dropped. Texels the plant's shape leaves open, and
 // plant cells level with or behind the creature, don't hide it.
 fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
-    let grid_pos = (pos - view.offset) / view.scale;
-    let cell = floor(grid_pos);
-    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+    let src = plant_source(pos);
+    if src.part < 0 {
         return false;
     }
-    let at = vec2<i32>(cell);
-    let t = textureLoad(cells, at, 0);
-    let part = part_of(t);
-    let sway_on = view.target_size.w > 0.5;
-    let self_sways = sway_on && part >= 0 && is_swaying_part(part, t);
-    var src_at = at;
-    var src_t = t;
-    var src_part = part;
-    var src_quarter = vec2<i32>(floor(fract(grid_pos) * 4.0));
-    if sway_on && (part < 0 || self_sways) {
-        let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
-        let s_cell = floor(s_grid);
-        let s_at = vec2<i32>(s_cell);
-        if !inside(s_at) {
-            return false;
-        }
-        let s_t = textureLoad(cells, s_at, 0);
-        let s_part = part_of(s_t);
-        if s_part < 0 || !is_swaying_part(s_part, s_t) {
-            return false;
-        }
-        if !self_sways && style_of(t) != STYLE_WATER {
-            return false;
-        }
-        src_at = s_at;
-        src_t = s_t;
-        src_part = s_part;
-        src_quarter = clamp(
-            vec2<i32>(floor((s_grid - s_cell) * 4.0)),
-            vec2<i32>(0),
-            vec2<i32>(3),
-        );
-    }
-    if src_part < 0 {
+    let band = band_at(src.at);
+    return band + 0.5 < depth && plant_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
+}
+
+// hidden_by_plant for the split sprite passes, which reach only their own
+// part's shape code: fs_sprite_leaves draws the pixels that show a leafy
+// part or no plant, fs_sprite_stems those that show another part. The split
+// is by pixel, not by sprite, so every sprite at a pixel draws in the same
+// pass and their back-to-front order holds.
+fn hidden_by_leaf(pos: vec2<f32>, depth: f32) -> bool {
+    let src = plant_source(pos);
+    if src.part < 0 {
         return false;
     }
-    let band = band_at(src_at);
-    if band + 0.5 >= depth {
-        return false;
+    if !is_leafy(src.part) {
+        discard;
     }
-    return plant_texel(src_at, src_t, src_part, src_quarter, band).a > 0.5;
+    let band = band_at(src.at);
+    return band + 0.5 < depth && leaf_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
+}
+
+fn hidden_by_stem(pos: vec2<f32>, depth: f32) -> bool {
+    let src = plant_source(pos);
+    if src.part < 0 || is_leafy(src.part) {
+        discard;
+    }
+    let band = band_at(src.at);
+    return band + 0.5 < depth && stem_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
 }
 
 // Whether loose substrate (sand, gravel, aquasoil) covers the pixel at
@@ -2013,22 +2175,52 @@ fn glow_weight(frame: vec4<f32>, p: vec2<f32>, t: vec4<f32>) -> f32 {
 
 @fragment
 fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
-    // The palette stays on top (where drawn: creatures show beside its
-    // shorter row).
+    if sprite_skipped(v) {
+        discard;
+    }
+    return sprite_colour(v, hidden_by_plant(v.pos.xy, v.depth));
+}
+
+@fragment
+fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
+    if sprite_skipped(v) {
+        discard;
+    }
+    return sprite_colour(v, hidden_by_leaf(v.pos.xy, v.depth));
+}
+
+@fragment
+fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
+    if sprite_skipped(v) {
+        discard;
+    }
+    return sprite_colour(v, hidden_by_stem(v.pos.xy, v.depth));
+}
+
+// Sprite fragments drawn without looking at plants: under the palette
+// (it stays on top; creatures show beside its shorter row), and open
+// texels without a glow's halo.
+fn sprite_skipped(v: SpriteOut) -> bool {
     if view.hud.w > 0.5 {
         let p = floor((v.pos.xy - view.hud.xy) / view.hud.z);
         if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy)
             && textureLoad(hud, vec2<i32>(p), 0).a > 0.5 {
-            discard;
+            return true;
         }
     }
+    return frame_texel(v.frame, floor(v.local)).a < 0.5 && v.glow.w <= 0.0;
+}
+
+// A sprite fragment's colour that sprite_skipped kept, `hidden` if a nearer
+// plant covers it.
+fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
     let p = floor(v.local);
     let texel = vec2<i32>(v.frame.xy + p);
     let t = frame_texel(v.frame, p);
     let k = v.glow.w;
     if t.a < 0.5 {
         // Only a glowing creature at night draws past its texels: the halo.
-        if k <= 0.0 || hidden_by_plant(v.pos.xy, v.depth) {
+        if k <= 0.0 || hidden {
             discard;
         }
         let a = halo_alpha(v.frame, p, k);
@@ -2037,8 +2229,7 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
         }
         return vec4<f32>(out(v.glow.rgb).rgb, a);
     }
-    if hidden_by_plant(v.pos.xy, v.depth)
-        || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
+    if hidden || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;
     }
     var rgb = t.rgb;

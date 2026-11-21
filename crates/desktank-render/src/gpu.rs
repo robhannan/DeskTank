@@ -8,6 +8,12 @@ pub struct GpuOptions {
     /// Request timestamp queries (for `desktank bench`), if the adapter
     /// supports them.
     pub timestamps: bool,
+    /// Draw the grid and sprites with smaller shaders in more passes (the
+    /// split grid, `tank.wgsl`), for GPUs that can't compile the one-pass
+    /// shaders: Chrome 68's `SwiftShader` caps a fragment shader at 4096
+    /// temporary registers (webOS, D26). Same picture, except where a
+    /// translucent plant texel blends over the ground on an sRGB target.
+    pub split_grid: bool,
 }
 
 /// Error finding an adapter or opening a device.
@@ -31,6 +37,8 @@ pub struct Gpu {
     pub device: wgpu::Device,
     /// The device's queue.
     pub queue: wgpu::Queue,
+    /// [`GpuOptions::split_grid`].
+    pub split_grid: bool,
 }
 
 impl Gpu {
@@ -71,6 +79,7 @@ impl Gpu {
             })
             .await?;
         Ok(Self {
+            split_grid: options.split_grid,
             adapter,
             device,
             queue,

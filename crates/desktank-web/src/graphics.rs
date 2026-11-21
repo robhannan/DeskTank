@@ -1,8 +1,8 @@
 //! The GPU side of the web host: backend selection and the canvas surface
 //! (SPEC §3.5).
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use desktank_render::{Gpu, GpuOptions, TankSurface, wgpu};
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
@@ -33,6 +33,9 @@ pub struct Graphics {
     /// Set by the device-lost callback (WebGPU). WebGL context loss arrives
     /// as a canvas event, which the page handles.
     lost: Arc<AtomicBool>,
+    /// The first uncaptured GPU error (such as a shader the driver won't
+    /// compile), for the page to show: wgpu only reports it to a callback.
+    error: Arc<Mutex<Option<String>>>,
 }
 
 #[wasm_bindgen]
@@ -40,22 +43,38 @@ impl Graphics {
     /// Opens graphics on `canvas` (sized in device pixels already).
     /// `backend` is `"webgpu"` or `"webgl2"` to force one; anything else
     /// tries WebGPU and falls back to WebGL2 if there is no adapter or the
-    /// device request fails.
+    /// device request fails. `split_grid` draws with smaller shaders in more
+    /// passes, for GPUs that can't compile the one-pass ones (the webOS
+    /// build, D26; see `GpuOptions::split_grid`); `srgb` false picks a
+    /// non-sRGB canvas format, which WebGL2 presents with a blit instead of
+    /// a shader pass (see `TankSurface::with_srgb`).
     ///
     /// # Errors
     ///
     /// Returns a message if no backend works.
-    pub async fn open(canvas: HtmlCanvasElement, backend: String) -> Result<Graphics, JsValue> {
+    pub async fn open(
+        canvas: HtmlCanvasElement,
+        backend: String,
+        split_grid: bool,
+        srgb: bool,
+    ) -> Result<Graphics, JsValue> {
+        let options = (
+            GpuOptions {
+                split_grid,
+                ..GpuOptions::default()
+            },
+            srgb,
+        );
         let result = match backend.as_str() {
-            "webgpu" => open_with(&canvas, Backend::WebGpu).await,
-            "webgl2" => open_with(&canvas, Backend::WebGl2).await,
-            _ => match open_with(&canvas, Backend::WebGpu).await {
+            "webgpu" => open_with(&canvas, Backend::WebGpu, options).await,
+            "webgl2" => open_with(&canvas, Backend::WebGl2, options).await,
+            _ => match open_with(&canvas, Backend::WebGpu, options).await {
                 Ok(g) => Ok(g),
                 Err(e) => {
                     web_sys::console::info_1(
                         &format!("desktank: WebGPU unavailable ({e}); using WebGL2").into(),
                     );
-                    open_with(&canvas, Backend::WebGl2).await
+                    open_with(&canvas, Backend::WebGl2, options).await
                 }
             },
         };
@@ -89,12 +108,21 @@ impl Graphics {
         self.lost.load(Ordering::Acquire)
     }
 
+    /// The first uncaptured GPU error, if any.
+    pub(crate) fn error(&self) -> Option<String> {
+        self.error.lock().ok().and_then(|e| e.clone())
+    }
+
     pub(crate) fn resize(&mut self, (width, height): (u32, u32)) {
         self.surface.resize(&self.gpu, width, height);
     }
 }
 
-async fn open_with(canvas: &HtmlCanvasElement, backend: Backend) -> Result<Graphics, String> {
+async fn open_with(
+    canvas: &HtmlCanvasElement,
+    backend: Backend,
+    (options, srgb): (GpuOptions, bool),
+) -> Result<Graphics, String> {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
     desc.backends = match backend {
         Backend::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
@@ -107,7 +135,7 @@ async fn open_with(canvas: &HtmlCanvasElement, backend: Backend) -> Result<Graph
         // hands out, so a failed WebGPU attempt must not touch the canvas or
         // the WebGL2 fallback couldn't use it.
         Backend::WebGpu => {
-            let gpu = Gpu::new(&instance, None, GpuOptions::default())
+            let gpu = Gpu::new(&instance, None, options)
                 .await
                 .map_err(|e| e.to_string())?;
             let surface = instance
@@ -120,7 +148,7 @@ async fn open_with(canvas: &HtmlCanvasElement, backend: Backend) -> Result<Graph
             let surface = instance
                 .create_surface(target())
                 .map_err(|e| e.to_string())?;
-            let gpu = Gpu::new(&instance, Some(&surface), GpuOptions::default())
+            let gpu = Gpu::new(&instance, Some(&surface), options)
                 .await
                 .map_err(|e| e.to_string())?;
             (gpu, surface)
@@ -135,15 +163,22 @@ async fn open_with(canvas: &HtmlCanvasElement, backend: Backend) -> Result<Graph
         );
     });
     // The default handler panics, which would abort the module.
-    gpu.device.on_uncaptured_error(Arc::new(|e| {
-        web_sys::console::error_1(&format!("desktank: GPU error: {e}").into());
+    let error = Arc::new(Mutex::new(None));
+    let first = Arc::clone(&error);
+    gpu.device.on_uncaptured_error(Arc::new(move |e| {
+        let message = e.to_string();
+        web_sys::console::error_1(&format!("desktank: GPU error: {message}").into());
+        if let Ok(mut slot) = first.lock() {
+            slot.get_or_insert(message);
+        }
     }));
-    let surface = TankSurface::new(&gpu, surface, canvas.width(), canvas.height())
+    let surface = TankSurface::with_srgb(&gpu, surface, (canvas.width(), canvas.height()), srgb)
         .map_err(|e| e.to_string())?;
     Ok(Graphics {
         gpu,
         surface,
         backend,
         lost,
+        error,
     })
 }

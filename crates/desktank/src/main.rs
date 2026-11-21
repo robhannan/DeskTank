@@ -157,6 +157,10 @@ struct CaptureArgs {
     /// Enable optional render-only plant sway.
     #[arg(long)]
     sway: bool,
+    /// Draw with the split grid (smaller shaders in more passes), as the
+    /// webOS web build does.
+    #[arg(long)]
+    split_grid: bool,
     /// Directory to write frames to (`frame.png`, or `frame_NNNN.png` for several).
     #[arg(long, value_name = "DIR")]
     out: PathBuf,
@@ -226,6 +230,7 @@ fn main() -> ExitCode {
             script: args.script.clone(),
             field: args.field,
             sway: args.sway,
+            split_grid: args.split_grid,
             out: args.out.clone(),
         }),
         other => {

@@ -2,6 +2,10 @@
 //! `tests/scenes/` is compared with `tests/reference/<scene>.png`. A test
 //! passes when at most 0.5% of pixels differ by more than CIEDE2000 ΔE 2.
 //!
+//! Each scene is also captured with the split grid (`--split-grid`, the
+//! webOS build's smaller shaders in more passes), which must match the
+//! one-pass capture within ΔE 2 at every pixel.
+//!
 //! Update the references deliberately with
 //! `DESKTANK_BLESS=1 cargo test -p desktank --test render`.
 //!
@@ -38,10 +42,16 @@ fn read_png(path: &Path) -> (u32, u32, Vec<u8>) {
     (info.width, info.height, buf)
 }
 
-/// Captures `scene` at `size` (lit for `time`, `HH:MM`, if given) into
-/// `name` and returns the PNG path, or `None` if there is no GPU adapter
-/// outside CI.
-fn capture(scene: &str, name: &str, time: Option<&str>, size: &str) -> Option<PathBuf> {
+/// Captures `scene` at `size` (lit for `time`, `HH:MM`, if given, with
+/// `extra` arguments) into `name` and returns the PNG path, or `None` if
+/// there is no GPU adapter outside CI.
+fn capture(
+    scene: &str,
+    name: &str,
+    time: Option<&str>,
+    size: &str,
+    extra: &[&str],
+) -> Option<PathBuf> {
     let out = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("render")
         .join(name);
@@ -55,6 +65,7 @@ fn capture(scene: &str, name: &str, time: Option<&str>, size: &str) -> Option<Pa
     if let Some(t) = time {
         command.args(["--time", t]);
     }
+    command.args(extra);
     let output = command.arg("--out").arg(&out).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
@@ -81,19 +92,44 @@ fn check_at(scene: &str, time: &str) {
 }
 
 fn check_named(scene: &str, name: &str, time: Option<&str>, size: &str) {
-    let Some(got_path) = capture(scene, name, time, size) else {
-        return;
-    };
     let reference = manifest()
         .join("tests/reference")
         .join(format!("{name}.png"));
+    let Some(got_path) = capture(scene, name, time, size, &[]) else {
+        return;
+    };
     if std::env::var_os("DESKTANK_BLESS").is_some() {
         std::fs::copy(&got_path, &reference).unwrap();
         eprintln!("blessed {}", reference.display());
         return;
     }
-    let (gw, gh, got) = read_png(&got_path);
-    let (rw, rh, want) = read_png(&reference);
+    compare_with(name, &got_path, &reference, MAX_FRACTION);
+    check_split(scene, name, time, size, &[], &got_path);
+}
+
+/// Captures `scene` with the split grid and asserts it matches `one_pass`,
+/// the same capture drawn in one pass, within ΔE 2 at every pixel: the
+/// passes differ only by rounding where a translucent plant texel blends.
+fn check_split(
+    scene: &str,
+    name: &str,
+    time: Option<&str>,
+    size: &str,
+    extra: &[&str],
+    one_pass: &Path,
+) {
+    let args: Vec<&str> = extra.iter().copied().chain(["--split-grid"]).collect();
+    let Some(split) = capture(scene, &format!("{name}_split"), time, size, &args) else {
+        return;
+    };
+    compare_with(&format!("{name} (split grid)"), &split, one_pass, 0.0);
+}
+
+/// Asserts the capture at `got_path` matches `reference`: at most
+/// `max_fraction` of pixels differ by more than ΔE 2.
+fn compare_with(name: &str, got_path: &Path, reference: &Path, max_fraction: f64) {
+    let (gw, gh, got) = read_png(got_path);
+    let (rw, rh, want) = read_png(reference);
     assert_eq!(
         (gw, gh),
         (rw, rh),
@@ -108,7 +144,7 @@ fn check_named(scene: &str, name: &str, time: Option<&str>, size: &str) {
         diff.max
     );
     assert!(
-        diff.fraction() <= MAX_FRACTION,
+        diff.fraction() <= max_fraction,
         "{name}: {:.3}% of pixels differ by more than ΔE {MAX_DELTA_E} (max ΔE {:.2}); \
          capture at {}, reference at {}; if the change is intended, rerun with DESKTANK_BLESS=1",
         diff.fraction() * 100.0,
@@ -291,4 +327,33 @@ fn depth_scene_matches_reference_at_scale_4() {
 fn blinker_scene_matches_reference_by_day_and_night() {
     check_named("blinker", "blinker_x4", None, SIZE_X4);
     check_named("blinker", "blinker_x4_0000", Some("00:00"), SIZE_X4);
+}
+
+/// The split grid with what only some frames show: swaying plants (a
+/// neighbour's leaf drawn over a cell, or a cell's own leaf swayed away)
+/// at both plant-art levels, and the field overlay and night tint, which
+/// the plant passes apply before blending over the ground.
+#[test]
+fn split_grid_matches_one_pass_with_sway_and_overlays() {
+    for (scene, size, time, extra) in [
+        ("depth", SIZE_X4, None, &["--sway"][..]),
+        (
+            "plant_floaters",
+            SIZE,
+            Some("21:00"),
+            &["--sway", "--field", "flow"][..],
+        ),
+        (
+            "plant_rosettes",
+            SIZE_X4,
+            None,
+            &["--sway", "--field", "light"][..],
+        ),
+    ] {
+        let name = format!("{scene}_sway");
+        let Some(one_pass) = capture(scene, &name, time, size, extra) else {
+            return;
+        };
+        check_split(scene, &name, time, size, extra, &one_pass);
+    }
 }
