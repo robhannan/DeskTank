@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // Serves target/site/ on http://127.0.0.1:<port>/ (default 8000) for local
-// checks and the Playwright tests: `pnpm serve:web [port]`.
+// checks and the Playwright tests: `pnpm serve:web [port] [mount]`. The
+// webOS build (target/site-webos/, `pnpm build:web:webos`) is served at
+// /webos/ beside it.
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 
-const root = path.resolve(import.meta.dirname, "..", "target", "site");
+const target = path.resolve(import.meta.dirname, "..", "target");
+const site = path.join(target, "site");
+const webos = path.join(target, "site-webos");
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
 const mount = process.argv[3] ?? "/";
 const TYPES: Record<string, string> = {
@@ -22,11 +26,12 @@ const TYPES: Record<string, string> = {
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (!url.pathname.startsWith(mount)) {
+  const [root, prefix] = url.pathname.startsWith("/webos/") ? [webos, "/webos/"] : [site, mount];
+  if (!url.pathname.startsWith(prefix)) {
     res.writeHead(404).end();
     return;
   }
-  let file = path.join(root, decodeURIComponent(url.pathname.slice(mount.length)));
+  let file = path.join(root, decodeURIComponent(url.pathname.slice(prefix.length)));
   if (!file.startsWith(root)) {
     res.writeHead(403).end();
     return;
@@ -43,4 +48,4 @@ createServer(async (req, res) => {
     "cache-control": "no-store",
   });
   createReadStream(file).pipe(res);
-}).listen(port, "127.0.0.1", () => console.log(`Serving ${root} on http://127.0.0.1:${port}${mount}`));
+}).listen(port, "127.0.0.1", () => console.log(`Serving ${site} on http://127.0.0.1:${port}${mount} and ${webos} on /webos/`));

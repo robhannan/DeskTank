@@ -33,16 +33,13 @@ const BACKDROP: [u8; 3] = [0x05, 0x0a, 0x12];
 pub struct Renderer {
     format: wgpu::TextureFormat,
     grid: (u32, u32),
-    /// The grid pipeline with four-texel plant art, for scales divisible
-    /// by four, and the one compiled without it (`FINE_PLANTS` false), so
-    /// other scales don't pay for the fine code on GPUs that run every
-    /// branch, such as software renderers.
-    pipeline: wgpu::RenderPipeline,
-    coarse_pipeline: wgpu::RenderPipeline,
-    /// The sprite pipelines likewise: a sprite over a nearer plant cell
-    /// reads its shape to see whether it is covered.
-    sprite_pipeline: wgpu::RenderPipeline,
-    coarse_sprite_pipeline: wgpu::RenderPipeline,
+    /// The grid's pipelines, drawn in order: with four-texel plant art, for
+    /// scales divisible by four, and compiled without it (`FINE_PLANTS`
+    /// false), so other scales don't pay for the fine code on GPUs that run
+    /// every branch, such as software renderers. One pipeline each, or three
+    /// with [`Gpu::split_grid`].
+    pipelines: Pipelines,
+    coarse_pipelines: Pipelines,
     bind_group: wgpu::BindGroup,
     /// Where each species' frames are in the atlas texture.
     atlas: Atlas,
@@ -141,19 +138,12 @@ impl Renderer {
                 &bands,
             ],
         );
-        let [
-            pipeline,
-            coarse_pipeline,
-            sprite_pipeline,
-            coarse_sprite_pipeline,
-        ] = create_pipelines(d, &bind_layout, format);
+        let [pipelines, coarse_pipelines] = create_pipelines(gpu, &bind_layout, format);
         Self {
             format,
             grid,
-            pipeline,
-            coarse_pipeline,
-            sprite_pipeline,
-            coarse_sprite_pipeline,
+            pipelines,
+            coarse_pipelines,
             bind_group,
             atlas,
             instances,
@@ -440,21 +430,22 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(if fine_scale(layout.scale) {
-            &self.pipeline
+        let pipelines = if fine_scale(layout.scale) {
+            &self.pipelines
         } else {
-            &self.coarse_pipeline
-        });
+            &self.coarse_pipelines
+        };
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        for p in &pipelines.grid {
+            pass.set_pipeline(p);
+            pass.draw(0..3, 0..1);
+        }
         if self.sprite_count > 0 {
-            pass.set_pipeline(if fine_scale(layout.scale) {
-                &self.sprite_pipeline
-            } else {
-                &self.coarse_sprite_pipeline
-            });
             pass.set_vertex_buffer(0, self.instances.slice(..));
-            pass.draw(0..6, 0..self.sprite_count);
+            for p in &pipelines.sprites {
+                pass.set_pipeline(p);
+                pass.draw(0..6, 0..self.sprite_count);
+            }
         }
     }
 }
@@ -757,14 +748,45 @@ fn fine_scale(scale: u32) -> bool {
     scale.is_multiple_of(4)
 }
 
-/// The full-screen-triangle grid pipelines and the instanced sprite
-/// pipelines, each with and without four-texel plant art, drawing into
-/// `format`: grid, coarse grid, sprites, coarse sprites.
+/// One plant-art level's pipelines, each drawn in order: full-screen
+/// triangles for the grid, then the instanced sprites.
+#[derive(Debug)]
+struct Pipelines {
+    grid: Vec<wgpu::RenderPipeline>,
+    sprites: Vec<wgpu::RenderPipeline>,
+}
+
+/// The grid's fragment entry points: `fs_main`, or with the split grid
+/// `fs_ground` and then the plant passes, which blend over it.
+const GRID_ENTRIES: &[&str] = &["fs_main"];
+const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
+/// The sprites' fragment entry points likewise; the split ones each draw
+/// the pixels over one kind of plant part.
+const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
+const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
+/// The split grid's plant passes blend their colour over the ground's and
+/// keep its alpha.
+const BLEND_OVER: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::SrcAlpha,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+/// The grid and sprite pipelines with and without four-texel plant art,
+/// drawing into `format`, one pass each or split ([`Gpu::split_grid`]).
 fn create_pipelines(
-    d: &wgpu::Device,
+    gpu: &Gpu,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> [wgpu::RenderPipeline; 4] {
+) -> [Pipelines; 2] {
+    let d = &gpu.device;
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
         source: wgpu::ShaderSource::Wgsl(include_str!("tank.wgsl").into()),
@@ -774,40 +796,6 @@ fn create_pipelines(
         bind_group_layouts: &[Some(bind_layout)],
         immediate_size: 0,
     });
-    let targets = [Some(wgpu::ColorTargetState {
-        format,
-        blend: None,
-        write_mask: wgpu::ColorWrites::ALL,
-    })];
-    let grid = |label, constants: &[(&str, f64)]| {
-        d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants,
-                    ..Default::default()
-                },
-                targets: &targets,
-            }),
-            multiview_mask: None,
-            cache: None,
-        })
-    };
-    let coarse_plants: &[(&str, f64)] = &[("FINE_PLANTS", 0.0)];
-    let fine = grid("tank", &[]);
-    let coarse = grid("tank (coarse plants)", coarse_plants);
     // Per instance: top-left cell, size, atlas origin, mirror and turn,
     // frame size, look and fine atlas origin (vec2 each), then depth and
     // the night glow (vec4).
@@ -816,49 +804,76 @@ fn create_pipelines(
         4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32,
         8 => Float32x4
     ];
-    // Sprites blend only a glow's halo (alpha below 1); every other sprite
-    // fragment is opaque or discarded, so it draws as without blending.
-    let sprite_targets = [Some(wgpu::ColorTargetState {
-        format,
-        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-        write_mask: wgpu::ColorWrites::ALL,
+    let instances = [Some(wgpu::VertexBufferLayout {
+        array_stride: INSTANCE_BYTES,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &attributes,
     })];
-    let sprites = |label, constants: &[(&str, f64)]| {
+    // The grid is a full-screen triangle (`vs_main`, no buffers); sprites
+    // are instanced quads (`vs_sprite`).
+    let pipeline = |label: &str, entry: &str, blend, constants: &[(&str, f64)]| {
+        let sprite = entry.starts_with("fs_sprite");
         d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_sprite"),
+                entry_point: Some(if sprite { "vs_sprite" } else { "vs_main" }),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: INSTANCE_BYTES,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &attributes,
-                })],
+                buffers: if sprite { &instances } else { &[] },
             },
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_sprite"),
+                entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants,
                     ..Default::default()
                 },
-                targets: &sprite_targets,
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             multiview_mask: None,
             cache: None,
         })
     };
-    [
-        fine,
-        coarse,
-        sprites("sprites", &[]),
-        sprites("sprites (coarse plants)", coarse_plants),
-    ]
+    let (grid_entries, sprite_entries) = if gpu.split_grid {
+        (SPLIT_GRID_ENTRIES, SPLIT_SPRITE_ENTRIES)
+    } else {
+        (GRID_ENTRIES, SPRITE_ENTRIES)
+    };
+    let level = |fine: bool| {
+        let (suffix, constants): (&str, &[(&str, f64)]) = if fine {
+            ("", &[])
+        } else {
+            (" (coarse plants)", &[("FINE_PLANTS", 0.0)])
+        };
+        Pipelines {
+            grid: grid_entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| {
+                    let blend = (i > 0).then_some(BLEND_OVER);
+                    pipeline(&format!("tank {entry}{suffix}"), entry, blend, constants)
+                })
+                .collect(),
+            sprites: sprite_entries
+                .iter()
+                .map(|entry| {
+                    // Sprites blend only a glow's halo (alpha below 1); every
+                    // other sprite fragment is opaque or discarded.
+                    let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
+                    pipeline(&format!("sprites {entry}{suffix}"), entry, blend, constants)
+                })
+                .collect(),
+        }
+    };
+    [level(true), level(false)]
 }
 
 /// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).

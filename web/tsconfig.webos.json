@@ -1,0 +1,16 @@
+// The legacy-Chromium (LG webOS 5, Chrome 68) build of the page, run by
+// `pnpm build:web -- --legacy`: emitted into target/site-webos/ without
+// source maps (esbuild lowers the syntax afterwards, which would break
+// them), and type-checked against ES2018's library, so a newer built-in
+// (String.replaceAll, Array.at, Object.hasOwn…) fails the build. DOM APIs
+// newer than Chrome 68 aren't caught here: see docs/PROGRESS.md.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2018", "dom", "dom.iterable"],
+    "outDir": "../target/site-webos",
+    "sourceMap": false,
+    "inlineSources": false,
+    "rootDirs": [".", "../target/web-bindgen-webos"]
+  }
+}

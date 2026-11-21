@@ -60,12 +60,15 @@ The [web version](https://robhannan.github.io/DeskTank/) (SPEC §3.5, D15) is `c
 cargo install --locked wasm-bindgen-cli --version 0.2.130
 pnpm install
 pnpm build:web           # builds target/site/ and reports the gzip transfer size (budget 3 MB)
+pnpm build:web:webos     # the Chrome 68 variant for LG webOS 5 TVs (SPEC D26) in target/site-webos/, served at /webos/
 pnpm typecheck           # strict tsc over the page, scripts and tests (after a build)
 pnpm serve:web           # then open http://127.0.0.1:8000
 pnpm exec playwright install chromium
 pnpm test:web            # Playwright: smoke test, context-loss recovery, render match with the native reference, tools with mouse and touch, settings
 pnpm bench:web chrome 60 # p50/p95 loop and drawn-frame intervals over 60 s of pouring at DPR 2 (also chromium, firefox, webkit)
 ```
+
+`?dpr=<n>` caps the canvas's device pixels per CSS pixel (1 by default on the webOS build) and `?debug=1` lists the startup steps and any error on screen.
 
 Pushes to `main` deploy it to GitHub Pages (`.github/workflows/pages.yml`).
 

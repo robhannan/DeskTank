@@ -35,7 +35,11 @@ const POUR_RADIUS: u32 = 4;
 pub fn run(seconds: u64, fish: usize, plants: bool, sway: bool) -> anyhow::Result<()> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let gpu = pollster::block_on(Gpu::new(&instance, None, GpuOptions { timestamps: true }))?;
+    let timed = GpuOptions {
+        timestamps: true,
+        ..GpuOptions::default()
+    };
+    let gpu = pollster::block_on(Gpu::new(&instance, None, timed))?;
     let config = WorldConfig {
         width: (TARGET.0 / CELL_SCALE) as usize,
         height: (TARGET.1 / CELL_SCALE) as usize,

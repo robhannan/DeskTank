@@ -32,6 +32,8 @@ pub struct Options {
     pub field: Option<FieldOverlay>,
     /// Enable optional render-only plant sway.
     pub sway: bool,
+    /// Draw with the split grid ([`GpuOptions::split_grid`]).
+    pub split_grid: bool,
     /// Output directory.
     pub out: PathBuf,
 }
@@ -53,7 +55,14 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
     };
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let gpu = pollster::block_on(Gpu::new(&instance, None, GpuOptions::default()))?;
+    let gpu = pollster::block_on(Gpu::new(
+        &instance,
+        None,
+        GpuOptions {
+            split_grid: opts.split_grid,
+            ..GpuOptions::default()
+        },
+    ))?;
 
     let mut world = World::new(script.world_config(opts.seed), MaterialTable::builtin()?)?;
     if script.world.starter {

@@ -19,7 +19,13 @@
 //
 // URL parameters: ?backend=webgpu|webgl2 forces a backend; ?bench records
 // rAF callback times in window.desktank.rafTimes and drawn-frame times in
-// window.desktank.frameTimes (scripts/bench-web.ts).
+// window.desktank.frameTimes (scripts/bench-web.ts); ?dpr=<n> caps the
+// canvas's device pixels per CSS pixel (1 by default on the webOS build);
+// ?debug=1 lists the startup steps and any error on screen.
+//
+// The webOS build (`pnpm build:web -- --legacy`, SPEC D26) runs this same
+// page on Chrome 68: <html data-build="webos">, MVP wasm, lowered syntax.
+// Keep to Chrome 68's APIs or feature-detect (docs/PROGRESS.md).
 import init, { Graphics, WebTank, brushRange, gridFor } from "./pkg/desktank_web.js";
 import type { Hooks, Settings } from "./hooks.js";
 import type { Save } from "./store.ts";
@@ -96,6 +102,21 @@ const DEFAULTS: Readonly<Settings> = Object.freeze({
 const params = new URLSearchParams(location.search);
 const wantBackend = params.get("backend") ?? "auto";
 const bench = params.has("bench");
+const debug = params.get("debug") === "1";
+// "webos" on the legacy-Chromium TV build (scripts/build-web.ts --legacy).
+const build = document.documentElement.dataset.build ?? "";
+// Device pixels per CSS pixel the canvas may use: ?dpr=, else 1 on the webOS
+// build (a 1080p webOS 5 TV reports 2, which would draw a 4K canvas on its
+// small GPU), else the display's own.
+const dprCap = ((v) => (v > 0 ? v : build === "webos" ? 1 : Infinity))(Number(params.get("dpr")));
+// Draw the grid in more passes with smaller shaders (?grid=split or
+// ?grid=single, else split on the webOS build): Chrome 68's SwiftShader, and
+// it seems the TV's driver, can't compile the one-pass shaders.
+const splitGrid = params.has("grid") ? params.get("grid") === "split" : build === "webos";
+// An sRGB canvas format (?srgb=1 or 0; not on the webOS build): the same
+// colours either way, but WebGL2 presents a non-sRGB canvas with a blit,
+// where wgpu's sRGB present shader draws nothing on Chrome 68's SwiftShader.
+const srgbCanvas = params.has("srgb") ? params.get("srgb") === "1" : build !== "webos";
 
 // The page's elements are all in index.html, so a lookup never misses.
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -196,6 +217,7 @@ const hooks: Hooks = {
   get settings() {
     return { ...settings };
   },
+  startup: [],
   loadScene,
 };
 window.desktank = hooks;
@@ -273,14 +295,41 @@ function maxFps() {
 // --- Tank and graphics -------------------------------------------------------
 
 function showError(message: string) {
+  // A real error stays: no stall report over it later.
+  clearTimeout(stallTimer);
+  stallTimer = 0;
+  stallShown = false;
   statusEl.textContent = message;
   statusEl.hidden = false;
+}
+
+// A GPU error (a shader the driver rejects leaves the tank unpainted) is
+// shown once, with the first lines of wgpu's message.
+let gpuErrorShown = false;
+function showGpuError() {
+  const err = tank.gpuError();
+  if (!err) return;
+  gpuErrorShown = true;
+  const brief = err.split("\n").slice(0, 6).join("\n");
+  note(`GPU error: ${brief}`);
+  showError(`DeskTank's GPU renderer failed${splitGrid ? "" : " (try ?grid=split)"}:\n${brief}`);
+}
+
+// Element.replaceChildren is Chrome 86+; the webOS build runs on Chrome 68.
+function setChildren(el: Element, ...children: Node[]) {
+  el.textContent = "";
+  el.append(...children);
+}
+
+// Canvas pixels per CSS pixel: the display's, at most dprCap (SPEC D26).
+function pixelRatio() {
+  return Math.min(window.devicePixelRatio || 1, dprCap);
 }
 
 // Canvas size in device pixels, from its CSS box.
 function canvasPixels(): Point {
   const r = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = pixelRatio();
   return [Math.max(1, Math.round(r.width * dpr)), Math.max(1, Math.round(r.height * dpr))];
 }
 
@@ -313,8 +362,10 @@ async function attachGraphics(): Promise<boolean> {
   for (;;) {
     if (contextLost) return false;
     const losses = lossCount;
-    const g = await Graphics.open(canvas, backend || wantBackend);
+    const g = await Graphics.open(canvas, backend || wantBackend, splitGrid, srgbCanvas);
     if (losses === lossCount && !contextLost) {
+      // New graphics report their own errors.
+      gpuErrorShown = false;
       backend = g.backend();
       adapter = g.adapterName();
       tank.attach(g);
@@ -539,7 +590,8 @@ async function importSave(file: File | undefined) {
   if (!owner || !file) return;
   let next;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Response, not file.arrayBuffer(): Chrome 68 (webOS) lacks Blob.arrayBuffer.
+    const bytes = new Uint8Array(await new Response(file).arrayBuffer());
     // The tab may have handed the tank over while the file was read.
     if (!owner) return;
     const [w, h] = sizeCanvas();
@@ -591,6 +643,61 @@ function updateStats() {
     ` · ${w}×${h} cells at ${scale}×`;
 }
 
+// --- Startup diagnostics -----------------------------------------------------
+
+// For browsers without developer tools at hand (the webOS TV build, SPEC
+// D26): main() names each startup step in hooks.startup, and a step stalled
+// for STALL_MS is reported in the status line with the steps so far. With
+// ?debug=1 the steps, visibility changes and any uncaught error are listed
+// on screen as they happen. A few lines per page load, so the list is short.
+const STALL_MS = 10_000;
+const MAX_NOTES = 60;
+let stallTimer = 0;
+let stallShown = false; // the status line shows a stall, not an error
+let looped = false; // the loop has run once
+let drewFirst = false; // the first frame is drawn
+let debugEl: HTMLElement | null = null;
+
+function note(line: string) {
+  if (hooks.startup.length >= MAX_NOTES) return;
+  hooks.startup.push(`${Math.round(performance.now())} ms ${line}`);
+  if (debugEl) debugEl.textContent = hooks.startup.join("\n");
+}
+
+// Starts startup step `name`; if it is still the current step after
+// STALL_MS, the status line says so. `watch` false notes it unwatched.
+function startStep(name: string, watch = true) {
+  note(name);
+  clearTimeout(stallTimer);
+  stallTimer = 0;
+  if (!watch) return;
+  stallTimer = setTimeout(() => {
+    showError(`DeskTank stalled at "${name}" for ${STALL_MS / 1000} s.\n${hooks.startup.join("\n")}`);
+    stallShown = true;
+  }, STALL_MS);
+}
+
+function endSteps(line: string) {
+  note(line);
+  clearTimeout(stallTimer);
+  stallTimer = 0;
+  if (stallShown) statusEl.hidden = true;
+  stallShown = false;
+}
+
+function startDiagnostics() {
+  if (debug) {
+    debugEl = document.createElement("pre");
+    debugEl.id = "debug";
+    debugEl.className = "debug";
+    document.body.append(debugEl);
+  }
+  note(`${navigator.userAgent} · build ${build || "web"} · dpr ${window.devicePixelRatio} (cap ${dprCap}) · ${document.visibilityState}`);
+  window.addEventListener("error", (e) => note(`error: ${e.message} (${e.filename}:${e.lineno})`));
+  window.addEventListener("unhandledrejection", (e) => note(`unhandled rejection: ${e.reason}`));
+  if (debug) document.addEventListener("visibilitychange", () => note(`visibility: ${document.visibilityState}`));
+}
+
 // --- Loop --------------------------------------------------------------------
 
 // One callback: the tank decides whether a tick or a frame is due, and when
@@ -603,12 +710,21 @@ function loop(now: number) {
   rafId = 0;
   timerId = 0;
   if (hidden || !tank) return;
+  if (!looped) {
+    looped = true;
+    note("loop running");
+  }
   if (now >= nextAutosave) persist("autosave");
   if (bench) hooks.rafTimes.push(now);
   const t0 = performance.now();
   const flags = tank.frame(now);
   if (flags >> TICKS_SHIFT) tickMs = performance.now() - t0;
+  if (!gpuErrorShown) showGpuError();
   if (flags & DREW) {
+    if (!drewFirst) {
+      drewFirst = true;
+      endSteps(`first frame drawn (${canvas.width}×${canvas.height} px)`);
+    }
     frames++;
     if (bench) hooks.frameTimes.push(now);
   }
@@ -700,13 +816,14 @@ function step() {
 // --- Palette -----------------------------------------------------------------
 
 function label(name: string) {
-  return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replaceAll("_", " ");
+  return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
 }
 
 // The plants slot pours the species picked here (the sim's list), as the
 // propagule picked in the second picker (only the species' own methods).
 function buildPlantPicker() {
-  plantPickEl.replaceChildren(
+  setChildren(
+    plantPickEl,
     ...tank.plantSpecies().map((entry, i) => {
       const [name, ...description] = entry.split(" ");
       const o = document.createElement("option");
@@ -722,7 +839,8 @@ function buildPlantPicker() {
 
 function buildPropagulePicker() {
   const ways = tank.plantPropagules();
-  propagulePickEl.replaceChildren(
+  setChildren(
+    propagulePickEl,
     ...ways.map((name) => {
       const o = document.createElement("option");
       o.value = name;
@@ -768,7 +886,8 @@ function buildPalette() {
   // "name label" per entry: the group's name and its tab's text.
   const groups = tank.paletteGroups().map((g) => g.split(" ") as [name: string, text: string]);
   const tabs = [...new Map(groups).entries()];
-  groupsEl.replaceChildren(
+  setChildren(
+    groupsEl,
     ...tabs.map(([name, text]) => {
       const t = document.createElement("button");
       t.type = "button";
@@ -782,7 +901,8 @@ function buildPalette() {
     }),
   );
   let slot = 0;
-  paletteEl.replaceChildren(
+  setChildren(
+    paletteEl,
     ...entries.map((entry, i) => {
       const [kind, name] = entry.split(" ");
       const group = groups[i][0];
@@ -846,7 +966,8 @@ function showSelection(focus = false) {
     const open = t.dataset.group === openGroup;
     t.setAttribute("aria-selected", String(open));
     t.tabIndex = open ? 0 : -1;
-    t.toggleAttribute("data-holds", !open && t.dataset.group === holder);
+    if (!open && t.dataset.group === holder) t.setAttribute("data-holds", "");
+    else t.removeAttribute("data-holds");
   }
   $("palette-panel").setAttribute("aria-labelledby", `group-${openGroup}`);
   swatches().forEach((b, i) => {
@@ -1095,7 +1216,7 @@ const touch: PointerHandler = {
     const p = canvasPoint(e);
     touches.set(e.pointerId, p);
     if (gesture.mode === "pending" && e.pointerId === gesture.id) {
-      const slop = TOUCH_SLOP * (window.devicePixelRatio || 1);
+      const slop = TOUCH_SLOP * pixelRatio();
       if (Math.hypot(p[0] - gesture.start[0], p[1] - gesture.start[1]) < slop) return;
       clearTimeout(gesture.timer);
       gesture.mode = "stroke";
@@ -1312,7 +1433,9 @@ function wireLifecycle() {
       tank?.pause();
       stopLoop();
       persist("hidden");
+      if (!drewFirst) startStep("hidden: waiting for the page to be shown", debug);
     } else {
+      if (!drewFirst) startStep("waiting for the first frame");
       kick();
     }
   });
@@ -1353,29 +1476,43 @@ function wireLifecycle() {
 }
 
 async function main() {
+  startDiagnostics();
   try {
+    startStep("loading the WebAssembly module");
     await init();
   } catch (err) {
+    endSteps(`error: ${err}`);
     showError(`Couldn't load the WebAssembly module: ${err}`);
     return;
   }
   const [rMin, rMax] = brushRange();
   brushInput.min = String(rMin);
   brushInput.max = String(rMax);
+  startStep("opening IndexedDB");
   db = await openStore();
-  // Without Web Locks (very old browsers) the tab owns the tank alone.
+  // Without Web Locks (Chrome before 69, as on webOS 5) the tab owns the
+  // tank alone.
   if (navigator.locks && typeof BroadcastChannel !== "undefined") {
+    startStep("taking the tank's Web Lock");
     ownership = new Ownership(LOCK, { own: becomeOwner, view: becomeViewer, handOver });
     await ownership.start();
   } else {
+    startStep(`claiming the tank (no Web Locks)${db ? "" : ", no IndexedDB"}`);
     await becomeOwner();
   }
   const ownedAtStart = owner;
   try {
-    replaceTank((await loadNewest()) ?? newTank());
+    startStep("reading the saves");
+    const saved = await loadNewest();
+    startStep("creating the tank");
+    replaceTank(saved ?? newTank());
     if (!owner) setRunning(false);
+    const look = `${splitGrid ? ", split grid" : ""}${srgbCanvas ? "" : ", non-sRGB"}`;
+    startStep(`opening graphics (${wantBackend}${look}, canvas ${canvas.width}×${canvas.height} px)`);
     await attachGraphics();
+    note(`graphics: ${backend}, ${adapter}`);
   } catch (err) {
+    endSteps(`error: ${err}`);
     showError(`Couldn't start the GPU renderer: ${err}`);
     return;
   }
@@ -1391,10 +1528,17 @@ async function main() {
   fpsSince = performance.now();
   updateStats();
   document.body.dataset.ready = "true";
+  // A page started hidden (a webOS app launched in the background) draws
+  // once shown; the visibility handler kicks the loop then.
+  if (hidden) startStep("hidden: waiting for the page to be shown", debug);
+  else startStep("waiting for the first frame");
   kick();
 }
 
-main();
+main().catch((err: unknown) => {
+  endSteps(`error: ${err}`);
+  showError(`DeskTank couldn't start: ${err}`);
+});
 
 // Offline installation is optional on restricted origins and private profiles.
 if ("serviceWorker" in navigator) {

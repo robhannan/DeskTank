@@ -1412,6 +1412,40 @@ modes; it is a "window mode" in a page.
   under the GitHub Pages project subpath `/DeskTank/`. The service
   worker cache is versioned by build hash and old caches are deleted on
   activate.
+- **Legacy-Chromium (webOS) variant** (D26): the same page built for
+  Chrome 68, the WebAppManager of LG webOS 5 TVs (OLED CX; Mali-G51, WebGL2,
+  1920×1080 CSS px at devicePixelRatio 2), so DeskTank can later run as
+  the TV's screensaver. `pnpm build:web:webos` writes `target/site-webos/`:
+  - **wasm**: MVP only. Our code is compiled with `-C target-cpu=mvp`;
+    binaryen lowers what the precompiled std still holds (sign-ext, bulk
+    memory, saturating float-to-int) and strips the `target_features`
+    section, so wasm-bindgen emits glue without an externref table; the
+    final `wasm-opt -Oz` runs with `--mvp-features` (no multivalue).
+  - **JS**: the page, the service worker and wasm-bindgen's glue lowered
+    to Chrome 68 syntax by esbuild; the page's TypeScript is also
+    type-checked against ES2018's library. DOM APIs newer than Chrome 68
+    are avoided or feature-detected by hand.
+  - **Pixels**: `<html data-build="webos">` caps the canvas at 1 device
+    pixel per CSS pixel (a 1080p backing store, not 4K); `?dpr=` overrides
+    it on any build.
+  - **Diagnostics**: startup steps are named; a step stalled for 10 s is
+    reported in the status line, and `?debug=1` lists the steps, visibility
+    and errors on screen, for a browser with no developer tools at hand.
+  - **Graphics**: Chrome 68's GPU stack can't compile the one-pass grid
+    shader (its 2018 SwiftShader allows 4096 temporary registers per
+    fragment shader, and the TV showed a black tank), so the webOS build
+    draws with the *split grid*: the ground first, then leafy and other
+    plant parts in two blended passes, and the sprites in two passes split
+    by the plant part under each pixel, each shader reaching only its own
+    code. It draws the same picture (the render tests check every scene
+    both ways). Its canvas is non-sRGB, which WebGL2 presents with a blit
+    rather than wgpu's sRGB present shader (which draws nothing on that
+    SwiftShader). `?grid=split|single` and `?srgb=1|0` override both on
+    any build, and a GPU error (such as a rejected shader) is shown on
+    screen rather than leaving the tank black.
+  - CI builds it, checks it (`scripts/check-webos.ts`: MVP wasm, Chrome 68
+    syntax), loads it in the web tests and runs it in a real Chromium 68
+    (`scripts/check-chrome68.ts`). It stays within the §6.1 budget.
 
 ### 3.6 Android (D23)
 
@@ -2580,6 +2614,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D23 | **Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal. |
 | D24 | **Epiphytes and mats stay on the grid and are torn off when a body moves away** (2026-11-20). An epiphyte (anubias, java fern) or mat (java moss, christmas moss) growing on a rigid body (rock or driftwood) does not ride the body if it is unglued or knocked away: rigid bodies translate and rotate (T4c), and a plant can span multiple bodies or static scenery, so riding a rotating body would shear cell-aligned leaves and require body-attachment state in saves and body-split logic. Instead, hardscape should be settled or glued before planting on it; when a body moves away or is scooped out, any rhizome or mat cell that no longer touches its support loses its hold and falls off as dead plant matter (cascading through outer mat layers, and killing epiphyte leaves left without a rhizome). No extra save state or per-tick body coupling is needed. |
 | D25 | **Live foods are creatures** (2026-11-20). Live bloodworms (later brine shrimp and earthworms) are small creatures of a `live_food` species, not powder: they move by the creature systems, are hunted and swallowed whole by species whose diet holds the matching food material, and die into a cell of that material. They come from the Food palette group a pinch at a time, never breed and sit outside the population cap under their own limit (§2.4 *Live food*). |
+| D26 | **The web target gains a legacy-Chromium (webOS) variant** (2026-11-21). The web build (D15) also ships as a Chrome 68 variant (§3.5), so DeskTank can run as the screensaver of an LG webOS 5 TV, whose WebAppManager is Chrome 68.0.3440.106. It is a build variant of the same page, not a second host: MVP wasm, syntax lowered by esbuild, a 1-device-pixel canvas cap and on-screen startup diagnostics, checked in CI so it can't regress. A native webOS app was not chosen, as webOS apps are web apps and the web build already runs there. The screensaver hookup itself comes later, after on-device testing. |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions

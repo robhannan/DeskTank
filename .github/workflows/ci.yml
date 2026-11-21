@@ -166,6 +166,12 @@ jobs:
       # Same build as the Pages deploy, so a broken demo fails the PR.
       - uses: ./.github/actions/build-web
 
+      # The legacy-Chromium variant for webOS 5 TVs (Chrome 68, SPEC D26)
+      # into target/site-webos/. The build fails unless scripts/check-webos.ts
+      # finds MVP-only wasm and Chrome 68 JS; the web tests then load it.
+      - name: Build webOS site (MVP wasm, Chrome 68 JS)
+        run: pnpm build:web:webos
+
       # Strict tsc over the scripts, tests and page (after the build, which
       # writes wasm-bindgen's declarations).
       - name: Typecheck
@@ -178,6 +184,41 @@ jobs:
       # the WebGL2 render comparison with the native reference (SPEC §7).
       - name: Web tests
         run: pnpm test:web
+
+      # The webOS build in a real Chromium 68 (the TV's engine, D26), whose
+      # 2018 SwiftShader caps fragment shaders at 4096 temporary registers:
+      # it must draw the depth scene like the native capture, and show the
+      # one-pass shaders' failure on screen. Playwright can't drive a browser
+      # that old; scripts/check-chrome68.ts uses the DevTools protocol.
+      - name: Cache Chromium 68
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/chrome68
+          key: chromium-linux-561732-6933d0af
+
+      - name: Chromium 68 check (webOS build)
+        timeout-minutes: 15
+        env:
+          CHROMIUM_ZIP: https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/561732/chrome-linux.zip
+          CHROMIUM_SHA256: 6933d0afce6e17304b62029fbbd246cbe9e130eb0d90d7682d3765d3dbc8e1c8
+        run: |
+          if [ ! -x target/chrome68/chrome-linux/chrome ]; then
+            mkdir -p target/chrome68
+            curl -sSfL --retry 3 --max-time 600 -o target/chrome68/chrome-linux.zip "$CHROMIUM_ZIP"
+            echo "$CHROMIUM_SHA256  target/chrome68/chrome-linux.zip" | sha256sum -c -
+            unzip -q target/chrome68/chrome-linux.zip -d target/chrome68
+            rm target/chrome68/chrome-linux.zip
+          fi
+          node scripts/check-chrome68.ts target/chrome68/chrome-linux/chrome
+
+      - name: Upload Chromium 68 screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chrome68-shots
+          path: target/shots/chrome68-*.png
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Clippy (wasm32)
         run: cargo clippy -p desktank-web --target wasm32-unknown-unknown --locked -- -D warnings
