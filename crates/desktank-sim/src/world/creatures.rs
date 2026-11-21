@@ -66,6 +66,7 @@ mod lifecycle;
 mod live;
 mod naming;
 pub mod pursuit;
+mod school;
 mod steering;
 
 use core::mem;
