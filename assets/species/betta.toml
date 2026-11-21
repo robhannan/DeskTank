@@ -18,6 +18,12 @@ maturity_days = 120
 # touches (T9 part 2).
 prey_cm = 2.5
 breathes_air = true
+# World seconds it lasts without air past a breath it misses (after a
+# 45-second grace for the trip up, it then dies of suffocation). A labyrinth fish: it must gulp air to thrive, but its gills
+# still take some oxygen from the water, so kept from the surface it
+# weakens over hours, not minutes. Fifteen minutes here, several times a
+# frog's.
+air_tolerance_seconds = 900
 temperament = "territorial"
 # Radius in cm of the territory an adult claims where it settles: it
 # patrols it and drives other fish out (and other males of its own kind).

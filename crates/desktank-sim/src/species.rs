@@ -51,6 +51,9 @@ pub const MAX_SPEED: f32 = 16.0;
 pub const MAX_REACH: u8 = 4;
 /// Longest lifespan a species may give, in real days (20 years).
 pub const MAX_LIFESPAN_DAYS: u32 = 7300;
+/// The range of [`Species::air_tolerance_seconds`]: half a minute to two
+/// hours.
+const AIR_TOLERANCE_SECONDS: std::ops::RangeInclusive<u32> = 30..=7200;
 /// Most colour morphs a species may have (SPEC §2.4, D13).
 pub const MAX_MORPHS: usize = 8;
 /// Most young in one brood or clutch.
@@ -196,6 +199,12 @@ pub struct Species {
     pub min_depth: usize,
     /// Whether it needs to reach air at the surface to breathe.
     pub breathes_air: bool,
+    /// For an air-breather, world seconds it lasts once a breath is due
+    /// and it can't reach air (0 for the rest): it builds up stress
+    /// towards [`crate::STRESS_LIMIT`] over this time and dies of
+    /// suffocation at the end. Short for obligate air-breathers (frogs),
+    /// long for labyrinth fish, whose gills still take some oxygen.
+    pub air_tolerance_seconds: u32,
     /// Temperament.
     pub temperament: Temperament,
     /// Cruising speed, cells per second.
@@ -385,6 +394,8 @@ struct SpeciesDef {
     min_depth: usize,
     #[serde(default)]
     breathes_air: bool,
+    #[serde(default)]
+    air_tolerance_seconds: Option<u32>,
     temperament: Temperament,
     speed: f32,
     max_speed: f32,
@@ -669,6 +680,15 @@ fn validate(
     {
         return Err(invalid("waste_every must be 1..=600 seconds"));
     }
+    match (d.breathes_air, d.air_tolerance_seconds) {
+        (true, Some(t)) if AIR_TOLERANCE_SECONDS.contains(&t) => {}
+        (false, None) => {}
+        _ => {
+            return Err(invalid(
+                "an air-breather needs air_tolerance_seconds (30..=7200), and only an air-breather",
+            ));
+        }
+    }
     if d.home_carpet.is_some() && d.zone != Zone::Bottom {
         return Err(invalid("only bottom walkers keep a home"));
     }
@@ -757,6 +777,7 @@ fn validate(
         bands: d.bands,
         min_depth: d.min_depth,
         breathes_air: d.breathes_air,
+        air_tolerance_seconds: d.air_tolerance_seconds.unwrap_or(0),
         temperament: d.temperament,
         speed: d.speed,
         max_speed: d.max_speed,
@@ -1119,6 +1140,8 @@ mod tests {
         assert!(worm.live_food && !worm.stocked() && !worm.cheat_only);
         assert_eq!(worm.food_as, m.id("bloodworm"));
         assert!(worm.breeding.is_none() && worm.diet.is_empty());
+        // Live food lives on the bed: it never rises for air or suffocates.
+        assert!(!worm.breathes_air && worm.air_tolerance_seconds == 0);
         assert_eq!(worm.zone, Zone::Bottom);
         assert!((1.0..=2.0).contains(&worm.length_cm));
         assert_eq!(t.iter().filter(|s| s.live_food).count(), 1);
@@ -1151,6 +1174,12 @@ mod tests {
         assert!(gourami.breathes_air);
         assert_eq!(gourami.zone, Zone::Surface);
         assert!(gourami.speed < betta.speed && gourami.depth[1] > betta.depth[1]);
+        // Frogs need air far sooner than the labyrinth fish.
+        for frog in ["african_dwarf_frog", "common_frog"] {
+            let frog = t.get(t.id(frog).unwrap()).unwrap();
+            assert!(frog.air_tolerance_seconds * 4 <= gourami.air_tolerance_seconds);
+            assert!(frog.air_tolerance_seconds * 4 <= betta.air_tolerance_seconds);
+        }
         let guppy = t.get(t.id("guppy").unwrap()).unwrap();
         assert_ne!(guppy.temperament, Temperament::Schooling);
         let rasbora = t.get(t.id("harlequin_rasbora").unwrap()).unwrap();
@@ -1520,6 +1549,38 @@ mod tests {
         assert_eq!((tetra.morphs.len(), tetra.looks.len()), (1, 1));
         assert_eq!(tetra.looks[0].frames, tetra.sprite.frames);
         assert_eq!(tetra.look(5, true), 0);
+    }
+
+    #[test]
+    fn only_an_air_breather_has_an_air_tolerance() {
+        let m = materials();
+        let with = |extra: &str| {
+            SpeciesTable::from_toml_sources(
+                &[&OK.replace("diet = [", &format!("{extra}\ndiet = ["))],
+                &m,
+            )
+        };
+        let frog = with("breathes_air = true\nair_tolerance_seconds = 180").unwrap();
+        assert_eq!(frog.get(SpeciesId(9)).unwrap().air_tolerance_seconds, 180);
+        assert_eq!(
+            with("")
+                .unwrap()
+                .get(SpeciesId(9))
+                .unwrap()
+                .air_tolerance_seconds,
+            0
+        );
+        for bad in [
+            "breathes_air = true",
+            "breathes_air = true\nair_tolerance_seconds = 10",
+            "breathes_air = true\nair_tolerance_seconds = 9000",
+            "air_tolerance_seconds = 180",
+        ] {
+            assert!(
+                matches!(with(bad), Err(SpeciesError::Invalid { .. })),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
