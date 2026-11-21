@@ -62,7 +62,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use desktank_platform::{PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats};
 use desktank_render::{
-    BrushPreview, Gpu, GpuOptions, Palette, PaletteHit, Tank, TankConfig, TankSurface, wgpu,
+    BrushPreview, Gpu, GpuOptions, Magnifier, Palette, PaletteHit, Tank, TankConfig, TankSurface,
+    wgpu,
 };
 use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
@@ -468,7 +469,18 @@ impl Running {
         self.tools.select(item);
         if item == plants {
             self.show_plant_species();
+        } else if item == PaletteItem::Tool(Tool::Magnify) {
+            self.show_magnify();
         }
+    }
+
+    /// Shows the active magnification factor in the title bar.
+    fn show_magnify(&mut self) {
+        let zoom = self.tools.zoom();
+        self.sync_overlay();
+        self.window.set_title(&format!(
+            "DeskTank — magnify {zoom}× (scroll, click or +/- to zoom)"
+        ));
     }
 
     /// Names the species the plants slot pours, and as what, in the title
@@ -494,6 +506,10 @@ impl Running {
     /// window's card; a drawn one comes with the overlay, which has no title
     /// bar).
     fn show(&mut self, out: Outcome) {
+        if let Outcome::Zoomed(_) = out {
+            self.show_magnify();
+            return;
+        }
         if let Outcome::AddRefused { species, reason } = out {
             self.forget_inspected();
             let world = self.tank.world();
@@ -751,6 +767,10 @@ impl Running {
         if over_palette.is_some_and(|((px, py), p)| p.contains(px, py)) {
             // Over the palette: scroll down for the next group.
             self.step_group(-steps);
+        } else if self.tools.tool() == Tool::Magnify {
+            if self.tools.step_zoom(steps) {
+                self.show_magnify();
+            }
         } else {
             self.tools.resize(steps);
         }
@@ -845,6 +865,11 @@ impl Running {
             radius,
         });
         self.tank.set_cursor(cursor);
+        let magnifier = self
+            .tools
+            .magnifier()
+            .map(|(x, y, zoom)| Magnifier { cell: (x, y), zoom });
+        self.tank.set_magnifier(magnifier);
     }
 }
 
@@ -1022,6 +1047,17 @@ impl ApplicationHandler for App {
                             s.next_plant_species();
                         } else if c.eq_ignore_ascii_case("o") {
                             s.next_plant_propagule();
+                        } else if s.tools.tool() == Tool::Magnify
+                            && matches!(c.as_str(), "+" | "=" | "]")
+                        {
+                            if s.tools.step_zoom(1) {
+                                s.show_magnify();
+                            }
+                        } else if s.tools.tool() == Tool::Magnify
+                            && matches!(c.as_str(), "-" | "[")
+                            && s.tools.step_zoom(-1)
+                        {
+                            s.show_magnify();
                         }
                     }
                     _ => {}

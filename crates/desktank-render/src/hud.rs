@@ -44,6 +44,9 @@ const GLUE: [&str; 8] = [
 const INSPECT: [&str; 8] = [
     ".####...", "#....#..", "#.#..#..", "#....#..", ".####...", "....##..", ".....##.", "......##",
 ];
+const MAGNIFY: [&str; 8] = [
+    ".#####..", "#..#..#.", "#.###.#.", "#..#..#.", ".#####..", ".....##.", "......##", ".......#",
+];
 
 /// Placeable icons: `#` is the device's colour, `o` a bubble or the jet.
 const BUBBLER: [&str; 8] = [
@@ -87,6 +90,121 @@ pub struct BrushPreview {
     pub cell: (i64, i64),
     /// Radius in cells.
     pub radius: u32,
+}
+
+/// The magnified lens to draw around the pointer: centre cell and
+/// magnification factor, as [`desktank_sim::tools::Tools::magnifier`] gives
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Magnifier {
+    /// Centre cell.
+    pub cell: (i64, i64),
+    /// Magnification factor (`2`, `4`, `6`, `8`).
+    pub zoom: u32,
+}
+
+/// Where the circular magnifying glass is drawn in a target, in target pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MagnifierLayout {
+    /// Centre of the circular glass lens in target pixels.
+    pub centre: (u32, u32),
+    /// Inner glass radius in target pixels.
+    pub radius: u32,
+    /// Pixel-art block size for the bezel and handle, in target pixels.
+    pub step: u32,
+    /// Tight bounding box of the circular glass lens (for scissoring the
+    /// magnified grid and sprites).
+    pub lens_origin: (u32, u32),
+    /// Width and height of the glass lens bounding box.
+    pub lens_size: (u32, u32),
+    /// Bounding box of the full magnifying glass (bezel + handle, clamped to
+    /// the target) for scissoring `fs_lens_frame`.
+    pub frame_origin: (u32, u32),
+    /// Width and height of the full magnifying glass bounding box.
+    pub frame_size: (u32, u32),
+    /// Target pixels per cell inside the lens (`grid.scale * zoom`).
+    pub scale: u32,
+    /// Top-left of the grid in target pixels for the magnified view.
+    pub offset: (i64, i64),
+}
+
+/// Smallest and largest lens diameter in target pixels (before clamping to
+/// the target itself).
+const MIN_LENS_SIDE: u32 = 48;
+const MAX_LENS_SIDE: u32 = 440;
+/// Outer bezel width in art pixels (4 px rim + 2 px drop shadow).
+const BEZEL_ART_PX: u32 = 6;
+/// Handle length bounds in art pixels (matches `fs_lens_frame` in `tank.wgsl`).
+const MIN_HANDLE_ART_PX: u32 = 14;
+const MAX_HANDLE_ART_PX: u32 = 44;
+
+impl MagnifierLayout {
+    /// Places a circular magnifying glass for `m` over `grid` inside `target`
+    /// pixels. Returns `None` if `target` is empty or `m.zoom <= 1`.
+    #[must_use]
+    pub fn fit(target: (u32, u32), grid: &Layout, m: Magnifier) -> Option<Self> {
+        if target.0 == 0 || target.1 == 0 || m.zoom <= 1 {
+            return None;
+        }
+        let min_dim = target.0.min(target.1);
+        let step = if min_dim >= 900 {
+            3
+        } else if min_dim >= 300 {
+            2
+        } else {
+            1
+        };
+        let pad = BEZEL_ART_PX * step;
+        let max_diameter = min_dim.saturating_sub(2 * pad);
+        if max_diameter < 4 {
+            return None;
+        }
+        let raw = (min_dim * 2 / 5)
+            .clamp(MIN_LENS_SIDE, MAX_LENS_SIDE)
+            .min(max_diameter);
+        let side = raw & !1;
+        let radius = side / 2;
+        if radius == 0 {
+            return None;
+        }
+        let margin = i64::from(radius + pad);
+        let gs = i64::from(grid.scale);
+        let target_pt = (
+            grid.offset.0 + m.cell.0 * gs + gs / 2,
+            grid.offset.1 + m.cell.1 * gs + gs / 2,
+        );
+        let cx = target_pt.0.clamp(margin, i64::from(target.0) - margin);
+        let cy = target_pt.1.clamp(margin, i64::from(target.1) - margin);
+        let scale = grid.scale.saturating_mul(m.zoom);
+        let ms = i64::from(scale);
+        let offset = (cx - m.cell.0 * ms - ms / 2, cy - m.cell.1 * ms - ms / 2);
+
+        let r_art = radius / step;
+        let handle_art = (r_art * 72 / 100).clamp(MIN_HANDLE_ART_PX, MAX_HANDLE_ART_PX);
+        // Handle extends down-right at 45° from the rim; leave room for its
+        // half-width and outline.
+        let reach = i64::from(radius + pad + (handle_art + 8) * step);
+        let fx0 = (cx - margin).clamp(0, i64::from(target.0));
+        let fy0 = (cy - margin).clamp(0, i64::from(target.1));
+        let fx1 = (cx + reach).clamp(0, i64::from(target.0));
+        let fy1 = (cy + reach).clamp(0, i64::from(target.1));
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to 0..=target
+        Some(Self {
+            centre: (cx as u32, cy as u32),
+            radius,
+            step,
+            lens_origin: (
+                (cx - i64::from(radius)) as u32,
+                (cy - i64::from(radius)) as u32,
+            ),
+            lens_size: (side, side),
+            frame_origin: (fx0 as u32, fy0 as u32),
+            frame_size: ((fx1 - fx0) as u32, (fy1 - fy0) as u32),
+            scale,
+            offset,
+        })
+    }
 }
 
 /// What a click on the palette hit.
@@ -321,6 +439,7 @@ fn slot_pixel(
                 Tool::Net => NET,
                 Tool::Inspect => INSPECT,
                 Tool::Glue => GLUE,
+                Tool::Magnify => MAGNIFY,
             };
             let ink = icon[y as usize].as_bytes().get(x as usize) == Some(&b'#');
             if ink { ICON_FG } else { ICON_BG }
@@ -452,5 +571,94 @@ mod tests {
         palette.plant = plants.id("java_moss");
         let moss = plants.get(palette.plant.unwrap()).unwrap();
         assert_eq!(leaf(&palette), moss.colour());
+    }
+
+    #[test]
+    fn magnifier_layout_centres_cell_and_clamps_to_target() {
+        let g = grid(); // 320×180 at scale 4 in 1280×720
+        assert_eq!(
+            MagnifierLayout::fit(
+                (1280, 720),
+                &g,
+                Magnifier {
+                    cell: (160, 90),
+                    zoom: 1
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            MagnifierLayout::fit(
+                (0, 720),
+                &g,
+                Magnifier {
+                    cell: (160, 90),
+                    zoom: 2
+                }
+            ),
+            None
+        );
+
+        // Centred in the middle of the tank.
+        let m = MagnifierLayout::fit(
+            (1280, 720),
+            &g,
+            Magnifier {
+                cell: (160, 90),
+                zoom: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(m.lens_size, (288, 288));
+        assert_eq!(m.radius, 144);
+        assert_eq!(m.scale, 8);
+        assert!(m.lens_origin.0 + m.lens_size.0 <= 1280);
+        assert!(m.lens_origin.1 + m.lens_size.1 <= 720);
+        assert!(m.frame_origin.0 + m.frame_size.0 <= 1280);
+        assert!(m.frame_origin.1 + m.frame_size.1 <= 720);
+        // The lens centre maps to the exact centre of cell (160, 90).
+        let cx = i64::from(m.centre.0);
+        let cy = i64::from(m.centre.1);
+        assert_eq!((cx - m.offset.0) / i64::from(m.scale), 160);
+        assert_eq!((cy - m.offset.1) / i64::from(m.scale), 90);
+        // Even scale means exact half-cell alignment.
+        assert_eq!(
+            (cx - m.offset.0) % i64::from(m.scale),
+            i64::from(m.scale / 2)
+        );
+
+        // Near the top-left corner: rim stays inside the target while still
+        // centring cell (1, 1) at the lens centre.
+        let corner = MagnifierLayout::fit(
+            (1280, 720),
+            &g,
+            Magnifier {
+                cell: (1, 1),
+                zoom: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(corner.frame_origin, (0, 0));
+        assert_eq!(corner.scale, 16);
+        let ccx = i64::from(corner.centre.0);
+        let ccy = i64::from(corner.centre.1);
+        assert_eq!((ccx - corner.offset.0) / i64::from(corner.scale), 1);
+        assert_eq!((ccy - corner.offset.1) / i64::from(corner.scale), 1);
+
+        // Near the bottom-right corner: lens and frame stay inside target bounds.
+        let br = MagnifierLayout::fit(
+            (1280, 720),
+            &g,
+            Magnifier {
+                cell: (319, 179),
+                zoom: 8,
+            },
+        )
+        .unwrap();
+        assert!(br.lens_origin.0 + br.lens_size.0 <= 1280);
+        assert!(br.lens_origin.1 + br.lens_size.1 <= 720);
+        assert!(br.frame_origin.0 + br.frame_size.0 <= 1280);
+        assert!(br.frame_origin.1 + br.frame_size.1 <= 720);
+        assert_eq!(br.scale, 32);
     }
 }

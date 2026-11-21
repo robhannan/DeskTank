@@ -567,3 +567,75 @@ test("creature cap input is disabled and ignores edits on a viewer tab", async (
   await expect(capInput).toHaveValue("60");
   expect(errors).toEqual([]);
 });
+
+test("magnify tool zooms on hover, cycles on click, and adjusts via wheel, keys and selector", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const [w, h] = await gridSize(page);
+  const [cx, cy] = [Math.round(w * 0.5), Math.round(h * 0.5)];
+  const zoom = () => page.evaluate(() => window.desktank.tank.zoom());
+  const radius = () => page.evaluate(() => window.desktank.tank.radius());
+  const frames = () => page.evaluate(() => window.desktank.tank.framesDrawn());
+  const zoomSelect = page.locator("#zoom");
+
+  // Pour a rock disc so the magnified view has a crisp feature to zoom in on.
+  await choose(page, "Rock");
+  const p = await cellPoint(page, cx, cy);
+  await page.mouse.click(p.x, p.y);
+  const hash = await stateHash(page);
+  const initialRadius = await radius();
+
+  // Select Magnify from the Tools group: starts at 2×.
+  await choose(page, "Magnify");
+  expect(await page.evaluate(() => window.desktank.tank.isMagnify())).toBe(true);
+  expect(await zoom()).toBe(2);
+  await expect(zoomSelect).toHaveValue("2");
+
+  // Capture canvas before hovering (no lens), then hover over the rock (lens visible).
+  const beforeHover = await page.locator("#tank").screenshot();
+  await page.mouse.move(p.x, p.y);
+  const afterHover = await page.locator("#tank").screenshot();
+  expect(Buffer.compare(beforeHover, afterHover)).not.toBe(0);
+
+  // Keeping the cursor still on a paused tank draws no extra frames.
+  await page.waitForTimeout(150);
+  const settledFrames = await frames();
+  await page.waitForTimeout(250);
+  expect(await frames()).toBe(settledFrames);
+
+  // Clicking cycles 2 → 4 → 6 → 8 → 2 without modifying the tank.
+  for (const want of [4, 6, 8, 2]) {
+    await page.mouse.click(p.x, p.y);
+    expect(await zoom()).toBe(want);
+    await expect(zoomSelect).toHaveValue(String(want));
+  }
+  expect(await stateHash(page)).toBe(hash);
+
+  // Mouse wheel zooms without changing brush radius.
+  await page.mouse.wheel(0, -80);
+  await expect.poll(zoom).toBe(6);
+  await expect(zoomSelect).toHaveValue("6");
+  expect(await radius()).toBe(initialRadius);
+  await page.mouse.wheel(0, 40);
+  await expect.poll(zoom).toBe(4);
+
+  // Keyboard controls step zoom.
+  await page.keyboard.press("]");
+  expect(await zoom()).toBe(6);
+  await page.keyboard.press("+");
+  expect(await zoom()).toBe(8);
+  await page.keyboard.press("-");
+  expect(await zoom()).toBe(6);
+  await page.keyboard.press("[");
+  expect(await zoom()).toBe(4);
+  expect(await radius()).toBe(initialRadius);
+
+  // Switching to another tool and picking a zoom level from #zoom re-selects Magnify.
+  await choose(page, "Sand");
+  expect(await page.evaluate(() => window.desktank.tank.isMagnify())).toBe(false);
+  await zoomSelect.selectOption("8");
+  expect(await page.evaluate(() => window.desktank.tank.isMagnify())).toBe(true);
+  expect(await zoom()).toBe(8);
+  expect(await stateHash(page)).toBe(hash);
+  expect(errors).toEqual([]);
+});
