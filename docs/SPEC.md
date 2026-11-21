@@ -323,7 +323,7 @@ The v1 palette (D2):
 |---|---|
 | Water and air | water (the medium, the "empty" cell), air (above the surface) |
 | Substrates | sand, gravel, aquasoil (holds nutrients), rock (rigid), driftwood (rigid, lighter than water) |
-| Food | flakes (float, then sink), sinking pellets, bloodworms (sink fast), algae wafers (for bottom feeders) |
+| Food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders); live foods (live bloodworms) are creatures offered from the same group (§2.4 *Live food*, D25) |
 | Fertilisers | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), CO₂ (bubbles that dissolve into the CO₂ field and boost plant growth) |
 | Life | seeds and cuttings of each plant species (become plants, §2.7), moss (grows on rock and wood; a plant species from T6b), algae (nuisance; grows with excess light and nutrients), eggs (one material per breeding species, which hatches into fry) |
 | Gases | air bubbles (from the bubbler, plants and creatures), CO₂ bubbles |
@@ -664,6 +664,41 @@ target computes the same bits.
     rest ticks without a quarry) and fright are saved (format version 9,
     migrating version 8 creatures calm) and hashed only when set; the
     territory is the creature's `home`.
+
+- *Live food* (D25; `desktank_sim::world::creatures::live`): some foods
+  are alive. A species with `live_food = "<material>"` is live food: a
+  small creature moved by the usual systems, offered from the **Food**
+  palette group (a click adds a pinch of `PINCH` = 5, scattered within 3
+  cells of the pointer) and never from Creatures, `spawn` or
+  `scene::stock`. It never breeds (no `[breeding]`, `[genetics]`,
+  `prey_cm`, territory or diet is allowed), and it doesn't count against
+  the population cap: a tank holds at most `MAX_LIVE_FOOD` = 32 live
+  foods beside the cap (the renderer draws up to cap + 32 + corpses).
+  - **Eaters.** A species eats a live food when its diet holds the live
+    food's material and it is at least as long, as grown: fish that take
+    frozen bloodworms take live ones, with no diet change. A hungry eater
+    (any age, in easy mode too, not in the net, not heading for a food
+    cell) hunts the nearest one within 80 cells (40 cm, lost past 96) as
+    a predator hunts prey, cover or not, and once a second swallows one
+    its reach touches, whole, worth two bites of food (`LIVE_FOOD_BITES`).
+    `prey_cm` doesn't apply to live food, and predation never takes it.
+  - **Behaviour.** A live food takes fright only at a creature chasing
+    it, and squirms straight away at its own slow top speed, seeking no
+    cover.
+  - **Death.** It ages and dies like any creature (old age, foul water
+    outside easy mode) but leaves no corpse: it becomes one cell of its
+    material in the lowest water cell its body covered, which rots like
+    any food.
+  - **Live bloodworms** (`live_bloodworm`, id 27, counting as `bloodworm`):
+    midge larvae 1.5 cm long, an 8×4-texel (4×2-cell) sprite with a
+    four-frame travelling-wave wriggle (16×8 fine frames). Bottom walkers
+    that sink at 6 cells a second and crawl the bed at 0.8 (top 2) cells
+    a second; 6 life days (about an hour of world time) from arriving
+    grown. The frozen material keeps its id (`bloodworm`) and is labelled
+    "Frozen bloodworms" on the web.
+  - **State.** Live food is ordinary creature state (no new fields), so
+    the save format is unchanged (v10); a save may hold up to the cap of
+    stock plus `MAX_LIVE_FOOD` live foods.
 
 ### 2.5 Interaction (D6)
 
@@ -2526,6 +2561,7 @@ Within each mode macOS comes first, then Windows, then Linux (§11). M6 can run 
 | D22 | **Floaters are buoyant bodies** (2026-11-20). A floating plant (duckweed, frogbit) is held at the surface and carried by the current as one object, built on the rigid-body motion (D17, T4c), not by a cell rule that pins floating leaves to the top water row. The plant table stays its owner (species, health, growth, budding, cutting, death); a per-plant raft holds only its motion (sub-cell offset and velocity), so cells growing onto it or cut from it need no re-anchoring. A rule would have kept leaves at the surface but let a plant's roots and leaves part when the current carried some cells and not others; as a body the whole plant moves together, rests by its leaves' buoyancy, falls back when lifted out, and stops at the glass. Rafts are saved (format version 7) and hashed. Epiphytes on moving bodies are settled in D24. |
 | D23 | **Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal. |
 | D24 | **Epiphytes and mats stay on the grid and are torn off when a body moves away** (2026-11-20). An epiphyte (anubias, java fern) or mat (java moss, christmas moss) growing on a rigid body (rock or driftwood) does not ride the body if it is unglued or knocked away: rigid bodies translate and rotate (T4c), and a plant can span multiple bodies or static scenery, so riding a rotating body would shear cell-aligned leaves and require body-attachment state in saves and body-split logic. Instead, hardscape should be settled or glued before planting on it; when a body moves away or is scooped out, any rhizome or mat cell that no longer touches its support loses its hold and falls off as dead plant matter (cascading through outer mat layers, and killing epiphyte leaves left without a rhizome). No extra save state or per-tick body coupling is needed. |
+| D25 | **Live foods are creatures** (2026-11-20). Live bloodworms (later brine shrimp and earthworms) are small creatures of a `live_food` species, not powder: they move by the creature systems, are hunted and swallowed whole by species whose diet holds the matching food material, and die into a cell of that material. They come from the Food palette group a pinch at a time, never breed and sit outside the population cap under their own limit (§2.4 *Live food*). |
 | — | Platform order macOS → Windows → Linux, with no Linux desktop preference. Lock-screen limits accepted. **Open source.** Tray + config only to start. §6.1 budgets accepted. Name to be confirmed. |
 
 ## 12. Open questions

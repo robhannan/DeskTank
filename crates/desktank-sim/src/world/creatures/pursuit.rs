@@ -47,6 +47,7 @@
 //! The quarry, the pursuit counter and fright are creature state (saved
 //! and hashed); the home is the creature's `home`.
 
+use super::live::{LIVE_LOSE, LIVE_SENSE};
 use super::quirks::salt;
 use super::{
     Creature, CreatureId, Kind, ONE, RETARGET_TICKS, TICKS_PER_SECOND, World, Zone, body_box,
@@ -113,6 +114,8 @@ pub(super) struct Near {
     /// A surface or mid-water species (one a territory is kept against).
     swimmer: bool,
     held: bool,
+    /// Live food (see [`super::live`]).
+    live: bool,
 }
 
 impl World {
@@ -122,9 +125,11 @@ impl World {
         let mut near = core::mem::take(&mut self.creatures.near);
         near.clear();
         let easy = self.creatures.easy;
+        let has_live = list.iter().any(|c| self.is_live(c.species));
         let active = list.iter().any(|c| {
-            self.kind(c.species)
-                .is_some_and(|k| (k.prey_mm > 0 && !easy) || k.territory > 0)
+            self.kind(c.species).is_some_and(|k| {
+                (k.prey_mm > 0 && !easy) || k.territory > 0 || (has_live && k.eats_live)
+            })
         });
         if active {
             for c in list {
@@ -141,12 +146,17 @@ impl World {
                     w,
                     h,
                     length_mm: self.length_mm(c),
-                    hunts_mm: if self.can_hunt(&k, c) { k.prey_mm } else { 0 },
+                    hunts_mm: if self.can_hunt(&k, c, false) {
+                        k.prey_mm
+                    } else {
+                        0
+                    },
                     chasing: c.quarry,
                     female: c.female,
                     adult: c.growth >= k.maturity,
                     swimmer: matches!(k.zone, Zone::Surface | Zone::Mid),
                     held: c.held_until >= self.tick,
+                    live: k.live,
                 });
             }
         }
@@ -188,7 +198,7 @@ impl World {
     /// Where `c` steers chasing its quarry, and how fast, if it has one.
     pub(super) fn chase_target(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, i32)> {
         let n = self.near(c.quarry?)?;
-        let hunt = self.is_prey(k, n);
+        let hunt = self.is_prey(k, c, n);
         let close = dist(n.x - c.x, n.y - c.y) <= i64::from(DASH_RANGE * ONE);
         let speed = if !hunt || close {
             k.top
@@ -199,18 +209,25 @@ impl World {
     }
 
     /// Whether `c` could hunt now: a hungry adult predator, outside easy
-    /// mode, not in the net.
-    fn can_hunt(&self, k: &Kind, c: &Creature) -> bool {
-        k.prey_mm > 0
-            && !self.creatures.easy
-            && c.growth >= k.maturity
-            && c.hungry()
-            && c.held_until < self.tick
+    /// mode, not in the net; or, for `live` food, a hungry eater of some
+    /// live food not in the net, at any age and in easy mode too.
+    fn can_hunt(&self, k: &Kind, c: &Creature, live: bool) -> bool {
+        let able = if live {
+            k.eats_live
+        } else {
+            k.prey_mm > 0 && !self.creatures.easy && c.growth >= k.maturity
+        };
+        able && c.hungry() && c.held_until < self.tick
     }
 
-    /// Whether `n` is prey to a creature of kind `k`.
-    fn is_prey(&self, k: &Kind, n: &Near) -> bool {
-        k.prey_mm > 0 && !self.creatures.easy && n.length_mm <= k.prey_mm
+    /// Whether `n` is prey to `c`, a creature of kind `k`: live food it
+    /// eats, or a creature no longer than its `prey_cm`.
+    fn is_prey(&self, k: &Kind, c: &Creature, n: &Near) -> bool {
+        if n.live {
+            Self::eats_live(k, self.length_mm(c), n.species, n.length_mm)
+        } else {
+            k.prey_mm > 0 && !self.creatures.easy && n.length_mm <= k.prey_mm
+        }
     }
 
     fn near(&self, id: CreatureId) -> Option<&Near> {
@@ -229,12 +246,13 @@ impl World {
         if n.held {
             return false;
         }
-        if self.is_prey(k, n) {
-            return self.can_hunt(k, c)
+        if self.is_prey(k, c, n) {
+            let lose = if n.live { LIVE_LOSE } else { LOSE_RANGE };
+            return self.can_hunt(k, c, n.live)
                 && c.food.is_none()
                 && c.pursuit <= self.quirks(c).ticks(salt::PERSIST, 60, 100, HUNT_TICKS)
-                && dist(n.x - c.x, n.y - c.y) <= i64::from(LOSE_RANGE * ONE)
-                && !(sensing && self.near_in_cover(n));
+                && dist(n.x - c.x, n.y - c.y) <= i64::from(lose * ONE)
+                && !(sensing && !n.live && self.near_in_cover(n));
         }
         c.pursuit <= self.quirks(c).ticks(salt::PERSIST, 60, 100, DRIVE_TICKS)
             && in_territory(k, c, n.x, n.y, k.territory + TERRITORY_MARGIN)
@@ -274,7 +292,7 @@ impl World {
         let drove = c
             .quarry
             .and_then(|q| self.near(q))
-            .is_none_or(|n| !self.is_prey(k, n));
+            .is_none_or(|n| !self.is_prey(k, c, n));
         c.quarry = None;
         c.pursuit = self.quirks(c).ticks(salt::PATIENCE, 60, 100, PURSUIT_REST);
         if let Some((hx, hy)) = c.home
@@ -286,19 +304,24 @@ impl World {
         }
     }
 
-    /// The nearest prey `c` can see, if it hunts now.
+    /// The nearest prey `c` can see, if it hunts now: live food it eats
+    /// within [`LIVE_SENSE`] (in cover or not), or prey within
+    /// [`HUNT_SENSE`] that isn't in cover.
     fn find_prey(&self, k: &Kind, c: &Creature) -> Option<CreatureId> {
-        if !self.can_hunt(k, c) || c.food.is_some() {
+        let (hunt, live) = (self.can_hunt(k, c, false), self.can_hunt(k, c, true));
+        if !(hunt || live) || c.food.is_some() {
             return None;
         }
         let mut best: Option<(i64, CreatureId)> = None;
-        let sense = i64::from(HUNT_SENSE * ONE);
         for n in &self.creatures.near {
-            if n.id == c.id || n.held || !self.is_prey(k, n) {
+            let able = if n.live { live } else { hunt };
+            if n.id == c.id || n.held || !able || !self.is_prey(k, c, n) {
                 continue;
             }
+            let sense = i64::from(if n.live { LIVE_SENSE } else { HUNT_SENSE } * ONE);
             let d = dist(n.x - c.x, n.y - c.y);
-            if d <= sense && best.is_none_or(|(bd, _)| d < bd) && !self.near_in_cover(n) {
+            if d <= sense && best.is_none_or(|(bd, _)| d < bd) && (n.live || !self.near_in_cover(n))
+            {
                 best = Some((d, n.id));
             }
         }
@@ -316,6 +339,7 @@ impl World {
             let rival = n.species == c.species && n.adult && n.female == c.female;
             if n.id == c.id
                 || n.held
+                || n.live
                 || !n.swimmer
                 || n.length_mm <= k.prey_mm
                 || (n.species == c.species && !rival)
@@ -345,7 +369,8 @@ impl World {
         let bold_sense = full * (50 + bold / 2) / 100;
         let mut threat: Option<(i64, i32, i32, bool)> = None;
         for n in &self.creatures.near {
-            let hunter = n.hunts_mm >= length && n.hunts_mm > 0;
+            // Live food squirms away from a chaser only, seeking no cover.
+            let hunter = !k.live && n.hunts_mm >= length && n.hunts_mm > 0;
             let chaser = n.chasing == Some(c.id);
             if n.id == c.id || n.held || !(hunter || chaser) {
                 continue;
