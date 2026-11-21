@@ -1520,6 +1520,16 @@ mod tests {
         }
     }
 
+    /// The shrimp's swatches are their body colours, not the outline: the
+    /// coarse frames keep more body than outline texels.
+    #[test]
+    fn shrimp_swatches_are_their_body_colours() {
+        let t = SpeciesTable::builtin_for(&materials()).unwrap();
+        let get = |name| t.get(t.id(name).unwrap()).unwrap();
+        assert_eq!(get("cherry_shrimp").colour, [0xd4, 0x2a, 0x2e]);
+        assert_eq!(get("amano_shrimp").colour, [0xb3, 0xa8, 0x8c]);
+    }
+
     /// T9 part 2: who breeds and how, who eats whom, and the colour morphs
     /// and female looks.
     #[test]
