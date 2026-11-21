@@ -306,6 +306,12 @@ test.describe("touch", () => {
     await expect(page.locator("#subtabs").getByRole("tab")).toHaveCount(7);
     const scrolls = await page.locator("#subtabs").evaluate((el) => el.scrollWidth > el.clientWidth);
     expect(scrolls, "#subtabs with Animals open").toBe(false);
+    const rows = await page.locator("#subtabs").getByRole("tab").evaluateAll((els: HTMLElement[]) => {
+      const right = Math.max(...els.map((b) => b.getBoundingClientRect().right));
+      return { rows: new Set(els.map((b) => b.offsetTop)).size, fits: right <= innerWidth };
+    });
+    expect(rows.rows, "the sub-tabs wrap onto several rows").toBeGreaterThan(1);
+    expect(rows.fits, "every sub-tab is on screen").toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no page overflow").toBe(true);
   });
 });

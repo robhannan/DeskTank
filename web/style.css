@@ -193,13 +193,14 @@ canvas {
   padding: 2px 10px;
   font-size: 0.9rem;
   font-weight: 400;
-  color: var(--muted);
+  color: #b4c8d8; /* --muted is under 4.5:1 on this fill */
   background: #284866;
   border: 2px solid var(--edge);
   box-shadow: inset -2px -2px 0 #172f45, inset 2px 2px 0 #3b6488;
 }
 
 .subtabs [role="tab"]:hover, .propagules .chip:hover { color: var(--ink); }
+.subtabs [role="tab"]:active, .propagules .chip:active { box-shadow: inset 2px 2px 0 #0b1724; }
 
 .subtabs [role="tab"][aria-selected="true"], .propagules .chip[aria-checked="true"] {
   color: var(--sub-open);
