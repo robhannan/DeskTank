@@ -36,6 +36,8 @@ export interface Hooks {
   ownedAt: number; // performance.now() when this tab last became the owner
   takeOverAt: number; // performance.now() of the last Take over click
   persisted?: boolean; // navigator.storage.persist()'s answer
+  // Startup steps and errors, "<ms> ms <what>" (main.ts; on screen with ?debug=1).
+  readonly startup: string[];
   readonly settings: Settings;
   loadScene(toml: string, seed: number, width: number, height: number): Promise<void>;
 }
