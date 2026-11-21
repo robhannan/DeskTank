@@ -1140,6 +1140,8 @@ mod tests {
         assert!(worm.live_food && !worm.stocked() && !worm.cheat_only);
         assert_eq!(worm.food_as, m.id("bloodworm"));
         assert!(worm.breeding.is_none() && worm.diet.is_empty());
+        // Live food lives on the bed: it never rises for air or suffocates.
+        assert!(!worm.breathes_air && worm.air_tolerance_seconds == 0);
         assert_eq!(worm.zone, Zone::Bottom);
         assert!((1.0..=2.0).contains(&worm.length_cm));
         assert_eq!(t.iter().filter(|s| s.live_food).count(), 1);
