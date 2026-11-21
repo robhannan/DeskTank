@@ -67,27 +67,27 @@ colours = { r = "#e0b020", h = "#f4d660", d = "#a87a10", a = "#f0d070", l = "#c4
 colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430", w = "#ffd6cc", m = "#7a121c", s = "#e34a44" }
 frames = [
     [
-        "d...dhhhd.aa",
+        "d...rhhhd.aa",
         "dlrhrsrrrkd.",
-        "d.dddrlrld.a",
+        "d.drrrlrrd.a",
         ".....l.l.l..",
     ],
     [
-        "d...dhhhd.aa",
+        "d...rhhhd.aa",
         "dlrhrsrrrkd.",
-        "d.dddrlrld.a",
+        "d.drrrlrrd.a",
         "....l.l.l.l.",
     ],
     [
-        "....dhhhd.a.",
+        "....rhhhd.a.",
         "dlrhrsrrrkda",
-        "d.dddrlrld.a",
+        "d.drrrlrrd.a",
         "d....l.l.l..",
     ],
     [
-        "....dhhhd.a.",
+        "....rhhhd.a.",
         "dlrhrsrrrkda",
-        "d.dddrlrld.a",
+        "d.drrrlrrd.a",
         "d...l.l.l.l.",
     ],
 ]
