@@ -3,7 +3,7 @@
 use rand_pcg::Pcg32;
 
 use super::{
-    Creature, FEET, Kind, ONE, REACHED, World, Zone, body, centre_of, dist, extent, to_i64,
+    Creature, FEET, Kind, ONE, REACHED, World, Zone, body, centre_of, dist, extent, school, to_i64,
 };
 
 impl World {
@@ -174,8 +174,9 @@ impl World {
         )
     }
 
-    /// The first free schoolmate wanders. Others follow its heading, with
-    /// close neighbours pushing apart. All sample the same tick snapshot.
+    /// The first free schoolmate wanders; the others swim loosely around
+    /// it (see [`school`](super::school) for why the school stays
+    /// irregular and out of step). All sample the same tick snapshot.
     fn school_target(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, i32)> {
         let mut mates = self
             .creatures
@@ -186,11 +187,17 @@ impl World {
         if c.id == lead.id {
             return None;
         }
-        let spacing = k.w * ONE;
-        let mut tx = lead.x + 8 * lead.vx;
-        let mut ty = lead.y + 8 * lead.vy;
+        let quirks = school::Quirks::of(self.seed, c.id, self.tick);
+        let len = k.w * ONE;
+        let (along, across) = quirks.slot(len);
+        let (hx, hy) = school::axis(k, lead);
+        let mut tx = lead.x + 8 * lead.vx + (along * hx - across * hy) / ONE;
+        let mut ty = lead.y + 8 * lead.vy + (along * hy + across * hx) / ONE;
+        let spacing = quirks.spacing(len);
         for m in std::iter::once(lead).chain(mates).filter(|m| m.id != c.id) {
-            let (mut dx, dy) = (c.x - m.x, c.y - m.y);
+            // Personal space is a body long and half as tall, like the
+            // fish, so close neighbours stack loosely rather than in a disc.
+            let (mut dx, dy) = (c.x - m.x, 2 * (c.y - m.y));
             if dx.abs() >= spacing || dy.abs() >= spacing {
                 continue;
             }
@@ -202,6 +209,7 @@ impl World {
             tx += dx * push / d;
             ty += dy * push / d;
         }
-        Some((tx, ty, k.top))
+        let far = dist(tx - c.x, ty - c.y) > i64::from(school::CATCH_UP * len);
+        Some((tx, ty, quirks.pace(k, far)))
     }
 }
