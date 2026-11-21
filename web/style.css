@@ -302,6 +302,10 @@ input[type="number"] {
   padding: 6px;
 }
 
+.cap-field { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+#set-creature-cap { width: 5em; }
+.cap-stock { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+
 input[type="range"] { accent-color: var(--accent); vertical-align: middle; }
 
 label { white-space: nowrap; }

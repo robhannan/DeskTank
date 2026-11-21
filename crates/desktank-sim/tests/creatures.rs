@@ -579,7 +579,13 @@ fn the_palette_adds_creatures_of_each_species() {
         assert_eq!(w.creature(c).unwrap().species(), s);
     }
     // Deep in the sand there's no room.
-    assert_eq!(t.press(&mut w, Button::Primary, (80, 89)), Outcome::None);
+    assert_eq!(
+        t.press(&mut w, Button::Primary, (80, 89)),
+        Outcome::AddRefused {
+            species: *adders.last().unwrap(),
+            reason: desktank_sim::tools::AddRefused::NoRoom,
+        }
+    );
     t.release(&mut w, Button::Primary);
     assert_eq!(w.creatures().len(), adders.len());
     // The population cap holds.

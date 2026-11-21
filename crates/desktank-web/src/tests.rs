@@ -797,3 +797,105 @@ mod saves {
         );
     }
 }
+
+#[test]
+fn creature_cap_clamps_marks_dirty_and_persists_in_saves() {
+    let mut t = paused();
+    assert_eq!(t.default_creature_cap(), 60);
+    assert_eq!(t.max_creature_cap(), 128);
+    assert_eq!(t.creature_cap(), 60);
+    assert_eq!(t.stock_count(), 0);
+    assert!(!t.save_needed());
+
+    // Setting the same cap doesn't mark dirty.
+    assert_eq!(t.set_creature_cap(60), 60);
+    assert!(!t.save_needed());
+
+    // Changing the cap marks dirty and clamps to 1..=max.
+    assert_eq!(t.set_creature_cap(0), 1);
+    assert!(t.save_needed());
+    assert_eq!(t.set_creature_cap(999), t.max_creature_cap());
+    assert_eq!(t.creature_cap(), 128);
+
+    // Stocked creatures raise the lower bound; live food does not.
+    t.select(slot(&t, "creature neon_tetra"));
+    for x in [30, 60, 90] {
+        down(&mut t, PRIMARY, x, 40);
+        t.pointer_up(PRIMARY);
+    }
+    assert_eq!(t.stock_count(), 3);
+    t.select(slot(&t, "live_food live_bloodworm"));
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    assert!(t.creatures() > t.stock_count());
+
+    assert_eq!(t.set_creature_cap(1), 3);
+    assert_eq!(t.creature_cap(), 3);
+
+    // Round-trip through save preserves the cap.
+    let bytes = t.save();
+    assert!(!t.save_needed());
+    let loaded = WebTank::from_save(&bytes, 512, 288).unwrap();
+    assert_eq!(loaded.creature_cap(), 3);
+    assert_eq!(loaded.stock_count(), 3);
+}
+
+#[test]
+fn refused_creature_add_reports_cap_live_cap_and_no_room() {
+    let mut t = paused();
+    t.select(slot(&t, "creature neon_tetra"));
+    assert_eq!(t.take_refusal(), "");
+
+    // Deep inside a solid block reports no_room and doesn't mark dirty.
+    let sand = t.tank().world().materials().id("sand").unwrap();
+    t.tank
+        .world_mut()
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: 0,
+                y0: 45,
+                x1: 128,
+                y1: 72,
+            },
+            sand,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+    let _ = t.save();
+    down(&mut t, PRIMARY, 64, 65);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.take_refusal(), "no_room neon_tetra");
+    assert_eq!(t.take_refusal(), "", "taken once");
+    assert!(!t.save_needed());
+
+    // Filling to cap reports cap <stock> <cap> <species>.
+    assert_eq!(t.set_creature_cap(2), 2);
+    for x in [40, 80] {
+        down(&mut t, PRIMARY, x, 40);
+        t.pointer_up(PRIMARY);
+        assert_eq!(t.take_refusal(), "");
+    }
+    let _ = t.save();
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.take_refusal(), "cap 2 2 neon_tetra");
+    assert!(!t.save_needed(), "refused add leaves tank clean");
+
+    // Raising the cap allows adding immediately.
+    assert_eq!(t.set_creature_cap(3), 3);
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.take_refusal(), "");
+    assert_eq!(t.stock_count(), 3);
+
+    // Live food reports live_cap once MAX_LIVE_FOOD is reached.
+    t.select(slot(&t, "live_food live_bloodworm"));
+    while t.tank().world().live_food_count() < desktank_sim::MAX_LIVE_FOOD {
+        down(&mut t, PRIMARY, 64, 40);
+        t.pointer_up(PRIMARY);
+        assert_eq!(t.take_refusal(), "");
+    }
+    down(&mut t, PRIMARY, 64, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.take_refusal(), "live_cap 32 32 live_bloodworm");
+}

@@ -66,7 +66,9 @@ use desktank_render::{
 };
 use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
-use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
+use desktank_sim::tools::{
+    AddRefused, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
+};
 use desktank_sim::{CreatureId, FieldKind, MAX_NAME_CHARS, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -488,9 +490,34 @@ impl Running {
         }
     }
 
-    /// Reports an inspection in the title bar (the window's card; a drawn
-    /// one comes with the overlay, which has no title bar).
+    /// Reports an inspection or refused creature add in the title bar (the
+    /// window's card; a drawn one comes with the overlay, which has no title
+    /// bar).
     fn show(&mut self, out: Outcome) {
+        if let Outcome::AddRefused { species, reason } = out {
+            self.forget_inspected();
+            let world = self.tank.world();
+            let name = world
+                .species()
+                .get(species)
+                .map_or_else(|| "creature".to_owned(), |s| s.name.replace('_', " "));
+            let text = match reason {
+                AddRefused::PopulationCap {
+                    cap,
+                    live_food: true,
+                } => format!("can't add {name}: live food limit reached ({cap} max)"),
+                AddRefused::PopulationCap {
+                    cap,
+                    live_food: false,
+                } => format!(
+                    "can't add {name}: tank is full ({}/{cap} creatures) — raise --creature-cap or net one out",
+                    world.stock_count(),
+                ),
+                AddRefused::NoRoom => format!("can't add {name} here: no room (click open water)"),
+            };
+            self.window.set_title(&format!("DeskTank — {text}"));
+            return;
+        }
         let Outcome::Inspected(found) = out else {
             return;
         };

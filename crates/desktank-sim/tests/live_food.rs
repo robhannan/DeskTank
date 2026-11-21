@@ -241,7 +241,16 @@ fn live_food_keeps_its_own_limit_and_never_breeds() {
     }
     assert_eq!(worms(&w).len(), MAX_LIVE_FOOD);
     assert_eq!(w.live_food_count(), MAX_LIVE_FOOD);
-    assert_eq!(pinch(&mut w, (120, 40)), Outcome::None);
+    assert_eq!(
+        pinch(&mut w, (120, 40)),
+        Outcome::AddRefused {
+            species: species(&w, "live_bloodworm"),
+            reason: desktank_sim::tools::AddRefused::PopulationCap {
+                cap: MAX_LIVE_FOOD,
+                live_food: true,
+            },
+        }
+    );
     assert_eq!(
         w.add_creature(species(&w, "live_bloodworm"), 120, 40),
         Err(WorldError::PopulationCap(MAX_LIVE_FOOD))
