@@ -487,7 +487,8 @@ impl World {
             },
             Some(Form::Epiphyte(_)) => Shape::Blades { pads_from: None },
             Some(Form::Mat(_)) => Shape::Mat,
-            Some(Form::Floater(_) | Form::Ball(_)) | None => Shape::Plain,
+            Some(Form::Floater(_)) => Shape::Floater,
+            Some(Form::Ball(_)) | None => Shape::Plain,
         };
         PlantDepth { id, base, shape }
     }
@@ -2550,6 +2551,14 @@ pub(super) struct PlantDepth {
     shape: Shape,
 }
 
+impl PlantDepth {
+    /// Whether the plant is a floater, whose roots are soft strands
+    /// hanging in the water (a swimmer passes through them).
+    pub(super) fn floats(&self) -> bool {
+        matches!(self.shape, Shape::Floater)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Shape {
     /// A stem plant: leaves left of `base_x` are one leaf, right another.
@@ -2562,8 +2571,10 @@ enum Shape {
         pads_from: Option<u8>,
     },
     Mat,
-    /// One band: a floater, or a plant not in the table (between an edit
-    /// and its tidy).
+    /// One band: a floater, whose roots hang soft in the water.
+    Floater,
+    /// One band: a ball (marimo), or a plant not in the table (between an
+    /// edit and its tidy).
     Plain,
 }
 
