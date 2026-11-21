@@ -1,6 +1,6 @@
 # An amano shrimp, Caridina multidentata (placeholder art, D11): a larger
-# translucent grey-green shrimp, 3–5 cm long (drawn at 4 cm), with a dashed brown
-# line along its side. A tireless algae grazer and a bold scavenger: it
+# translucent tan shrimp, 3–5 cm long (drawn at 4 cm), with dashed brown
+# lines and dots along its side. A tireless algae grazer and a bold scavenger: it
 # takes every prepared food as well as algae and mulm, and darts after it
 # faster than the cherries.
 id = 6
@@ -26,43 +26,47 @@ diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "bloodworm", "flak
 
 [sprite]
 # Facing right; two texels per cell side. The body is 16 texels (8 cells,
-# 4 cm at two cells per cm) from tail fan to eye, with a pale dorsal
-# stripe and the dashed lateral line; the long antennae sweep 4 texels
-# past it: a 10x3-cell sprite. Four frames: the legs paddle while the
-# tail fan and antennae flick.
-colours = { g = "#9aab94", p = "#d6dccb", t = "#73836d", d = "#7d4b38", k = "#16160f", a = "#c3cdbb", l = "#7f8f7a", h = "#b4c2ad", n = "#5e3a2c", e = "#e8ece0", m = "#8d9d86" }
+# 4 cm at two cells per cm) from tail fan to rostrum; the long antennae
+# sweep 4 texels past it, one down to the ground: a 10x3-cell sprite.
+# Traced from a side-on photo: longer and slimmer than the cherry, a
+# straight back with a gentle hump where carapace meets abdomen, a long
+# rostrum, a narrow tail fan, long jointed legs, and one antenna swept
+# back along the flank and past the tail. Translucent tan, outlined in a
+# dark shade of it, with the dot-dash markings. Four frames: the legs
+# step while the tail fan and antennae flick.
+colours = { g = "#b3a88c", p = "#d6ceb6", t = "#7d715a", d = "#7d4b38", k = "#16120f", a = "#cbc2aa", l = "#a89c82", h = "#c4baa0", n = "#5e3a2c", e = "#e9e3d2", m = "#9a8f74" }
 frames = [
     [
-        ".......pppppp.....aa",
-        "...ggggggggggggg.aa.",
-        "ttgdggdggdggdggkaa..",
-        "ttgggdggdggdgggg...a",
-        "t...l.l.l.l.lll.....",
-        "....l.l.l.l.........",
+        "t..tttttpphhpt...aa.",
+        "tmtgdgdhgdgdgktta...",
+        "..ttmgngmgngmgt.a...",
+        "aaaaaaatttttt....a..",
+        ".......l.l.l.l....a.",
+        "......n.n..n.n.....a",
     ],
     [
-        ".......pppppp.....aa",
-        "...ggggggggggggg.aa.",
-        "ttgdggdggdggdggkaa..",
-        "ttgggdggdggdgggg...a",
-        "t..l.l.l.l.l.ll.....",
-        "...l.l.l.l..........",
+        "t..tttttpphhpt...aa.",
+        "tmtgdgdhgdgdgktta...",
+        "..ttmgngmgngmgt.a...",
+        "aaaaaaatttttt....a..",
+        ".......l.l.l.l....a.",
+        ".......n.n.n..n....a",
     ],
     [
-        ".......pppppp....aa.",
-        "t..ggggggggggggg.aa.",
-        "ttgdggdggdggdggkaa..",
-        "t.gggdggdggdgggg..a.",
-        "....l.l.l.l.lll.....",
-        "....l.l.l.l.........",
+        "...tttttpphhpt....aa",
+        "tmtgdgdhgdgdgktta...",
+        "t.ttmgngmgngmgt.a...",
+        "aaaaaaatttttt....a..",
+        ".......l.l.l.l....a.",
+        "......n.n..n.n.....a",
     ],
     [
-        ".......pppppp....aa.",
-        "t..ggggggggggggg.aa.",
-        "ttgdggdggdggdggkaa..",
-        "t.gggdggdggdgggg..a.",
-        "...l.l.l.l.l.ll.....",
-        "...l.l.l.l..........",
+        "...tttttpphhpt....aa",
+        "tmtgdgdhgdgdgktta...",
+        "t.ttmgngmgngmgt.a...",
+        "aaaaaaatttttt....a..",
+        ".......l.l.l.l....a.",
+        ".......n.n.n..n....a",
     ],
 ]
 # The palette icon, at one pixel per cell.
@@ -76,59 +80,59 @@ icon = [
 # display scales divisible by four.
 fine_frames = [
     [
-        "...............ppeeppeppp.............aa",
-        "............pppppppppppppppp.........a..",
-        "......ghhhhhaaaaaaaaaaaaaaaahhhg...aa...",
-        ".....ggglggglggglggglggglggggekghaa.....",
-        "tttgggddlgggddgglgddlgggddgggkkka.......",
-        "ttmgggdndgggdndgggdndgggdndgggggaaa.....",
-        ".ttgggglggdddggldddlggdddggggggg...aaa..",
-        "ttt.gmmmmmmdmmmmmdmmmmmdmmmmmmmg......aa",
-        "tt......ll..ll..ll..ll..l..l.t..........",
-        "m.......l...l...l...l....l..l.t.........",
-        "........l...l...l...l...................",
-        ".......l...l...l...l....................",
+        ".................tttt...........aa......",
+        "ttt.ttttttttttttthphptttt.t...aa........",
+        "thmmphpmphmhnmphmggnghnhptke.a..........",
+        "ttttmmddmmddmggddgggddgggtphgttt........",
+        "....tttttnmmmnggggnggggngggmt.aa........",
+        "......l..tttttmahhahhahhahht....aa......",
+        ".....aaaalaalaatttttttttttt.......a.....",
+        "aaaaa............l.l.l.l.l.........a....",
+        "................l.l..l.l..l.........a...",
+        "...............d..d..d..d..d.........a..",
+        "..............l..l..l...l..l..........a.",
+        ".............n...n..n....n..n..........a",
     ],
     [
-        "...............ppeeppeppp.............aa",
-        "............pppppppppppppppp.........a..",
-        "......ghhhhhaaaaaaaaaaaaaaaahhhg...aa...",
-        ".....ggglggglggglggglggglggggekghaa.....",
-        "tttgggddlgggddgglgddlgggddgggkkka.......",
-        "ttmgggdndgggdndgggdndgggdndgggggaaa.....",
-        ".ttgggglggdddggldddlggdddggggggg...aaa..",
-        "ttt.gmmmmmmdmmmmmdmmmmmdmmmmmmmg......aa",
-        "tt....ll..ll..ll..ll..l..l.t............",
-        "m.....l...l...l...l....l..l.t...........",
-        "......l...l...l...l.....................",
-        ".....l...l...l...l......................",
+        ".................tttt...........aa......",
+        "ttt.ttttttttttttthphptttt.t...aa........",
+        "thmmphpmphmhnmphmggnghnhptke.a..........",
+        "ttttmmddmmddmggddgggddgggtphgttt........",
+        "....tttttnmmmnggggnggggngggmt.aa........",
+        "......l..tttttmahhahhahhahht....aa......",
+        ".....aaaalaalaatttttttttttt.......a.....",
+        "aaaaa............l.l.l.l.l.........a....",
+        "................l..ll...ll..........a...",
+        "................d.d.d...d.d..........a..",
+        "...............l..ll.....ll...........a.",
+        "..............n...nn.....n.n...........a",
     ],
     [
-        "...............ppeeppeppp...........aa..",
-        "............pppppppppppppppp.......a....",
-        "m.....ghhhhhaaaaaaaaaaaaaaaahhhg..aa....",
-        "tt...ggglggglggglggglggglggggekgha......",
-        "tttgggddlgggddgglgddlgggddgggkkka.......",
-        ".tmgggdndgggdndgggdndgggdndgggggaa......",
-        "ttg.ggglggdddggldddlggdddggggggg..aa....",
-        "t...gmmmmmmdmmmmmdmmmmmdmmmmmmmg....aa..",
-        "........ll..ll..ll..ll..l..l.t..........",
-        "........l...l...l...l....l..l.t.........",
-        "........l...l...l...l...................",
-        ".......l...l...l...l....................",
+        ".................tttt............a......",
+        ".tt.ttttttttttttthphptttt.t...aaa.......",
+        "thmmphpmphmhnmphmggnghnhptke.a..........",
+        "ttttmmddmmddmggddgggddgggtphgttt........",
+        "t...tttttnmmmnggggnggggngggmt.aa........",
+        "......l..tttttmahhahhahhahht....aa......",
+        ".....aaaalaalaatttttttttttt.......aa....",
+        "aaaaa............l.l.l.l.l..........a...",
+        "................l.l..l.l..l..........a..",
+        "...............d..d..d..d..d..........a.",
+        "..............l..l..l...l..l...........a",
+        ".............n...n..n....n..n...........",
     ],
     [
-        "...............ppeeppeppp...........aa..",
-        "............pppppppppppppppp.......a....",
-        "m.....ghhhhhaaaaaaaaaaaaaaaahhhg..aa....",
-        "tt...ggglggglggglggglggglggggekgha......",
-        "tttgggddlgggddgglgddlgggddgggkkka.......",
-        ".tmgggdndgggdndgggdndgggdndgggggaa......",
-        "ttg.ggglggdddggldddlggdddggggggg..aa....",
-        "t...gmmmmmmdmmmmmdmmmmmdmmmmmmmg....aa..",
-        "......ll..ll..ll..ll..l..l.t............",
-        "......l...l...l...l....l..l.t...........",
-        "......l...l...l...l.....................",
-        ".....l...l...l...l......................",
+        ".................tttt............a......",
+        ".tt.ttttttttttttthphptttt.t...aaa.......",
+        "thmmphpmphmhnmphmggnghnhptke.a..........",
+        "ttttmmddmmddmggddgggddgggtphgttt........",
+        "t...tttttnmmmnggggnggggngggmt.aa........",
+        "......l..tttttmahhahhahhahht....aa......",
+        ".....aaaalaalaatttttttttttt.......aa....",
+        "aaaaa............l.l.l.l.l..........a...",
+        "................l..ll...ll...........a..",
+        "................d.d.d...d.d...........a.",
+        "...............l..ll.....ll............a",
+        "..............n...nn.....n.n............",
     ],
 ]

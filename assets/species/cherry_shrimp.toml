@@ -57,34 +57,38 @@ colours = { r = "#e0b020", h = "#f4d660", d = "#a87a10", a = "#f0d070", l = "#c4
 
 [sprite]
 # Facing right; two texels per cell side. The body is 10 texels (5 cells,
-# 2.5 cm at two cells per cm) from tail fan to eye, with the antennae
-# reaching 2 texels past it: a 6x2-cell sprite. Four frames: the legs
-# paddle while the tail fan and antennae flick.
+# 2.5 cm at two cells per cm) from tail fan to rostrum, with the antennae
+# reaching 2 texels past it: a 6x2-cell sprite. Traced from a side-on
+# photo: a humped carapace, tallest just behind the stalked eye, with a
+# short rostrum; a segmented abdomen tapering to a flared tail fan; legs
+# under the carapace and swimmerets under the abdomen. Outlined in a dark
+# shade of the body, never black. Four frames: the legs step while the
+# tail fan and antennae flick.
 colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430", w = "#ffd6cc", m = "#7a121c", s = "#e34a44" }
 frames = [
     [
-        "...rhhrr...a",
-        "ddrrrrrrrka.",
-        "d.rdrrdrrr.a",
-        "...l.l.l.l..",
+        "d...dhhhd.aa",
+        "dlrhrsrrrkd.",
+        "d.dddrlrld.a",
+        ".....l.l.l..",
     ],
     [
-        "...rhhrr...a",
-        "ddrrrrrrrka.",
-        "d.rdrrdrrr.a",
-        "..l.l.l.l...",
+        "d...dhhhd.aa",
+        "dlrhrsrrrkd.",
+        "d.dddrlrld.a",
+        "....l.l.l.l.",
     ],
     [
-        "...rhhrr..a.",
-        "d.rrrrrrrka.",
-        "ddrdrrdrrr.a",
-        "...l.l.l.l..",
+        "....dhhhd.a.",
+        "dlrhrsrrrkda",
+        "d.dddrlrld.a",
+        "d....l.l.l..",
     ],
     [
-        "...rhhrr..a.",
-        "d.rrrrrrrka.",
-        "ddrdrrdrrr.a",
-        "..l.l.l.l...",
+        "....dhhhd.a.",
+        "dlrhrsrrrkda",
+        "d.dddrlrld.a",
+        "d...l.l.l.l.",
     ],
 ]
 # The palette icon, at one pixel per cell.
@@ -98,43 +102,43 @@ icon = [
 # display scales divisible by four.
 fine_frames = [
     [
-        "........hhhhhhhr.......a",
-        "......rhrsssssssrr....a.",
-        "add.rrlrrlrrlrrrlrwk.a..",
-        ".dddrrlrrlrrlrrrlrkkah..",
-        "dd..mlrrlrrlrrrrlrrraa..",
-        "a...mdddddddddddddrr..aa",
-        "......l...l.d.l.d.l.....",
-        ".....l...l.....l...l....",
+        "...........dddd........a",
+        "d.......ddhhhhhdd.....a.",
+        "dd.dddddhshssssrrrk..a..",
+        "dldhshlrlrlrsrrrrrrdd...",
+        "dd.dddrlrlrlrlrlrrrd.aa.",
+        "d....l.ddddddddddddl...a",
+        "..........l.l..l.l.l....",
+        ".........l..l.l..l..l...",
     ],
     [
-        "........hhhhhhhr.......a",
-        "......rhrsssssssrr....a.",
-        "add.rrlrrlrrlrrrlrwk.a..",
-        ".dddrrlrrlrrlrrrlrkkah..",
-        "dd..mlrrlrrlrrrrlrrraa..",
-        "a...mdddddddddddddrr..aa",
-        "....l...l.d.l.d.l.......",
-        "...l...l.....l...l......",
+        "...........dddd........a",
+        "d.......ddhhhhhdd.....a.",
+        "dd.dddddhshssssrrrk..a..",
+        "dldhshlrlrlrsrrrrrrdd...",
+        "dd.dddrlrlrlrlrlrrrd.aa.",
+        "d....l.ddddddddddddl...a",
+        "..........l.l..l.l.l....",
+        "..........l..l.l..l.l...",
     ],
     [
-        "........hhhhhhhr.....a..",
-        "......rhrsssssssrr...a..",
-        "ad..rrlrrlrrlrrrlrwka...",
-        ".dddrrlrrlrrlrrrlrkkah..",
-        "ddddmlrrlrrlrrrrlrrraa..",
-        "addamdddddddddddddrr..aa",
-        "......l...l.d.l.d.l.....",
-        ".....l...l.....l...l....",
+        "........................",
+        "........ddhhhhhdd.....aa",
+        "dd.dddddhshssssrrrk..a..",
+        "dldhshlrlrlrsrrrrrrdd...",
+        "dd.dddrlrlrlrlrlrrrd.aa.",
+        "d....l.ddddddddddddl...a",
+        "d.........l.l..l.l.l....",
+        ".........l..l.l..l..l...",
     ],
     [
-        "........hhhhhhhr.....a..",
-        "......rhrsssssssrr...a..",
-        "ad..rrlrrlrrlrrrlrwka...",
-        ".dddrrlrrlrrlrrrlrkkah..",
-        "ddddmlrrlrrlrrrrlrrraa..",
-        "addamdddddddddddddrr..aa",
-        "....l...l.d.l.d.l.......",
-        "...l...l.....l...l......",
+        "........................",
+        "........ddhhhhhdd.....aa",
+        "dd.dddddhshssssrrrk..a..",
+        "dldhshlrlrlrsrrrrrrdd...",
+        "dd.dddrlrlrlrlrlrrrd.aa.",
+        "d....l.ddddddddddddl...a",
+        "d.........l.l..l.l.l....",
+        "..........l..l.l..l.l...",
     ],
 ]
