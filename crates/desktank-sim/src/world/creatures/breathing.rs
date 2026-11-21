@@ -25,6 +25,7 @@
 //!
 //! No state is added: the phases follow from the saved `next_breath`.
 
+use super::quirks::salt;
 use super::{Creature, Kind, ONE, TICKS_PER_SECOND, World, centre_of, to_i64};
 use crate::STRESS_LIMIT;
 
@@ -149,20 +150,27 @@ impl World {
     /// while searching, where to swim for one. Just after a breath, it
     /// skims the surface for floating food.
     pub(super) fn air_target(&self, k: &Kind, c: &mut Creature) -> Option<(i32, i32, i32)> {
+        // Its own rhythm: 80–125% of the time between breaths, and a skim
+        // of 2–4 s.
+        let q = self.quirks(c);
+        let between = q.scale(salt::BREATH, 80, 125, BETWEEN_BREATHS);
+        let skim = q.scale(salt::SKIM, 67, 133, SKIM);
         if self.tick >= c.next_breath {
             let b = self.creature_body(c);
             if b.y0 > 0
                 && (b.x0..b.x1)
                     .any(|x| self.cells[(b.y0 - 1) * self.width + x].material == self.creatures.air)
             {
-                c.next_breath = self.tick + BETWEEN_BREATHS;
+                c.next_breath = self.tick + between;
             } else if self.seeking_air(k, c) {
                 return self.gap_target(k, c);
             } else {
                 return None;
             }
         }
-        if c.next_breath.saturating_sub(self.tick) > BETWEEN_BREATHS - SKIM {
+        // A skim is optional: a chase (an intruder to drive off, prey)
+        // breaks it off.
+        if c.quarry.is_none() && c.next_breath.saturating_sub(self.tick) > between - skim {
             let tx = c
                 .food
                 .map_or(c.tx, |i| centre_of(to_i64(i as usize % self.width)));
