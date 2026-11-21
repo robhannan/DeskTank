@@ -220,9 +220,12 @@ impl World {
         // However crowded it is, the push is at most its personal space:
         // summed over a packed clump it used to shove every fish round it
         // out to one radius, a ring.
-        let p = i32::try_from(dist(px, py)).unwrap_or(i32::MAX);
-        if p > spacing {
-            (px, py) = (px * spacing / p, py * spacing / p);
+        let p = dist(px, py);
+        if p > i64::from(spacing) {
+            // In i64: a big body in a packed clump can push past i32 here.
+            let scale =
+                |v: i32| i32::try_from(i64::from(v) * i64::from(spacing) / p).unwrap_or(spacing);
+            (px, py) = (scale(px), scale(py));
         }
         tx += px;
         ty += py;

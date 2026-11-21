@@ -1334,6 +1334,7 @@ fn regularity(seed: u64, adults: i64, young: i64) -> Regularity {
         w.tick();
         let fish: Vec<_> = w.creatures().iter().collect();
         let now: Vec<_> = fish.iter().map(|c| c.centre()).collect();
+        assert_eq!(now.len(), before.len(), "a fish was born or died");
         let n = now.len() as f32;
         let (mx, my) = now
             .iter()
@@ -1383,8 +1384,8 @@ fn regularity(seed: u64, adults: i64, young: i64) -> Regularity {
 /// A school with young in it (as a breeding tank's soon has) stays an
 /// uneven shoal stretched the way it swims, the young mixed through it,
 /// not a ring of adults round a clump of young (on the old steering:
-/// young 0.30–0.40 of the adults' distance out, stretched on 33–56% of
-/// ticks).
+/// young 0.38–0.41 of the adults' distance out; only that assertion
+/// tells the two apart, the others guard the fix).
 #[test]
 fn a_school_with_young_is_not_a_ring_round_them() {
     let runs: Vec<_> = [3, 11, 42]

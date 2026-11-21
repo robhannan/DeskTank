@@ -25,7 +25,8 @@
 //! - **Pace.** A speed cap between cruise and top over [`PACE_TICKS`];
 //!   near the top of its swing it darts ahead, near the bottom it lags
 //!   behind at under cruise (falling back a little), and one further than
-//!   [`CATCH_UP`] lengths from its place swims at top speed.
+//!   [`CATCH_UP`] full-grown lengths from its place swims at top speed
+//!   (so young, whose places are as far out as adults', don't race).
 //! - **Spacing.** Its own personal space, 1–1.5 body lengths, pushing it
 //!   at most that far however many fish crowd it.
 //!
@@ -44,8 +45,8 @@ const ACROSS: i32 = 2;
 const SLOT_TICKS: (u64, u64) = (200, 480);
 const WOBBLE_TICKS: (u64, u64) = (24, 60);
 const PACE_TICKS: (u64, u64) = (40, 120);
-/// A follower further than this many body lengths from its place swims at
-/// top speed.
+/// A follower further than this many of its species' full-grown lengths
+/// from its place swims at top speed.
 pub(super) const CATCH_UP: i32 = 6;
 
 /// Period of the whole school's shape, in ticks (each lead draws its own).
