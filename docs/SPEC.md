@@ -438,10 +438,16 @@ target computes the same bits.
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Three species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Five species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
-  hops off the substrate, for shrimp) and `bands` (the depth bands it
+  hops off the substrate, for shrimp), `swim_every` (seconds between a
+  bottom dweller's chances of a short swim: shrimp, plecos, loaches and
+  corydoras can swim but would rather not; snails and crabs, without it,
+  can't), `burrow_every` (seconds between a bottom walker's chances to
+  burrow into loose substrate, never rock: the kuhli loach; digging
+  moves the grains it displaces onto spoil heaps beside it and draws them
+  back over its body, conserving the substrate) and `bands` (the depth bands it
   keeps to, front and back, D21; every band by default). Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
@@ -453,7 +459,9 @@ target computes the same bits.
   - wander;
   - schooling for schoolers;
   - zone preference;
-  - bottom-walking for corydoras and shrimp;
+  - bottom-walking for corydoras and shrimp, with short swims now and
+    then for bottom dwellers that can swim, and burrowing into loose
+    substrate for kuhli loaches;
   - surface-grazing for snails on glass, rock and plants, turned in
     quarter turns so the foot rests on the face they hold (walls,
     overhangs), with the collision box turned too;

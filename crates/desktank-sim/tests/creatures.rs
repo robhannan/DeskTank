@@ -676,7 +676,8 @@ fn walker_follows_a_stepped_bed() {
             u32::from((b.x0..b.x1).any(|x| !swimmable(&w, w.cell(x, b.y1).unwrap().material)));
         range = (range.0.min(c.cell().0), range.1.max(c.cell().0));
     }
-    assert!(contacts > 2_900, "on the substrate {contacts}/3000 ticks");
+    // On the bed but for a short swim or two (`swim_every`).
+    assert!(contacts > 2_500, "on the substrate {contacts}/3000 ticks");
     assert!(
         range.0 < 45 && range.1 > 65,
         "did not cross the ledge: {range:?}"
@@ -921,11 +922,12 @@ fn shrimp_walk_the_substrate_and_hop_off_it_now_and_then() {
         }
         eprintln!("{name}: {hops} hops, on the bed {on_bed}/4000, top {highest}");
         // Mostly on the bed, with a hop every 6–10 s that lifts it a few
-        // cells and lands it again.
+        // cells and lands it again, and now and then a short swim
+        // (`swim_every`) a few cells higher.
         assert!(on_bed > 2_400, "{name} on the bed {on_bed}/4000 ticks");
         assert!(hops >= 15, "{name} hopped {hops} times in 200 s");
         assert!(
-            floor - highest <= 6,
+            floor - highest <= 10,
             "{name} hopped {} cells",
             floor - highest
         );
