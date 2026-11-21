@@ -1123,6 +1123,15 @@ impl WebTank {
         self.graphics = None;
     }
 
+    /// The first GPU error the attached graphics reported (such as a
+    /// pipeline whose shader the driver rejected, which leaves the tank
+    /// unpainted), for the page to show.
+    #[wasm_bindgen(js_name = gpuError)]
+    #[must_use]
+    pub fn gpu_error(&self) -> Option<String> {
+        self.graphics.as_ref().and_then(Graphics::error)
+    }
+
     /// The attached graphics backend (`"webgpu"`, `"webgl2"`), or `""`.
     #[must_use]
     pub fn backend(&self) -> String {

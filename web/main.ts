@@ -109,6 +109,14 @@ const build = document.documentElement.dataset.build ?? "";
 // build (a 1080p webOS 5 TV reports 2, which would draw a 4K canvas on its
 // small GPU), else the display's own.
 const dprCap = ((v) => (v > 0 ? v : build === "webos" ? 1 : Infinity))(Number(params.get("dpr")));
+// Draw the grid in more passes with smaller shaders (?grid=split or
+// ?grid=single, else split on the webOS build): Chrome 68's SwiftShader, and
+// it seems the TV's driver, can't compile the one-pass shaders.
+const splitGrid = params.has("grid") ? params.get("grid") === "split" : build === "webos";
+// An sRGB canvas format (?srgb=1 or 0; not on the webOS build): the same
+// colours either way, but WebGL2 presents a non-sRGB canvas with a blit,
+// where wgpu's sRGB present shader draws nothing on Chrome 68's SwiftShader.
+const srgbCanvas = params.has("srgb") ? params.get("srgb") === "1" : build !== "webos";
 
 // The page's elements are all in index.html, so a lookup never misses.
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -295,6 +303,18 @@ function showError(message: string) {
   statusEl.hidden = false;
 }
 
+// A GPU error (a shader the driver rejects leaves the tank unpainted) is
+// shown once, with the first lines of wgpu's message.
+let gpuErrorShown = false;
+function showGpuError() {
+  const err = tank.gpuError();
+  if (!err) return;
+  gpuErrorShown = true;
+  const brief = err.split("\n").slice(0, 6).join("\n");
+  note(`GPU error: ${brief}`);
+  showError(`DeskTank's GPU renderer failed${splitGrid ? "" : " (try ?grid=split)"}:\n${brief}`);
+}
+
 // Element.replaceChildren is Chrome 86+; the webOS build runs on Chrome 68.
 function setChildren(el: Element, ...children: Node[]) {
   el.textContent = "";
@@ -342,8 +362,10 @@ async function attachGraphics(): Promise<boolean> {
   for (;;) {
     if (contextLost) return false;
     const losses = lossCount;
-    const g = await Graphics.open(canvas, backend || wantBackend);
+    const g = await Graphics.open(canvas, backend || wantBackend, splitGrid, srgbCanvas);
     if (losses === lossCount && !contextLost) {
+      // New graphics report their own errors.
+      gpuErrorShown = false;
       backend = g.backend();
       adapter = g.adapterName();
       tank.attach(g);
@@ -697,6 +719,7 @@ function loop(now: number) {
   const t0 = performance.now();
   const flags = tank.frame(now);
   if (flags >> TICKS_SHIFT) tickMs = performance.now() - t0;
+  if (!gpuErrorShown) showGpuError();
   if (flags & DREW) {
     if (!drewFirst) {
       drewFirst = true;
@@ -1484,7 +1507,8 @@ async function main() {
     startStep("creating the tank");
     replaceTank(saved ?? newTank());
     if (!owner) setRunning(false);
-    startStep(`opening graphics (${wantBackend}, canvas ${canvas.width}×${canvas.height} px)`);
+    const look = `${splitGrid ? ", split grid" : ""}${srgbCanvas ? "" : ", non-sRGB"}`;
+    startStep(`opening graphics (${wantBackend}${look}, canvas ${canvas.width}×${canvas.height} px)`);
     await attachGraphics();
     note(`graphics: ${backend}, ${adapter}`);
   } catch (err) {
