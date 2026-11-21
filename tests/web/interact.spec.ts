@@ -507,6 +507,14 @@ test("creature cap setting and refused spawn messages", async ({ page }) => {
   expect(await stock()).toBe(3);
   await expect(capStock).toHaveText("(3/3)");
 
+  // Lowering from above stock down below stock says "set to" rather than "kept at".
+  await capInput.fill("10");
+  await capInput.dispatchEvent("change");
+  await capInput.fill("1");
+  await capInput.dispatchEvent("change");
+  await expect(capInput).toHaveValue("3");
+  await expect(page.locator("#inspect")).toHaveText(/Creature cap set to 3/);
+
   // Live food has its own cap and reports when full.
   await choose(page, "Live bloodworms");
   const mid = await cellPoint(page, Math.round(w * 0.5), waterY);
@@ -534,5 +542,28 @@ test("creature cap setting and refused spawn messages", async ({ page }) => {
   expect(await page.evaluate(() => window.desktank.tank.creatureCap())).toBe(60);
   await expect(capInput).toHaveValue("60");
   await expect(capStock).toHaveText("(3/60)");
+  expect(errors).toEqual([]);
+});
+
+test("creature cap input is disabled and ignores edits on a viewer tab", async ({ context }) => {
+  const ownerPage = await context.newPage();
+  const errors = watchErrors(ownerPage);
+  await open(ownerPage, "?backend=webgl2");
+
+  const viewerPage = await context.newPage();
+  errors.push(...watchErrors(viewerPage));
+  await open(viewerPage, "?backend=webgl2");
+
+  expect(await viewerPage.evaluate(() => window.desktank.owner)).toBe(false);
+  const capInput = viewerPage.locator("#set-creature-cap");
+  await expect(capInput).toBeDisabled();
+  // Even a synthetic change event on a viewer tab is ignored and restored.
+  await viewerPage.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>("#set-creature-cap")!;
+    input.value = "10";
+    input.dispatchEvent(new Event("change"));
+  });
+  expect(await viewerPage.evaluate(() => window.desktank.tank.creatureCap())).toBe(60);
+  await expect(capInput).toHaveValue("60");
   expect(errors).toEqual([]);
 });

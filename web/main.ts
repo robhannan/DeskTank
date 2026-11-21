@@ -1472,13 +1472,15 @@ function wireSettings(resetTank: () => void) {
       return;
     }
     const requested = Math.max(0, Math.floor(parsed));
+    const prev = tank.creatureCap();
     const applied = tank.setCreatureCap(requested);
     showCreatureCap(true);
     updateStats();
     if (applied !== requested) {
       const stock = tank.stockCount();
       if (requested < Math.max(1, stock)) {
-        flash(stock > 0 ? `Creature cap kept at ${applied} (tank has ${stock} creatures)` : `Creature cap must be at least ${applied}`);
+        const verb = applied === prev ? "kept at" : "set to";
+        flash(stock > 0 ? `Creature cap ${verb} ${applied} (tank has ${stock} creatures)` : `Creature cap must be at least ${applied}`);
       } else {
         flash(`Creature cap clamped to max ${applied}`);
       }
