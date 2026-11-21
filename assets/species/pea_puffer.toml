@@ -1,6 +1,6 @@
 id = 18
 name = "pea_puffer"
-palette = "animals/fish"
+palette = "animals/centrepiece"
 zone = "mid"
 depth = [0.2, 0.8]
 min_depth = 12

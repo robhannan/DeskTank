@@ -1,6 +1,6 @@
 id = 15
 name = "common_goldfish"
-palette = "animals/fish"
+palette = "animals/coldwater"
 zone = "mid"
 depth = [0.12, 0.88]
 min_depth = 18

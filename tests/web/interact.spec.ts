@@ -301,7 +301,11 @@ test.describe("touch", () => {
     // Every item can be reached through its tab and sub-tab.
     await choose(page, "Neon tetra");
     await expect(page.getByRole("tab", { name: "Animals" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("tab", { name: "Fish", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Schooling", exact: true })).toHaveAttribute("aria-selected", "true");
+    // Animals' seven sub-tabs wrap rather than scroll.
+    await expect(page.locator("#subtabs").getByRole("tab")).toHaveCount(7);
+    const scrolls = await page.locator("#subtabs").evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(scrolls, "#subtabs with Animals open").toBe(false);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no page overflow").toBe(true);
   });
 });
@@ -346,6 +350,15 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   const radios = page.locator("#palette").getByRole("radio");
   await expect(radios).toHaveText(["Sand", "Gravel", "Aquasoil"]);
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
+  // Animals splits the fish by stocking role.
+  await tab("Animals").click();
+  await expect(subs).toHaveText(["Schooling", "Centrepiece", "Coldwater", "Clean-up crew", "Shrimp & crabs", "Snails", "Amphibians"]);
+  await expect(radios).toHaveText(["Neon tetra", "Guppy", "Harlequin rasbora"]);
+  await tab("Clean-up crew").click();
+  await expect(radios).toHaveText(["Corydoras", "Otocinclus", "Bristlenose pleco", "Kuhli loach"]);
+  await expect(page.getByRole("radio", { name: "Sand" })).toBeHidden();
+  await tab("Build").click();
+  await expect(tab("Substrate")).toHaveAttribute("aria-selected", "true");
 
   // One tab, one sub-tab and one radio are in the tab order; arrows move
   // the selection within the sub-category and wrap.

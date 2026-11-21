@@ -185,25 +185,31 @@ canvas {
   box-shadow: none;
 }
 
-/* Sub-tabs: lighter, smaller and flat, inside the panel. */
-.subtabs [role="tab"] {
+/* Sub-tabs and propagule chips: smaller, lighter bevelled buttons inside
+   the panel, square-cornered like the rest of the page. The open sub-tab
+   (mint) and the picked chip (gold) are drawn pressed in. */
+.subtabs [role="tab"], .propagules .chip {
   min-height: 30px;
   padding: 2px 10px;
   font-size: 0.9rem;
+  font-weight: 400;
   color: var(--muted);
-  background: transparent;
-  border-color: transparent;
-  border-radius: 999px;
-  box-shadow: none;
+  background: #284866;
+  border: 2px solid var(--edge);
+  box-shadow: inset -2px -2px 0 #172f45, inset 2px 2px 0 #3b6488;
 }
 
-.subtabs [role="tab"]:hover { color: var(--ink); }
+.subtabs [role="tab"]:hover, .propagules .chip:hover { color: var(--ink); }
 
-.subtabs [role="tab"][aria-selected="true"] {
+.subtabs [role="tab"][aria-selected="true"], .propagules .chip[aria-checked="true"] {
   color: var(--sub-open);
-  background: rgba(127, 214, 176, 0.12);
+  background: #183048;
   border-color: var(--sub-open);
+  box-shadow: inset 2px 2px 0 #0b1724, inset -2px -2px 0 #2c4862;
 }
+
+.propagules .chip { padding: 2px 8px; }
+.propagules .chip[aria-checked="true"] { color: var(--accent); border-color: var(--accent); }
 
 /* A closed tab or sub-tab holding the selection. */
 .tabs [role="tab"][data-holds]::after {
@@ -218,8 +224,6 @@ canvas {
 
 .propagules { align-items: center; font-size: 0.9rem; }
 .propagules .as { margin-left: 2px; color: var(--muted); }
-.propagules .chip { min-height: 30px; padding: 2px 8px; color: var(--muted); background: var(--bg); }
-.propagules .chip[aria-checked="true"] { color: var(--ink); background: var(--panel); border-color: var(--accent); }
 
 button, .swatch {
   font: inherit;

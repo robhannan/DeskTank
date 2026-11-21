@@ -1210,20 +1210,28 @@ mod tests {
             ),
             ("plants/algae", vec!["algae"]),
             (
-                "animals/fish",
+                "animals/schooling",
+                vec!["neon_tetra", "guppy", "harlequin_rasbora"],
+            ),
+            (
+                "animals/centrepiece",
                 vec![
-                    "neon_tetra",
-                    "corydoras",
                     "betta",
                     "honey_gourami",
-                    "guppy",
-                    "harlequin_rasbora",
-                    "otocinclus",
-                    "common_goldfish",
-                    "fancy_goldfish",
                     "angelfish",
                     "pea_puffer",
                     "flowerhorn",
+                ],
+            ),
+            (
+                "animals/coldwater",
+                vec!["common_goldfish", "fancy_goldfish"],
+            ),
+            (
+                "animals/cleanup",
+                vec![
+                    "corydoras",
+                    "otocinclus",
                     "bristlenose_pleco",
                     "kuhli_loach",
                 ],
@@ -1270,12 +1278,10 @@ mod tests {
                 s.name
             );
         }
-        // Number keys pick the open sub-category's first ten slots: every
-        // slot but the fish past the tenth is keyboard-reachable (those
-        // take a click or the web's arrow keys). A palette row holds 23.
+        // Number keys pick the open sub-category's first ten slots, so
+        // every slot is keyboard-reachable.
         for (path, items) in &names {
-            let most = if path == "animals/fish" { 23 } else { 10 };
-            assert!(items.len() <= most, "{path} has {} slots", items.len());
+            assert!(items.len() <= 10, "{path} has {} slots", items.len());
         }
         // Plant tissue, air and device cells aren't poured.
         for name in [

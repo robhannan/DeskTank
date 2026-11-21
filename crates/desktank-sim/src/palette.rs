@@ -3,7 +3,7 @@
 //! host.
 //!
 //! Assets name the sub-category they are offered in with a path:
-//! `palette = "animals/fish"` in a species, plant or material TOML. A top
+//! `palette = "animals/schooling"` in a species, plant or material TOML. A top
 //! category with a single sub-category is named on its own
 //! (`palette = "water"`). Assets without a `palette` key aren't offered.
 //! The tools and devices sub-categories are filled from code
@@ -111,7 +111,10 @@ const TREE: &[TopDef] = &[
         name: "animals",
         label: "Animals",
         subs: &[
-            sub("fish", "Fish", Holds::Creatures),
+            sub("schooling", "Schooling", Holds::Creatures),
+            sub("centrepiece", "Centrepiece", Holds::Creatures),
+            sub("coldwater", "Coldwater", Holds::Creatures),
+            sub("cleanup", "Clean-up crew", Holds::Creatures),
             sub("shrimp", "Shrimp & crabs", Holds::Creatures),
             sub("snails", "Snails", Holds::Creatures),
             sub("amphibians", "Amphibians", Holds::Creatures),
@@ -201,7 +204,7 @@ impl PalettePath {
         &self.top_def().subs[usize::from(self.sub)]
     }
 
-    /// Its path as assets write it: `"animals/fish"`, or `"water"` for a
+    /// Its path as assets write it: `"animals/schooling"`, or `"water"` for a
     /// top category's only sub-category.
     #[must_use]
     pub fn name(self) -> String {
@@ -237,7 +240,7 @@ impl PalettePath {
         self.top_def().label
     }
 
-    /// Its own label (`"Fish"`; the top category's for an only
+    /// Its own label (`"Schooling"`; the top category's for an only
     /// sub-category).
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -263,9 +266,12 @@ mod tests {
 
     #[test]
     fn paths_parse_and_name_themselves() {
-        let fish = PalettePath::parse("animals/fish", Holds::Creatures).unwrap();
-        assert_eq!(fish.name(), "animals/fish");
-        assert_eq!((fish.top_label(), fish.label()), ("Animals", "Fish"));
+        let crew = PalettePath::parse("animals/cleanup", Holds::Creatures).unwrap();
+        assert_eq!(crew.name(), "animals/cleanup");
+        assert_eq!(
+            (crew.top_label(), crew.label()),
+            ("Animals", "Clean-up crew")
+        );
         assert_eq!(PalettePath::SUBSTRATE.name(), "build/substrate");
         let water = PalettePath::parse("water", Holds::Materials).unwrap();
         assert_eq!((water.top_label(), water.label()), ("Water", "Water"));
@@ -283,6 +289,24 @@ mod tests {
                 "Tools", "Build", "Water", "Food", "Care", "Plants", "Animals"
             ]
         );
+        // Fish are split by stocking role, ahead of the other animals.
+        let animals: Vec<_> = all
+            .iter()
+            .filter(|p| p.top_name() == "animals")
+            .map(|p| p.label())
+            .collect();
+        assert_eq!(
+            animals,
+            [
+                "Schooling",
+                "Centrepiece",
+                "Coldwater",
+                "Clean-up crew",
+                "Shrimp & crabs",
+                "Snails",
+                "Amphibians"
+            ]
+        );
     }
 
     #[test]
@@ -291,14 +315,17 @@ mod tests {
         assert!(matches!(err, PalettePathError::Unknown { .. }));
         let text = err.to_string();
         assert!(text.contains("\"animals/fsh\""), "{text}");
-        assert!(text.contains("animals/fish, animals/shrimp"), "{text}");
-        assert!(!text.contains("water"), "only creature categories: {text}");
+        assert!(
+            text.contains("animals/schooling, animals/centrepiece"),
+            "{text}"
+        );
+        assert!(!text.contains("build/"), "only creature categories: {text}");
         // The top alone isn't enough where it has several sub-categories.
         assert!(PalettePath::parse("animals", Holds::Creatures).is_err());
         assert_eq!(
-            PalettePath::parse("animals/fish", Holds::Materials),
+            PalettePath::parse("animals/schooling", Holds::Materials),
             Err(PalettePathError::WrongKind {
-                path: "animals/fish".into(),
+                path: "animals/schooling".into(),
                 holds: "creatures",
                 wanted: "materials",
             })

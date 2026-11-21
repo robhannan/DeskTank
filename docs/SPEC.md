@@ -739,12 +739,20 @@ target computes the same bits.
     - **Care**: root tabs, liquid fertiliser, waste, detritus;
     - **Plants**: Stem, Rosette, Carpet, Floating, Moss & epiphytes
       (one item per plant species), Algae;
-    - **Animals**: Fish, Shrimp & crabs, Snails, Amphibians (one item
-      per stocked species; cheat-only species aren't offered).
+    - **Animals**: the fish by stocking role, Schooling (neon tetra,
+      harlequin rasbora, guppy), Centrepiece (angelfish, betta,
+      flowerhorn, honey gourami, pea puffer), Coldwater (common and
+      fancy goldfish), Clean-up crew (corydoras, kuhli loach,
+      bristlenose pleco, otocinclus); then Shrimp & crabs, Snails,
+      Amphibians (one item per stocked species; cheat-only species
+      aren't offered).
 
     The open tab opens into a lighter panel holding its sub-tabs and
     items, and sub-tabs are framed in their own colour, so the two
-    levels never read as one row of the same kind.
+    levels never read as one row of the same kind. Every tab, sub-tab
+    and chip is square-cornered pixel art; on the web the sub-tabs and
+    propagule chips are smaller, lighter bevelled buttons, the open one
+    drawn pressed in.
     Chaos materials (not built yet, §2.2) will name categories too and
     be offered only while their setting is on.
     `G` / `Shift+G` step the top tabs, `H` / `Shift+H` the sub-tabs, `1`–`0`

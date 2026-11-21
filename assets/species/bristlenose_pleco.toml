@@ -1,6 +1,6 @@
 id = 20
 name = "bristlenose_pleco"
-palette = "animals/fish"
+palette = "animals/cleanup"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 14

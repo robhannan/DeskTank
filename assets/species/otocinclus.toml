@@ -4,7 +4,7 @@
 # films and mulm as it goes.
 id = 11
 name = "otocinclus"
-palette = "animals/fish"
+palette = "animals/cleanup"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 10

@@ -2,7 +2,7 @@
 # grazes surface films and mulm and takes food that sinks.
 id = 2
 name = "corydoras"
-palette = "animals/fish"
+palette = "animals/cleanup"
 zone = "bottom"
 depth = [0.72, 1.0]
 min_depth = 20

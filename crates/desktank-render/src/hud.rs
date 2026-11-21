@@ -623,6 +623,9 @@ mod tests {
         .unwrap();
         let tree = desktank_sim::tools::Tools::palette_tree(&w);
         let subs = tree.iter().map(|t| t.subs.len()).max().unwrap();
+        // Animals' seven sub-tabs (four of them fish by stocking role) are
+        // the widest sub-tab row; it fits beside the rest.
+        assert_eq!(subs, 7);
         let widest = tree
             .iter()
             .flat_map(|t| &t.subs)
