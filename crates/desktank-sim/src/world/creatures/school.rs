@@ -15,11 +15,20 @@
 //!   it, and those that were behind now lead. The slot drifts over
 //!   [`SLOT_TICKS`], so fish slide through the school, trail or swim ahead,
 //!   and a [`WOBBLE_TICKS`] wobble keeps each one moving on its own.
+//!   Slots are measured in the species' full-grown length: young fish
+//!   once took slots scaled to their own small bodies, packed the middle,
+//!   and their summed personal space pushed every adult out to one radius,
+//!   a ring round a clump of young.
+//! - **Shape.** The whole school stretches and squeezes over
+//!   [`SHAPE_TICKS`] (from its lead's quirks): long and thin for a while,
+//!   then bunched up, or loosened into a broad shoal.
 //! - **Pace.** A speed cap between cruise and top over [`PACE_TICKS`];
 //!   near the top of its swing it darts ahead, near the bottom it lags
 //!   behind at under cruise (falling back a little), and one further than
-//!   [`CATCH_UP`] lengths from its place swims at top speed.
-//! - **Spacing.** Its own personal space, 1–1.5 body lengths.
+//!   [`CATCH_UP`] full-grown lengths from its place swims at top speed
+//!   (so young, whose places are as far out as adults', don't race).
+//! - **Spacing.** Its own personal space, 1–1.5 body lengths, pushing it
+//!   at most that far however many fish crowd it.
 //!
 //! The noise is the creature's [`Quirks`]: a few integer hashes a tick, no
 //! state, independent of update order and of any other creature.
@@ -36,16 +45,32 @@ const ACROSS: i32 = 2;
 const SLOT_TICKS: (u64, u64) = (200, 480);
 const WOBBLE_TICKS: (u64, u64) = (24, 60);
 const PACE_TICKS: (u64, u64) = (40, 120);
-/// A follower further than this many body lengths from its place swims at
-/// top speed.
+/// A follower further than this many of its species' full-grown lengths
+/// from its place swims at top speed.
 pub(super) const CATCH_UP: i32 = 6;
 
-/// Its place in the lead's frame, `(along, across)` in 1/256 cells for
-/// a body `len` long (1/256 cells).
-pub(super) fn slot(q: Quirks, len: i32) -> (i32, i32) {
+/// Period of the whole school's shape, in ticks (each lead draws its own).
+const SHAPE_TICKS: (u64, u64) = (900, 2_400);
+
+/// The whole school's stretch this tick, `(along, across)` in 1/256 of
+/// the slot ranges, from its lead's quirks `lead`: the school draws out
+/// long and thin, bunches up short, or loosens into a broad shoal, and
+/// every fish's place stretches with it.
+pub(super) fn shape(lead: Quirks) -> (i32, i32) {
+    // Noise in -256..256 to 60–140% along and 40–120% across.
+    let along = ONE + lead.noise(salt::SHAPE_ALONG, SHAPE_TICKS) * 2 / 5;
+    let across = ONE * 4 / 5 + lead.noise(salt::SHAPE_ACROSS, SHAPE_TICKS) * 2 / 5;
+    (along, across)
+}
+
+/// Its place in the lead's frame, `(along, across)` in 1/256 cells, for
+/// a school of fish `len` long (1/256 cells) stretched by `shape` (see
+/// [`shape`]).
+pub(super) fn slot(q: Quirks, len: i32, shape: (i32, i32)) -> (i32, i32) {
     // ±3.5 lengths: a whole school about seven long.
     let along = q.noise(salt::SLOT_ALONG, SLOT_TICKS) * (2 * ALONG + 1) * len / (2 * ONE);
     let across = q.noise(salt::SLOT_ACROSS, SLOT_TICKS) * ACROSS * len / ONE;
+    let (along, across) = (along * shape.0 / ONE, across * shape.1 / ONE);
     let wobble = |salt, reach: i32| q.noise(salt, WOBBLE_TICKS) * reach / ONE;
     (
         along + wobble(salt::WOBBLE_ALONG, len * 3 / 4),
@@ -104,7 +129,7 @@ mod tests {
         let (mut along, mut across) = ((i32::MAX, i32::MIN), (i32::MAX, i32::MIN));
         for id in 1..40 {
             for t in (0..4_000).step_by(50) {
-                let (a, c) = slot(q(id, t), len);
+                let (a, c) = slot(q(id, t), len, (ONE, ONE));
                 along = (along.0.min(a), along.1.max(a));
                 across = (across.0.min(c), across.1.max(c));
             }
@@ -164,6 +189,30 @@ mod tests {
             );
             last = now;
         }
+    }
+
+    #[test]
+    fn the_school_shape_drifts_within_its_range() {
+        let (mut along, mut across) = ((i32::MAX, i32::MIN), (i32::MAX, i32::MIN));
+        let mut last = shape(q(3, 0));
+        for t in 1..20_000 {
+            let now = shape(q(3, t));
+            // Smooth: a school never jumps to a new shape.
+            assert!((now.0 - last.0).abs() <= 2 && (now.1 - last.1).abs() <= 2);
+            along = (along.0.min(now.0), along.1.max(now.0));
+            across = (across.0.min(now.1), across.1.max(now.1));
+            last = now;
+        }
+        // 60–140% along and 40–120% across, and it uses most of that.
+        assert!(
+            along.0 >= ONE * 3 / 5 && along.1 <= ONE * 7 / 5,
+            "{along:?}"
+        );
+        assert!(
+            across.0 >= ONE * 2 / 5 && across.1 <= ONE * 6 / 5,
+            "{across:?}"
+        );
+        assert!(along.1 - along.0 > ONE / 2 && across.1 - across.0 > ONE / 2);
     }
 
     #[test]

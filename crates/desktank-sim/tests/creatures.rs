@@ -5,8 +5,9 @@
 
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
 use desktank_sim::{
-    BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, MaterialId, MaterialTable, MovementClass,
-    Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig, WorldError,
+    BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, LIFE_DAY_TICKS, MaterialId, MaterialTable,
+    MovementClass, Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig,
+    WorldError,
 };
 
 fn world(width: usize, height: usize, seed: u64) -> World {
@@ -1290,6 +1291,119 @@ fn schools_are_loose_irregular_and_out_of_step() {
         assert!(s.elongation >= 1.6, "a round school");
         assert!(s.polarisation <= 0.9, "fish swim in lockstep");
         assert!(s.reshuffle >= 1.0, "fish keep their places");
+    }
+}
+
+/// How regular a mixed school of adults and young is over a run.
+struct Regularity {
+    /// Share of ticks its spread along the way it swims is at least 1.4
+    /// times its spread across (the covariance in the school's heading
+    /// frame).
+    stretched: f32,
+    /// Mean distance of the young from the centroid over that of the
+    /// adults: near 0 when the young pack the middle of a ring of adults.
+    young_out: f32,
+    /// Mean spread of the members' distances from the centroid over their
+    /// mean (a ring has a narrow one), adults only.
+    radial_spread: f32,
+    /// Ticks the school met the SPEC spacing limit (≤ 3 body lengths).
+    close: u32,
+    ticks: u32,
+}
+
+fn regularity(seed: u64, adults: i64, young: i64) -> Regularity {
+    let mut w = world(471, 265, seed);
+    let s = species(&w, "harlequin_rasbora");
+    let length = w.species().get(s).unwrap().size().0 as f32;
+    // Young twelve days old, as in a tank that bred (adults mature at 210).
+    let age = Some(LIFE_DAY_TICKS * 12);
+    for i in 0..adults + young {
+        let traits = Traits {
+            age: (i >= adults).then_some(age).flatten(),
+            ..Traits::default()
+        };
+        w.add_creature_with_traits(s, 180 + (i % 7) * 4, 150 + (i / 7) * 5, traits)
+            .unwrap();
+    }
+    run(&mut w, 1_000);
+    let grown = |c: &Creature| c.age() >= LIFE_DAY_TICKS * 100;
+    let mut before: Vec<_> = w.creatures().iter().map(Creature::centre).collect();
+    let ticks = 6_000;
+    let (mut stretched, mut young_out, mut radial_spread, mut close) = (0, 0.0, 0.0, 0);
+    for _ in 0..ticks {
+        w.tick();
+        let fish: Vec<_> = w.creatures().iter().collect();
+        let now: Vec<_> = fish.iter().map(|c| c.centre()).collect();
+        assert_eq!(now.len(), before.len(), "a fish was born or died");
+        let n = now.len() as f32;
+        let (mx, my) = now
+            .iter()
+            .fold((0.0, 0.0), |(a, b), &(x, y)| (a + x / n, b + y / n));
+        let (vx, vy) = now.iter().zip(&before).fold((0.0, 0.0), |(a, b), (p, q)| {
+            (a + (p.0 - q.0) / n, b + (p.1 - q.1) / n)
+        });
+        let v = vx.hypot(vy).max(1e-6);
+        let (hx, hy) = if v > 1e-3 {
+            (vx / v, vy / v)
+        } else {
+            (1.0, 0.0)
+        };
+        let (mut along, mut across) = (0.0, 0.0);
+        let (mut adult_r, mut adult_r2, mut adults_n, mut young_r, mut young_n) =
+            (0.0, 0.0, 0.0, 0.0, 0.0);
+        for (c, &(x, y)) in fish.iter().zip(&now) {
+            let (dx, dy) = (x - mx, y - my);
+            along += (dx * hx + dy * hy).powi(2);
+            across += (dy * hx - dx * hy).powi(2);
+            let r = dx.hypot(dy);
+            if grown(c) {
+                (adult_r, adult_r2, adults_n) = (adult_r + r, adult_r2 + r * r, adults_n + 1.0);
+            } else {
+                (young_r, young_n) = (young_r + r, young_n + 1.0);
+            }
+        }
+        stretched += u32::from(along >= 1.96 * across);
+        let mean = adult_r / adults_n;
+        radial_spread += (adult_r2 / adults_n - mean * mean).max(0.0).sqrt() / mean;
+        if young_n > 0.0 {
+            young_out += young_r / young_n / mean;
+        }
+        close += u32::from(mean_nearest_mate(&w, s) <= 3.0 * length);
+        before = now;
+    }
+    let t = ticks as f32;
+    Regularity {
+        stretched: stretched as f32 / t,
+        young_out: young_out / t,
+        radial_spread: radial_spread / t,
+        close,
+        ticks,
+    }
+}
+
+/// A school with young in it (as a breeding tank's soon has) stays an
+/// uneven shoal stretched the way it swims, the young mixed through it,
+/// not a ring of adults round a clump of young (on the old steering:
+/// young 0.38–0.41 of the adults' distance out; only that assertion
+/// tells the two apart, the others guard the fix).
+#[test]
+fn a_school_with_young_is_not_a_ring_round_them() {
+    let runs: Vec<_> = [3, 11, 42]
+        .into_iter()
+        .map(|seed| {
+            let r = regularity(seed, 12, 9);
+            eprintln!(
+                "seed {seed}: stretched {:.2}, young out {:.2}, radial spread {:.2}, close {}/{}",
+                r.stretched, r.young_out, r.radial_spread, r.close, r.ticks
+            );
+            r
+        })
+        .collect();
+    for r in runs {
+        assert!(r.close * 10 >= r.ticks * 9, "school broke up");
+        assert!(r.young_out >= 0.6, "young packed in the middle");
+        assert!(r.stretched >= 0.5, "a round school");
+        assert!(r.radial_spread >= 0.4, "a ring");
     }
 }
 
