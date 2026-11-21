@@ -458,6 +458,7 @@ fn gpu_with(options: GpuOptions) -> Option<Gpu> {
 /// lens rect, draws a border around it, leaves pixels outside untouched, and
 /// works identically on both single-pass and split-grid (`webOS`) pipelines.
 #[test]
+#[allow(clippy::too_many_lines)]
 fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let (tw, th) = (320u32, 180u32);
@@ -502,28 +503,36 @@ fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
             tank.set_magnifier(Some(mag));
             let zoomed = render_sized(&gpu, &mut tank, format, (tw, th));
 
-            // Pixels outside the lens rect are byte-identical to the plain frame.
+            // Pixels outside the magnifying glass frame rect are byte-identical
+            // to the plain frame.
             for y in 0..th {
                 for x in 0..tw {
-                    let in_lens = x >= ml.origin.0
-                        && x < ml.origin.0 + ml.size.0
-                        && y >= ml.origin.1
-                        && y < ml.origin.1 + ml.size.1;
-                    if !in_lens {
+                    let in_frame = x >= ml.frame_origin.0
+                        && x < ml.frame_origin.0 + ml.frame_size.0
+                        && y >= ml.frame_origin.1
+                        && y < ml.frame_origin.1 + ml.frame_size.1;
+                    if !in_frame {
                         assert_eq!(
                             px_at(&zoomed, x, y),
                             px_at(&plain, x, y),
-                            "split={split_grid} zoom={zoom}: outside lens ({x},{y}) changed"
+                            "split={split_grid} zoom={zoom}: outside frame ({x},{y}) changed"
                         );
                     }
                 }
             }
 
-            // Inside the lens, cell (40, 22) covers an exact (4 * zoom)^2 block
-            // centred at the lens centre.
+            // Roundness check: the top-left corner of the frame bounding box is
+            // outside the circular bezel, so the plain tank shows through there.
+            assert_eq!(
+                px_at(&zoomed, ml.frame_origin.0, ml.frame_origin.1),
+                px_at(&plain, ml.frame_origin.0, ml.frame_origin.1),
+                "split={split_grid} zoom={zoom}: top-left corner outside circular rim must stay untouched"
+            );
+
+            // Inside the circular lens, cell (40, 22) covers an exact
+            // (4 * zoom)^2 block centred at `ml.centre`.
             let cell_px = layout.scale * zoom;
-            let cx = ml.origin.0 + ml.size.0 / 2;
-            let cy = ml.origin.1 + ml.size.1 / 2;
+            let (cx, cy) = ml.centre;
             let x0 = cx - cell_px / 2;
             let y0 = cy - cell_px / 2;
             for y in y0..y0 + cell_px {
@@ -538,12 +547,21 @@ fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
                 }
             }
 
-            // The lens border is drawn along the outer edge of the lens rect.
-            let border = px_at(&zoomed, ml.origin.0, ml.origin.1);
-            let water = px_at(&plain, ml.origin.0, ml.origin.1);
+            // The circular bezel is drawn just outside `ml.radius` (top edge).
+            let rim_y = cy - ml.radius - 2 * ml.step;
             assert_ne!(
-                border, water,
-                "split={split_grid} zoom={zoom}: expected visible lens border"
+                px_at(&zoomed, cx, rim_y),
+                px_at(&plain, cx, rim_y),
+                "split={split_grid} zoom={zoom}: expected visible circular bezel"
+            );
+
+            // The diagonal handle is drawn extending down-right from the rim.
+            let diag = ((ml.radius + 10 * ml.step) * 707) / 1000;
+            let (hx, hy) = (cx + diag, cy + diag);
+            assert_ne!(
+                px_at(&zoomed, hx, hy),
+                px_at(&plain, hx, hy),
+                "split={split_grid} zoom={zoom}: expected visible magnifying-glass handle at ({hx},{hy})"
             );
 
             if zoom == 2 {

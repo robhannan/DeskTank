@@ -457,11 +457,11 @@ impl Renderer {
         let lens_layout = magnifier.and_then(|m| MagnifierLayout::fit(size, &layout, m));
         if let Some(ml) = lens_layout {
             #[allow(clippy::cast_precision_loss)] // target pixels
-            let lens_rect = [
-                ml.origin.0 as f32,
-                ml.origin.1 as f32,
-                ml.size.0 as f32,
-                ml.size.1 as f32,
+            let lens_info = [
+                ml.centre.0 as f32,
+                ml.centre.1 as f32,
+                ml.radius as f32,
+                ml.step as f32,
             ];
             let lens_bytes = self.pack_view(
                 size,
@@ -473,7 +473,7 @@ impl Renderer {
                 palette,
                 None,
                 field_mode,
-                lens_rect,
+                lens_info,
             );
             if lens_bytes != self.lens_view {
                 gpu.queue
@@ -501,10 +501,23 @@ impl Renderer {
         });
         self.draw_view(&mut pass, &self.bind_group, layout.scale);
         if let Some(ml) = lens_layout {
-            pass.set_scissor_rect(ml.origin.0, ml.origin.1, ml.size.0, ml.size.1);
+            pass.set_scissor_rect(
+                ml.lens_origin.0,
+                ml.lens_origin.1,
+                ml.lens_size.0,
+                ml.lens_size.1,
+            );
             self.draw_view(&mut pass, &self.lens_bind_group, ml.scale);
-            pass.set_pipeline(&self.lens_frame);
-            pass.draw(0..3, 0..1);
+            if ml.frame_size.0 > 0 && ml.frame_size.1 > 0 {
+                pass.set_scissor_rect(
+                    ml.frame_origin.0,
+                    ml.frame_origin.1,
+                    ml.frame_size.0,
+                    ml.frame_size.1,
+                );
+                pass.set_pipeline(&self.lens_frame);
+                pass.draw(0..3, 0..1);
+            }
         }
     }
 
