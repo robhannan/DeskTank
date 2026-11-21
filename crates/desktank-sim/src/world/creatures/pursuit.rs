@@ -48,6 +48,7 @@
 //! and hashed); the home is the creature's `home`.
 
 use super::live::{LIVE_LOSE, LIVE_SENSE};
+use super::quirks::salt;
 use super::{
     Creature, CreatureId, Kind, ONE, RETARGET_TICKS, TICKS_PER_SECOND, World, Zone, body_box,
     centre_of, dist, extent, lifecycle::grown_percent, to_i64, z_of, zone,
@@ -251,11 +252,12 @@ impl World {
             let lose = if n.live { LIVE_LOSE } else { LOSE_RANGE };
             return self.can_hunt(k, c, n.live)
                 && c.food.is_none()
-                && c.pursuit <= HUNT_TICKS
+                && c.pursuit <= self.quirks(c).ticks(salt::PERSIST, 60, 100, HUNT_TICKS)
                 && dist(n.x - c.x, n.y - c.y) <= i64::from(lose * ONE)
                 && !(sensing && !n.live && self.near_in_cover(n));
         }
-        c.pursuit <= DRIVE_TICKS && in_territory(k, c, n.x, n.y, k.territory + TERRITORY_MARGIN)
+        c.pursuit <= self.quirks(c).ticks(salt::PERSIST, 60, 100, DRIVE_TICKS)
+            && in_territory(k, c, n.x, n.y, k.territory + TERRITORY_MARGIN)
     }
 
     /// `c` couldn't move: it gives up its chase, and a territorial fish
@@ -263,7 +265,7 @@ impl World {
     /// stand of plants) settles a new one where it is.
     pub(super) fn pursuit_blocked(&self, k: &Kind, c: &mut Creature) {
         if c.quarry.take().is_some() {
-            c.pursuit = PURSUIT_REST;
+            c.pursuit = self.quirks(c).ticks(salt::PATIENCE, 60, 100, PURSUIT_REST);
         }
         if k.territory > 0 && c.home.is_some() && !in_territory(k, c, c.x, c.y, k.territory) {
             c.home = None;
@@ -294,7 +296,7 @@ impl World {
             .and_then(|q| self.near(q))
             .is_none_or(|n| !self.is_prey(k, c, n));
         c.quarry = None;
-        c.pursuit = PURSUIT_REST;
+        c.pursuit = self.quirks(c).ticks(salt::PATIENCE, 60, 100, PURSUIT_REST);
         if let Some((hx, hy)) = c.home
             && drove
             && k.territory > 0
@@ -362,7 +364,11 @@ impl World {
             return;
         }
         let length = self.length_mm(c);
-        let sense = i64::from(FLEE_SENSE * ONE);
+        // And lets a hunter closer: 80–100% of the range. A fish chasing it
+        // off its territory it notices at the full range.
+        let bold = i64::try_from(self.quirks(c).percent(salt::BOLD, 60, 100)).unwrap_or(100);
+        let full = i64::from(FLEE_SENSE * ONE);
+        let bold_sense = full * (50 + bold / 2) / 100;
         let mut threat: Option<(i64, i32, i32, bool)> = None;
         for n in &self.creatures.near {
             // Live food squirms away from a chaser only, seeking no cover.
@@ -372,6 +378,7 @@ impl World {
                 continue;
             }
             let d = dist(n.x - c.x, n.y - c.y);
+            let sense = if chaser { full } else { bold_sense };
             if d <= sense && threat.is_none_or(|(td, ..)| d < td) {
                 threat = Some((d, n.x, n.y, hunter));
             }
@@ -379,7 +386,8 @@ impl World {
         let Some((_, fx, fy, hunted)) = threat else {
             return;
         };
-        c.fear = FEAR_TICKS;
+        // A bold one gets over it sooner.
+        c.fear = self.quirks(c).ticks(salt::BOLD, 60, 100, FEAR_TICKS);
         if hunted {
             let (w, h) = extent(k, c.turn);
             if self.in_cover(w, h, c.x, c.y, c.band()) {

@@ -2,8 +2,11 @@
 
 use rand_pcg::Pcg32;
 
+use super::quirks::Quirks;
+
 use super::{
     Creature, FEET, Kind, ONE, REACHED, World, Zone, body, centre_of, dist, extent, school, to_i64,
+    zone,
 };
 
 impl World {
@@ -187,13 +190,13 @@ impl World {
         if c.id == lead.id {
             return None;
         }
-        let quirks = school::Quirks::of(self.seed, c.id, self.tick);
+        let quirks = Quirks::of(self.seed, c.id, self.tick);
         let len = k.w * ONE;
-        let (along, across) = quirks.slot(len);
+        let (along, across) = school::slot(quirks, len);
         let (hx, hy) = school::axis(k, lead);
         let mut tx = lead.x + 8 * lead.vx + (along * hx - across * hy) / ONE;
         let mut ty = lead.y + 8 * lead.vy + (along * hy + across * hx) / ONE;
-        let spacing = quirks.spacing(len);
+        let spacing = school::spacing(quirks, len);
         for m in std::iter::once(lead).chain(mates).filter(|m| m.id != c.id) {
             // Personal space is a body long and half as tall, like the
             // fish, so close neighbours stack loosely rather than in a disc.
@@ -209,7 +212,16 @@ impl World {
             tx += dx * push / d;
             ty += dy * push / d;
         }
+        // A slot reaches 3.5 lengths from the lead: keep it to the rows
+        // that hold the whole body in the species' zone, as a wander
+        // target is, so a follower near the edge isn't led out of its band.
+        let (top, bottom) = zone(k, self.surface_row, self.height);
+        let hh = i64::from(k.h / 2);
+        let (y0, y1) = (to_i64(top) + hh, to_i64(bottom) - hh - 1);
+        if y0 <= y1 {
+            ty = ty.clamp(centre_of(y0), centre_of(y1));
+        }
         let far = dist(tx - c.x, ty - c.y) > i64::from(school::CATCH_UP * len);
-        Some((tx, ty, quirks.pace(k, far)))
+        Some((tx, ty, school::pace(quirks, k, far)))
     }
 }
