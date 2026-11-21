@@ -1,16 +1,17 @@
 //! The interact overlay (SPEC §2.5): a small pixel-art palette in the top-left
 //! corner and the brush outline under the pointer.
 //!
-//! The palette is two rows of slots: the group tabs on top (each showing its
-//! group's first item) and the open group's items below. It is a tiny RGBA
-//! image built on the CPU when the selection or the open group changes and
-//! drawn by the tank shader at an integer scale, so it adds one texture and
-//! no pipeline (WebGL2-safe, SPEC §3.5). Pixels outside the rows are
-//! transparent. Hosts hit-test clicks with [`PaletteLayout`], which places it
-//! exactly as it is drawn.
+//! The palette is up to three rows of slots: the top tabs (each showing its
+//! category's first item), the open tab's sub-tabs (only when it has more
+//! than one sub-category, each showing its first item) and the open
+//! sub-category's items. It is a tiny RGBA image built on the CPU when the
+//! selection or the open tabs change and drawn by the tank shader at an
+//! integer scale, so it adds one texture and no pipeline (WebGL2-safe, SPEC
+//! §3.5). Pixels outside the rows are transparent. Hosts hit-test clicks
+//! with [`PaletteLayout`], which places it exactly as it is drawn.
 
 use desktank_sim::tools::{PaletteItem, Tool};
-use desktank_sim::{MaterialTable, Placeable, PlantSpeciesId, PlantSpeciesTable, SpeciesTable};
+use desktank_sim::{MaterialTable, Placeable, PlantSpeciesTable, SpeciesTable};
 
 use crate::Layout;
 
@@ -20,14 +21,23 @@ const SLOT: u32 = 10;
 const GAP: u32 = 1;
 /// Palette pixels per row: its leading gap and its slots.
 const ROW: u32 = GAP + SLOT;
-/// Largest palette image: the HUD texture's size (23 slots per row).
-pub const MAX_SIZE: (u32, u32) = (256, 24);
+/// Most rows: tabs, sub-tabs and items.
+const MAX_ROWS: u32 = 3;
+/// Largest palette image: the HUD texture's size (23 slots per row, three
+/// rows).
+pub const MAX_SIZE: (u32, u32) = (256, MAX_ROWS * ROW + GAP);
 
 /// Colours, sRGB.
 const BACKGROUND: [u8; 3] = [0x0b, 0x12, 0x1c];
 const FRAME: [u8; 3] = [0x2a, 0x36, 0x48];
 const SELECTED: [u8; 3] = [0xf4, 0xe9, 0xc8];
 const OPEN: [u8; 3] = [0x6f, 0xb3, 0xe0];
+/// The open tab's panel: the sub-tab and item rows sit on it, and the open
+/// tab opens into it (no bottom edge), so the rows read as that tab's.
+const PANEL: [u8; 3] = [0x2b, 0x48, 0x66];
+/// The open sub-tab's frame: unlike the tabs' blue, so the two rows of
+/// categories don't read as one.
+const SUB_OPEN: [u8; 3] = [0x7f, 0xd6, 0xb0];
 const ICON_BG: [u8; 3] = [0x16, 0x22, 0x34];
 const ICON_FG: [u8; 3] = [0xd8, 0xe4, 0xf0];
 
@@ -57,29 +67,33 @@ const OUTLET: [&str; 8] = [
 ];
 const BUBBLE: [u8; 3] = [0xe8, 0xf6, 0xff];
 
-/// The plants slot: a sprout, `#` in the picked species' colour, `s` its
-/// stem, `o` a seed.
+/// A plant slot: a sprout, `#` in its species' colour, `s` its stem, `o` a
+/// seed.
 const SPROUT: [&str; 8] = [
     "...##...", "..#s##..", ".##s.#..", "...s....", ".#.s.##.", "..#s#...", "...s....", ".oo.oo..",
 ];
 const SEED: [u8; 3] = [0xc8, 0xa8, 0x5a];
 
-/// The palette as the host shows it: the group tabs, the open group's items
-/// and the selection.
+/// The palette as the host shows it: the top tabs, the open tab's
+/// sub-tabs, the open sub-category's items and the selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Palette {
-    /// One tab per group, left to right: the item whose face it shows
-    /// (the group's first).
+    /// One tab per top category, left to right: the item whose face it
+    /// shows (the category's first).
     pub tabs: Vec<PaletteItem>,
     /// Index of the open tab.
     pub open: usize,
-    /// The open group's items, left to right.
+    /// One sub-tab per sub-category of the open tab (its first item's
+    /// face), or none when it has only one: then no sub-tab row is drawn.
+    pub subs: Vec<PaletteItem>,
+    /// Index of the open sub-category within the open tab.
+    pub open_sub: usize,
+    /// The open sub-category's items, left to right.
     pub items: Vec<PaletteItem>,
-    /// The selection: its group's tab and its index in that group. Framed
-    /// in the item row while its group is open, marked on its tab when not.
-    pub selected: Option<(usize, usize)>,
-    /// The plant species the plants slot pours, which colours its icon.
-    pub plant: Option<PlantSpeciesId>,
+    /// The selection: its tab, its sub-category in that tab and its index
+    /// there. Framed in the item row while its sub-category is open,
+    /// marked on its sub-tab or tab when not.
+    pub selected: Option<(usize, usize, usize)>,
 }
 
 /// The brush outline to draw: centre cell and radius, as
@@ -210,9 +224,11 @@ impl MagnifierLayout {
 /// What a click on the palette hit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteHit {
-    /// A group tab (top row).
+    /// A top tab (first row).
     Tab(usize),
-    /// An item of the open group (bottom row).
+    /// A sub-tab of the open tab (second row, when shown).
+    Sub(usize),
+    /// An item of the open sub-category (last row).
     Item(usize),
 }
 
@@ -223,19 +239,21 @@ pub struct PaletteLayout {
     pub origin: (u32, u32),
     /// Target pixels per palette pixel.
     pub scale: u32,
-    /// Number of group tabs (top row).
+    /// Number of top tabs (first row).
     pub tabs: usize,
-    /// Number of items in the open group (bottom row).
+    /// Number of sub-tabs (second row; 0: no sub-tab row).
+    pub subs: usize,
+    /// Number of items in the open sub-category (last row).
     pub items: usize,
 }
 
 impl PaletteLayout {
-    /// Places a palette of `tabs` tabs over `items` items in the top-left
-    /// of `target`, at the grid's cell scale (at least 2) or smaller if it
-    /// wouldn't fit.
+    /// Places a palette of `tabs` tabs, `subs` sub-tabs (0 for none) and
+    /// `items` items in the top-left of `target`, at the grid's cell scale
+    /// (at least 2) or smaller if it wouldn't fit.
     #[must_use]
-    pub fn fit(target: (u32, u32), grid: &Layout, tabs: usize, items: usize) -> Self {
-        let (w, _) = image_size(tabs, items);
+    pub fn fit(target: (u32, u32), grid: &Layout, tabs: usize, subs: usize, items: usize) -> Self {
+        let (w, _) = image_size(tabs, subs, items);
         let mut scale = grid.scale.max(2);
         while scale > 1 && (w + 4) * scale > target.0 {
             scale -= 1;
@@ -244,22 +262,23 @@ impl PaletteLayout {
             origin: (2 * scale, 2 * scale),
             scale,
             tabs,
+            subs,
             items,
         }
     }
 
     /// Size of the image's bounding box in target pixels; parts of it
-    /// right of the shorter row are transparent.
+    /// right of the shorter rows are transparent.
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
-        let (w, h) = image_size(self.tabs, self.items);
+        let (w, h) = image_size(self.tabs, self.subs, self.items);
         (w * self.scale, h * self.scale)
     }
 
     /// The palette pixel under target pixel `(px, py)`, if inside the
     /// bounding box.
     fn pixel(&self, px: f64, py: f64) -> Option<(u32, u32)> {
-        let (width, height) = image_size(self.tabs, self.items);
+        let (width, height) = image_size(self.tabs, self.subs, self.items);
         let scale = f64::from(self.scale);
         let (x, y) = (
             (px - f64::from(self.origin.0)) / scale,
@@ -270,34 +289,54 @@ impl PaletteLayout {
         inside.then_some((x as u32, y as u32))
     }
 
-    /// Whether target pixel `(px, py)` is over the drawn palette (either
-    /// row, not the transparent part beside the shorter one).
+    /// Whether target pixel `(px, py)` is over the drawn palette (any row,
+    /// not the transparent part beside a shorter one).
     #[must_use]
     pub fn contains(&self, px: f64, py: f64) -> bool {
-        self.pixel(px, py)
-            .is_some_and(|(x, y)| x < row_width(self.row_slots(y / ROW)))
+        self.pixel(px, py).is_some_and(|(x, y)| {
+            let row = (y / ROW).min(rows(self.subs) - 1);
+            x < row_width(self.row(row).1)
+        })
     }
 
-    fn row_slots(&self, row: u32) -> usize {
-        if row == 0 { self.tabs } else { self.items }
+    /// What row `row` holds and how many slots.
+    fn row(&self, row: u32) -> (RowKind, usize) {
+        match (row, self.subs) {
+            (0, _) => (RowKind::Tabs, self.tabs),
+            (1, n) if n > 0 => (RowKind::Subs, n),
+            _ => (RowKind::Items, self.items),
+        }
     }
 
-    /// The tab or item under target pixel `(px, py)`, if any.
+    /// The tab, sub-tab or item under target pixel `(px, py)`, if any.
     #[must_use]
     pub fn hit(&self, px: f64, py: f64) -> Option<PaletteHit> {
         let (x, y) = self.pixel(px, py)?;
         let row = y / ROW;
         let slot = usize::try_from(x.checked_sub(GAP)? / ROW).ok()?;
-        let within = (x - GAP) % ROW < SLOT && y % ROW >= GAP && row < 2;
-        if !within || slot >= self.row_slots(row) {
+        let within = (x - GAP) % ROW < SLOT && y % ROW >= GAP && row < rows(self.subs);
+        let (kind, slots) = self.row(row);
+        if !within || slot >= slots {
             return None;
         }
-        Some(if row == 0 {
-            PaletteHit::Tab(slot)
-        } else {
-            PaletteHit::Item(slot)
+        Some(match kind {
+            RowKind::Tabs => PaletteHit::Tab(slot),
+            RowKind::Subs => PaletteHit::Sub(slot),
+            RowKind::Items => PaletteHit::Item(slot),
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowKind {
+    Tabs,
+    Subs,
+    Items,
+}
+
+/// Rows drawn: two, or three with a sub-tab row.
+fn rows(subs: usize) -> u32 {
+    if subs > 0 { MAX_ROWS } else { MAX_ROWS - 1 }
 }
 
 /// Width in palette pixels of a row of `slots` slots, capped at
@@ -307,10 +346,27 @@ fn row_width(slots: usize) -> u32 {
     (GAP + n.saturating_mul(ROW)).min(MAX_SIZE.0)
 }
 
-/// Palette image size in palette pixels: two rows, as wide as the longer.
+/// Palette image size in palette pixels: two rows, or three with sub-tabs
+/// (`subs` > 0), as wide as the longest.
 #[must_use]
-pub fn image_size(tabs: usize, items: usize) -> (u32, u32) {
-    (row_width(tabs.max(items)), (2 * ROW + GAP).min(MAX_SIZE.1))
+pub fn image_size(tabs: usize, subs: usize, items: usize) -> (u32, u32) {
+    (
+        row_width(tabs.max(subs).max(items)),
+        (rows(subs) * ROW + GAP).min(MAX_SIZE.1),
+    )
+}
+
+/// One row of slots as [`build`] draws it.
+struct Row<'a> {
+    items: &'a [PaletteItem],
+    /// The slot framed as open (tabs) or selected (items).
+    framed: Option<usize>,
+    /// The closed slot holding the selection, marked.
+    holds: Option<usize>,
+    /// The frame colour of the framed slot.
+    colour: [u8; 3],
+    /// The row's background.
+    background: [u8; 3],
 }
 
 /// Draws the palette as RGBA rows (alpha 255 = drawn, 0 = transparent).
@@ -322,12 +378,7 @@ pub fn build(
     species: &SpeciesTable,
     plants: &PlantSpeciesTable,
 ) -> (Vec<u8>, (u32, u32)) {
-    let plant = palette
-        .plant
-        .and_then(|id| plants.get(id))
-        .or_else(|| plants.default_species())
-        .map(|s| (s.colour(), s.colours.stem[s.colours.stem.len() / 2]));
-    let (w, h) = image_size(palette.tabs.len(), palette.items.len());
+    let (w, h) = image_size(palette.tabs.len(), palette.subs.len(), palette.items.len());
     let mut img = vec![0u8; (w * h * 4) as usize];
     let mut put = |x: u32, y: u32, c: [u8; 3]| {
         if x < w && y < h {
@@ -335,15 +386,50 @@ pub fn build(
             img[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
         }
     };
-    let (sel_tab, sel_item) = palette.selected.unzip();
-    let rows = [(&palette.tabs, 0), (&palette.items, 1)];
-    for (items, row) in rows {
-        let y0 = row * ROW;
-        // The row's background, including the gap under the item row.
-        let bottom = if row == 0 { ROW } else { h - y0 };
+    let sel = palette.selected;
+    let in_open_tab = sel.filter(|&(t, _, _)| t == palette.open);
+    let in_open_sub = in_open_tab.filter(|&(_, s, _)| s == palette.open_sub);
+    let mut rows = vec![Row {
+        items: &palette.tabs,
+        framed: Some(palette.open),
+        holds: sel.map(|(t, _, _)| t),
+        colour: OPEN,
+        background: BACKGROUND,
+    }];
+    if !palette.subs.is_empty() {
+        rows.push(Row {
+            items: &palette.subs,
+            framed: Some(palette.open_sub),
+            holds: in_open_tab.map(|(_, s, _)| s),
+            colour: SUB_OPEN,
+            background: PANEL,
+        });
+    }
+    rows.push(Row {
+        items: &palette.items,
+        framed: in_open_sub.map(|(_, _, i)| i),
+        holds: None,
+        colour: SELECTED,
+        background: PANEL,
+    });
+    let last = rows.len() - 1;
+    for (
+        row,
+        Row {
+            items,
+            framed,
+            holds,
+            colour: frame_colour,
+            background,
+        },
+    ) in rows.into_iter().enumerate()
+    {
+        let y0 = u32::try_from(row).unwrap_or(0) * ROW;
+        // The row's background, including the gap under the last row.
+        let bottom = if row == last { h - y0 } else { ROW };
         for y in 0..bottom {
             for x in 0..row_width(items.len()) {
-                put(x, y0 + y, BACKGROUND);
+                put(x, y0 + y, background);
             }
         }
         for (i, item) in items.iter().enumerate() {
@@ -353,10 +439,10 @@ pub fn build(
                 break;
             }
             let top = y0 + GAP;
-            let frame = match row {
-                0 if i == palette.open => OPEN,
-                1 if sel_tab == Some(palette.open) && sel_item == Some(i) => SELECTED,
-                _ => FRAME,
+            let frame = if framed == Some(i) {
+                frame_colour
+            } else {
+                FRAME
             };
             for d in 0..SLOT {
                 for (x, y) in [(d, 0), (d, SLOT - 1), (0, d), (SLOT - 1, d)] {
@@ -365,15 +451,21 @@ pub fn build(
             }
             for y in 0..SLOT - 2 {
                 for x in 0..SLOT - 2 {
-                    let px = match item {
-                        PaletteItem::Tool(Tool::Plant) => sprout(plant, x, y),
-                        _ => slot_pixel(*item, materials, species, x, y),
-                    };
+                    let px = slot_pixel(*item, materials, species, plants, x, y);
                     put(x0 + 1 + x, top + 1 + y, px);
                 }
             }
-            // A closed tab holding the selection: a mark on its bottom edge.
-            if row == 0 && i != palette.open && sel_tab == Some(i) {
+            // The open tab opens into the panel below it, where the panel
+            // reaches under it.
+            let under = palette.subs.len().max(palette.items.len());
+            if row == 0 && framed == Some(i) && x0 + SLOT <= row_width(under) {
+                for x in 1..SLOT - 1 {
+                    put(x0 + x, top + SLOT - 1, PANEL);
+                }
+            }
+            // A closed tab or sub-tab holding the selection: a mark on its
+            // bottom edge.
+            if framed != Some(i) && holds == Some(i) {
                 for x in 3..SLOT - 3 {
                     put(x0 + x, top + SLOT - 1, SELECTED);
                 }
@@ -383,7 +475,7 @@ pub fn build(
     (img, (w, h))
 }
 
-/// Pixel `(x, y)` of the plants slot's face, in `colours` (leaf, stem).
+/// Pixel `(x, y)` of a plant slot's face, in `colours` (leaf, stem).
 fn sprout(colours: Option<([u8; 3], [u8; 3])>, x: u32, y: u32) -> [u8; 3] {
     let (leaf, stem) = colours.unwrap_or((ICON_FG, ICON_FG));
     match SPROUT[y as usize].as_bytes().get(x as usize) {
@@ -399,10 +491,18 @@ fn slot_pixel(
     item: PaletteItem,
     materials: &MaterialTable,
     species: &SpeciesTable,
+    plants: &PlantSpeciesTable,
     x: u32,
     y: u32,
 ) -> [u8; 3] {
     match item {
+        // A sprout in the species' leaf and stem colours.
+        PaletteItem::Tool(Tool::Plant(s)) => {
+            let colours = plants
+                .get(s)
+                .map(|s| (s.colour(), s.colours.stem[s.colours.stem.len() / 2]));
+            sprout(colours, x, y)
+        }
         // The species' sprite, centred.
         PaletteItem::Tool(Tool::AddCreature(s)) => {
             crate::sprites::icon(species, s, x, y).unwrap_or(ICON_BG)
@@ -433,9 +533,11 @@ fn slot_pixel(
         }
         PaletteItem::Tool(t) => {
             let icon = match t {
-                Tool::Scoop | Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) | Tool::Plant => {
-                    SCOOP
-                }
+                Tool::Scoop
+                | Tool::Pour
+                | Tool::Place(_)
+                | Tool::AddCreature(_)
+                | Tool::Plant(_) => SCOOP,
                 Tool::Net => NET,
                 Tool::Inspect => INSPECT,
                 Tool::Glue => GLUE,
@@ -457,15 +559,19 @@ mod tests {
 
     #[test]
     fn palette_sits_top_left_at_cell_scale() {
-        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 4);
+        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 0, 4);
         assert_eq!(p.scale, 4);
         assert_eq!(p.origin, (8, 8));
         assert_eq!(p.size(), ((1 + 9 * 11) * 4, 23 * 4));
+        // A sub-tab row adds a row.
+        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 4);
+        assert_eq!(p.size(), ((1 + 7 * 11) * 4, 34 * 4));
+        assert_eq!(image_size(7, 3, 4).1, MAX_SIZE.1);
     }
 
     #[test]
     fn hit_maps_pixels_to_tabs_and_items() {
-        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 4);
+        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 0, 4);
         // Tab 0 spans palette x 1..11, y 1..11, i.e. target 12..52 (origin
         // 8, scale 4); item 0 is the row below, palette y 12..22.
         assert_eq!(p.hit(12.0, 12.0), Some(PaletteHit::Tab(0)));
@@ -488,27 +594,48 @@ mod tests {
     }
 
     #[test]
+    fn hit_maps_the_sub_tab_row() {
+        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 5);
+        let row = |r: f64| 8.0 + 4.0 * (11.0 * r + 5.0);
+        assert_eq!(p.hit(20.0, row(0.0)), Some(PaletteHit::Tab(0)));
+        assert_eq!(p.hit(20.0, row(1.0)), Some(PaletteHit::Sub(0)));
+        assert_eq!(p.hit(8.0 + 4.0 * 30.0, row(1.0)), Some(PaletteHit::Sub(2)));
+        assert_eq!(p.hit(8.0 + 4.0 * 40.0, row(1.0)), None, "past the sub-tabs");
+        assert_eq!(p.hit(8.0 + 4.0 * 40.0, row(2.0)), Some(PaletteHit::Item(3)));
+        assert_eq!(p.hit(20.0, 8.0 + 4.0 * 33.5), None, "bottom gap");
+        assert!(!p.contains(8.0 + 4.0 * 40.0, row(1.0)));
+        assert!(p.contains(8.0 + 4.0 * 40.0, row(2.0)));
+        assert!(p.contains(20.0, 8.0 + 4.0 * 33.5), "under the item row");
+    }
+
+    #[test]
     fn shrinks_to_fit_a_narrow_target() {
-        let p = PaletteLayout::fit((200, 100), &Layout::fit((50, 25), (200, 100)), 9, 3);
+        let p = PaletteLayout::fit((200, 100), &Layout::fit((50, 25), (200, 100)), 9, 0, 3);
         assert_eq!(p.scale, 1);
     }
 
     #[test]
-    fn every_default_group_fits() {
+    fn every_default_row_fits() {
         let w = desktank_sim::World::new(
             desktank_sim::WorldConfig::default(),
             MaterialTable::builtin().unwrap(),
         )
         .unwrap();
-        let groups = desktank_sim::tools::Tools::palette_groups(&w);
-        let widest = groups.iter().map(|(_, i)| i.len()).max().unwrap();
-        let n = groups.len().max(widest);
-        assert_eq!(image_size(groups.len(), widest).0, row_width(n));
+        let tree = desktank_sim::tools::Tools::palette_tree(&w);
+        let subs = tree.iter().map(|t| t.subs.len()).max().unwrap();
+        let widest = tree
+            .iter()
+            .flat_map(|t| &t.subs)
+            .map(|s| s.items.len())
+            .max()
+            .unwrap();
+        let n = tree.len().max(subs).max(widest);
+        assert_eq!(image_size(tree.len(), subs, widest).0, row_width(n));
         assert!(GAP + u32::try_from(n).unwrap() * ROW <= MAX_SIZE.0);
     }
 
     #[test]
-    fn image_frames_the_open_tab_and_the_selection() {
+    fn image_frames_the_open_tabs_and_the_selection() {
         let mats = MaterialTable::builtin().unwrap();
         let sand = mats.id("sand").unwrap();
         let water = mats.id("water").unwrap();
@@ -525,52 +652,75 @@ mod tests {
                 PaletteItem::Material(water),
             ],
             open: 1,
+            subs: Vec::new(),
+            open_sub: 0,
             items: vec![PaletteItem::Material(sand), PaletteItem::Tool(Tool::Net)],
-            selected: Some((1, 1)),
-            plant: None,
+            selected: Some((1, 0, 1)),
         };
         let (img, (w, h)) = build(&palette, &mats, &species, &plants);
         assert_eq!((w, h), (34, 23));
-        let rgb = |x, y| {
-            let p = px(&img, w, x, y);
+        let rgb = |img: &[u8], x, y| {
+            let p = px(img, w, x, y);
             [p[0], p[1], p[2]]
         };
-        assert_eq!(rgb(1, 1), FRAME, "closed tab");
-        assert_eq!(rgb(12, 1), OPEN, "open tab");
-        assert_eq!(rgb(1, 12), FRAME);
-        assert_eq!(rgb(12, 12), SELECTED, "selected item");
+        assert_eq!(rgb(&img, 1, 1), FRAME, "closed tab");
+        assert_eq!(rgb(&img, 12, 1), OPEN, "open tab");
+        assert_eq!(
+            rgb(&img, 13, 10),
+            PANEL,
+            "the open tab opens into the panel"
+        );
+        assert_eq!(rgb(&img, 12, 10), OPEN, "its corner stays");
+        assert_eq!(rgb(&img, 1, 10), FRAME, "a closed tab keeps its edge");
+        assert_eq!(rgb(&img, 0, 0), BACKGROUND, "the tab row");
+        assert_eq!(rgb(&img, 0, 11), PANEL, "the item row is on the panel");
+        assert_eq!(rgb(&img, 1, 12), FRAME);
+        assert_eq!(rgb(&img, 12, 12), SELECTED, "selected item");
         let sand_colour = mats.get(sand).unwrap().colour;
-        assert_eq!(rgb(3, 14), sand_colour);
-        assert_eq!(rgb(2, 13), sand_colour.map(|v| v.saturating_sub(24)));
+        assert_eq!(rgb(&img, 3, 14), sand_colour);
+        assert_eq!(rgb(&img, 2, 13), sand_colour.map(|v| v.saturating_sub(24)));
         // Beside the two-item row the image is transparent.
         assert_eq!(px(&img, w, 30, 15)[3], 0);
         assert_eq!(px(&img, w, 30, 5)[3], 255);
 
-        // Another group open: the selection marks its tab instead.
+        // Another tab open: the selection marks its tab instead.
         palette.open = 2;
         let (img, _) = build(&palette, &mats, &species, &plants);
-        assert_eq!(
-            px(&img, w, 16, 10)[..3],
-            SELECTED,
-            "mark on the selection's tab"
-        );
-        assert_eq!(
-            px(&img, w, 12, 12)[..3],
-            FRAME,
-            "nothing selected in this group"
-        );
+        assert_eq!(rgb(&img, 16, 10), SELECTED, "mark on the selection's tab");
+        assert_eq!(rgb(&img, 12, 12), FRAME, "nothing selected here");
 
-        // The plants slot shows the picked species: the default, then moss.
-        palette.items = vec![PaletteItem::Tool(Tool::Plant)];
+        // With sub-tabs: three rows, the open sub-tab framed, and the
+        // selection's closed sub-tab marked.
+        palette.open = 1;
+        palette.subs = vec![PaletteItem::Material(sand), PaletteItem::Material(water)];
+        palette.open_sub = 1;
+        let (img, (w3, h3)) = build(&palette, &mats, &species, &plants);
+        assert_eq!((w3, h3), (34, 34));
+        assert_eq!(rgb(&img, 12, 1), OPEN, "open tab");
+        assert_eq!(rgb(&img, 12, 12), SUB_OPEN, "open sub-tab, unlike a tab");
+        assert_eq!(rgb(&img, 0, 11), PANEL, "the sub-tab row is on the panel");
+        assert_eq!(
+            rgb(&img, 5, 21),
+            SELECTED,
+            "mark on the selection's sub-tab"
+        );
+        assert_eq!(rgb(&img, 12, 23), FRAME, "selection is in another sub-tab");
+        palette.open_sub = 0;
+        let (img, _) = build(&palette, &mats, &species, &plants);
+        assert_eq!(rgb(&img, 12, 23), SELECTED, "selected item");
+
+        // A plant slot shows its own species' colour.
+        palette.subs.clear();
         let leaf = |palette: &Palette| {
             let (img, (w, _)) = build(palette, &mats, &species, &plants);
             let p = px(&img, w, GAP + 1 + 3, ROW + GAP + 1);
             [p[0], p[1], p[2]]
         };
-        assert_eq!(leaf(&palette), plants.default_species().unwrap().colour());
-        palette.plant = plants.id("java_moss");
-        let moss = plants.get(palette.plant.unwrap()).unwrap();
-        assert_eq!(leaf(&palette), moss.colour());
+        for name in ["hygrophila", "java_moss"] {
+            let s = plants.id(name).unwrap();
+            palette.items = vec![PaletteItem::Tool(Tool::Plant(s))];
+            assert_eq!(leaf(&palette), plants.get(s).unwrap().colour(), "{name}");
+        }
     }
 
     #[test]

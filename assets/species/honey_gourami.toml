@@ -5,6 +5,7 @@
 # keeps to itself. Eats flakes, bloodworms and pellets.
 id = 8
 name = "honey_gourami"
+palette = "animals/fish"
 zone = "surface"
 depth = [0.0, 0.5]
 min_depth = 20

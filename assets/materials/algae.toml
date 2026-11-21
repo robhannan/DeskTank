@@ -4,7 +4,7 @@
 id = 76
 name = "algae"
 # The palette group it is poured from (SPEC §2.5).
-palette = "plants"
+palette = "plants/algae"
 class = "solid"
 density = 1.05
 opacity = 0.5

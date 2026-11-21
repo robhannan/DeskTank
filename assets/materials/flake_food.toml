@@ -2,7 +2,7 @@
 id = 30
 name = "flake_food"
 # The palette group it is poured from (SPEC §2.5).
-palette = "food"
+palette = "food/fish"
 class = "floating"
 density = 1.1
 # Density while floating: lighter than water, heavier than air.

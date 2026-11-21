@@ -136,49 +136,53 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   expect(errors).toEqual([]);
 });
 
-test("the plants slot pours the species picked beside it", async ({ page }) => {
+test("each plant species has a palette item that pours it", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
-  const picker = page.locator("#plant-species");
-  const names = await tank("plantSpecies");
-  await expect(picker.locator("option")).toHaveCount(names.length);
-  // Picking a species selects the plants slot and colours its swatch.
-  await picker.selectOption({ label: "Java moss" });
-  const slot = page.getByRole("radio", { name: "Plants" });
+  // Java moss is under Plants › Moss & epiphytes, in its own colour.
+  await choose(page, "Java moss");
+  await expect(page.getByRole("tab", { name: "Plants" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Moss & epiphytes" })).toHaveAttribute("aria-selected", "true");
+  const slot = page.getByRole("radio", { name: "Java moss" });
   await expect(slot).toHaveAttribute("aria-checked", "true");
-  const moss = names.findIndex((n) => n.startsWith("java_moss "));
-  expect(await tank("plantSpeciesSelected")).toBe(moss);
   const swatch = await slot.locator("i").evaluate((el) => el.style.getPropertyValue("--c"));
   const colours = await tank("paletteColours");
   const entries = await tank("palette");
-  expect(swatch).toBe(colours[entries.indexOf("plant plants")]);
-  // A click pours its cuttings.
+  expect(swatch).toBe(colours[entries.indexOf("plant java_moss")]);
+  // Every plant item is under Plants, with its description as a tooltip.
+  const cats = await tank("paletteCategories");
+  for (const [i, e] of entries.entries()) if (e.startsWith("plant ")) expect(cats[i], e).toMatch(/^plants\//);
+  await expect(slot).toHaveAttribute("title", /\S · Key \d/);
+  // A click pours its fragments (the cutting material).
   const canvas = page.locator("#tank");
   await canvas.scrollIntoViewIfNeeded();
   const b = await boxOf(canvas);
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
   expect(await tank("materialCount", "cutting")).toBeGreaterThan(0);
-  // The pick survives a reset.
+  // The selection survives a reset.
   await page.getByRole("button", { name: "Reset" }).click();
-  await expect.poll(() => tank("plantSpeciesSelected")).toBe(moss);
-  await expect(picker).toHaveValue(String(moss));
+  await expect(page.getByRole("radio", { name: "Java moss" })).toHaveAttribute("aria-checked", "true");
   expect(errors).toEqual([]);
 });
 
-test("the propagule picker offers the species' own methods and pours seeds", async ({ page }) => {
+test("the propagule chips offer the species' own methods and pour seeds", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
-  const species = page.locator("#plant-species");
-  const way = page.locator("#plant-propagule");
-  // Hygrophila (the default) grows from all three; cuttings come first.
-  await expect(way.locator("option")).toHaveText(["Seeds", "Cuttings", "Fragments"]);
-  await expect(way).toHaveValue("cuttings");
-  await expect(way).toBeEnabled();
-  // Picking seeds selects the plants slot, and a click pours seeds.
-  await way.selectOption("seeds");
-  await expect(page.getByRole("radio", { name: "Plants" })).toHaveAttribute("aria-checked", "true");
+  const row = page.locator("#propagules");
+  const chips = row.getByRole("radio");
+  // No chips until a plant is selected.
+  await expect(row).toBeHidden();
+  // Hygrophila grows from all three; cuttings come first.
+  await choose(page, "Hygrophila");
+  await expect(row).toBeVisible();
+  await expect(chips).toHaveText(["Seeds", "Cuttings", "Fragments"]);
+  await expect(row.getByRole("radio", { name: "Cuttings" })).toHaveAttribute("aria-checked", "true");
+  // Picking seeds keeps the plant selected, and a click pours seeds.
+  await row.getByRole("radio", { name: "Seeds" }).click();
+  await expect(row.getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "Hygrophila" })).toHaveAttribute("aria-checked", "true");
   expect(await tank("plantPropagule")).toBe("seeds");
   const canvas = page.locator("#tank");
   await canvas.scrollIntoViewIfNeeded();
@@ -186,30 +190,33 @@ test("the propagule picker offers the species' own methods and pours seeds", asy
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
   expect(await tank("materialCount", "seed")).toBeGreaterThan(0);
   // Rotala only grows from cuttings; java moss only from fragments.
-  await species.selectOption({ label: "Rotala" });
-  await expect(way.locator("option")).toHaveText(["Cuttings"]);
-  await expect(way).toBeDisabled();
-  await species.selectOption({ label: "Java moss" });
-  await expect(way.locator("option")).toHaveText(["Fragments"]);
-  // Carpets and rosettes spread by runners (T6c).
-  await species.selectOption({ label: "Dwarf hairgrass" });
-  await expect(way.locator("option")).toHaveText(["Fragments", "Runners"]);
-  await species.selectOption({ label: "Vallisneria" });
-  await expect(way.locator("option")).toHaveText(["Runners"]);
-  await species.selectOption({ label: "Monte Carlo" });
-  // Floaters bud new plants (T6c part 2).
-  await species.selectOption({ label: "Duckweed" });
-  await expect(way.locator("option")).toHaveText(["Fragments", "Buds"]);
-  // Back on hygrophila the seeds pick still holds; it survives a reset,
-  // even one made while on a species without seeds.
-  await species.selectOption({ label: "Hygrophila" });
-  await expect(way).toHaveValue("seeds");
-  await species.selectOption({ label: "Rotala" });
+  await choose(page, "Rotala");
+  await expect(chips).toHaveText(["Cuttings"]);
+  await choose(page, "Java moss");
+  await expect(chips).toHaveText(["Fragments"]);
+  // Carpets and rosettes spread by runners (T6c), floaters by buds.
+  await choose(page, "Dwarf hairgrass");
+  await expect(chips).toHaveText(["Fragments", "Runners"]);
+  await choose(page, "Vallisneria");
+  await expect(chips).toHaveText(["Runners"]);
+  await choose(page, "Duckweed");
+  await expect(chips).toHaveText(["Fragments", "Buds"]);
+  // Arrow keys move the pick and wrap.
+  await row.getByRole("radio", { name: "Fragments" }).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(row.getByRole("radio", { name: "Buds" })).toBeFocused();
+  expect(await tank("plantPropagule")).toBe("buds");
+  // Another tab hides the chips; a non-plant item too.
+  await page.getByRole("tab", { name: "Animals" }).click();
+  await expect(row).toBeHidden();
+  await choose(page, "Sand");
+  await expect(row).toBeHidden();
+  // Hygrophila keeps its seeds pick, through a reset too.
+  await choose(page, "Hygrophila");
+  await expect(row.getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("button", { name: "Reset" }).click();
-  await expect(species).toHaveValue(String((await tank("plantSpecies")).findIndex((n) => n.startsWith("rotala "))));
-  await expect(way).toHaveValue("cuttings");
-  await species.selectOption({ label: "Hygrophila" });
-  await expect.poll(() => tank("plantPropagule")).toBe("seeds");
-  await expect(way).toHaveValue("seeds");
+  await expect(row.getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
+  await choose(page, "Duckweed");
+  await expect.poll(() => tank("plantPropagule")).toBe("buds");
   expect(errors).toEqual([]);
 });

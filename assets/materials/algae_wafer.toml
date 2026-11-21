@@ -2,7 +2,7 @@
 id = 33
 name = "algae_wafer"
 # The palette group it is poured from (SPEC §2.5).
-palette = "food"
+palette = "food/fish"
 class = "powder"
 density = 1.5
 repose = 45.0

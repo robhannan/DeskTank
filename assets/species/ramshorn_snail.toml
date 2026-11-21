@@ -1,5 +1,6 @@
 id = 23
 name = "ramshorn_snail"
+palette = "animals/snails"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 12

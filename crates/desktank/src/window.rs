@@ -11,22 +11,25 @@
 //! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
 //! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
 //! drag scoops, the scroll wheel or a two-finger trackpad scroll sets the
-//! brush size. The palette in the top-left corner is grouped: its top row
-//! picks a group (click a tab, scroll over the palette, or `G` / `Shift+G`
-//! for the next or previous group) and the row below lists that group's
-//! materials, devices, tools or creatures; click one (or press 1–9, then 0
-//! for the tenth) to select it. A device
+//! brush size. The palette in the top-left corner is a two-level tree
+//! (`desktank_sim::tools::Tools::palette_tree`): its top row picks a
+//! category (click a tab, or `G` / `Shift+G` for the next or previous one),
+//! the row below it picks a sub-category when the category has several
+//! (click one, or `H` / `Shift+H`), and the last row lists that
+//! sub-category's materials, devices, tools, plants or creatures; click one
+//! (or press 1–9, then 0 for the tenth) to select it. Scrolling over the
+//! palette steps through the sub-categories, on into the next category. A device
 //! (bubbler, filter outlet) is placed once per click. `F` cycles a debug
 //! tint of the nutrient, CO₂ and light fields; `W` changes the water and
 //! `Q` shows the water quality in the title bar. `--time HH:MM` lights the
 //! tank for that time of day (default noon). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
-//! Plants (T6b): the palette's plants slot pours the species named in the
-//! title bar as the propagule named there (seeds, cuttings, fragments or runners);
-//! clicking it again (or `P`) picks the next species, `O` the next
-//! propagule that species grows from. Inspect shows a plant's species, age, health, size and
-//! what limits its growth in the title bar.
+//! Plants (T6b): each plant species has a slot under Plants; selected, it
+//! pours its species as the propagule named in the title bar (seeds,
+//! cuttings, fragments, runners or buds), and `P` picks the next one that
+//! species grows from (remembered per species). Inspect shows a plant's
+//! species, age, health, size and what limits its growth in the title bar.
 //!
 //! Creatures (T7a): the palette's creature slots add one per click; the net
 //! carries a creature and, let go above the water, lifts it out; inspect
@@ -68,7 +71,7 @@ use desktank_render::{
 use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
 use desktank_sim::tools::{
-    AddRefused, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
+    AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{CreatureId, FieldKind, MAX_NAME_CHARS, MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
@@ -245,13 +248,9 @@ struct Hidden {
     minimised: bool,
 }
 
-/// What the palette overlay last showed: the open group, the selection
-/// (group, item) and the plant species the plants slot pours.
-type Shown = (
-    usize,
-    Option<(usize, usize)>,
-    Option<desktank_sim::PlantSpeciesId>,
-);
+/// What the palette overlay last showed: the open tab and sub-category and
+/// the selection (tab, sub-category, item).
+type Shown = (usize, usize, Option<(usize, usize, usize)>);
 
 struct Running {
     window: Arc<Window>,
@@ -265,11 +264,13 @@ struct Running {
     cursor: Option<(f64, f64)>,
     avoid_cursor: bool,
     tools: Tools,
-    /// The palette's groups and their items.
-    groups: Vec<(PaletteGroup, Vec<PaletteItem>)>,
-    /// Index of the group the palette shows.
+    /// The palette's tree: top tabs, their sub-categories and items.
+    tree: Vec<PaletteTab>,
+    /// Index of the top tab the palette shows.
     open: usize,
-    /// Modifier keys held (Shift steps groups backwards; with Ctrl or
+    /// Index of the sub-category it shows within that tab.
+    open_sub: usize,
+    /// Modifier keys held (Shift steps tabs backwards; with Ctrl or
     /// Command a key is a shortcut, which neither types into the cheat
     /// field nor counts towards the code).
     modifiers: ModifiersState,
@@ -278,7 +279,7 @@ struct Running {
     /// Wheel scroll (lines) not yet turned into a step; Windows precision
     /// touchpads send fractions of a line.
     scroll_lines: f64,
-    /// Open group, selection and plant species last given to the tank
+    /// Open tab and sub-category and the selection last given to the tank
     /// (`None` before the first).
     shown: Option<Shown>,
     /// Watches key presses for the code that opens the cheat field.
@@ -354,7 +355,7 @@ impl Running {
             world
         };
         let tools = Tools::new(scene::material(&world, "sand")?);
-        let groups = Tools::palette_groups(&world);
+        let tree = Tools::palette_tree(&world);
         let info = gpu.adapter.get_info();
         eprintln!(
             "desktank window: {} ({:?}), {}x{} cells, {}x{} px, {:?}",
@@ -378,8 +379,9 @@ impl Running {
             cursor: None,
             avoid_cursor: false,
             tools,
-            groups,
+            tree,
             open: 0,
+            open_sub: 0,
             modifiers: ModifiersState::empty(),
             scroll: 0.0,
             scroll_lines: 0.0,
@@ -388,8 +390,8 @@ impl Running {
             field: None,
             inspected: None,
         };
-        // Open the group holding the starting material.
-        s.open = s.selection().map_or(0, |(g, _)| g);
+        // Open the tab and sub-category holding the starting material.
+        (s.open, s.open_sub) = s.selection().map_or((0, 0), |(t, sub, _)| (t, sub));
         s.sync_overlay();
         Ok(s)
     }
@@ -441,8 +443,12 @@ impl Running {
         let size = self.surface.size();
         if let (Some((px, py)), Some(p)) = (self.cursor, self.tank.palette_layout(size)) {
             match p.hit(px, py) {
-                Some(PaletteHit::Tab(g)) => {
-                    self.open = g;
+                Some(PaletteHit::Tab(t)) => {
+                    self.open_tab(t);
+                    return;
+                }
+                Some(PaletteHit::Sub(sub)) => {
+                    self.open_sub = sub;
                     return;
                 }
                 Some(PaletteHit::Item(i)) => {
@@ -459,16 +465,12 @@ impl Running {
         }
     }
 
-    /// Selects a palette item; choosing the plants slot again picks the
-    /// next plant species. The plants slot names its species in the title.
+    /// Selects a palette item. A plant slot names its species and
+    /// propagule in the title.
     fn choose(&mut self, item: PaletteItem) {
-        let plants = PaletteItem::Tool(Tool::Plant);
-        if item == plants && self.tools.is_selected(plants) {
-            self.tools.next_plant_species(self.tank.world());
-        }
         self.tools.select(item);
-        if item == plants {
-            self.show_plant_species();
+        if matches!(item, PaletteItem::Tool(Tool::Plant(_))) {
+            self.show_plant();
         } else if item == PaletteItem::Tool(Tool::Magnify) {
             self.show_magnify();
         }
@@ -483,23 +485,34 @@ impl Running {
         ));
     }
 
-    /// Names the species the plants slot pours, and as what, in the title
-    /// bar.
-    fn show_plant_species(&mut self) {
+    /// Names the species the selected plant slot pours, and as what, in
+    /// the title bar.
+    fn show_plant(&mut self) {
         let world = self.tank.world();
-        if let Some(s) = self
+        let Some(s) = self
             .tools
-            .plant_species(world)
+            .selected_plant()
             .and_then(|id| world.plant_species().get(id))
-        {
-            let way = self
-                .tools
-                .plant_propagule(world)
-                .map_or("", desktank_sim::Propagule::name);
-            let title = format!("DeskTank — plants: {} as {way} ({})", s.name, s.description);
-            self.sync_overlay();
-            self.window.set_title(&title);
-        }
+        else {
+            return;
+        };
+        let way = self
+            .tools
+            .plant_propagule(world)
+            .map_or("", desktank_sim::Propagule::name);
+        let ways: Vec<_> = s.propagules().map(desktank_sim::Propagule::name).collect();
+        let more = if ways.len() > 1 {
+            format!(", P for {}", ways.join("/"))
+        } else {
+            String::new()
+        };
+        let title = format!(
+            "DeskTank — {} as {way} ({}{more})",
+            s.name.replace('_', " "),
+            s.description
+        );
+        self.sync_overlay();
+        self.window.set_title(&title);
     }
 
     /// Reports an inspection or refused creature add in the title bar (the
@@ -765,8 +778,8 @@ impl Running {
             .cursor
             .zip(self.tank.palette_layout(self.surface.size()));
         if over_palette.is_some_and(|((px, py), p)| p.contains(px, py)) {
-            // Over the palette: scroll down for the next group.
-            self.step_group(-steps);
+            // Over the palette: scroll down for the next sub-category.
+            self.step_through(-steps);
         } else if self.tools.tool() == Tool::Magnify {
             if self.tools.step_zoom(steps) {
                 self.show_magnify();
@@ -776,86 +789,112 @@ impl Running {
         }
     }
 
-    /// Opens the group `steps` after (or before) the open one, wrapping.
-    fn step_group(&mut self, steps: i32) {
-        let n = i64::try_from(self.groups.len()).unwrap_or(1).max(1);
-        let open = i64::try_from(self.open).unwrap_or(0);
-        self.open = usize::try_from((open + i64::from(steps)).rem_euclid(n)).unwrap_or(0);
+    /// Opens top tab `t` on the sub-category holding the selection, if it
+    /// is in that tab, else on its first.
+    fn open_tab(&mut self, t: usize) {
+        self.open = t;
+        self.open_sub = self
+            .selection()
+            .filter(|&(st, _, _)| st == t)
+            .map_or(0, |(_, sub, _)| sub);
     }
 
-    /// Selects slot `i` of the open group, if it has one.
-    fn select_slot(&mut self, i: usize) {
-        if let Some(&item) = self
-            .groups
+    /// Opens the top tab `steps` after (or before) the open one, wrapping.
+    fn step_tab(&mut self, steps: i32) {
+        self.open_tab(wrap(self.open, steps, self.tree.len()));
+    }
+
+    /// Opens the open tab's sub-category `steps` after (or before) the
+    /// open one, wrapping within the tab.
+    fn step_sub(&mut self, steps: i32) {
+        let n = self.tree.get(self.open).map_or(1, |t| t.subs.len());
+        self.open_sub = wrap(self.open_sub, steps, n);
+    }
+
+    /// Steps through every sub-category in palette order, `steps` on (or
+    /// back), on into the next (or previous) tab and wrapping: what
+    /// scrolling over the palette does.
+    fn step_through(&mut self, steps: i32) {
+        let all: Vec<(usize, usize)> = self
+            .tree
+            .iter()
+            .enumerate()
+            .flat_map(|(t, tab)| (0..tab.subs.len()).map(move |sub| (t, sub)))
+            .collect();
+        let at = all
+            .iter()
+            .position(|&p| p == (self.open, self.open_sub))
+            .unwrap_or(0);
+        if let Some(&(t, sub)) = all.get(wrap(at, steps, all.len())) {
+            (self.open, self.open_sub) = (t, sub);
+        }
+    }
+
+    /// The open sub-category's items.
+    fn open_items(&self) -> &[PaletteItem] {
+        self.tree
             .get(self.open)
-            .and_then(|(_, items)| items.get(i))
-        {
+            .and_then(|t| t.subs.get(self.open_sub))
+            .map_or(&[], |s| &s.items)
+    }
+
+    /// Selects slot `i` of the open sub-category, if it has one.
+    fn select_slot(&mut self, i: usize) {
+        if let Some(&item) = self.open_items().get(i) {
             self.choose(item);
         }
     }
 
-    /// Picks the next plant species and selects the plants slot, opening
-    /// its group.
-    fn next_plant_species(&mut self) {
-        self.tools.next_plant_species(self.tank.world());
-        self.select_plants_slot();
-    }
-
-    /// Picks the next propagule the plant species grows from (seeds,
-    /// cuttings, fragments, runners) and selects the plants slot, opening its group.
+    /// Picks the next propagule the selected plant's species grows from
+    /// (seeds, cuttings, fragments, runners, buds) and names it.
     fn next_plant_propagule(&mut self) {
-        self.tools.next_plant_propagule(self.tank.world());
-        self.select_plants_slot();
-    }
-
-    /// Selects the plants slot, opening its group, and names its species.
-    fn select_plants_slot(&mut self) {
-        let slot = PaletteItem::Tool(Tool::Plant);
-        if let Some(g) = self
-            .groups
-            .iter()
-            .position(|(_, items)| items.contains(&slot))
-        {
-            self.open = g;
+        if self.tools.next_plant_propagule(self.tank.world()).is_some() {
+            self.show_plant();
+        } else {
+            self.window
+                .set_title("DeskTank — select a plant, then P picks how it starts");
         }
-        self.tools.select(slot);
-        self.show_plant_species();
     }
 
-    /// The selection's group and its index in that group.
-    fn selection(&self) -> Option<(usize, usize)> {
-        self.groups.iter().enumerate().find_map(|(g, (_, items))| {
-            let i = items.iter().position(|&i| self.tools.is_selected(i))?;
-            Some((g, i))
+    /// The selection's tab, sub-category and index there.
+    fn selection(&self) -> Option<(usize, usize, usize)> {
+        self.tree.iter().enumerate().find_map(|(t, tab)| {
+            tab.subs.iter().enumerate().find_map(|(sub, s)| {
+                let i = s.items.iter().position(|&i| self.tools.is_selected(i))?;
+                Some((t, sub, i))
+            })
         })
     }
 
-    /// Pushes the palette (open group and selection) and brush outline to
+    /// Pushes the palette (open tabs and selection) and brush outline to
     /// the tank; it only asks for a frame if they changed.
     fn sync_overlay(&mut self) {
         let selected = self.selection();
-        let plant = self.tools.plant_species(self.tank.world());
-        let shown = (self.open, selected, plant);
+        let shown = (self.open, self.open_sub, selected);
         if self.shown != Some(shown) {
-            if self.shown.is_none_or(|(_, s, _)| s != selected) {
+            if self.shown.is_none_or(|(_, _, s)| s != selected) {
                 // A new tool clears the last inspection from the title.
                 self.window.set_title("DeskTank");
                 self.forget_inspected();
             }
             self.shown = Some(shown);
+            let first = |s: &PaletteSub| s.items.first().copied();
+            let open = self.tree.get(self.open);
+            // A tab with one sub-category has no sub-tab row.
+            let subs = open
+                .filter(|t| t.subs.len() > 1)
+                .map_or_else(Vec::new, |t| t.subs.iter().filter_map(first).collect());
             self.tank.set_palette(Some(Palette {
                 tabs: self
-                    .groups
+                    .tree
                     .iter()
-                    .filter_map(|(_, items)| items.first().copied())
+                    .filter_map(|t| t.subs.first().and_then(first))
                     .collect(),
                 open: self.open,
-                items: self
-                    .groups
-                    .get(self.open)
-                    .map_or_else(Vec::new, |(_, items)| items.clone()),
+                subs,
+                open_sub: self.open_sub,
+                items: self.open_items().to_vec(),
                 selected,
-                plant,
             }));
         }
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
@@ -1026,10 +1065,14 @@ impl ApplicationHandler for App {
                             e.algae_coverage * 100.0
                         ));
                     }
-                    // G opens the next group, Shift+G the previous one
-                    // (Shift, not the letter's case: Caps Lock doesn't flip it).
+                    // G opens the next tab, Shift+G the previous one, and H
+                    // / Shift+H the open tab's sub-categories (Shift, not
+                    // the letter's case: Caps Lock doesn't flip it).
                     Key::Character(c) if c.eq_ignore_ascii_case("g") => {
-                        s.step_group(if s.modifiers.shift_key() { -1 } else { 1 });
+                        s.step_tab(if s.modifiers.shift_key() { -1 } else { 1 });
+                    }
+                    Key::Character(c) if c.eq_ignore_ascii_case("h") => {
+                        s.step_sub(if s.modifiers.shift_key() { -1 } else { 1 });
                     }
                     // N names the creature inspect last showed.
                     Key::Character(c)
@@ -1038,14 +1081,12 @@ impl ApplicationHandler for App {
                         s.open_name_field();
                     }
                     Key::Character(c) => {
-                        // 1–9 are the open group's first nine slots, 0 the
-                        // tenth; P picks the next plant species, O the
-                        // next way to start it (seeds, cuttings, fragments, runners).
+                        // 1–9 are the open sub-category's first nine slots,
+                        // 0 the tenth; P picks the selected plant's next way
+                        // to start (seeds, cuttings, fragments, runners, buds).
                         if let Ok(n) = c.parse::<usize>() {
                             s.select_slot((n + 9) % 10);
                         } else if c.eq_ignore_ascii_case("p") {
-                            s.next_plant_species();
-                        } else if c.eq_ignore_ascii_case("o") {
                             s.next_plant_propagule();
                         } else if s.tools.tool() == Tool::Magnify
                             && matches!(c.as_str(), "+" | "=" | "]")
@@ -1165,4 +1206,11 @@ fn konami_key(key: &Key) -> Option<CheatKey> {
         ) => return None,
         _ => CheatKey::Other,
     })
+}
+
+/// `at` moved `steps` along a ring of `n`.
+fn wrap(at: usize, steps: i32, n: usize) -> usize {
+    let n = i64::try_from(n).unwrap_or(1).max(1);
+    let at = i64::try_from(at).unwrap_or(0);
+    usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
 }

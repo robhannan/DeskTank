@@ -1,7 +1,7 @@
 id = 10
 name = "sand"
 # The palette group it is poured from (SPEC §2.5).
-palette = "substrate"
+palette = "build/substrate"
 class = "powder"
 density = 1.6
 # Angle of repose in degrees.

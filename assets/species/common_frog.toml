@@ -1,5 +1,6 @@
 id = 26
 name = "common_frog"
+palette = "animals/amphibians"
 zone = "surface"
 depth = [0.0, 0.45]
 min_depth = 22

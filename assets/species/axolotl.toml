@@ -1,5 +1,6 @@
 id = 25
 name = "axolotl"
+palette = "animals/amphibians"
 zone = "bottom"
 depth = [0.7, 1.0]
 min_depth = 20

@@ -4,6 +4,7 @@
 # and fallen food, and kicks off the bottom in short hops now and then.
 id = 5
 name = "cherry_shrimp"
+palette = "animals/shrimp"
 zone = "bottom"
 depth = [0.72, 1.0]
 min_depth = 12

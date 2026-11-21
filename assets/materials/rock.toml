@@ -1,7 +1,7 @@
 id = 12
 name = "rock"
 # The palette group it is poured from (SPEC §2.5).
-palette = "substrate"
+palette = "build/hardscape"
 class = "rigid"
 density = 2.6
 colour = "#55524d"

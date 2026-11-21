@@ -285,28 +285,31 @@ test.describe("touch", () => {
     await expect.poll(async () => (await scroll())[1]).toBeGreaterThan(before[1]);
   });
 
-  test("the grouped palette fits a phone without scrolling sideways", async ({ page }) => {
+  test("the palette tree fits a phone without scrolling sideways", async ({ page }) => {
     await open(page, "?backend=webgl2");
-    for (const id of ["#groups", "#palette"]) {
+    await choose(page, "Hygrophila");
+    for (const id of ["#tabs", "#subtabs", "#palette", "#propagules"]) {
       const scrolls = await page.locator(id).evaluate((el) => el.scrollWidth > el.clientWidth);
       expect(scrolls, id).toBe(false);
     }
     // Touch-sized targets.
-    for (const sel of ['#groups [role="tab"]', '#palette .swatch:not([hidden])']) {
+    for (const sel of ['#tabs [role="tab"]', '#subtabs [role="tab"]:not([hidden])', "#palette .swatch:not([hidden])", "#propagules .chip"]) {
       const heights = await page.locator(sel).evaluateAll((els: HTMLElement[]) => els.map((b) => b.offsetHeight));
+      expect(heights.length, sel).toBeGreaterThan(0);
       expect(Math.min(...heights), sel).toBeGreaterThanOrEqual(44);
     }
-    // Every item can be reached through its group.
+    // Every item can be reached through its tab and sub-tab.
     await choose(page, "Neon tetra");
-    await expect(page.getByRole("tab", { name: "Creatures" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Animals" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Fish", exact: true })).toHaveAttribute("aria-selected", "true");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no page overflow").toBe(true);
   });
 });
 
-test("the palette groups the sim's tools and navigates with the keyboard", async ({ page }) => {
+test("the palette follows the sim's category tree and navigates with the keyboard", async ({ page }) => {
   await open(page, "?backend=webgl2");
   const entries = await page.evaluate(() => window.desktank.tank.palette());
-  const groups = await page.evaluate(() => window.desktank.tank.paletteGroups());
+  const cats = await page.evaluate(() => window.desktank.tank.paletteCategories());
   const all = page.locator("#palette .swatch");
   await expect(all).toHaveCount(entries.length);
   const names = await all.evaluateAll((els) => els.map((b) => `${b.dataset.kind} ${b.dataset.name}`));
@@ -315,33 +318,39 @@ test("the palette groups the sim's tools and navigates with the keyboard", async
   const species = await page.evaluate(() => window.desktank.tank.species());
   const liveFoods = await page.evaluate(() => window.desktank.tank.liveFoods());
   expect(liveFoods).toContain("live_bloodworm");
+  const path = (i: number) => cats[i].split("\t")[0];
   for (const [i, e] of entries.entries()) {
     const [kind, name] = e.split(" ");
-    if (kind === "creature") expect(species, e).toContain(name);
-    else if (kind === "live_food") {
+    if (kind === "creature") {
+      expect(species, e).toContain(name);
+      expect(path(i), `${e} is under Animals`).toMatch(/^animals\//);
+    } else if (kind === "live_food") {
       expect(liveFoods, e).toContain(name);
-      expect(groups[i].split(" ")[0], `${e} is in the Food group`).toBe("food");
-    }
-    else if (kind === "plant") expect(name, e).toBe("plants");
+      expect(path(i), `${e} is in Food › Live`).toBe("food/live");
+    } else if (kind === "plant") expect(path(i), e).toMatch(/^plants\//);
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
   expect(entries.filter((e) => e.startsWith("live_food ")).length).toBe(liveFoods.length);
-  expect(entries.filter((e) => e.startsWith("plant ")).length, "one plants slot").toBe(1);
+  expect(entries.filter((e) => e.startsWith("plant ")).length, "one item per plant species").toBeGreaterThan(10);
 
-  // One tab per sim group, in order; it opens on the selection's group
-  // (sand, in Substrate), showing only that group's items.
-  const tabs = page.getByRole("tab");
-  const labels = [...new Set(groups.map((g) => g.split(" ")[1]))];
-  await expect(tabs).toHaveText(labels);
-  await expect(page.getByRole("tab", { name: "Substrate" })).toHaveAttribute("aria-selected", "true");
-  const radios = page.getByRole("radio");
-  await expect(radios).toHaveText(["Sand", "Gravel", "Rock", "Aquasoil", "Driftwood"]);
+  // One tab per top category, in order; it opens on the selection's
+  // (sand, in Build › Substrate), showing only that sub-category's items.
+  const tabs = page.locator("#tabs").getByRole("tab");
+  await expect(tabs).toHaveText(["Tools", "Build", "Water", "Food", "Care", "Plants", "Animals"]);
+  const subs = page.locator("#subtabs").getByRole("tab");
+  const tab = (name: string) => page.getByRole("tab", { name, exact: true });
+  await expect(tab("Build")).toHaveAttribute("aria-selected", "true");
+  await expect(subs).toHaveText(["Substrate", "Hardscape", "Devices"]);
+  await expect(tab("Substrate")).toHaveAttribute("aria-selected", "true");
+  const radios = page.locator("#palette").getByRole("radio");
+  await expect(radios).toHaveText(["Sand", "Gravel", "Aquasoil"]);
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
 
-  // One tab and one radio are in the tab order; arrows move the selection
-  // within the group and wrap.
-  await expect(page.locator('#groups [tabindex="0"]')).toHaveCount(1);
+  // One tab, one sub-tab and one radio are in the tab order; arrows move
+  // the selection within the sub-category and wrap.
+  await expect(page.locator('#tabs [tabindex="0"]')).toHaveCount(1);
+  await expect(page.locator('#subtabs [tabindex="0"]')).toHaveCount(1);
   await expect(page.locator('#palette [tabindex="0"]')).toHaveCount(1);
   await radios.first().focus();
   await page.keyboard.press("ArrowRight");
@@ -351,41 +360,86 @@ test("the palette groups the sim's tools and navigates with the keyboard", async
   await expect(radios.last()).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("ArrowRight");
   await expect(radios.first()).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("ArrowLeft");
-  await expect(radios.last()).toBeFocused();
 
-  // Arrows on the tabs open the next group; the selection stays, marked on
-  // its tab, and the open group's first radio takes the tab stop.
-  await page.getByRole("tab", { name: "Substrate" }).focus();
+  // Arrows on the sub-tabs open the next sub-category; the selection
+  // stays, marked on its sub-tab.
+  await tab("Substrate").focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: "Water" })).toBeFocused();
-  await expect(page.getByRole("tab", { name: "Water" })).toHaveAttribute("aria-selected", "true");
+  await expect(tab("Hardscape")).toBeFocused();
+  await expect(tab("Hardscape")).toHaveAttribute("aria-selected", "true");
+  await expect(radios).toHaveText(["Rock", "Driftwood"]);
+  await expect(page.locator("#sub-build-substrate")).toHaveAttribute("data-holds", "");
+
+  // Arrows on the tabs open the next tab; one with a single sub-category
+  // has no sub-tab row. The selection is marked on its tab, and the open
+  // sub-category's first radio takes the tab stop.
+  await tab("Build").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tab("Water")).toBeFocused();
+  await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#subtabs")).toBeHidden();
   await expect(radios.first()).toHaveText("Water");
-  await expect(page.locator("#group-substrate")).toHaveAttribute("data-holds", "");
+  await expect(page.locator("#tab-build")).toHaveAttribute("data-holds", "");
   await expect(page.locator('#palette [tabindex="0"]')).toHaveText("Water");
 
-  // Digits pick slots of the open group anywhere on the page; G and
-  // Shift+G step through the groups.
+  // Digits pick items of the open sub-category anywhere on the page; G and
+  // Shift+G step through the tabs, H and Shift+H through the sub-tabs.
   await page.locator("h1").click();
   await page.keyboard.press("2");
   await expect(page.getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("9");
   await expect(page.getByRole("radio", { name: "Bubbles" })).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("g");
-  await expect(page.getByRole("tab", { name: "Food" })).toHaveAttribute("aria-selected", "true");
+  await expect(tab("Food")).toHaveAttribute("aria-selected", "true");
+  await expect(tab("Fish food")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("h");
+  await expect(tab("Live")).toHaveAttribute("aria-selected", "true");
+  await expect(radios).toHaveText(["Live bloodworms"]);
+  await page.keyboard.press("h");
+  await expect(tab("Fish food")).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Shift+H");
+  await expect(tab("Live")).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Shift+G");
   await page.keyboard.press("Shift+G");
-  await expect(page.getByRole("tab", { name: "Substrate" })).toHaveAttribute("aria-selected", "true");
+  // A tab opens on its first sub-category unless it holds the selection.
+  await expect(tab("Build")).toHaveAttribute("aria-selected", "true");
+  await expect(tab("Substrate")).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("1");
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
-
-  // G with a radio focused moves focus to the new group's tab (the radio
-  // is hidden), and a reset keeps the open group.
-  await page.getByRole("radio", { name: "Sand" }).focus();
+  await page.keyboard.press("h");
   await page.keyboard.press("g");
-  await expect(page.getByRole("tab", { name: "Water" })).toBeFocused();
+  await page.keyboard.press("Shift+G");
+  await expect(tab("Substrate"), "back on the selection's sub-category").toHaveAttribute("aria-selected", "true");
+
+  // Scrolling over the palette steps through the sub-categories, on into
+  // the next tab.
+  await page.locator("#palette-panel").hover();
+  await page.mouse.wheel(0, 40);
+  await expect(tab("Hardscape")).toHaveAttribute("aria-selected", "true");
+  await page.mouse.wheel(0, 80);
+  await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
+  await page.mouse.wheel(0, -40);
+  await expect(tab("Devices")).toHaveAttribute("aria-selected", "true");
+
+  // G or H with a radio focused moves focus to the new tab or sub-tab (the
+  // radio is hidden), and a reset keeps the open sub-category.
+  await choose(page, "Sand");
+  await page.keyboard.press("h");
+  await expect(tab("Hardscape")).toBeFocused();
+  await page.keyboard.press("g");
+  await expect(tab("Water")).toBeFocused();
   await page.getByRole("button", { name: "Reset" }).click();
-  await expect(page.getByRole("tab", { name: "Water" })).toHaveAttribute("aria-selected", "true");
+  await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
+
+  // P picks the selected plant's next propagule; without a plant it says
+  // what it needs.
+  await page.keyboard.press("p");
+  await expect(page.locator("#inspect")).toHaveText(/Select a plant/);
+  await choose(page, "Hygrophila");
+  await page.keyboard.press("p");
+  await expect(page.locator("#propagules").getByRole("radio", { name: "Fragments" })).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("p");
+  await expect(page.locator("#propagules").getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("settings persist across reloads", async ({ page }) => {

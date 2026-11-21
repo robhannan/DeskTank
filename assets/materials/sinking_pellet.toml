@@ -2,7 +2,7 @@
 id = 31
 name = "sinking_pellet"
 # The palette group it is poured from (SPEC §2.5).
-palette = "food"
+palette = "food/fish"
 class = "powder"
 density = 1.4
 repose = 40.0

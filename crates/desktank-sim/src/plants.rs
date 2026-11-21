@@ -30,6 +30,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::material::{MaterialId, MaterialTable, parse_colour};
+use crate::palette::{Holds, PalettePath, PalettePathError};
 
 /// Index of a plant species in the [`PlantSpeciesTable`]; fixed in each
 /// species' TOML file so saves stay stable when species are added.
@@ -782,6 +783,9 @@ pub struct PlantSpecies {
     pub name: String,
     /// One line for the inspect card.
     pub description: String,
+    /// The palette sub-category it is offered in (`palette = "plants/stem"`),
+    /// or `None` if the palette doesn't offer it.
+    pub palette: Option<PalettePath>,
     /// Growth form and its parameters.
     pub form: Form,
     /// Environment preferences.
@@ -849,7 +853,7 @@ impl PlantSpecies {
     }
 }
 
-/// A way to start a plant from the palette: what the plants slot pours
+/// A way to start a plant from the palette: what a plant slot pours
 /// (the names are those of a species' `propagation` list).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -937,6 +941,15 @@ pub enum PlantSpeciesError {
         /// What is wrong.
         reason: &'static str,
     },
+    /// `palette` names no sub-category that holds plants.
+    #[error("plant species {name:?}: {source}")]
+    Palette {
+        /// Species name.
+        name: String,
+        /// What is wrong with the path.
+        #[source]
+        source: PalettePathError,
+    },
     /// A material it names doesn't exist.
     #[error("plant species {name:?}: unknown material {material:?}")]
     UnknownMaterial {
@@ -953,6 +966,8 @@ struct SpeciesDef {
     id: u8,
     name: String,
     description: String,
+    #[serde(default)]
+    palette: Option<String>,
     form: FormName,
     stem: Option<StemDef>,
     mat: Option<MatDef>,
@@ -1531,6 +1546,15 @@ fn validate(
         id: PlantSpeciesId(d.id),
         name: d.name.clone(),
         description: d.description.clone(),
+        palette: d
+            .palette
+            .as_deref()
+            .map(|p| PalettePath::parse(p, Holds::Plants))
+            .transpose()
+            .map_err(|source| PlantSpeciesError::Palette {
+                name: d.name.clone(),
+                source,
+            })?,
         form,
         prefer: d.prefer,
         growth: Growth {

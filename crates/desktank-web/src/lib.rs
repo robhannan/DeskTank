@@ -22,8 +22,10 @@
 //! ([`desktank_render::PaletteLayout`]): touch needs larger targets than the
 //! pixel-art slots, and buttons give the page a keyboard-navigable radio
 //! group. Its items come from [`Tools::palette`], so the page lists exactly
-//! the sim's materials, tools and devices, and [`WebTank::palette_groups`]
-//! gives each one's group for the page's group tabs. The brush outline is the shader's
+//! the sim's materials, tools, devices, plants and creatures, and
+//! [`WebTank::palette_categories`] gives each one's place in the sim's
+//! category tree ([`Tools::palette_tree`]) for the page's tabs and
+//! sub-tabs. The brush outline is the shader's
 //! ([`Tank::set_cursor`]).
 //!
 //! Saves (WB3) are [`desktank_sim::save`]'s format, the same bytes as the
@@ -41,7 +43,7 @@ use core::time::Duration;
 
 use desktank_render::{BrushPreview, FieldOverlay, Layout, Magnifier, Tank, TankConfig};
 use desktank_sim::tools::{
-    self, AddRefused, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
+    self, AddRefused, Button, Inspection, Outcome, PaletteItem, PalettePath, Tool, Tools,
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, MAX_CREATURE_CAP, MaterialTable, Propagule,
@@ -127,8 +129,8 @@ pub struct WebTank {
     tools: Tools,
     avoid_cursor: bool,
     palette: Vec<PaletteItem>,
-    /// Each palette item's group.
-    groups: Vec<PaletteGroup>,
+    /// Each palette item's sub-category.
+    categories: Vec<PalettePath>,
     running: bool,
     /// What inspect found, not yet taken by [`WebTank::take_inspection`].
     inspection: String,
@@ -287,10 +289,9 @@ impl WebTank {
     /// The palette, in order, as `"<kind> <name>"`: kind `material` (pour
     /// it; the name is the material's), `tool` (`scoop`, `glue`, `net`,
     /// `inspect`), `device` (place it; the name is its material's),
-    /// `creature` (add one; the name is the species') or `plant` (the one
-    /// plants slot, named `plants`: pour the species
-    /// [`WebTank::set_plant_species`] picked, as the propagule
-    /// [`WebTank::set_plant_propagule`] picked).
+    /// `creature` (add one; the name is the species'), `live_food` (add a
+    /// pinch) or `plant` (pour the plant species named, as the propagule
+    /// [`WebTank::set_plant_propagule`] picked for it).
     #[must_use]
     pub fn palette(&self) -> Vec<String> {
         self.palette
@@ -302,15 +303,34 @@ impl WebTank {
             .collect()
     }
 
-    /// Each palette item's group, as `"<name> <label>"` (e.g.
-    /// `"substrate Substrate"`); items of a group are consecutive, groups
-    /// in palette order.
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = paletteGroups))]
+    /// Each palette item's sub-category, as `"<path>\t<tab label>\t<sub
+    /// label>"` (e.g. `"animals/fish\tAnimals\tFish"`, or
+    /// `"water\tWater\tWater"` for a tab's only sub-category); the path's
+    /// first part is the tab's name. Items of a sub-category are
+    /// consecutive, sub-categories of a tab too, all in palette order.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = paletteCategories))]
     #[must_use]
-    pub fn palette_groups(&self) -> Vec<String> {
-        self.groups
+    pub fn palette_categories(&self) -> Vec<String> {
+        self.categories
             .iter()
-            .map(|g| format!("{} {}", g.name(), g.label()))
+            .map(|p| format!("{}\t{}\t{}", p.name(), p.top_label(), p.label()))
+            .collect()
+    }
+
+    /// A line about each palette item for its tooltip: a plant species'
+    /// description, or `""`.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = paletteDescriptions))]
+    #[must_use]
+    pub fn palette_descriptions(&self) -> Vec<String> {
+        let plants = self.tank.world().plant_species();
+        self.palette
+            .iter()
+            .map(|&item| match item {
+                PaletteItem::Tool(Tool::Plant(s)) => plants
+                    .get(s)
+                    .map_or_else(String::new, |s| s.description.clone()),
+                _ => String::new(),
+            })
             .collect()
     }
 
@@ -333,10 +353,9 @@ impl WebTank {
                     PaletteItem::Tool(Tool::AddCreature(s)) => {
                         world.species().get(s).map(|s| s.colour)
                     }
-                    PaletteItem::Tool(Tool::Plant) => self
-                        .tools
-                        .plant_species(world)
-                        .and_then(|id| world.plant_species().get(id))
+                    PaletteItem::Tool(Tool::Plant(s)) => world
+                        .plant_species()
+                        .get(s)
                         .map(desktank_sim::PlantSpecies::colour),
                     PaletteItem::Tool(_) => None,
                 };
@@ -358,7 +377,7 @@ impl WebTank {
             .collect()
     }
 
-    /// The names of the live foods the Food group offers, ordered by ID.
+    /// The names of the live foods Food › Live offers, ordered by ID.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = liveFoods))]
     #[must_use]
     pub fn live_foods(&self) -> Vec<String> {
@@ -371,64 +390,22 @@ impl WebTank {
             .collect()
     }
 
-    /// Plant species, ordered by ID, as `"<name> <description>"` (the plants
-    /// slot's picker).
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantSpecies))]
-    #[must_use]
-    pub fn plant_species(&self) -> Vec<String> {
-        self.tank
-            .world()
-            .plant_species()
-            .iter()
-            .map(|s| format!("{} {}", s.name, s.description))
-            .collect()
-    }
-
-    /// Index (in [`WebTank::plant_species`]) of the species the plants slot
-    /// pours.
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantSpeciesSelected))]
-    #[must_use]
-    pub fn plant_species_selected(&self) -> u32 {
-        let world = self.tank.world();
-        let picked = self.tools.plant_species(world);
-        let i = world
-            .plant_species()
-            .iter()
-            .position(|s| Some(s.id) == picked);
-        count(i.unwrap_or(0))
-    }
-
-    /// Picks the species the plants slot pours, by index in
-    /// [`WebTank::plant_species`] (ignored if out of range). Doesn't change
-    /// the selected tool.
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setPlantSpecies))]
-    pub fn set_plant_species(&mut self, index: u32) {
-        let id = self
-            .tank
-            .world()
-            .plant_species()
-            .iter()
-            .nth(index as usize)
-            .map(|s| s.id);
-        if let Some(id) = id {
-            self.tools.set_plant_species(id);
-        }
-    }
-
-    /// The propagules the picked species grows from, as names (`seeds`,
-    /// `cuttings`, `fragments`, `runners`): the plants slot's second picker.
+    /// The propagules the selected plant's species grows from, as names
+    /// (`seeds`, `cuttings`, `fragments`, `runners`, `buds`): the page's
+    /// propagule chips. Empty unless a plant slot is selected.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagules))]
     #[must_use]
     pub fn plant_propagules(&self) -> Vec<String> {
         let world = self.tank.world();
         self.tools
-            .plant_species(world)
+            .selected_plant()
             .and_then(|id| world.plant_species().get(id))
             .map_or_default(|s| s.propagules().map(|p| p.name().to_owned()).collect())
     }
 
-    /// The propagule the plants slot pours (one of
-    /// [`WebTank::plant_propagules`]), or `""` without plant species.
+    /// The propagule the selected plant slot pours (one of
+    /// [`WebTank::plant_propagules`]), or `""` unless a plant slot is
+    /// selected.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagule))]
     #[must_use]
     pub fn plant_propagule(&self) -> String {
@@ -437,18 +414,27 @@ impl WebTank {
             .map_or_else(String::new, |p| p.name().to_owned())
     }
 
-    /// Picks the propagule the plants slot pours, by name; ignored (returns
-    /// false) unless the picked species grows from it. A species picked
-    /// later that doesn't grow from it pours its own default.
+    /// Picks the propagule the selected plant slot pours, by name, and
+    /// keeps it for that species; ignored (returns false) unless a plant
+    /// slot is selected and its species grows from it.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setPlantPropagule))]
     pub fn set_plant_propagule(&mut self, name: &str) -> bool {
         Propagule::from_name(name)
             .is_some_and(|p| self.tools.set_plant_propagule(self.tank.world(), p))
     }
 
-    /// Takes `old`'s plant species and propagule picks, for a new tank
-    /// replacing it (a stored propagule pick survives even while the picked
-    /// species doesn't grow from it).
+    /// Picks the next propagule the selected plant's species grows from
+    /// (wrapping; the `P` key) and returns its name, or `""` unless a plant
+    /// slot is selected.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = nextPlantPropagule))]
+    pub fn next_plant_propagule(&mut self) -> String {
+        self.tools
+            .next_plant_propagule(self.tank.world())
+            .map_or_else(String::new, |p| p.name().to_owned())
+    }
+
+    /// Takes `old`'s propagule picks (one per plant species), for a new
+    /// tank replacing it.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = keepPlantPicks))]
     pub fn keep_plant_picks(&mut self, old: &WebTank) {
         self.tools.keep_plant_picks(&old.tools);
@@ -1013,16 +999,17 @@ impl WebTank {
             .materials()
             .id("sand")
             .ok_or_else(|| "no sand material".to_owned())?;
-        let (groups, palette) = Tools::palette_groups(&world)
+        let (categories, palette) = Tools::palette_tree(&world)
             .into_iter()
-            .flat_map(|(g, items)| items.into_iter().map(move |i| (g, i)))
+            .flat_map(|tab| tab.subs)
+            .flat_map(|sub| sub.items.into_iter().map(move |i| (sub.path, i)))
             .unzip();
         Ok(Self {
             tank: Tank::new(world, TankConfig::default()),
             tools: Tools::new(sand),
             avoid_cursor: false,
             palette,
-            groups,
+            categories,
             running: true,
             inspection: String::new(),
             refusal: String::new(),
@@ -1072,7 +1059,7 @@ impl WebTank {
             PaletteItem::Tool(Tool::AddCreature(s)) => {
                 let species = self.tank.world().species().get(s);
                 (
-                    // Live food is poured from the Food group, a pinch a
+                    // Live food is poured from Food › Live, a pinch a
                     // click.
                     if species.is_some_and(|s| s.live_food) {
                         "live_food"
@@ -1082,7 +1069,14 @@ impl WebTank {
                     species.map_or_else(String::new, |s| s.name.clone()),
                 )
             }
-            PaletteItem::Tool(Tool::Plant) => ("plant", "plants".to_owned()),
+            PaletteItem::Tool(Tool::Plant(s)) => (
+                "plant",
+                self.tank
+                    .world()
+                    .plant_species()
+                    .get(s)
+                    .map_or_else(String::new, |s| s.name.clone()),
+            ),
             PaletteItem::Tool(t) => (
                 "tool",
                 match t {
@@ -1091,7 +1085,7 @@ impl WebTank {
                     Tool::Net => "net",
                     Tool::Inspect => "inspect",
                     Tool::Magnify => "magnify",
-                    Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) | Tool::Plant => "pour",
+                    Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) | Tool::Plant(_) => "pour",
                 }
                 .to_owned(),
             ),

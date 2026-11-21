@@ -15,15 +15,21 @@
 //! button is down; letting go above the water (or outside the tank) lifts it
 //! out. Inspect reports the creature under the pointer, if any, or the
 //! plant, and the cell's material. A creature slot in the palette adds one
-//! of its species per click. The one plants slot (T6b) pours the species
-//! picked with [`Tools::set_plant_species`], as the propagule (seeds,
-//! cuttings or fragments) picked with [`Tools::set_plant_propagule`].
+//! of its species per click. A plant slot (one per species, like the
+//! creatures) pours its species as the propagule picked for it with
+//! [`Tools::set_plant_propagule`] (seeds, cuttings, fragments, runners or
+//! buds; the species' default until one is picked).
 //!
-//! The palette is grouped ([`PaletteGroup`], [`Tools::palette_groups`]):
-//! hosts show a group selector and the open group's items, so every slot
-//! stays a short reach (and a number key) away.
+//! The palette is a two-level tree ([`PaletteTab`], [`Tools::palette_tree`];
+//! the categories are [`crate::palette`]'s): hosts show the top tabs, the
+//! open tab's sub-tabs (when it has more than one) and the open
+//! sub-category's items, so every slot stays a short reach (and a number
+//! key) away.
+
+use std::collections::BTreeMap;
 
 pub use crate::CreatureId;
+pub use crate::palette::{Holds, PalettePath};
 use crate::{
     BodyId, Brush, MaterialId, Placeable, PlantId, PlantSpeciesId, Propagule, SpeciesId, World,
     WorldError,
@@ -44,83 +50,26 @@ pub const ZOOM_LEVELS: [u32; 4] = [2, 4, 6, 8];
 /// Magnification factor a new [`Tools`] starts with.
 pub const DEFAULT_ZOOM: u32 = ZOOM_LEVELS[0];
 
-/// A palette group: hosts show one group's items at a time, with a
-/// selector for the groups (SPEC §2.5).
-///
-/// The material groups come from data: each pourable material names its
-/// group in its TOML (`palette = "substrate"`), and materials without one
-/// aren't offered. The tools, devices and creatures groups are filled from
-/// code ([`Tool`], [`Placeable::ALL`], the species table).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaletteGroup {
-    /// Scoop, net, inspect and glue.
-    Tools,
-    /// Sand, gravel, soil, rock and driftwood.
-    Substrate,
-    /// Water and bubbles.
-    Water,
-    /// Fish food and plant fertilisers.
-    Food,
-    /// The plants slot (seeds and cuttings of a picked species) and algae.
-    Plants,
-    /// Waste and detritus.
-    Waste,
-    /// Placeable devices: bubbler, filter outlet.
-    Devices,
-    /// One slot per species.
-    Creatures,
+/// A top category of the palette and its non-empty sub-categories, as
+/// [`Tools::palette_tree`] gives them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaletteTab {
+    /// Its name (`"animals"`).
+    pub name: &'static str,
+    /// Its label (`"Animals"`).
+    pub label: &'static str,
+    /// Its sub-categories with items, in palette order. Hosts show a
+    /// sub-tab row only when there are several.
+    pub subs: Vec<PaletteSub>,
 }
 
-impl PaletteGroup {
-    /// Every group, in palette order.
-    pub const ALL: [Self; 8] = [
-        Self::Tools,
-        Self::Substrate,
-        Self::Water,
-        Self::Food,
-        Self::Plants,
-        Self::Waste,
-        Self::Devices,
-        Self::Creatures,
-    ];
-
-    /// The name materials use for it (`palette = "…"`).
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Tools => "tools",
-            Self::Substrate => "substrate",
-            Self::Water => "water",
-            Self::Food => "food",
-            Self::Plants => "plants",
-            Self::Waste => "waste",
-            Self::Devices => "devices",
-            Self::Creatures => "creatures",
-        }
-    }
-
-    /// Display label.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Tools => "Tools",
-            Self::Substrate => "Substrate",
-            Self::Water => "Water",
-            Self::Food => "Food",
-            Self::Plants => "Plants",
-            Self::Waste => "Waste",
-            Self::Devices => "Devices",
-            Self::Creatures => "Creatures",
-        }
-    }
-
-    /// Whether materials may name it: the tools, devices and creatures
-    /// groups are filled from code.
-    #[must_use]
-    pub fn holds_materials(self) -> bool {
-        !matches!(self, Self::Tools | Self::Devices | Self::Creatures)
-    }
+/// A sub-category of the palette and its items.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaletteSub {
+    /// Where it is in the tree (its name and label).
+    pub path: PalettePath,
+    /// Its items, in order.
+    pub items: Vec<PaletteItem>,
 }
 
 /// What the primary button does.
@@ -142,9 +91,9 @@ pub enum Tool {
     Place(Placeable),
     /// Add a creature of this species, once per click.
     AddCreature(SpeciesId),
-    /// Pour the picked plant species ([`Tools::plant_species`]) as the
-    /// picked propagule ([`Tools::plant_propagule`]).
-    Plant,
+    /// Pour this plant species as the propagule picked for it
+    /// ([`Tools::plant_propagule`]).
+    Plant(PlantSpeciesId),
 }
 
 /// One entry in the palette.
@@ -289,12 +238,10 @@ enum Action {
 pub struct Tools {
     tool: Tool,
     material: MaterialId,
-    /// The species the plants slot pours (0: the default species).
-    plant: PlantSpeciesId,
-    /// The propagule picked for it (`None`: the species' default). Kept
-    /// across species changes; one a species doesn't grow from falls back
-    /// to that species' default ([`Tools::plant_propagule`]).
-    propagule: Option<Propagule>,
+    /// The propagule picked for each plant species (none: the species'
+    /// default). One a species doesn't grow from (a different world's
+    /// species table) falls back to its default ([`Tools::plant_propagule`]).
+    propagules: BTreeMap<PlantSpeciesId, Propagule>,
     radius: u32,
     /// Index into [`ZOOM_LEVELS`] for [`Tool::Magnify`].
     zoom: usize,
@@ -309,8 +256,7 @@ impl Tools {
         Self {
             tool: Tool::Pour,
             material,
-            plant: PlantSpeciesId(0),
-            propagule: None,
+            propagules: BTreeMap::new(),
             radius: DEFAULT_RADIUS,
             zoom: 0,
             pointer: None,
@@ -318,89 +264,77 @@ impl Tools {
         }
     }
 
-    /// The palette for `world`, grouped: the non-empty groups in
-    /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
-    /// inspect, glue and magnify; each material group lists the materials naming it,
-    /// by ID (the plants group starts with the plants slot); then the
-    /// placeables whose material `world` has, and its stocked species by
-    /// ID ([`crate::Species::stocked`]). Live food species follow the food
-    /// materials in the Food group, where a click adds a pinch.
+    /// The palette for `world` as a tree: the top categories in
+    /// [`PalettePath::all`] order, each with its non-empty sub-categories
+    /// (top categories with none are left out). Tools are scoop, net,
+    /// inspect, glue and magnify; devices the placeables whose material `world`
+    /// has; the rest are the materials, plant species and creature species
+    /// whose TOML names the sub-category (`palette = "…"`), each kind by
+    /// ID. Assets naming no sub-category aren't offered (the cheat-only
+    /// species, plant tissue, air, device cells).
     #[must_use]
-    pub fn palette_groups(world: &World) -> Vec<(PaletteGroup, Vec<PaletteItem>)> {
-        let table = world.materials();
-        PaletteGroup::ALL
-            .into_iter()
-            .map(|group| {
-                let items: Vec<_> = match group {
-                    PaletteGroup::Tools => [
-                        Tool::Scoop,
-                        Tool::Net,
-                        Tool::Inspect,
-                        Tool::Glue,
-                        Tool::Magnify,
-                    ]
-                    .map(PaletteItem::Tool)
-                    .to_vec(),
-                    PaletteGroup::Devices => Placeable::ALL
-                        .into_iter()
-                        .filter(|p| table.id(p.material_name()).is_some())
-                        .map(|p| PaletteItem::Tool(Tool::Place(p)))
-                        .collect(),
-                    // Cheat-only species come from their cheats, live
-                    // food from the Food group.
-                    PaletteGroup::Creatures => world
-                        .species()
-                        .iter()
-                        .filter(|s| s.stocked())
-                        .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
-                        .collect(),
-                    // The plants slot (if `world` has plant species and
-                    // their seeds and cuttings) leads its group.
-                    PaletteGroup::Plants => {
-                        let slot = (!world.plant_species().is_empty()
-                            && ["seed", "cutting"].iter().all(|n| table.id(n).is_some()))
-                        .then_some(PaletteItem::Tool(Tool::Plant));
-                        slot.into_iter()
-                            .chain(
-                                table
-                                    .iter()
-                                    .filter(|m| m.palette == Some(group))
-                                    .map(|m| PaletteItem::Material(m.id)),
-                            )
-                            .collect()
-                    }
-                    // Live food follows the food materials, a pinch a click.
-                    PaletteGroup::Food => table
-                        .iter()
-                        .filter(|m| m.palette == Some(group))
-                        .map(|m| PaletteItem::Material(m.id))
-                        .chain(
-                            world
-                                .species()
-                                .iter()
-                                .filter(|s| s.live_food)
-                                .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id))),
-                        )
-                        .collect(),
-                    _ => table
-                        .iter()
-                        .filter(|m| m.palette == Some(group))
-                        .map(|m| PaletteItem::Material(m.id))
-                        .collect(),
-                };
-                (group, items)
-            })
-            .filter(|(_, items)| !items.is_empty())
-            .collect()
+    pub fn palette_tree(world: &World) -> Vec<PaletteTab> {
+        let materials = world.materials();
+        let mut tabs: Vec<PaletteTab> = Vec::new();
+        for path in PalettePath::all() {
+            let items: Vec<_> = match path.holds() {
+                Holds::Tools => [
+                    Tool::Scoop,
+                    Tool::Net,
+                    Tool::Inspect,
+                    Tool::Glue,
+                    Tool::Magnify,
+                ]
+                .map(PaletteItem::Tool)
+                .to_vec(),
+                Holds::Devices => Placeable::ALL
+                    .into_iter()
+                    .filter(|p| materials.id(p.material_name()).is_some())
+                    .map(|p| PaletteItem::Tool(Tool::Place(p)))
+                    .collect(),
+                Holds::Materials => materials
+                    .iter()
+                    .filter(|m| m.palette == Some(path))
+                    .map(|m| PaletteItem::Material(m.id))
+                    .collect(),
+                Holds::Plants => world
+                    .plant_species()
+                    .iter()
+                    .filter(|s| s.palette == Some(path))
+                    .map(|s| PaletteItem::Tool(Tool::Plant(s.id)))
+                    .collect(),
+                // Cheat-only species name no category (their load checks).
+                Holds::Creatures => world
+                    .species()
+                    .iter()
+                    .filter(|s| s.palette == Some(path))
+                    .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
+                    .collect(),
+            };
+            if items.is_empty() {
+                continue;
+            }
+            let sub = PaletteSub { path, items };
+            match tabs.last_mut() {
+                Some(tab) if tab.name == path.top_name() => tab.subs.push(sub),
+                _ => tabs.push(PaletteTab {
+                    name: path.top_name(),
+                    label: path.top_label(),
+                    subs: vec![sub],
+                }),
+            }
+        }
+        tabs
     }
 
-    /// The palette for `world` as one list: [`Tools::palette_groups`]'
-    /// items, group after group.
+    /// The palette for `world` as one list: [`Tools::palette_tree`]'s
+    /// items, sub-category after sub-category.
     #[must_use]
     pub fn palette(world: &World) -> Vec<PaletteItem> {
-        Self::palette_groups(world)
+        Self::palette_tree(world)
             .into_iter()
-            .flat_map(|(_, items)| items)
+            .flat_map(|tab| tab.subs)
+            .flat_map(|sub| sub.items)
             .collect()
     }
 
@@ -416,84 +350,75 @@ impl Tools {
         self.material
     }
 
-    /// The plant species the plants slot pours, as `world` resolves it
-    /// (the default species until one is picked).
+    /// The plant species the selected plant slot pours, if one is
+    /// selected.
     #[must_use]
-    pub fn plant_species(&self, world: &World) -> Option<PlantSpeciesId> {
-        world
-            .plant_species()
-            .for_state(u16::from(self.plant.0))
-            .map(|s| s.id)
+    pub fn selected_plant(&self) -> Option<PlantSpeciesId> {
+        match self.tool {
+            Tool::Plant(s) => Some(s),
+            _ => None,
+        }
     }
 
-    /// Picks the plant species the plants slot pours. Doesn't change the
-    /// selected tool. The picked propagule stays if the species grows from
-    /// it; otherwise the species' default is poured.
-    pub fn set_plant_species(&mut self, species: PlantSpeciesId) {
-        self.plant = species;
-    }
-
-    /// The propagule the plants slot pours, as `world` resolves it: the
-    /// picked one if the picked species grows from it, else the species'
-    /// [`crate::PlantSpecies::default_propagule`].
+    /// The propagule `species` pours, as `world` resolves it: the one
+    /// picked for it if it grows from it, else its
+    /// [`crate::PlantSpecies::default_propagule`]. `None` for a species
+    /// `world` lacks.
     #[must_use]
-    pub fn plant_propagule(&self, world: &World) -> Option<Propagule> {
-        let s = world.plant_species().for_state(u16::from(self.plant.0))?;
+    pub fn propagule_for(&self, world: &World, species: PlantSpeciesId) -> Option<Propagule> {
+        let s = world.plant_species().get(species)?;
         Some(
-            self.propagule
+            self.propagules
+                .get(&species)
+                .copied()
                 .filter(|&p| s.grows_from(p))
                 .unwrap_or_else(|| s.default_propagule()),
         )
     }
 
-    /// Picks the propagule the plants slot pours, if the picked species
-    /// grows from it (as `world` resolves the species). Returns whether it
-    /// was taken. Doesn't change the selected tool.
+    /// The propagule the selected plant slot pours ([`Tools::propagule_for`]),
+    /// or `None` if no plant slot is selected.
+    #[must_use]
+    pub fn plant_propagule(&self, world: &World) -> Option<Propagule> {
+        self.propagule_for(world, self.selected_plant()?)
+    }
+
+    /// Picks the propagule the selected plant slot pours, if its species
+    /// grows from it. Returns whether it was taken; the pick is kept for
+    /// that species.
     pub fn set_plant_propagule(&mut self, world: &World, propagule: Propagule) -> bool {
+        let Some(species) = self.selected_plant() else {
+            return false;
+        };
         let ok = world
             .plant_species()
-            .for_state(u16::from(self.plant.0))
+            .get(species)
             .is_some_and(|s| s.grows_from(propagule));
         if ok {
-            self.propagule = Some(propagule);
+            self.propagules.insert(species, propagule);
         }
         ok
     }
 
-    /// Takes `other`'s plant species and propagule picks as they are (the
-    /// stored propagule pick too, even one its species doesn't grow from),
-    /// for a host replacing its tank. Species ids are stable across
-    /// worlds; one this world lacks resolves to the default species.
-    pub fn keep_plant_picks(&mut self, other: &Self) {
-        self.plant = other.plant;
-        self.propagule = other.propagule;
-    }
-
-    /// Picks the next propagule the picked species grows from (wrapping),
-    /// for hosts without a picker of their own. Returns it.
+    /// Picks the next propagule the selected plant's species grows from
+    /// (wrapping). Returns it, or `None` if no plant slot is selected.
     pub fn next_plant_propagule(&mut self, world: &World) -> Option<Propagule> {
-        let s = world.plant_species().for_state(u16::from(self.plant.0))?;
-        let current = self.plant_propagule(world)?;
+        let species = self.selected_plant()?;
+        let s = world.plant_species().get(species)?;
+        let current = self.propagule_for(world, species)?;
         let next = s
             .propagules()
             .find(|&p| p > current)
             .or_else(|| s.propagules().next())?;
-        self.propagule = Some(next);
+        self.propagules.insert(species, next);
         Some(next)
     }
 
-    /// Picks the next plant species after the current one (wrapping), for
-    /// hosts without a picker of their own. Returns it.
-    pub fn next_plant_species(&mut self, world: &World) -> Option<PlantSpeciesId> {
-        let table = world.plant_species();
-        let current = self.plant_species(world)?;
-        let next = table
-            .iter()
-            .map(|s| s.id)
-            .find(|&id| id > current)
-            .or_else(|| table.iter().next().map(|s| s.id))?;
-        self.plant = next;
-        Some(next)
+    /// Takes `other`'s propagule picks as they are (even ones their
+    /// species doesn't grow from), for a host replacing its tank. Plant
+    /// species ids are stable across worlds.
+    pub fn keep_plant_picks(&mut self, other: &Self) {
+        self.propagules.clone_from(&other.propagules);
     }
 
     /// Brush radius in cells.
@@ -577,7 +502,7 @@ impl Tools {
             ),
             None => matches!(
                 self.tool,
-                Tool::Pour | Tool::Plant | Tool::Scoop | Tool::Glue
+                Tool::Pour | Tool::Plant(_) | Tool::Scoop | Tool::Glue
             ),
         };
         let (x, y) = self.pointer?;
@@ -617,7 +542,7 @@ impl Tools {
         let action = match (button, self.tool) {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
-            (Button::Primary, Tool::Plant) => Action::Plant,
+            (Button::Primary, Tool::Plant(_)) => Action::Plant,
             (Button::Primary, Tool::Glue) => Action::Glue(None),
             (Button::Primary, Tool::Net) => {
                 Action::Net(world.creature_at(cell.0, cell.1).and_then(|id| {
@@ -788,7 +713,7 @@ impl Tools {
     /// One brush disc at `c` for the stroke in progress; returns how many
     /// cells changed. A pour adds rigid cells to the stroke's body.
     fn stamp(&mut self, world: &mut World, c: (i64, i64)) -> usize {
-        let plant = self.plant_species(world).zip(self.plant_propagule(world));
+        let plant = self.selected_plant().zip(self.plant_propagule(world));
         let Some(stroke) = self.stroke.as_mut() else {
             return 0;
         };
@@ -1188,9 +1113,10 @@ mod tests {
         let w = world();
         let items = Tools::palette(&w);
         let pourable = w.materials().iter().filter(|m| m.palette.is_some());
+        let offered = w.species().iter().filter(|s| s.palette.is_some()).count();
         assert_eq!(
             items.len(),
-            pourable.count() + 1 + 2 + 5 + w.species().iter().filter(|s| !s.cheat_only).count()
+            pourable.count() + w.plant_species().len() + 2 + 5 + offered
         );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
@@ -1202,94 +1128,222 @@ mod tests {
         assert_eq!(items.iter().filter(|&&i| t.is_selected(i)).count(), 1);
     }
 
+    /// Every sub-category's items by name, `"top/sub"` (or `"top"`) first.
+    fn tree_names(w: &World) -> Vec<(String, Vec<String>)> {
+        Tools::palette_tree(w)
+            .into_iter()
+            .flat_map(|tab| tab.subs)
+            .map(|sub| {
+                let names = sub
+                    .items
+                    .iter()
+                    .map(|&i| match i {
+                        PaletteItem::Material(m) => w.materials().get(m).unwrap().name.clone(),
+                        PaletteItem::Tool(Tool::AddCreature(s)) => {
+                            w.species().get(s).unwrap().name.clone()
+                        }
+                        PaletteItem::Tool(Tool::Plant(s)) => {
+                            w.plant_species().get(s).unwrap().name.clone()
+                        }
+                        PaletteItem::Tool(t) => format!("{t:?}"),
+                    })
+                    .collect();
+                (sub.path.name(), names)
+            })
+            .collect()
+    }
+
     #[test]
-    fn palette_groups_come_from_the_materials() {
+    fn palette_tree_comes_from_the_assets() {
         let w = world();
-        let groups = Tools::palette_groups(&w);
-        let order: Vec<_> = groups.iter().map(|(g, _)| *g).collect();
-        assert_eq!(order, PaletteGroup::ALL, "every built-in group is filled");
-        let names = |g: PaletteGroup| -> Vec<String> {
-            let (_, items) = groups.iter().find(|(x, _)| *x == g).unwrap();
-            items
-                .iter()
-                .map(|&i| match i {
-                    PaletteItem::Material(m) => w.materials().get(m).unwrap().name.clone(),
-                    PaletteItem::Tool(t) => format!("{t:?}"),
-                })
-                .collect()
-        };
+        let tree = Tools::palette_tree(&w);
+        let tops: Vec<_> = tree.iter().map(|t| t.label).collect();
         assert_eq!(
-            names(PaletteGroup::Tools),
-            ["Scoop", "Net", "Inspect", "Glue", "Magnify"]
-        );
-        assert_eq!(
-            names(PaletteGroup::Substrate),
-            ["sand", "gravel", "rock", "aquasoil", "driftwood"]
-        );
-        assert_eq!(
-            names(PaletteGroup::Water),
-            ["water", "air_bubble", "co2_bubble"]
-        );
-        assert_eq!(names(PaletteGroup::Plants), ["Plant", "algae"]);
-        assert_eq!(names(PaletteGroup::Waste), ["waste", "detritus"]);
-        assert_eq!(
-            names(PaletteGroup::Devices),
-            ["Place(Bubbler)", "Place(FilterOutlet)"]
-        );
-        // Live food follows the food materials in Food.
-        assert_eq!(
-            names(PaletteGroup::Food),
+            tops,
             [
-                "flake_food",
-                "sinking_pellet",
-                "bloodworm",
-                "algae_wafer",
-                "root_tab",
-                "liquid_fertiliser",
-                &format!(
-                    "AddCreature({:?})",
-                    w.species().id("live_bloodworm").unwrap()
-                ),
-            ]
+                "Tools", "Build", "Water", "Food", "Care", "Plants", "Animals"
+            ],
+            "every top category is filled"
         );
-        // Every stocked species, nerites included, has a slot in Creatures:
-        // not the cheat-only crabs and blinker, which come from their
-        // cheats, nor live food.
-        let creatures: Vec<_> = w
-            .species()
+        let names = tree_names(&w);
+        let got: Vec<(&str, Vec<&str>)> = names
             .iter()
-            .filter(|s| s.stocked())
-            .map(|s| PaletteItem::Tool(Tool::AddCreature(s.id)))
+            .map(|(p, n)| (p.as_str(), n.iter().map(String::as_str).collect()))
             .collect();
-        assert!(w.species().iter().any(|s| s.name == "nerite"));
-        assert_eq!(w.species().iter().filter(|s| s.cheat_only).count(), 3);
-        assert_eq!(
-            groups
-                .iter()
-                .find(|(g, _)| *g == PaletteGroup::Creatures)
-                .unwrap()
-                .1,
-            creatures
-        );
-        // Number keys pick the open group's first ten slots: every slot is
-        // reachable but the Creatures group's past the tenth, which take a
-        // click (or the web's arrow keys). A palette row holds 23.
-        for (g, items) in &groups {
-            let most = if *g == PaletteGroup::Creatures {
-                23
-            } else {
-                10
-            };
-            assert!(items.len() <= most, "{g:?} has {} slots", items.len());
+        let want: Vec<(&str, Vec<&str>)> = vec![
+            ("tools", vec!["Scoop", "Net", "Inspect", "Glue", "Magnify"]),
+            ("build/substrate", vec!["sand", "gravel", "aquasoil"]),
+            ("build/hardscape", vec!["rock", "driftwood"]),
+            (
+                "build/devices",
+                vec!["Place(Bubbler)", "Place(FilterOutlet)"],
+            ),
+            ("water", vec!["water", "air_bubble", "co2_bubble"]),
+            (
+                "food/fish",
+                vec!["flake_food", "sinking_pellet", "bloodworm", "algae_wafer"],
+            ),
+            ("food/live", vec!["live_bloodworm"]),
+            (
+                "care",
+                vec!["root_tab", "liquid_fertiliser", "waste", "detritus"],
+            ),
+            (
+                "plants/stem",
+                vec!["hygrophila", "rotala", "ludwigia", "cabomba", "bacopa"],
+            ),
+            (
+                "plants/rosette",
+                vec!["amazon_sword", "vallisneria", "cryptocoryne", "tiger_lotus"],
+            ),
+            ("plants/carpet", vec!["dwarf_hairgrass", "monte_carlo"]),
+            ("plants/floating", vec!["duckweed", "frogbit"]),
+            (
+                "plants/moss",
+                vec![
+                    "java_moss",
+                    "christmas_moss",
+                    "anubias",
+                    "java_fern",
+                    "marimo",
+                ],
+            ),
+            ("plants/algae", vec!["algae"]),
+            (
+                "animals/fish",
+                vec![
+                    "neon_tetra",
+                    "corydoras",
+                    "betta",
+                    "honey_gourami",
+                    "guppy",
+                    "harlequin_rasbora",
+                    "otocinclus",
+                    "common_goldfish",
+                    "fancy_goldfish",
+                    "angelfish",
+                    "pea_puffer",
+                    "flowerhorn",
+                    "bristlenose_pleco",
+                    "kuhli_loach",
+                ],
+            ),
+            (
+                "animals/shrimp",
+                vec!["cherry_shrimp", "amano_shrimp", "thai_micro_crab"],
+            ),
+            (
+                "animals/snails",
+                vec!["nerite", "mystery_snail", "ramshorn_snail"],
+            ),
+            (
+                "animals/amphibians",
+                vec!["african_dwarf_frog", "axolotl", "common_frog"],
+            ),
+        ];
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn palette_tree_offers_every_asset_once_in_order() {
+        let w = world();
+        let tree = Tools::palette_tree(&w);
+        let names = tree_names(&w);
+        // Each sub-category is in its top category, in tree order.
+        for tab in &tree {
+            assert!(tab.subs.iter().all(|s| s.path.top_name() == tab.name));
+            assert!(tab.subs.windows(2).all(|p| p[0].path < p[1].path));
         }
-        // Plant tissue, air and device cells aren't poured.
-        for name in ["air", "stem", "leaf", "root", "dead_plant", "bubbler"] {
-            let m = id(&w, name);
+        // Every stocked species and every plant species has a slot; the
+        // cheat-only crabs and blinker (which come from their cheats)
+        // don't.
+        let all = Tools::palette(&w);
+        for s in w.species().iter() {
+            let item = PaletteItem::Tool(Tool::AddCreature(s.id));
+            assert_eq!(all.contains(&item), !s.cheat_only, "{}", s.name);
+        }
+        assert_eq!(w.species().iter().filter(|s| s.cheat_only).count(), 3);
+        for s in w.plant_species().iter() {
             assert!(
-                !Tools::palette(&w).contains(&PaletteItem::Material(m)),
-                "{name}"
+                all.contains(&PaletteItem::Tool(Tool::Plant(s.id))),
+                "{}",
+                s.name
             );
         }
+        // Number keys pick the open sub-category's first ten slots: every
+        // slot but the fish past the tenth is keyboard-reachable (those
+        // take a click or the web's arrow keys). A palette row holds 23.
+        for (path, items) in &names {
+            let most = if path == "animals/fish" { 23 } else { 10 };
+            assert!(items.len() <= most, "{path} has {} slots", items.len());
+        }
+        // Plant tissue, air and device cells aren't poured.
+        for name in [
+            "air",
+            "stem",
+            "leaf",
+            "root",
+            "dead_plant",
+            "bubbler",
+            "seed",
+        ] {
+            let m = id(&w, name);
+            assert!(!all.contains(&PaletteItem::Material(m)), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_plant_slot_pours_its_species_as_the_propagule_picked_for_it() {
+        let mut w = world();
+        let plant = |w: &World, name| w.plant_species().id(name).unwrap();
+        let (hyg, moss, rotala) = (
+            plant(&w, "hygrophila"),
+            plant(&w, "java_moss"),
+            plant(&w, "rotala"),
+        );
+        let mut t = Tools::new(id(&w, "sand"));
+        // No plant slot selected: nothing to pick.
+        assert_eq!(t.plant_propagule(&w), None);
+        assert!(!t.set_plant_propagule(&w, Propagule::Seeds));
+        assert_eq!(t.next_plant_propagule(&w), None);
+        t.select(PaletteItem::Tool(Tool::Plant(hyg)));
+        assert_eq!(t.selected_plant(), Some(hyg));
+        assert!(t.preview().is_none(), "no pointer yet");
+        assert_eq!(t.plant_propagule(&w), Some(Propagule::Cuttings));
+        assert!(t.set_plant_propagule(&w, Propagule::Seeds));
+        // Picks are per species: moss only grows from fragments, rotala
+        // from cuttings, and hygrophila keeps its seeds.
+        t.select(PaletteItem::Tool(Tool::Plant(moss)));
+        assert_eq!(t.plant_propagule(&w), Some(Propagule::Fragments));
+        assert!(!t.set_plant_propagule(&w, Propagule::Seeds));
+        assert_eq!(t.next_plant_propagule(&w), Some(Propagule::Fragments));
+        t.select(PaletteItem::Tool(Tool::Plant(rotala)));
+        assert_eq!(t.plant_propagule(&w), Some(Propagule::Cuttings));
+        t.select(PaletteItem::Tool(Tool::Plant(hyg)));
+        assert_eq!(t.plant_propagule(&w), Some(Propagule::Seeds));
+        assert_eq!(t.propagule_for(&w, rotala), Some(Propagule::Cuttings));
+        // P cycles the species' own methods, wrapping.
+        let cycle: Vec<_> = (0..3)
+            .map(|_| t.next_plant_propagule(&w).unwrap())
+            .collect();
+        assert_eq!(
+            cycle,
+            [Propagule::Cuttings, Propagule::Fragments, Propagule::Seeds]
+        );
+        // A press pours the slot's species as its pick: one seed.
+        t.resize(-i32::try_from(DEFAULT_RADIUS).unwrap());
+        let seed = id(&w, "seed");
+        assert_eq!(
+            t.press(&mut w, Button::Primary, (80, 30)),
+            Outcome::Painted(1)
+        );
+        t.release(&mut w, Button::Primary);
+        assert_eq!(count(&w, seed), 1);
+        // The picks survive into a host's new tools.
+        let mut fresh = Tools::new(id(&w, "sand"));
+        fresh.keep_plant_picks(&t);
+        fresh.select(PaletteItem::Tool(Tool::Plant(hyg)));
+        assert_eq!(fresh.plant_propagule(&w), Some(Propagule::Seeds));
     }
 
     #[test]

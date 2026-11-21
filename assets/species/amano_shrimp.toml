@@ -5,6 +5,7 @@
 # faster than the cherries.
 id = 6
 name = "amano_shrimp"
+palette = "animals/shrimp"
 zone = "bottom"
 depth = [0.68, 1.0]
 min_depth = 14

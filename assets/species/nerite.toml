@@ -1,6 +1,7 @@
 # A surface grazer. The shell and foot occupy five by three cells.
 id = 4
 name = "nerite"
+palette = "animals/snails"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 6

@@ -2,7 +2,7 @@
 id = 50
 name = "waste"
 # The palette group it is poured from (SPEC §2.5).
-palette = "waste"
+palette = "care"
 class = "powder"
 density = 1.2
 repose = 30.0

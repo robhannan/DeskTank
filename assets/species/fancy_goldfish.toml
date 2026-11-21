@@ -1,5 +1,6 @@
 id = 16
 name = "fancy_goldfish"
+palette = "animals/fish"
 zone = "mid"
 depth = [0.18, 0.85]
 min_depth = 26

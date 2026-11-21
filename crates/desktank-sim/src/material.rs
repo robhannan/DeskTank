@@ -6,7 +6,7 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::tools::PaletteGroup;
+use crate::palette::{Holds, PalettePath, PalettePathError};
 
 /// Index of a material in the [`MaterialTable`]; stored in every cell.
 ///
@@ -104,9 +104,9 @@ pub struct Material {
     pub passable: bool,
     /// Placeholder palette colour (sRGB).
     pub colour: [u8; 3],
-    /// The palette group it is poured from, or `None` if it isn't offered
-    /// for pouring (air, the tissue plants grow, device cells).
-    pub palette: Option<PaletteGroup>,
+    /// The palette sub-category it is poured from, or `None` if it isn't
+    /// offered for pouring (air, the tissue plants grow, device cells).
+    pub palette: Option<PalettePath>,
 }
 
 /// Error loading or validating materials.
@@ -135,6 +135,15 @@ pub enum MaterialError {
         /// What is wrong.
         reason: &'static str,
     },
+    /// `palette` names no sub-category that holds materials.
+    #[error("material {name:?}: {source}")]
+    Palette {
+        /// Material name.
+        name: String,
+        /// What is wrong with the path.
+        #[source]
+        source: PalettePathError,
+    },
     /// `pops_into` names a material that doesn't exist.
     #[error("material {name:?}: unknown pops_into material {target:?}")]
     UnknownTarget {
@@ -162,7 +171,7 @@ struct MaterialDef {
     #[serde(default)]
     passable: bool,
     colour: String,
-    palette: Option<PaletteGroup>,
+    palette: Option<String>,
 }
 
 /// The palette embedded in the binary (SPEC T1, T5, T6). Our own values.
@@ -336,11 +345,15 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
     if d.passable && !slides {
         return Err(invalid("passable only applies to powder and floating"));
     }
-    if d.palette.is_some_and(|g| !g.holds_materials()) {
-        return Err(invalid(
-            "palette must be substrate, water, food, plants or waste",
-        ));
-    }
+    let palette = d
+        .palette
+        .as_deref()
+        .map(|p| PalettePath::parse(p, Holds::Materials))
+        .transpose()
+        .map_err(|source| MaterialError::Palette {
+            name: d.name.clone(),
+            source,
+        })?;
     Ok(Material {
         id: MaterialId(d.id),
         name: d.name.clone(),
@@ -354,7 +367,7 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         opacity,
         passable: d.passable,
         colour,
-        palette: d.palette,
+        palette,
     })
 }
 
@@ -421,17 +434,27 @@ mod tests {
         let base = "id = 1\nname = \"a\"\nclass = \"solid\"\ndensity = 1.0\ncolour = \"#000000\"";
         assert!(matches!(
             MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"tools\"")]),
-            Err(MaterialError::Invalid { .. })
+            Err(MaterialError::Palette {
+                source: PalettePathError::WrongKind { .. },
+                ..
+            })
         ));
         assert!(matches!(
             MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"nowhere\"")]),
-            Err(MaterialError::Parse { index: 0, .. })
+            Err(MaterialError::Palette {
+                source: PalettePathError::Unknown { .. },
+                ..
+            })
         ));
-        let rock = MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"substrate\"")])
-            .unwrap();
+        let rock =
+            MaterialTable::from_toml_sources(&[&format!("{base}\npalette = \"build/hardscape\"")])
+                .unwrap();
         assert_eq!(
-            rock.get(MaterialId(1)).unwrap().palette,
-            Some(PaletteGroup::Substrate)
+            rock.get(MaterialId(1))
+                .unwrap()
+                .palette
+                .map(PalettePath::name),
+            Some("build/hardscape".to_owned())
         );
     }
 }

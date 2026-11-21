@@ -125,42 +125,88 @@ canvas {
 
 .tools { flex-wrap: nowrap; }
 
-/* The group tabs over the open group's items; both rows wrap, so nothing
-   scrolls sideways at phone width. */
+/* The tabs, the open tab's sub-tabs, its items and a selected plant's
+   propagule chips; every row wraps, so nothing scrolls sideways at phone
+   width. As in desktank window's palette, the open tab (framed blue) opens
+   into a lighter panel holding its sub-tabs (framed mint) and items
+   (framed gold), so categories and sub-categories don't read as one. */
 .palette-box {
+  --tab-open: #6fb3e0;
+  --sub-open: #7fd6b0;
+  --tab-body: #1f3a56;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
-  gap: 6px;
 }
 
-.groups, .palette {
+.tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--tab-body);
+  border: 2px solid var(--tab-open);
+}
+
+.tabs, .palette, .propagules {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
+.tabs[hidden], .propagules[hidden] { display: none; }
+
 .palette { padding: 2px; }
 
 .palette .swatch { flex: 0 0 auto; white-space: nowrap; }
-.palette .swatch[hidden] { display: none; }
+.palette .swatch[hidden], .subtabs [role="tab"][hidden] { display: none; }
 
-.groups [role="tab"] {
+/* Top tabs: bold, on the page, the open one joined to the panel. */
+#tabs { gap: 4px; }
+
+#tabs [role="tab"] {
+  position: relative;
   min-height: 36px;
-  padding: 4px 10px;
+  padding: 4px 12px;
+  font-weight: 700;
   color: var(--muted);
   background: var(--bg);
+  border-bottom-width: 0;
 }
 
-.groups [role="tab"][aria-selected="true"] {
+#tabs [role="tab"][aria-selected="true"] {
+  z-index: 1;
+  margin-bottom: -2px;
+  padding-bottom: 6px;
   color: var(--ink);
-  background: var(--panel);
-  border-color: var(--accent);
+  background: var(--tab-body);
+  border-color: var(--tab-open);
+  box-shadow: none;
 }
 
-/* A closed group holding the selection. */
-.groups [role="tab"][data-holds]::after {
+/* Sub-tabs: lighter, smaller and flat, inside the panel. */
+.subtabs [role="tab"] {
+  min-height: 30px;
+  padding: 2px 10px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.subtabs [role="tab"]:hover { color: var(--ink); }
+
+.subtabs [role="tab"][aria-selected="true"] {
+  color: var(--sub-open);
+  background: rgba(127, 214, 176, 0.12);
+  border-color: var(--sub-open);
+}
+
+/* A closed tab or sub-tab holding the selection. */
+.tabs [role="tab"][data-holds]::after {
   content: "";
   display: inline-block;
   width: 6px;
@@ -169,6 +215,11 @@ canvas {
   vertical-align: middle;
   background: var(--accent);
 }
+
+.propagules { align-items: center; font-size: 0.9rem; }
+.propagules .as { margin-left: 2px; color: var(--muted); }
+.propagules .chip { min-height: 30px; padding: 2px 8px; color: var(--muted); background: var(--bg); }
+.propagules .chip[aria-checked="true"] { color: var(--ink); background: var(--panel); border-color: var(--accent); }
 
 button, .swatch {
   font: inherit;
@@ -316,7 +367,8 @@ label { white-space: nowrap; }
   main { padding: 10px; }
   .tools { flex-wrap: wrap; }
   .palette-box { flex-basis: 100%; }
-  .swatch, .groups [role="tab"] { min-height: 44px; padding: 6px 8px; }
+  .swatch, #tabs [role="tab"], .subtabs [role="tab"], .propagules .chip { min-height: 44px; padding: 6px 8px; }
+  #tabs [role="tab"][aria-selected="true"] { padding-bottom: 8px; }
 }
 
 .hint {
