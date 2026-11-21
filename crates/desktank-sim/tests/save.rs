@@ -785,3 +785,25 @@ fn catalogue_species_and_morphs_round_trip() {
         }
     }
 }
+
+/// A tank saved on any tick, even one where a plant grew after the
+/// registries were refreshed, lights its water exactly as the tank that
+/// saved it (a loaded tank once counted that growth a light step early).
+#[test]
+fn a_loaded_tank_lights_its_water_as_the_running_one() {
+    let mut w = bred();
+    let light = |w: &World| w.field(desktank_sim::FieldKind::Light).values().to_vec();
+    for t in 0..40 {
+        w.tick();
+        let mut loaded = save::decode(&save::encode(&w), table()).unwrap();
+        let mut running = w.clone();
+        for step in 0..12 {
+            loaded.tick();
+            running.tick();
+            assert!(
+                light(&loaded) == light(&running),
+                "saved at +{t}, {step} ticks on"
+            );
+        }
+    }
+}

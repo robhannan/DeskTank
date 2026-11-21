@@ -87,10 +87,12 @@ fn air_breathers_surface_on_beats_of_their_own() {
         }
     }
     eprintln!("visits {visits:?}");
-    // They don't arrive together: the first visits spread over seconds.
-    let firsts: Vec<f32> = visits.iter().map(|v| v[0] as f32).collect();
-    let (first, last) = range(&firsts);
-    assert!(last - first >= 60.0, "first breaths together: {firsts:?}");
+    assert!(visits.iter().all(|v| v.len() >= 3), "too few breaths");
+    // They first surface soon after being added, but drift apart: by the
+    // third breath they arrive seconds apart (on one beat, within 2 s).
+    let thirds: Vec<f32> = visits.iter().map(|v| v[2] as f32).collect();
+    let (first, last) = range(&thirds);
+    assert!(last - first >= 100.0, "breathing together: {thirds:?}");
     // And each keeps its own beat, so their mean gaps differ.
     let gaps: Vec<f32> = visits
         .iter()
@@ -102,7 +104,7 @@ fn air_breathers_surface_on_beats_of_their_own() {
 
 #[test]
 fn shrimp_hop_in_rhythms_of_their_own() {
-    let (mut w, ids) = stocked(8, "cherry_shrimp", 4);
+    let (mut w, ids) = stocked(8, "cherry_shrimp", 6);
     let (width, height) = (w.width(), w.height());
     let sand = w.materials().id("sand").unwrap();
     w.fill_rect(
@@ -131,9 +133,10 @@ fn shrimp_hop_in_rhythms_of_their_own() {
             last[j] = y;
         }
     }
+    assert!(hops.iter().all(|h| h.len() >= 2), "too few hops");
     let gaps: Vec<f32> = hops
         .iter()
-        .map(|h| (h[h.len() - 1] - h[0]) as f32 / (h.len() - 1).max(1) as f32)
+        .map(|h| (h[h.len() - 1] - h[0]) as f32 / (h.len() - 1) as f32)
         .collect();
     eprintln!(
         "hops {:?} gaps {gaps:?}",

@@ -59,7 +59,7 @@ mod lifecycle;
 mod naming;
 pub mod pursuit;
 mod quirks;
-use quirks::{Quirks, salt};
+use quirks::salt;
 mod school;
 mod steering;
 
@@ -836,13 +836,7 @@ impl World {
             facing_left: self.creatures.next_id % 2 == 1,
             turn: 0,
             held_until: 0,
-            next_breath: self.tick
-                + Quirks::of(self.seed, CreatureId(self.creatures.next_id), self.tick).scale(
-                    salt::BREATH_PHASE,
-                    0,
-                    50,
-                    BETWEEN_BREATHS,
-                ),
+            next_breath: self.tick + u64::from(self.creatures.next_id % 20),
             eaten: 0,
             age,
             growth,
