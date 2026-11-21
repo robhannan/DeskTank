@@ -182,18 +182,27 @@ fn a_territorial_betta_drives_an_intruder_out_and_goes_home() {
         };
         let mut chased_at = None;
         let mut fled = false;
+        // A gourami quicker than this betta (creature quirks) may leave
+        // the territory before the betta gets close enough to frighten it.
+        let mut outran = false;
         let mut furthest = 0.0_f32;
         for t in 0..20 * TICKS_PER_SECOND {
             w.tick();
-            if w.creature(betta).unwrap().quarry() == Some(gourami) {
+            let chasing = w.creature(betta).unwrap().quarry() == Some(gourami);
+            if chasing {
                 chased_at.get_or_insert(t);
+            } else if chased_at.is_some() && !fled && !outran {
+                outran = from_home(&w, gourami) > radius;
             }
             fled |= w.creature(gourami).unwrap().fear() > 0;
             furthest = furthest.max(from_home(&w, gourami));
         }
         let chased_at = chased_at.unwrap_or_else(|| panic!("seed {seed}: no chase"));
         assert!(chased_at < TICKS_PER_SECOND, "seed {seed}: chased late");
-        assert!(fled, "seed {seed}: the gourami never fled");
+        assert!(
+            fled || outran,
+            "seed {seed}: the gourami neither fled nor left the territory"
+        );
         assert!(
             furthest > radius,
             "seed {seed}: gourami kept within {furthest}"

@@ -667,10 +667,12 @@ fn a_version_9_fixture_loads() {
     assert!(w.creatures().iter().any(|c| c.fear() > 0));
     // Version 10 migrates its rigid cells whole (round outlines change no
     // physics). The tank that wrote it no longer plays out the same since
-    // bottom dwellers swim and burrow, so the migrated tank is checked
-    // against itself re-saved in the current version: it hunts on the same.
+    // creature quirks and since bottom dwellers swim and burrow, so it is
+    // no longer compared with a fresh one (the version 10 fixture is):
+    // instead it carries on exactly as its own re-save does.
     assert!((0..w.width() * w.height()).all(|i| w.rigid_mask(i).is_none_or(|m| m == FULL_MASK)));
     let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(fresh.state_hash(), w.state_hash());
     assert_eq!(pursuit(&w), pursuit(&fresh));
     for _ in 0..400 {
         w.tick();
@@ -781,6 +783,28 @@ fn catalogue_species_and_morphs_round_trip() {
             world.tick();
             assert_eq!(restored.state_hash(), world.state_hash());
             world.remove_creature(creature);
+        }
+    }
+}
+
+/// A tank saved on any tick, even one where a plant grew after the
+/// registries were refreshed, lights its water exactly as the tank that
+/// saved it (a loaded tank once counted that growth a light step early).
+#[test]
+fn a_loaded_tank_lights_its_water_as_the_running_one() {
+    let mut w = bred();
+    let light = |w: &World| w.field(desktank_sim::FieldKind::Light).values().to_vec();
+    for t in 0..40 {
+        w.tick();
+        let mut loaded = save::decode(&save::encode(&w), table()).unwrap();
+        let mut running = w.clone();
+        for step in 0..12 {
+            loaded.tick();
+            running.tick();
+            assert!(
+                light(&loaded) == light(&running),
+                "saved at +{t}, {step} ticks on"
+            );
         }
     }
 }

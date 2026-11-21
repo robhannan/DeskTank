@@ -19,6 +19,7 @@
 //! Each runs at a tick picked from the creature's id, so a group doesn't
 //! act as one.
 
+use super::quirks::salt;
 use super::{BITE, BITE_ENERGY, Creature, ENERGY_RESERVE, FULL, Kind, TICKS_PER_SECOND, World};
 use crate::grid::Rect;
 use rand_core::Rng as _;
@@ -42,7 +43,9 @@ impl World {
     /// look for a home while it has none.
     pub(super) fn habits(&mut self, k: &Kind, c: &mut Creature, rng: &mut Pcg32) {
         let phase = self.tick + u64::from(c.id.0) * 7919;
-        if k.waste_every > 0 && phase.is_multiple_of(k.waste_every) {
+        // Its own rhythm, 80–125% of its species'.
+        let every = self.quirks(c).scale(salt::WASTE, 80, 125, k.waste_every);
+        if every > 0 && phase.is_multiple_of(every) {
             self.drop_waste(k, c);
         }
         if k.homebody

@@ -1128,6 +1128,23 @@ impl World {
     }
 
     fn step_fields(&mut self) {
+        // Cells changed since the registries were refreshed this tick
+        // (plants growing, spawns) are counted now too, as a tank loaded
+        // from a save counts every block at its first step: otherwise a
+        // loaded tank's light runs a step ahead of the tank that saved it.
+        let fw = self.life.light.width();
+        for c in &self.chunks {
+            let r = c.changed_next;
+            if r.is_empty() {
+                continue;
+            }
+            for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
+                for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {
+                    self.life.opacity_dirty[fy * fw + fx] = true;
+                }
+            }
+            self.life.any_opacity_dirty = true;
+        }
         if self.life.any_opacity_dirty {
             self.update_light();
         }
