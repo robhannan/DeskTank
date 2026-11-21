@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import { checkJs } from "../../scripts/check-webos.ts";
 import { framesDrawn, watchErrors } from "./support.ts";
 
 const built = existsSync(path.join(import.meta.dirname, "..", "..", "target", "site-webos", "index.html"));
@@ -23,6 +24,15 @@ const canvasPixels = (page: Page) =>
     const r = c.getBoundingClientRect();
     return { width: c.width, height: c.height, cssWidth: Math.round(r.width), cssHeight: Math.round(r.height) };
   });
+
+// The checker itself, so a regression can't wave everything through.
+test("check-webos rejects syntax Chrome 68 lacks and accepts what it has", () => {
+  for (const bad of ["a?.b;", "a ?? b;", "1n;", 'export * as ns from "./x.js";', "class A { x = 1 }", "1_000;"]) {
+    expect(checkJs(bad), bad).not.toEqual([]);
+  }
+  const ok = 'const u = new URL("x", import.meta.url); import("./m.js"); try {} catch {} async function f(a) { for await (const x of a) {} return { ...a }; }';
+  expect(checkJs(ok)).toEqual([]);
+});
 
 test.describe("webOS build", () => {
   test.use({ deviceScaleFactor: 2 });

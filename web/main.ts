@@ -287,6 +287,9 @@ function maxFps() {
 // --- Tank and graphics -------------------------------------------------------
 
 function showError(message: string) {
+  // A real error stays: no stall report over it later.
+  clearTimeout(stallTimer);
+  stallTimer = 0;
   stallShown = false;
   statusEl.textContent = message;
   statusEl.hidden = false;
@@ -298,11 +301,15 @@ function setChildren(el: Element, ...children: Node[]) {
   el.append(...children);
 }
 
-// Canvas size in device pixels, from its CSS box (SPEC D26: at most dprCap
-// device pixels per CSS pixel).
+// Canvas pixels per CSS pixel: the display's, at most dprCap (SPEC D26).
+function pixelRatio() {
+  return Math.min(window.devicePixelRatio || 1, dprCap);
+}
+
+// Canvas size in device pixels, from its CSS box.
 function canvasPixels(): Point {
   const r = canvas.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
+  const dpr = pixelRatio();
   return [Math.max(1, Math.round(r.width * dpr)), Math.max(1, Math.round(r.height * dpr))];
 }
 
@@ -1186,7 +1193,7 @@ const touch: PointerHandler = {
     const p = canvasPoint(e);
     touches.set(e.pointerId, p);
     if (gesture.mode === "pending" && e.pointerId === gesture.id) {
-      const slop = TOUCH_SLOP * (window.devicePixelRatio || 1);
+      const slop = TOUCH_SLOP * pixelRatio();
       if (Math.hypot(p[0] - gesture.start[0], p[1] - gesture.start[1]) < slop) return;
       clearTimeout(gesture.timer);
       gesture.mode = "stroke";
