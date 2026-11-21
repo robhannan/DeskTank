@@ -114,11 +114,20 @@ pub enum DeathCause {
     Starvation,
     /// It lived too long in foul water.
     PoorWater,
+    /// An air-breather kept from the air for longer than its species'
+    /// `air_tolerance_seconds`.
+    Suffocation,
 }
 
 impl DeathCause {
     /// Every cause, in save order.
-    pub const ALL: [Self; 3] = [Self::OldAge, Self::Starvation, Self::PoorWater];
+    /// Causes may only be appended: their codes are saved.
+    pub const ALL: [Self; 4] = [
+        Self::OldAge,
+        Self::Starvation,
+        Self::PoorWater,
+        Self::Suffocation,
+    ];
 
     /// The cause's name.
     #[must_use]
@@ -127,6 +136,7 @@ impl DeathCause {
             Self::OldAge => "old age",
             Self::Starvation => "starvation",
             Self::PoorWater => "poor water",
+            Self::Suffocation => "suffocation",
         }
     }
 
@@ -135,6 +145,7 @@ impl DeathCause {
             Self::OldAge => 0,
             Self::Starvation => 1,
             Self::PoorWater => 2,
+            Self::Suffocation => 3,
         }
     }
 
@@ -419,16 +430,24 @@ impl World {
             return Some(DeathCause::Starvation);
         }
         if let Some(q) = quality {
+            let breathless = self.out_of_air(k, c);
+            if breathless {
+                c.stress = c.stress.saturating_add(k.air_stress);
+            }
             if q < POOR_QUALITY {
                 // Thousandths of a second at quality 0, 1000 at most.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let add = ((POOR_QUALITY - q) / POOR_QUALITY * 1000.0).round() as u32;
                 c.stress = c.stress.saturating_add(add);
-            } else {
+            } else if !breathless {
                 c.stress = c.stress.saturating_sub(STRESS_RECOVERY);
             }
             if c.stress >= STRESS_LIMIT {
-                return Some(DeathCause::PoorWater);
+                return Some(if breathless {
+                    DeathCause::Suffocation
+                } else {
+                    DeathCause::PoorWater
+                });
             }
         }
         None
@@ -479,14 +498,14 @@ impl World {
         );
         corpses.retain_mut(|c| {
             let (w, h) = (i32::from(c.w), i32::from(c.h));
-            if self.fits_box(w, h, c.x, c.y + SINK, Some(c.band)) {
+            if self.fits_box(w, h, c.x, c.y + SINK, Some(c.band), true) {
                 c.y += SINK;
                 changed = true;
             } else {
                 // Settle the rest of the way onto whatever stopped it.
                 let top = c.y - h * ONE / 2;
                 let settled = (top + ONE - 1).div_euclid(ONE) * ONE + h * ONE / 2;
-                if settled > c.y && self.fits_box(w, h, c.x, settled, Some(c.band)) {
+                if settled > c.y && self.fits_box(w, h, c.x, settled, Some(c.band), true) {
                     c.y = settled;
                     changed = true;
                 }
