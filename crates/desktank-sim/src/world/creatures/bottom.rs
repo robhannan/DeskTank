@@ -14,7 +14,7 @@
 //! - **Burrowing.** A walker with `burrow_every` (the kuhli loach) gets a
 //!   window of [`BURROW_TICKS`] in each `burrow_every`, again at one chance
 //!   in [`BURROW_ODDS`]. In one, resting on loose substrate (a powder from
-//!   the substrate palette: sand, gravel, soil; never rock, wood or glass)
+//!   the substrate palette: sand, gravel, aquasoil; never rock, wood or glass)
 //!   under at least half its body and nothing else under it (a poured
 //!   bed's top is ragged), it digs straight down at [`DIG_SPEED`]. The
 //!   substrate really moves: each loose cell its body digs into is swapped
@@ -50,7 +50,8 @@ use crate::tools::PaletteGroup;
 pub const SWIM_TICKS: u64 = 4 * TICKS_PER_SECOND as u64;
 /// One swim window in this many is taken.
 pub const SWIM_ODDS: u64 = 2;
-/// Ticks a burrow window lasts (16 s), digging in and back out included.
+/// Ticks a burrow window lasts (16 s): it digs and holds for all but the
+/// last `dig_ticks`, which leave it time to wriggle back out.
 pub const BURROW_TICKS: u64 = 16 * TICKS_PER_SECOND as u64;
 /// One burrow window in this many is taken.
 pub const BURROW_ODDS: u64 = 2;
@@ -255,7 +256,8 @@ impl World {
                         .rev()
                         .map(|row| row * self.width + x)
                         .find(|&i| {
-                            swim(self, i)
+                            // Water only: food or detritus in it stays put.
+                            self.cells[i].material == self.creatures.water
                                 && (i + self.width >= self.cells.len()
                                     || !swim(self, i + self.width))
                         })
