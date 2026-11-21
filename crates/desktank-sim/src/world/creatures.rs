@@ -11,7 +11,9 @@
 //!   *swimmable* cells: water (dense liquids), bubbles and passable loose
 //!   particles such as food and detritus (material `passable`). Rock,
 //!   substrate, bodies and air block it; a plant cell blocks it only
-//!   within [`BAND_REACH`] of its depth band (below). If the world moves a
+//!   within [`BAND_REACH`] of its depth band (below), and a floater's
+//!   hanging roots, soft strands, block only surface crawlers (which climb
+//!   them as they would any plant). If the world moves a
 //!   solid into a creature (a pour, a growing plant) it shifts to a free
 //!   band where it is, or else hops to the nearest free spot.
 //! - **Depth** (2.5D, D21). The tank is [`DEPTH_BANDS`] bands deep, 0 at
@@ -73,6 +75,7 @@ use super::{TICKS_PER_SECOND, World, WorldError};
 use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
+use crate::plants::Part;
 use crate::rng::chunk_stream;
 use crate::save::{SaveError, v6, v9};
 use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
@@ -135,6 +138,10 @@ pub const DEPTH_BANDS: u8 = 8;
 /// shifts two bands to slip past a leaf. (With 0, plants hardly block at
 /// all; with 2, a stand of stem plants is a wall in every band.)
 pub const BAND_REACH: u8 = 1;
+/// Food within this many cells (each way) of the cell a creature last
+/// gave up on is skipped too, so a fish blocked from a patch of food (a
+/// leaf mat behind rock) doesn't flip between neighbouring cells of it.
+const IGNORE_REACH: i64 = 2;
 /// Depth change per tick, in 1/256 band: a band in 4 ticks (0.2 s).
 const DEPTH_SPEED: i32 = ONE / 4;
 /// Ticks a creature holds still shifting band past a plant before it gives
@@ -1708,13 +1715,19 @@ impl World {
         k.eats_corpses && self.bite_corpse(reach, c)
     }
 
-    /// The nearest food cell `c` eats within [`FOOD_SENSE`], skipping the
-    /// one it gave up on.
+    /// The nearest food cell `c` eats within [`FOOD_SENSE`], skipping those
+    /// within [`IGNORE_REACH`] of the one it gave up on.
     #[allow(clippy::many_single_char_names)] // cell maths
     fn nearest_food(&self, k: &Kind, c: &Creature) -> Option<u32> {
         let (cx, cy) = (i64::from(c.x >> 8), i64::from(c.y >> 8));
         let sense2 = FOOD_SENSE * FOOD_SENSE;
         let mut best: Option<(i64, u32)> = None;
+        let ignored = c.ignore.map(|i| {
+            (
+                to_i64(i as usize % self.width),
+                to_i64(i as usize / self.width),
+            )
+        });
         for (ci, list) in self.life.food_lists().iter().enumerate() {
             if list.is_empty() {
                 continue;
@@ -1731,9 +1744,6 @@ impl World {
                 continue;
             }
             for &i in list {
-                if Some(i) == c.ignore {
-                    continue;
-                }
                 if !self.edible_cell(k, i as usize) {
                     continue;
                 }
@@ -1741,6 +1751,11 @@ impl World {
                     to_i64(i as usize % self.width),
                     to_i64(i as usize / self.width),
                 );
+                if ignored.is_some_and(|(ix, iy)| {
+                    (fx - ix).abs() <= IGNORE_REACH && (fy - iy).abs() <= IGNORE_REACH
+                }) {
+                    continue;
+                }
                 if !near_home(k, c, fx) {
                     continue;
                 }
@@ -1823,42 +1838,60 @@ impl World {
 
     /// Whether a body turned `turn` and centred at `(x, y)` (fixed point)
     /// lies inside the grid on cells it may overlap in `band`.
+    /// A surface crawler holds floaters' hanging roots as it does any
+    /// plant; everything else passes through them (see the module docs).
     fn fits(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
         let (wide, tall) = extent(k, turn);
-        self.fits_box(wide, tall, x, y, Some(band))
+        let soft = k.zone != Zone::Surfaces;
+        self.fits_box(wide, tall, x, y, Some(band), soft)
     }
 
     /// Whether a `w × h`-cell box centred at `(x, y)` (fixed point) lies
-    /// inside the grid on cells it may overlap: swimmable ones, and plant
-    /// cells further than [`BAND_REACH`] from `band` (`None`: none).
-    fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>) -> bool {
+    /// inside the grid on cells it may overlap: swimmable ones, plant
+    /// cells further than [`BAND_REACH`] from `band` (`None`: none) and,
+    /// if `soft` and in a band, a floater's hanging roots in any band.
+    fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>, soft: bool) -> bool {
         let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
         };
         let mut memo = None;
         (b.y0..b.y1).all(|row| {
             (row * self.width + b.x0..row * self.width + b.x1)
-                .all(|i| !self.blocks_with(i, band, &mut memo))
+                .all(|i| !self.blocks_with(i, band, soft, &mut memo))
         })
     }
 
     /// Whether the cell at index `i` blocks a body in `band` (`None`: in
-    /// every band).
+    /// every band). A floater's roots count as solid here: this is what a
+    /// crawler holds on to.
     pub(super) fn blocks(&self, i: usize, band: Option<u8>) -> bool {
-        self.blocks_with(i, band, &mut None)
+        self.blocks_with(i, band, false, &mut None)
     }
 
-    /// [`World::blocks`], with a plant memo for a run of cells.
+    /// [`World::blocks`], with a plant memo for a run of cells; `soft`
+    /// lets a body in a band through a floater's hanging roots.
     #[inline]
-    fn blocks_with(&self, i: usize, band: Option<u8>, memo: &mut Option<PlantDepth>) -> bool {
+    fn blocks_with(
+        &self,
+        i: usize,
+        band: Option<u8>,
+        soft: bool,
+        memo: &mut Option<PlantDepth>,
+    ) -> bool {
         let m = self.cells[i].material;
         if self.creatures.swim[usize::from(m.0)] {
             return false;
         }
         match (band, self.plants.part(m)) {
-            (Some(band), Some(_)) => self
-                .plant_band_with(i, memo)
-                .is_none_or(|p| p.abs_diff(band) <= BAND_REACH),
+            (Some(band), Some(part)) => {
+                let Some(p) = self.plant_band_with(i, memo) else {
+                    return true;
+                };
+                if soft && part == Part::Root && memo.as_ref().is_some_and(PlantDepth::floats) {
+                    return false;
+                }
+                p.abs_diff(band) <= BAND_REACH
+            }
             _ => true,
         }
     }
@@ -2067,5 +2100,74 @@ mod tests {
             assert!((2..=4).contains(&default_band(7, id, (2, 4))));
         }
         assert_eq!(seen, [true; DEPTH_BANDS as usize]);
+    }
+
+    #[test]
+    fn food_next_to_a_cell_given_up_on_is_skipped_too() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 80,
+                height: 40,
+                seed: 1,
+                water_level: 0.95,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let flake = w.materials().id("flake_food").unwrap();
+        // A clump of flakes near the fish, one further off.
+        for (x, y) in [(30, 20), (31, 20), (32, 20), (33, 20), (50, 20)] {
+            w.set_cell(x, y, flake).unwrap();
+        }
+        let guppy = w.species().id("guppy").unwrap();
+        let id = w.add_creature(guppy, 25, 20).unwrap();
+        // Registers the food (it may drift a cell).
+        w.tick();
+        let mut c = w.creature(id).unwrap().clone();
+        let k = *w.kind(guppy).unwrap();
+        let xy = |i: u32| (i as usize % w.width, i as usize / w.width);
+        let near = w.nearest_food(&k, &c).unwrap();
+        assert!(xy(near).0 < 40, "a near flake first: {:?}", xy(near));
+        // Blocked from one, it doesn't flip to the next in the clump.
+        c.ignore = Some(near);
+        let next = w.nearest_food(&k, &c).unwrap();
+        assert!(xy(next).0 > 40, "the far flake next: {:?}", xy(next));
+    }
+
+    #[test]
+    fn only_crawlers_hold_a_floaters_roots() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 60,
+                height: 40,
+                seed: 2,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let duckweed = w.plant_species().id("duckweed").unwrap();
+        let top = i64::try_from(w.surface_row()).unwrap();
+        w.paint_plant(30, top + 2, 0, duckweed, crate::Propagule::Buds)
+            .unwrap();
+        for _ in 0..3000 {
+            w.tick();
+        }
+        let root = w.materials().id("root").unwrap();
+        let i = (0..w.cells.len())
+            .find(|&i| w.cells[i].material == root)
+            .expect("the duckweed hangs a root");
+        let band = w.plant_band_at(i).unwrap();
+        let (x, y) = (to_i64(i % w.width), to_i64(i / w.width));
+        // One-cell bodies, so only the root cell is tested.
+        let body = |name: &str| {
+            let mut kind = *w.kind(w.species().id(name).unwrap()).unwrap();
+            (kind.w, kind.h) = (1, 1);
+            kind
+        };
+        let (guppy, snail) = (body("guppy"), body("ramshorn_snail"));
+        assert!(w.fits(&guppy, 0, centre_of(x), centre_of(y), band));
+        assert!(!w.fits(&snail, 0, centre_of(x), centre_of(y), band));
+        assert!(w.blocks(i, Some(band)), "a crawler holds it");
     }
 }
