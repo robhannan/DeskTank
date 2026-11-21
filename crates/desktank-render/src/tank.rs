@@ -6,7 +6,7 @@ use desktank_sim::{TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
 use crate::grid::DirtyRects;
-use crate::hud::{self, BrushPreview, Palette, PaletteLayout};
+use crate::hud::{self, BrushPreview, Magnifier, Palette, PaletteLayout};
 use crate::layout::Layout;
 use crate::pacing::{FrameRequest, Pacer};
 use crate::renderer::Renderer;
@@ -96,6 +96,8 @@ pub struct Tank {
     palette_dirty: bool,
     /// The brush outline, if shown.
     cursor: Option<BrushPreview>,
+    /// The magnified lens around the pointer, if shown.
+    magnifier: Option<Magnifier>,
     /// The field tinted over the tank (debug overlay), if any.
     field_overlay: Option<crate::FieldOverlay>,
     /// Field version last drawn with the overlay.
@@ -126,6 +128,7 @@ impl Tank {
             palette: None,
             palette_dirty: false,
             cursor: None,
+            magnifier: None,
             field_overlay: None,
             fields_drawn: 0,
             time_of_day: daylight::NOON,
@@ -252,6 +255,21 @@ impl Tank {
             self.cursor = cursor;
             self.needs_frame = true;
         }
+    }
+
+    /// Shows (or hides) the magnified lens around the pointer. Setting the
+    /// same magnifier again costs nothing and asks for no extra frame.
+    pub fn set_magnifier(&mut self, magnifier: Option<Magnifier>) {
+        if self.magnifier != magnifier {
+            self.magnifier = magnifier;
+            self.needs_frame = true;
+        }
+    }
+
+    /// The magnified lens currently shown, if any.
+    #[must_use]
+    pub fn magnifier(&self) -> Option<Magnifier> {
+        self.magnifier
     }
 
     /// Where the palette is drawn in a `target`-pixel surface, for hit
@@ -490,7 +508,7 @@ impl Tank {
             self.world.surface_row(),
             daylight::tint(self.time_of_day),
             sway,
-            (palette, self.cursor, self.field_overlay),
+            (palette, self.cursor, self.magnifier, self.field_overlay),
             self.timer.as_ref(),
         );
         if let Some(t) = &self.timer {
@@ -731,5 +749,41 @@ mod tests {
         tank.set_sway(true);
         assert!(!tank.sway_active());
         assert_eq!(count_frames(&mut tank, Duration::ZERO, 5), 0);
+    }
+
+    #[test]
+    fn settled_tank_draws_only_when_magnifier_changes() {
+        let mut tank = settled_planted_tank();
+        assert_eq!(tank.magnifier(), None);
+        // Setting None again asks for no frame.
+        tank.set_magnifier(None);
+        assert_eq!(count_frames(&mut tank, Duration::ZERO, 2), 0);
+
+        // Turning the magnifier on asks for one frame, then 0 while still.
+        let m = Magnifier {
+            cell: (32, 30),
+            zoom: 4,
+        };
+        tank.set_magnifier(Some(m));
+        assert_eq!(tank.magnifier(), Some(m));
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(2), 2), 1);
+        tank.set_magnifier(Some(m));
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(4), 2), 0);
+
+        // Moving to a new cell or changing zoom asks for one frame each.
+        tank.set_magnifier(Some(Magnifier {
+            cell: (33, 30),
+            zoom: 4,
+        }));
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 1), 1);
+        tank.set_magnifier(Some(Magnifier {
+            cell: (33, 30),
+            zoom: 8,
+        }));
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(7), 1), 1);
+
+        // Turning it off asks for one frame, then 0.
+        tank.set_magnifier(None);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(8), 2), 1);
     }
 }

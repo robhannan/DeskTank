@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use desktank_sim::{FieldKind, Part, World};
 
 use crate::grid::{self, DirtyRects};
-use crate::hud::{self, BrushPreview, PaletteLayout};
+use crate::hud::{self, BrushPreview, Magnifier, MagnifierLayout, PaletteLayout};
 use crate::layout::Layout;
 use crate::palette;
 use crate::plants::{self, PlantTints};
@@ -19,7 +19,7 @@ use crate::{Gpu, timer::GpuTimer};
 const DEPTH_DIM: f32 = 0.5;
 
 /// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 160;
+const VIEW_BYTES: u64 = 176;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -40,7 +40,12 @@ pub struct Renderer {
     /// with [`Gpu::split_grid`].
     pipelines: Pipelines,
     coarse_pipelines: Pipelines,
+    /// Border and centre reticle drawn over the magnified lens.
+    lens_frame: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    /// Second bind group sharing every texture with `lens_view_buffer` at
+    /// binding 0, used only while the magnifier is active.
+    lens_bind_group: wgpu::BindGroup,
     /// Where each species' frames are in the atlas texture.
     atlas: Atlas,
     /// Per-instance sprite data, [`sprites::MAX_SPRITES`] slots.
@@ -51,6 +56,7 @@ pub struct Renderer {
     instance_bytes: Vec<u8>,
     instance_scratch: Vec<f32>,
     view_buffer: wgpu::Buffer,
+    lens_view_buffer: wgpu::Buffer,
     cells: wgpu::Texture,
     /// Each plant cell's depth band (D21), 0 elsewhere; uploaded with the
     /// cells' dirty rectangles, skipping those without plant cells (the
@@ -78,6 +84,8 @@ pub struct Renderer {
     plant_parts: [f32; 8],
     /// Uniform bytes last written.
     view: Vec<u8>,
+    /// Uniform bytes last written for the magnifier pass.
+    lens_view: Vec<u8>,
     scratch: Vec<u8>,
 }
 
@@ -122,29 +130,35 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let lens_view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lens view"),
+            size: VIEW_BYTES,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let bind_layout = create_bind_layout(d);
-        let bind_group = create_bind_group(
-            d,
-            &bind_layout,
-            &view_buffer,
-            [
-                &cells,
-                &palette,
-                &hud,
-                &fields,
-                &atlas_texture,
-                &plants,
-                &species,
-                &bands,
-            ],
-        );
-        let [pipelines, coarse_pipelines] = create_pipelines(gpu, &bind_layout, format);
+        let textures = [
+            &cells,
+            &palette,
+            &hud,
+            &fields,
+            &atlas_texture,
+            &plants,
+            &species,
+            &bands,
+        ];
+        let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
+        let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
+        let ([pipelines, coarse_pipelines], lens_frame) =
+            create_pipelines(gpu, &bind_layout, format);
         Self {
             format,
             grid,
             pipelines,
             coarse_pipelines,
+            lens_frame,
             bind_group,
+            lens_bind_group,
             atlas,
             instances,
             sprite_count: 0,
@@ -152,6 +166,7 @@ impl Renderer {
             instance_bytes: Vec::new(),
             instance_scratch: Vec::new(),
             view_buffer,
+            lens_view_buffer,
             cells,
             bands,
             band_scratch: Vec::new(),
@@ -165,6 +180,7 @@ impl Renderer {
             plant_tints,
             plant_parts,
             view: Vec::new(),
+            lens_view: Vec::new(),
             scratch: Vec::new(),
         }
     }
@@ -330,9 +346,69 @@ impl Renderer {
         );
     }
 
+    /// Packs the `View` uniform block bytes for one pass (main tank or lens).
+    #[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
+    fn pack_view(
+        &self,
+        size: (u32, u32),
+        offset: (i64, i64),
+        scale: u32,
+        surface_row: usize,
+        daylight: [f32; 3],
+        sway: Option<f32>,
+        palette: Option<PaletteLayout>,
+        cursor: Option<BrushPreview>,
+        field_mode: f32,
+        lens: [f32; 4],
+    ) -> Vec<u8> {
+        let hud = palette.map_or([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, field_mode, 0.0], |p| {
+            let (w, h) = hud::image_size(p.tabs, p.items);
+            [
+                p.origin.0 as f32,
+                p.origin.1 as f32,
+                p.scale as f32,
+                1.0,
+                w as f32,
+                h as f32,
+                field_mode,
+                0.0,
+            ]
+        });
+        let cursor = cursor.map_or([0.0; 4], |c| {
+            [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
+        });
+        let target_info = [
+            size.0 as f32,
+            size.1 as f32,
+            sway.unwrap_or(0.0),
+            if sway.is_some() { 1.0 } else { 0.0 },
+        ];
+        [
+            self.grid.0 as f32,
+            self.grid.1 as f32,
+            offset.0 as f32,
+            offset.1 as f32,
+            scale as f32,
+            surface_row as f32,
+            DEPTH_DIM,
+            if self.format.is_srgb() { 1.0 } else { 0.0 },
+        ]
+        .into_iter()
+        .chain(backdrop())
+        .chain(hud)
+        .chain(cursor)
+        .chain(daylight)
+        .chain([desktank_sim::daylight::darkness(daylight)])
+        .chain(target_info)
+        .chain(self.plant_parts)
+        .chain(lens)
+        .flat_map(f32::to_le_bytes)
+        .collect()
+    }
+
     /// Records the draw into `target` (`size` pixels), with the palette at
-    /// `palette`, the brush outline at `cursor` and the field overlay
-    /// `field` if given.
+    /// `palette`, the brush outline at `cursor`, the magnified lens at
+    /// `magnifier` and the field overlay `field` if given.
     #[allow(clippy::too_many_arguments)] // one frame's inputs
     pub fn encode(
         &mut self,
@@ -346,12 +422,13 @@ impl Renderer {
         overlay: (
             Option<PaletteLayout>,
             Option<BrushPreview>,
+            Option<Magnifier>,
             Option<crate::FieldOverlay>,
         ),
         timer: Option<&GpuTimer>,
     ) {
         let layout = Layout::fit(self.grid, size);
-        let (palette, cursor, field) = overlay;
+        let (palette, cursor, magnifier, field) = overlay;
         // 0 = none; 1, 2, 3 = nutrient, CO₂, light (the texture's channels).
         let field_mode = match field {
             None => 0.0,
@@ -360,59 +437,51 @@ impl Renderer {
             Some(crate::FieldOverlay::Scalar(FieldKind::Light)) => 3.0,
             Some(crate::FieldOverlay::Flow) => 4.0,
         };
-        #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
-        let extra = {
-            let hud = palette.map_or([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, field_mode, 0.0], |p| {
-                let (w, h) = hud::image_size(p.tabs, p.items);
-                [
-                    p.origin.0 as f32,
-                    p.origin.1 as f32,
-                    p.scale as f32,
-                    1.0,
-                    w as f32,
-                    h as f32,
-                    field_mode,
-                    0.0,
-                ]
-            });
-            let cursor = cursor.map_or([0.0; 4], |c| {
-                [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
-            });
+        let bytes = self.pack_view(
+            size,
+            layout.offset,
+            layout.scale,
+            surface_row,
+            daylight,
+            sway,
+            palette,
+            cursor,
+            field_mode,
+            [0.0; 4],
+        );
+        if bytes != self.view {
+            gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
+            self.view = bytes;
+        }
+
+        let lens_layout = magnifier.and_then(|m| MagnifierLayout::fit(size, &layout, m));
+        if let Some(ml) = lens_layout {
             #[allow(clippy::cast_precision_loss)] // target pixels
-            let target = [
-                size.0 as f32,
-                size.1 as f32,
-                sway.unwrap_or(0.0),
-                if sway.is_some() { 1.0 } else { 0.0 },
+            let lens_rect = [
+                ml.origin.0 as f32,
+                ml.origin.1 as f32,
+                ml.size.0 as f32,
+                ml.size.1 as f32,
             ];
-            hud.into_iter()
-                .chain(cursor)
-                .chain(daylight)
-                .chain([desktank_sim::daylight::darkness(daylight)])
-                .chain(target)
-                .chain(self.plant_parts)
-        };
-        {
-            #[allow(clippy::cast_precision_loss)] // pixel and cell coordinates
-            let view = [
-                self.grid.0 as f32,
-                self.grid.1 as f32,
-                layout.offset.0 as f32,
-                layout.offset.1 as f32,
-                layout.scale as f32,
-                surface_row as f32,
-                DEPTH_DIM,
-                if self.format.is_srgb() { 1.0 } else { 0.0 },
-            ]
-            .into_iter()
-            .chain(backdrop())
-            .chain(extra);
-            let bytes: Vec<u8> = view.flat_map(f32::to_le_bytes).collect();
-            if bytes != self.view {
-                gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
-                self.view = bytes;
+            let lens_bytes = self.pack_view(
+                size,
+                ml.offset,
+                ml.scale,
+                surface_row,
+                daylight,
+                sway,
+                palette,
+                None,
+                field_mode,
+                lens_rect,
+            );
+            if lens_bytes != self.lens_view {
+                gpu.queue
+                    .write_buffer(&self.lens_view_buffer, 0, &lens_bytes);
+                self.lens_view = lens_bytes;
             }
         }
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("tank"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -430,12 +499,23 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        let pipelines = if fine_scale(layout.scale) {
+        self.draw_view(&mut pass, &self.bind_group, layout.scale);
+        if let Some(ml) = lens_layout {
+            pass.set_scissor_rect(ml.origin.0, ml.origin.1, ml.size.0, ml.size.1);
+            self.draw_view(&mut pass, &self.lens_bind_group, ml.scale);
+            pass.set_pipeline(&self.lens_frame);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Draws the grid and creature sprites with `bind_group` at cell `scale`.
+    fn draw_view(&self, pass: &mut wgpu::RenderPass<'_>, bind_group: &wgpu::BindGroup, scale: u32) {
+        let pipelines = if fine_scale(scale) {
             &self.pipelines
         } else {
             &self.coarse_pipelines
         };
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, bind_group, &[]);
         for p in &pipelines.grid {
             pass.set_pipeline(p);
             pass.draw(0..3, 0..1);
@@ -780,12 +860,13 @@ const BLEND_OVER: wgpu::BlendState = wgpu::BlendState {
 };
 
 /// The grid and sprite pipelines with and without four-texel plant art,
-/// drawing into `format`, one pass each or split ([`Gpu::split_grid`]).
+/// plus the magnifier lens frame pipeline, drawing into `format`, one pass
+/// each or split ([`Gpu::split_grid`]).
 fn create_pipelines(
     gpu: &Gpu,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> [Pipelines; 2] {
+) -> ([Pipelines; 2], wgpu::RenderPipeline) {
     let d = &gpu.device;
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
@@ -873,7 +954,8 @@ fn create_pipelines(
                 .collect(),
         }
     };
-    [level(true), level(false)]
+    let lens_frame = pipeline("lens frame", "fs_lens_frame", Some(BLEND_OVER), &[]);
+    ([level(true), level(false)], lens_frame)
 }
 
 /// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).

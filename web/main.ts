@@ -26,7 +26,7 @@
 // The webOS build (`pnpm build:web -- --legacy`, SPEC D26) runs this same
 // page on Chrome 68: <html data-build="webos">, MVP wasm, lowered syntax.
 // Keep to Chrome 68's APIs or feature-detect (docs/PROGRESS.md).
-import init, { Graphics, WebTank, brushRange, gridFor } from "./pkg/desktank_web.js";
+import init, { Graphics, WebTank, brushRange, gridFor, zoomLevels } from "./pkg/desktank_web.js";
 import type { Hooks, Settings } from "./hooks.js";
 import type { Save } from "./store.ts";
 import { Ownership } from "./ownership.ts";
@@ -136,6 +136,7 @@ const seedInput = $<HTMLInputElement>("seed");
 const capInput = $<HTMLInputElement>("set-creature-cap");
 const capStockOut = $<HTMLOutputElement>("set-creature-cap-stock");
 const brushInput = $<HTMLInputElement>("brush");
+const zoomSelect = $<HTMLSelectElement>("zoom");
 const paletteEl = $("palette");
 const groupsEl = $("groups");
 const plantPickEl = $<HTMLSelectElement>("plant-species");
@@ -359,13 +360,16 @@ function setCanvasSize([w, h]: Point) {
 function replaceTank(next: WebTank) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
+  const zoom = tank?.zoom() ?? next.zoom();
   // It keeps the plant species and propagule picks too.
   if (tank) next.keepPlantPicks(tank);
   tank?.free();
   tank = next;
   tank.select(selected);
+  tank.setZoom(zoom);
   showSettings();
   showCreatureCap(true);
+  showZoom();
   setRunning(tank.running());
   buildPlantPicker();
   buildPalette();
@@ -1181,10 +1185,31 @@ function showRefusal() {
   flash(message);
 }
 
+function showZoom() {
+  if (!tank) return;
+  zoomSelect.value = String(tank.zoom());
+}
+
+function chooseMagnifySlot() {
+  const slot = tank.palette().findIndex((e) => e === "tool magnify");
+  const button = swatch(slot);
+  if (button) {
+    openGroup = button.dataset.group;
+    choose(slot);
+  }
+}
+
+function pickZoom() {
+  tank.setZoom(Number(zoomSelect.value));
+  showZoom();
+  chooseMagnifySlot();
+}
+
 function after() {
   showInspection();
   showRefusal();
   showCreatureCap();
+  showZoom();
   kick();
 }
 
@@ -1340,7 +1365,8 @@ function wireInput() {
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   // The wheel (and trackpad pinch, which arrives as ctrl+wheel) sizes the
-  // brush and never scrolls or zooms the page.
+  // brush (or steps magnification when Magnify is active) and never scrolls or
+  // zooms the page.
   canvas.addEventListener(
     "wheel",
     (e) => {
@@ -1350,7 +1376,13 @@ function wireInput() {
       const steps = Math.trunc(wheelRest / WHEEL_STEP);
       if (!steps) return;
       wheelRest -= steps * WHEEL_STEP;
-      update({ radius: tank.resizeBrush(steps) });
+      if (tank.isMagnify()) {
+        tank.stepZoom(steps);
+        showZoom();
+        kick();
+      } else {
+        update({ radius: tank.resizeBrush(steps) });
+      }
     },
     { passive: false },
   );
@@ -1361,6 +1393,7 @@ function wireInput() {
   groupsEl.addEventListener("keydown", groupKeys);
   plantPickEl.addEventListener("change", pickPlant);
   propagulePickEl.addEventListener("change", pickPropagule);
+  zoomSelect.addEventListener("change", pickZoom);
   playBtn.addEventListener("click", () => setRunning(!tank.running()));
   stepBtn.addEventListener("click", step);
   $("feed").addEventListener("click", () => {
@@ -1410,7 +1443,17 @@ function wireInput() {
     } else if (e.key === "." && !tank.running()) {
       step();
     } else if (e.key === "[" || e.key === "]") {
-      update({ radius: tank.resizeBrush(e.key === "]" ? 1 : -1) });
+      if (tank.isMagnify()) {
+        tank.stepZoom(e.key === "]" ? 1 : -1);
+        showZoom();
+        kick();
+      } else {
+        update({ radius: tank.resizeBrush(e.key === "]" ? 1 : -1) });
+      }
+    } else if (tank.isMagnify() && (e.key === "+" || e.key === "=" || e.key === "-")) {
+      tank.stepZoom(e.key === "-" ? -1 : 1);
+      showZoom();
+      kick();
     } else if ((e.key === "n" || e.key === "N") && !nameForm.hidden) {
       e.preventDefault();
       nameInput.focus();
@@ -1565,6 +1608,15 @@ async function main() {
   const [rMin, rMax] = brushRange();
   brushInput.min = String(rMin);
   brushInput.max = String(rMax);
+  setChildren(
+    zoomSelect,
+    ...Array.from(zoomLevels(), (z) => {
+      const o = document.createElement("option");
+      o.value = String(z);
+      o.textContent = `${z}×`;
+      return o;
+    }),
+  );
   startStep("opening IndexedDB");
   db = await openStore();
   // Without Web Locks (Chrome before 69, as on webOS 5) the tab owns the

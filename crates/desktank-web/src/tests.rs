@@ -85,7 +85,7 @@ fn palette_matches_the_sim() {
         let listed = palette.contains(&format!("material {}", m.name));
         assert_eq!(listed, m.palette.is_some(), "{}", m.name);
     }
-    for tool in ["scoop", "glue", "net", "inspect"] {
+    for tool in ["scoop", "glue", "net", "inspect", "magnify"] {
         assert!(palette.contains(&format!("tool {tool}")), "{tool}");
     }
     for p in desktank_sim::Placeable::ALL {
@@ -898,4 +898,61 @@ fn refused_creature_add_reports_cap_live_cap_and_no_room() {
     down(&mut t, PRIMARY, 64, 40);
     t.pointer_up(PRIMARY);
     assert_eq!(t.take_refusal(), "live_cap 32 32 live_bloodworm");
+}
+
+#[test]
+fn magnify_tool_controls_lens_without_dirtying_world() {
+    let mut t = paused();
+    assert_eq!(zoom_levels(), [2, 4, 6, 8]);
+    assert!(!t.is_magnify());
+    assert_eq!(t.zoom(), 2);
+    assert_eq!(t.tank().magnifier(), None);
+
+    t.select(slot(&t, "tool magnify"));
+    assert!(t.is_magnify());
+    let _ = t.save();
+
+    // Moving the pointer places the magnifier without marking the tank dirty.
+    drag(&mut t, 60, 35);
+    assert_eq!(
+        t.tank().magnifier(),
+        Some(Magnifier {
+            cell: (60, 35),
+            zoom: 2,
+        })
+    );
+    assert!(!t.save_needed());
+
+    // Clicking cycles magnification without dirtying the save.
+    down(&mut t, PRIMARY, 60, 35);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.zoom(), 4);
+    assert_eq!(
+        t.tank().magnifier(),
+        Some(Magnifier {
+            cell: (60, 35),
+            zoom: 4,
+        })
+    );
+    assert!(!t.save_needed());
+
+    // Stepping and setting zoom update the lens.
+    assert_eq!(t.step_zoom(1), 6);
+    assert_eq!(t.tank().magnifier().unwrap().zoom, 6);
+    assert_eq!(t.set_zoom(8), 8);
+    assert_eq!(t.tank().magnifier().unwrap().zoom, 8);
+    assert_eq!(t.step_zoom(5), 8);
+    assert_eq!(t.step_zoom(-10), 2);
+    assert_eq!(t.tank().magnifier().unwrap().zoom, 2);
+
+    // Dragging pans without cycling zoom.
+    down(&mut t, PRIMARY, 60, 35);
+    drag(&mut t, 70, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.zoom(), 2);
+    assert_eq!(t.tank().magnifier().unwrap().cell, (70, 40));
+
+    // Leaving hides the lens.
+    t.pointer_leave();
+    assert_eq!(t.tank().magnifier(), None);
 }

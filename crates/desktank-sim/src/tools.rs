@@ -36,6 +36,14 @@ pub const MAX_RADIUS: u32 = 24;
 /// Brush radius a new [`Tools`] starts with.
 pub const DEFAULT_RADIUS: u32 = 3;
 
+/// Available magnification factors for [`Tool::Magnify`]. All are even so
+/// `grid.scale * zoom` stays divisible by four at every even cell scale
+/// (keeping 4×4 fine plant and sprite art) and cell centres land on whole
+/// pixels even at scale 1.
+pub const ZOOM_LEVELS: [u32; 4] = [2, 4, 6, 8];
+/// Magnification factor a new [`Tools`] starts with.
+pub const DEFAULT_ZOOM: u32 = ZOOM_LEVELS[0];
+
 /// A palette group: hosts show one group's items at a time, with a
 /// selector for the groups (SPEC §2.5).
 ///
@@ -128,6 +136,8 @@ pub enum Tool {
     Net,
     /// Show what is under the pointer.
     Inspect,
+    /// Zoom in on a region around the pointer.
+    Magnify,
     /// Place a device, once per click.
     Place(Placeable),
     /// Add a creature of this species, once per click.
@@ -236,6 +246,8 @@ pub enum Outcome {
         /// Why it was refused.
         reason: AddRefused,
     },
+    /// The magnify tool cycled to this magnification factor.
+    Zoomed(u32),
 }
 
 /// A stroke in progress: which button, what it does, where it last was.
@@ -261,6 +273,11 @@ enum Action {
     /// body centre (or nothing: the hit test missed).
     Net(Option<(CreatureId, (i64, i64))>),
     Inspect,
+    /// Panning or clicking the magnifier; a click without moving cycles zoom
+    /// on release.
+    Magnify {
+        moved: bool,
+    },
     /// Placed a device or added a creature on press; the rest of the drag
     /// does nothing.
     Place,
@@ -279,6 +296,8 @@ pub struct Tools {
     /// to that species' default ([`Tools::plant_propagule`]).
     propagule: Option<Propagule>,
     radius: u32,
+    /// Index into [`ZOOM_LEVELS`] for [`Tool::Magnify`].
+    zoom: usize,
     pointer: Option<(i64, i64)>,
     stroke: Option<Stroke>,
 }
@@ -293,6 +312,7 @@ impl Tools {
             plant: PlantSpeciesId(0),
             propagule: None,
             radius: DEFAULT_RADIUS,
+            zoom: 0,
             pointer: None,
             stroke: None,
         }
@@ -300,7 +320,7 @@ impl Tools {
 
     /// The palette for `world`, grouped: the non-empty groups in
     /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
-    /// inspect and glue; each material group lists the materials naming it,
+    /// inspect, glue and magnify; each material group lists the materials naming it,
     /// by ID (the plants group starts with the plants slot); then the
     /// placeables whose material `world` has, and its stocked species by
     /// ID ([`crate::Species::stocked`]). Live food species follow the food
@@ -312,9 +332,15 @@ impl Tools {
             .into_iter()
             .map(|group| {
                 let items: Vec<_> = match group {
-                    PaletteGroup::Tools => [Tool::Scoop, Tool::Net, Tool::Inspect, Tool::Glue]
-                        .map(PaletteItem::Tool)
-                        .to_vec(),
+                    PaletteGroup::Tools => [
+                        Tool::Scoop,
+                        Tool::Net,
+                        Tool::Inspect,
+                        Tool::Glue,
+                        Tool::Magnify,
+                    ]
+                    .map(PaletteItem::Tool)
+                    .to_vec(),
                     PaletteGroup::Devices => Placeable::ALL
                         .into_iter()
                         .filter(|p| table.id(p.material_name()).is_some())
@@ -476,6 +502,55 @@ impl Tools {
         self.radius
     }
 
+    /// Magnification factor for [`Tool::Magnify`] (one of [`ZOOM_LEVELS`]).
+    #[must_use]
+    pub fn zoom(&self) -> u32 {
+        ZOOM_LEVELS[self.zoom]
+    }
+
+    /// Picks the closest magnification factor in [`ZOOM_LEVELS`] to `zoom`.
+    /// Returns whether it changed.
+    pub fn set_zoom(&mut self, zoom: u32) -> bool {
+        let best = ZOOM_LEVELS
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, level)| level.abs_diff(zoom))
+            .map_or(0, |(i, _)| i);
+        let changed = best != self.zoom;
+        self.zoom = best;
+        changed
+    }
+
+    /// Steps the magnification level up (positive) or down (negative) within
+    /// [`ZOOM_LEVELS`]. Returns whether it changed.
+    pub fn step_zoom(&mut self, steps: i32) -> bool {
+        let last = i64::try_from(ZOOM_LEVELS.len() - 1).unwrap_or(0);
+        let next = (i64::try_from(self.zoom).unwrap_or(0) + i64::from(steps)).clamp(0, last);
+        let next = usize::try_from(next).unwrap_or(0);
+        let changed = next != self.zoom;
+        self.zoom = next;
+        changed
+    }
+
+    /// Advances to the next magnification level in [`ZOOM_LEVELS`] (wrapping)
+    /// and returns it.
+    pub fn cycle_zoom(&mut self) -> u32 {
+        self.zoom = (self.zoom + 1) % ZOOM_LEVELS.len();
+        self.zoom()
+    }
+
+    /// The magnified lens to show at the pointer, `(x, y, zoom)`, while
+    /// [`Tool::Magnify`] is active and no secondary scoop stroke is running.
+    #[must_use]
+    pub fn magnifier(&self) -> Option<(i64, i64, u32)> {
+        let active = match self.stroke {
+            Some(s) => matches!(s.action, Action::Magnify { .. }),
+            None => self.tool == Tool::Magnify,
+        };
+        let (x, y) = self.pointer?;
+        active.then_some((x, y, self.zoom()))
+    }
+
     /// The pointer cell, if the pointer is over the tank.
     #[must_use]
     pub fn pointer(&self) -> Option<(i64, i64)> {
@@ -551,6 +626,7 @@ impl Tools {
                 }))
             }
             (Button::Primary, Tool::Inspect) => Action::Inspect,
+            (Button::Primary, Tool::Magnify) => Action::Magnify { moved: false },
             (Button::Primary, Tool::Place(_) | Tool::AddCreature(_)) => Action::Place,
         };
         self.stroke = Some(Stroke {
@@ -591,7 +667,7 @@ impl Tools {
                 world.hold_creature(id);
                 Outcome::Caught(id)
             }
-            Action::Net(None) => Outcome::None,
+            Action::Net(None) | Action::Magnify { .. } => Outcome::None,
         }
     }
 
@@ -604,6 +680,11 @@ impl Tools {
         };
         let from = stroke.last;
         stroke.last = cell;
+        if let Action::Magnify { ref mut moved } = stroke.action
+            && from != cell
+        {
+            *moved = true;
+        }
         self.stroke = Some(stroke);
         match stroke.action {
             Action::Glue(_) => {
@@ -637,18 +718,24 @@ impl Tools {
                 world.hold_creature(id);
                 Outcome::None
             }
-            Action::Net(None) | Action::Inspect | Action::Place => Outcome::None,
+            Action::Net(None) | Action::Inspect | Action::Magnify { .. } | Action::Place => {
+                Outcome::None
+            }
         }
     }
 
     /// `button` was released. Ends the stroke it started. A netted creature
     /// is let go where it is, or lifted out of the tank if the pointer is
-    /// above the water or outside the grid.
+    /// above the water or outside the grid. A click (without moving) with
+    /// [`Tool::Magnify`] cycles the magnification level.
     pub fn release(&mut self, world: &mut World, button: Button) -> Outcome {
         let Some(stroke) = self.stroke.filter(|s| s.button == button) else {
             return Outcome::None;
         };
         self.stroke = None;
+        if matches!(stroke.action, Action::Magnify { moved: false }) {
+            return Outcome::Zoomed(self.cycle_zoom());
+        }
         let Action::Net(Some((id, _))) = stroke.action else {
             return Outcome::None;
         };
@@ -1102,7 +1189,7 @@ mod tests {
         let pourable = w.materials().iter().filter(|m| m.palette.is_some());
         assert_eq!(
             items.len(),
-            pourable.count() + 1 + 2 + 4 + w.species().iter().filter(|s| !s.cheat_only).count()
+            pourable.count() + 1 + 2 + 5 + w.species().iter().filter(|s| !s.cheat_only).count()
         );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
@@ -1132,7 +1219,7 @@ mod tests {
         };
         assert_eq!(
             names(PaletteGroup::Tools),
-            ["Scoop", "Net", "Inspect", "Glue"]
+            ["Scoop", "Net", "Inspect", "Glue", "Magnify"]
         );
         assert_eq!(
             names(PaletteGroup::Substrate),
@@ -1319,5 +1406,77 @@ mod tests {
             }
         );
         t.release(&mut w, Button::Primary);
+    }
+
+    #[test]
+    fn magnify_tracks_pointer_cycles_on_click_and_steps_zoom() {
+        let mut w = world();
+        let sand = id(&w, "sand");
+        let before = w.state_hash();
+        let mut t = Tools::new(sand);
+        assert_eq!(t.zoom(), DEFAULT_ZOOM);
+        assert_eq!(t.magnifier(), None);
+
+        t.select(PaletteItem::Tool(Tool::Magnify));
+        // No pointer yet: no lens, no brush preview.
+        assert_eq!(t.magnifier(), None);
+        assert_eq!(t.preview(), None);
+
+        // Hovering shows the magnifier at the default zoom and changes nothing.
+        assert_eq!(t.moved(&mut w, (40, 30)), Outcome::None);
+        assert_eq!(t.magnifier(), Some((40, 30, 2)));
+        assert_eq!(t.preview(), None);
+
+        // A click (press + release on the same cell) cycles zoom through ZOOM_LEVELS.
+        for &want in &ZOOM_LEVELS[1..] {
+            assert_eq!(t.press(&mut w, Button::Primary, (40, 30)), Outcome::None);
+            assert_eq!(t.release(&mut w, Button::Primary), Outcome::Zoomed(want));
+            assert_eq!(t.zoom(), want);
+            assert_eq!(t.magnifier(), Some((40, 30, want)));
+        }
+        // Wraps back to the first level.
+        assert_eq!(t.press(&mut w, Button::Primary, (40, 30)), Outcome::None);
+        assert_eq!(
+            t.release(&mut w, Button::Primary),
+            Outcome::Zoomed(ZOOM_LEVELS[0])
+        );
+
+        // Dragging to another cell pans without cycling zoom on release.
+        assert_eq!(t.press(&mut w, Button::Primary, (40, 30)), Outcome::None);
+        assert_eq!(t.moved(&mut w, (55, 35)), Outcome::None);
+        assert_eq!(t.magnifier(), Some((55, 35, ZOOM_LEVELS[0])));
+        assert_eq!(t.release(&mut w, Button::Primary), Outcome::None);
+        assert_eq!(t.zoom(), ZOOM_LEVELS[0]);
+
+        // step_zoom clamps at both ends; set_zoom snaps to the nearest level.
+        assert!(!t.step_zoom(-1));
+        assert!(t.step_zoom(1));
+        assert_eq!(t.zoom(), 4);
+        assert!(t.step_zoom(99));
+        assert_eq!(t.zoom(), 8);
+        assert!(!t.step_zoom(1));
+        assert!(t.set_zoom(5));
+        assert_eq!(t.zoom(), 4);
+        assert!(t.set_zoom(6));
+        assert_eq!(t.zoom(), 6);
+        assert!(!t.set_zoom(6));
+
+        // Nothing in the world changed so far.
+        assert_eq!(w.state_hash(), before);
+
+        // Secondary button scoops as usual, hiding the magnifier during the stroke.
+        w.set_cell(60, 40, sand).unwrap();
+        assert!(matches!(
+            t.press(&mut w, Button::Secondary, (60, 40)),
+            Outcome::Painted(_)
+        ));
+        assert_eq!(t.magnifier(), None);
+        assert!(t.preview().is_some());
+        t.release(&mut w, Button::Secondary);
+        assert_eq!(t.magnifier(), Some((60, 40, 6)));
+
+        // Leaving hides the lens.
+        t.leave(&mut w);
+        assert_eq!(t.magnifier(), None);
     }
 }

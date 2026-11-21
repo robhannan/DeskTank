@@ -61,6 +61,9 @@ struct View {
     // Material ids of the runner (x) and floating leaf (y) parts; -1 if
     // missing.
     plant_parts2: vec4<f32>,
+    // Magnified lens rect in target pixels (origin xy, size zw); zero outside
+    // the magnifier pass.
+    lens: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -2252,4 +2255,34 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         lit = min(lit + v.glow.rgb * e * vec3<f32>(0.55, 1.0, 0.55), vec3<f32>(1.0));
     }
     return out(lit);
+}
+
+// Crisp pixel-art border and subtle centre reticle over the magnified lens
+// (drawn after the magnified grid and sprites inside the lens scissor rect).
+// Stays behind the palette strip when the two overlap.
+@fragment
+fn fs_lens_frame(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    let rel = floor(pos.xy) - view.lens.xy;
+    let size = view.lens.zw;
+    let d = min(rel, size - 1.0 - rel);
+    let edge = min(d.x, d.y);
+    if edge < 1.0 {
+        return vec4<f32>(out(vec3<f32>(0.043, 0.071, 0.110)).rgb, 0.92);
+    }
+    if edge < 2.0 && min(size.x, size.y) >= 64.0 {
+        return vec4<f32>(out(vec3<f32>(0.957, 0.914, 0.784)).rgb, 0.88);
+    }
+    let centre = floor(size * 0.5);
+    let dc = abs(rel - centre);
+    let gap = max(3.0, floor(view.scale * 0.5) + 2.0);
+    let tick = gap + 4.0;
+    let on_x = dc.y < 0.5 && dc.x >= gap && dc.x < tick;
+    let on_y = dc.x < 0.5 && dc.y >= gap && dc.y < tick;
+    if on_x || on_y {
+        return vec4<f32>(out(vec3<f32>(0.957, 0.914, 0.784)).rgb, 0.55);
+    }
+    discard;
 }

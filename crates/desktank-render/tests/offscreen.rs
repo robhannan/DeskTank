@@ -440,3 +440,126 @@ fn flow_tint_shows_speed_in_either_direction() {
         assert_eq!(plain, render(&gpu, &mut tank, format));
     }
 }
+
+fn gpu_with(options: GpuOptions) -> Option<Gpu> {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    match pollster::block_on(Gpu::new(&instance, None, options)) {
+        Ok(g) => Some(g),
+        Err(e) if std::env::var_os("CI").is_none() => {
+            eprintln!("skipping: {e}");
+            None
+        }
+        Err(e) => panic!("no GPU in CI: {e}"),
+    }
+}
+
+/// The magnifier zooms a single rock cell and a creature sprite inside the
+/// lens rect, draws a border around it, leaves pixels outside untouched, and
+/// works identically on both single-pass and split-grid (`webOS`) pipelines.
+#[test]
+fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (tw, th) = (320u32, 180u32);
+    let px_at = |img: &[u8], x: u32, y: u32| -> [u8; 3] {
+        let i = ((y * tw + x) * 4) as usize;
+        [img[i], img[i + 1], img[i + 2]]
+    };
+    let mut single_2x: Option<Vec<u8>> = None;
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let materials = MaterialTable::builtin().unwrap();
+        let rock = materials.id("rock").unwrap();
+        let rock_colour = materials.get(rock).unwrap().colour;
+        let config = WorldConfig {
+            width: 80,
+            height: 45,
+            seed: 7,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, materials).unwrap();
+        // Single rock cell at (40, 22) and a creature beside it at (43, 22).
+        world.set_cell(40, 22, rock).unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        world.add_creature(tetra, 43, 22).unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let plain = render_sized(&gpu, &mut tank, format, (tw, th));
+
+        let layout = tank.layout((tw, th));
+        assert_eq!(layout.scale, 4);
+
+        for zoom in [2u32, 4u32] {
+            let mag = desktank_render::Magnifier {
+                cell: (40, 22),
+                zoom,
+            };
+            let ml = desktank_render::MagnifierLayout::fit((tw, th), &layout, mag).unwrap();
+            tank.set_magnifier(Some(mag));
+            let zoomed = render_sized(&gpu, &mut tank, format, (tw, th));
+
+            // Pixels outside the lens rect are byte-identical to the plain frame.
+            for y in 0..th {
+                for x in 0..tw {
+                    let in_lens = x >= ml.origin.0
+                        && x < ml.origin.0 + ml.size.0
+                        && y >= ml.origin.1
+                        && y < ml.origin.1 + ml.size.1;
+                    if !in_lens {
+                        assert_eq!(
+                            px_at(&zoomed, x, y),
+                            px_at(&plain, x, y),
+                            "split={split_grid} zoom={zoom}: outside lens ({x},{y}) changed"
+                        );
+                    }
+                }
+            }
+
+            // Inside the lens, cell (40, 22) covers an exact (4 * zoom)^2 block
+            // centred at the lens centre.
+            let cell_px = layout.scale * zoom;
+            let cx = ml.origin.0 + ml.size.0 / 2;
+            let cy = ml.origin.1 + ml.size.1 / 2;
+            let x0 = cx - cell_px / 2;
+            let y0 = cy - cell_px / 2;
+            for y in y0..y0 + cell_px {
+                for x in x0..x0 + cell_px {
+                    let p = px_at(&zoomed, x, y);
+                    for (got, base) in p.iter().zip(rock_colour) {
+                        assert!(
+                            got.abs_diff(base) <= 40,
+                            "split={split_grid} zoom={zoom}: magnified rock at ({x},{y}) {p:?} vs {rock_colour:?}"
+                        );
+                    }
+                }
+            }
+
+            // The lens border is drawn along the outer edge of the lens rect.
+            let border = px_at(&zoomed, ml.origin.0, ml.origin.1);
+            let water = px_at(&plain, ml.origin.0, ml.origin.1);
+            assert_ne!(
+                border, water,
+                "split={split_grid} zoom={zoom}: expected visible lens border"
+            );
+
+            if zoom == 2 {
+                if !split_grid {
+                    single_2x = Some(zoomed);
+                } else if let Some(ref single) = single_2x {
+                    assert_eq!(
+                        zoomed, *single,
+                        "split-grid magnified output must match single-pass"
+                    );
+                }
+            }
+        }
+
+        // Turning the magnifier off restores the plain frame identically.
+        tank.set_magnifier(None);
+        assert_eq!(plain, render_sized(&gpu, &mut tank, format, (tw, th)));
+    }
+}
