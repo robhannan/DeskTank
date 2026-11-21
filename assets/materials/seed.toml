@@ -3,7 +3,7 @@
 # stem (`assets/reactions.toml`, [[grow]]).
 id = 70
 name = "seed"
-# Poured from the palette's plants slot (T6b), as the picked species.
+# Poured from a plant species' palette slot (T6b) as its seeds.
 class = "powder"
 density = 1.3
 repose = 30.0

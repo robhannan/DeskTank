@@ -745,7 +745,8 @@ target computes the same bits.
     The open tab opens into a lighter panel holding its sub-tabs and
     items, and sub-tabs are framed in their own colour, so the two
     levels never read as one row of the same kind.
-    Chaos materials join their categories while their setting is on.
+    Chaos materials (not built yet, §2.2) will name categories too and
+    be offered only while their setting is on.
     `G` / `Shift+G` step the top tabs, `H` / `Shift+H` the sub-tabs, `1`–`0`
     pick within the open sub-category, `P` picks how the selected plant
     starts, and scrolling over the palette steps through the

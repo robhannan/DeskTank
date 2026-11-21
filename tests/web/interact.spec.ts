@@ -420,6 +420,10 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
   await page.mouse.wheel(0, -40);
   await expect(tab("Devices")).toHaveAttribute("aria-selected", "true");
+  // Focus on an item follows to the new sub-tab, so the keys keep working.
+  await page.getByRole("radio", { name: "Bubbler" }).focus();
+  await page.mouse.wheel(0, -40);
+  await expect(tab("Hardscape")).toBeFocused();
 
   // G or H with a radio focused moves focus to the new tab or sub-tab (the
   // radio is hidden), and a reset keeps the open sub-category.
@@ -639,7 +643,7 @@ test("magnify tool zooms on hover, cycles on click, and adjusts via wheel, keys 
   const hash = await stateHash(page);
   const initialRadius = await radius();
 
-  // Select Magnify from the Tools group: starts at 2×.
+  // Select Magnify from the Tools tab: starts at 2×.
   await choose(page, "Magnify");
   expect(await page.evaluate(() => window.desktank.tank.isMagnify())).toBe(true);
   expect(await zoom()).toBe(2);

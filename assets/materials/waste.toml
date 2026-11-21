@@ -1,7 +1,7 @@
 # Fish waste. Sinks and breaks down into detritus.
 id = 50
 name = "waste"
-# The palette group it is poured from (SPEC §2.5).
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "care"
 class = "powder"
 density = 1.2

@@ -249,13 +249,6 @@ impl PalettePath {
     pub fn holds(self) -> Holds {
         self.sub_def().holds
     }
-
-    /// Whether its top category has more than one sub-category (hosts show
-    /// a sub-tab row only then).
-    #[must_use]
-    pub fn has_siblings(self) -> bool {
-        self.top_def().subs.len() > 1
-    }
 }
 
 impl core::fmt::Display for PalettePath {
@@ -273,11 +266,9 @@ mod tests {
         let fish = PalettePath::parse("animals/fish", Holds::Creatures).unwrap();
         assert_eq!(fish.name(), "animals/fish");
         assert_eq!((fish.top_label(), fish.label()), ("Animals", "Fish"));
-        assert!(fish.has_siblings());
         assert_eq!(PalettePath::SUBSTRATE.name(), "build/substrate");
         let water = PalettePath::parse("water", Holds::Materials).unwrap();
         assert_eq!((water.top_label(), water.label()), ("Water", "Water"));
-        assert!(!water.has_siblings());
         // Every path round-trips, names are unique and in tree order.
         let all: Vec<_> = PalettePath::all().collect();
         for p in &all {

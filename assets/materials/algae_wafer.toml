@@ -1,7 +1,7 @@
 # Flat wafers for bottom feeders: they stack steeply and rot slowly.
 id = 33
 name = "algae_wafer"
-# The palette group it is poured from (SPEC §2.5).
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "food/fish"
 class = "powder"
 density = 1.5

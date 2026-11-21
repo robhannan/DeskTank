@@ -1,6 +1,6 @@
 id = 12
 name = "rock"
-# The palette group it is poured from (SPEC §2.5).
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "build/hardscape"
 class = "rigid"
 density = 2.6

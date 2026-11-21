@@ -975,10 +975,12 @@ function stepSub(steps: number, focus = false) {
 
 // Steps through every sub-category in palette order, on into the next (or
 // previous) tab and wrapping: what scrolling over the palette does.
+// Focus in the palette follows to the new sub-tab (or tab), as the item
+// it was on may now be hidden.
 function stepThrough(steps: number) {
   const subs = subTabs();
   const at = subs.findIndex((t) => t.dataset.path === openSub);
-  showSub(subs[wrapAt(at, steps, subs.length)]?.dataset.path);
+  showSub(subs[wrapAt(at, steps, subs.length)]?.dataset.path, paletteBox.contains(document.activeElement));
 }
 
 // The tabs, sub-tabs, swatches and propagule chips, all buttons

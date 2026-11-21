@@ -3,7 +3,7 @@
 # crumbles into sand (`assets/reactions.toml`).
 id = 40
 name = "root_tab"
-# The palette group it is poured from (SPEC §2.5).
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "care"
 class = "powder"
 density = 2.2

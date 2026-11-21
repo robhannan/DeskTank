@@ -2,7 +2,7 @@
 # nutrient field as it goes (`assets/reactions.toml`).
 id = 41
 name = "liquid_fertiliser"
-# The palette group it is poured from (SPEC §2.5).
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "care"
 class = "liquid"
 density = 1.03

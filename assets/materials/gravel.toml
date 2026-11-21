@@ -1,6 +1,6 @@
 id = 11
 name = "gravel"
-# The palette group it is poured from (SPEC §2.5).
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "build/substrate"
 class = "powder"
 density = 2.4
