@@ -996,6 +996,13 @@ const openItems = () => swatches().filter((b) => !b.hidden);
 // order, the open ones and the checked radio (or, if the selection is in
 // a closed sub-category, the open one's first). A closed tab or sub-tab
 // holding the selection is marked.
+// Sets or clears `data-holds` (Element.toggleAttribute is Chrome 69+, and
+// the webOS build runs on Chrome 68).
+function markHolds(t: HTMLElement, holds: boolean) {
+  if (holds) t.setAttribute("data-holds", "");
+  else t.removeAttribute("data-holds");
+}
+
 function showSelection(focus = false) {
   const selected = tank.selected();
   const held = places[selected];
@@ -1003,7 +1010,7 @@ function showSelection(focus = false) {
     const open = t.dataset.tab === openTab;
     t.setAttribute("aria-selected", String(open));
     t.tabIndex = open ? 0 : -1;
-    t.toggleAttribute("data-holds", !open && t.dataset.tab === held?.tab);
+    markHolds(t, !open && t.dataset.tab === held?.tab);
   }
   const siblings = subTabs().filter((t) => t.dataset.tab === openTab);
   // A tab with one sub-category has no sub-tab row.
@@ -1014,7 +1021,7 @@ function showSelection(focus = false) {
     t.hidden = !row || t.dataset.tab !== openTab;
     t.setAttribute("aria-selected", String(open));
     t.tabIndex = open ? 0 : -1;
-    t.toggleAttribute("data-holds", !open && t.dataset.path === held?.path);
+    markHolds(t, !open && t.dataset.path === held?.path);
   }
   $("palette-panel").setAttribute("aria-labelledby", row && openSub ? subId(openSub) : `tab-${openTab}`);
   swatches().forEach((b, i) => {
