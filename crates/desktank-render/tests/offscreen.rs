@@ -3,16 +3,31 @@
 //! is set: CI has Metal, WARP/DX12 and lavapipe. Reference-image tests are
 //! in `crates/desktank/tests/render.rs`.
 
+use std::sync::OnceLock;
+
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
 use desktank_sim::{Brush, MaterialTable, World, WorldConfig};
 
 const W: u32 = 80;
 const H: u32 = 32;
 
-fn gpu() -> Option<Gpu> {
+fn gpu() -> Option<&'static Gpu> {
+    static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
+    GPU.get_or_init(|| open_gpu(GpuOptions::default())).as_ref()
+}
+
+fn gpu_with(options: GpuOptions) -> Option<&'static Gpu> {
+    static SPLIT_GPU: OnceLock<Option<Gpu>> = OnceLock::new();
+    if !options.split_grid {
+        return gpu();
+    }
+    SPLIT_GPU.get_or_init(|| open_gpu(options)).as_ref()
+}
+
+fn open_gpu(options: GpuOptions) -> Option<Gpu> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    match pollster::block_on(Gpu::new(&instance, None, GpuOptions::default())) {
+    match pollster::block_on(Gpu::new(&instance, None, options)) {
         Ok(g) => Some(g),
         Err(e) if std::env::var_os("CI").is_none() => {
             eprintln!("skipping: {e}");
@@ -105,7 +120,7 @@ fn draws_cells_scaled_and_letterboxed() {
     let mut world = World::new(config, materials).unwrap();
     world.set_cell(3, 5, rock).unwrap();
     let mut tank = Tank::new(world, TankConfig::default());
-    let img = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    let img = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
 
     // 16×8 cells in 80×32 px: scale 4, centred with an 8 px letterbox.
     let backdrop = px(&img, 2, 10);
@@ -155,7 +170,7 @@ fn a_poured_rock_disc_is_round() {
     // 24×24 cells in 96×96 px: scale 4, no letterbox.
     let side = 96;
     let img = render_sized(
-        &gpu,
+        gpu,
         &mut tank,
         wgpu::TextureFormat::Rgba8Unorm,
         (side, side),
@@ -222,7 +237,7 @@ fn scale_one_keeps_flat_cells_and_depth_tints_water() {
     let mut world = World::new(config, materials).unwrap();
     world.set_cell(3, 5, rock).unwrap();
     let mut tank = Tank::new(world, TankConfig::default());
-    let img = tank.capture(&gpu, (16, 8)).unwrap();
+    let img = tank.capture(gpu, (16, 8)).unwrap();
     let at = |x: u32, y: u32| -> [u8; 3] {
         let i = ((y * 16 + x) * 4) as usize;
         [img[i], img[i + 1], img[i + 2]]
@@ -252,8 +267,8 @@ fn srgb_targets_show_the_same_colours() {
     };
     let world = World::new(config, materials).unwrap();
     let mut tank = Tank::new(world, TankConfig::default());
-    let linear = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
-    let srgb = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8UnormSrgb);
+    let linear = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    let srgb = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8UnormSrgb);
     // Backdrop and a water cell match within rounding.
     for (x, y) in [(2, 10), (9, 1)] {
         let (a, b) = (px(&linear, x, y), px(&srgb, x, y));
@@ -291,7 +306,7 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
         .unwrap();
     let mut tank = Tank::new(world, TankConfig::default());
     tank.step();
-    let healthy = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    let healthy = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
     // The cell at (4, 5) covers pixels 24..28 × 20..24.
     let before = px(&healthy, 25, 21);
     let table = tank.world().plant_species();
@@ -337,7 +352,7 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
     assert!(p.health < 0.8 && p.health > 0.5, "{p:?}");
     assert_eq!(tank.world().dirty_rects().count(), 0);
     assert!(tank.frame_wanted());
-    let starving = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+    let starving = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
     let after = px(&starving, 25, 21);
     assert!(after[2] + 8 < before[2], "{before:?} -> {after:?}");
     assert!(after[0] >= before[0], "{before:?} -> {after:?}");
@@ -377,13 +392,13 @@ fn plants_in_front_hide_creatures_behind_them() {
         // Placed in a band clear of the leaves it overlaps, or beside them.
         let id = world.add_creature(tetra, 40, 16).unwrap();
         let mut tank = Tank::new(world, TankConfig::default());
-        let with = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+        let with = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
         let world = tank.world_mut();
         let depth = world.creature(id).unwrap().depth();
         let (cx, cy) = world.creature(id).unwrap().centre();
         assert!(world.remove_creature(id));
         tank.invalidate();
-        let without = render(&gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
+        let without = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
         let world = tank.world();
         let mut covered = 0;
         for y in 0..H {
@@ -429,14 +444,142 @@ fn flow_tint_shows_speed_in_either_direction() {
             .unwrap();
         world.tick();
         let mut tank = Tank::new(world, TankConfig::default());
-        let plain = render(&gpu, &mut tank, format);
+        let plain = render(gpu, &mut tank, format);
         tank.set_field_overlay(Some(desktank_render::FieldOverlay::Flow));
-        let tinted = render(&gpu, &mut tank, format);
+        let tinted = render(gpu, &mut tank, format);
         let x = if outlet_x == 5 { 20 } else { 59 };
         let gain = |y| i16::from(px(&tinted, x, y)[0]) - i16::from(px(&plain, x, y)[0]);
         assert!(gain(20) > gain(16) && gain(16) > 0);
         assert_eq!(px(&plain, x, 0), px(&tinted, x, 0));
         tank.set_field_overlay(None);
-        assert_eq!(plain, render(&gpu, &mut tank, format));
+        assert_eq!(plain, render(gpu, &mut tank, format));
+    }
+}
+
+/// The magnifier zooms a single rock cell and a creature sprite inside the
+/// lens rect, draws a border around it, leaves pixels outside untouched, and
+/// works identically on both single-pass and split-grid (`webOS`) pipelines.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (tw, th) = (320u32, 180u32);
+    let px_at = |img: &[u8], x: u32, y: u32| -> [u8; 3] {
+        let i = ((y * tw + x) * 4) as usize;
+        [img[i], img[i + 1], img[i + 2]]
+    };
+    let mut single_2x: Option<Vec<u8>> = None;
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let materials = MaterialTable::builtin().unwrap();
+        let rock = materials.id("rock").unwrap();
+        let rock_colour = materials.get(rock).unwrap().colour;
+        let config = WorldConfig {
+            width: 80,
+            height: 45,
+            seed: 7,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, materials).unwrap();
+        // Single rock cell at (40, 22) and a creature beside it at (43, 22).
+        world.set_cell(40, 22, rock).unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        world.add_creature(tetra, 43, 22).unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let plain = render_sized(gpu, &mut tank, format, (tw, th));
+
+        let layout = tank.layout((tw, th));
+        assert_eq!(layout.scale, 4);
+
+        for zoom in [2u32, 4u32] {
+            let mag = desktank_render::Magnifier {
+                cell: (40, 22),
+                zoom,
+            };
+            let ml = desktank_render::MagnifierLayout::fit((tw, th), &layout, mag).unwrap();
+            tank.set_magnifier(Some(mag));
+            let zoomed = render_sized(gpu, &mut tank, format, (tw, th));
+
+            // Pixels outside the magnifying glass frame rect are byte-identical
+            // to the plain frame.
+            for y in 0..th {
+                for x in 0..tw {
+                    let in_frame = x >= ml.frame_origin.0
+                        && x < ml.frame_origin.0 + ml.frame_size.0
+                        && y >= ml.frame_origin.1
+                        && y < ml.frame_origin.1 + ml.frame_size.1;
+                    if !in_frame {
+                        assert_eq!(
+                            px_at(&zoomed, x, y),
+                            px_at(&plain, x, y),
+                            "split={split_grid} zoom={zoom}: outside frame ({x},{y}) changed"
+                        );
+                    }
+                }
+            }
+
+            // Roundness check: the top-left corner of the frame bounding box is
+            // outside the circular bezel, so the plain tank shows through there.
+            assert_eq!(
+                px_at(&zoomed, ml.frame_origin.0, ml.frame_origin.1),
+                px_at(&plain, ml.frame_origin.0, ml.frame_origin.1),
+                "split={split_grid} zoom={zoom}: top-left corner outside circular rim must stay untouched"
+            );
+
+            // Inside the circular lens, cell (40, 22) covers an exact
+            // (4 * zoom)^2 block centred at `ml.centre`.
+            let cell_px = layout.scale * zoom;
+            let (cx, cy) = ml.centre;
+            let x0 = cx - cell_px / 2;
+            let y0 = cy - cell_px / 2;
+            for y in y0..y0 + cell_px {
+                for x in x0..x0 + cell_px {
+                    let p = px_at(&zoomed, x, y);
+                    for (got, base) in p.iter().zip(rock_colour) {
+                        assert!(
+                            got.abs_diff(base) <= 40,
+                            "split={split_grid} zoom={zoom}: magnified rock at ({x},{y}) {p:?} vs {rock_colour:?}"
+                        );
+                    }
+                }
+            }
+
+            // The circular bezel is drawn just outside `ml.radius` (top edge).
+            let rim_y = cy - ml.radius - 2 * ml.step;
+            assert_ne!(
+                px_at(&zoomed, cx, rim_y),
+                px_at(&plain, cx, rim_y),
+                "split={split_grid} zoom={zoom}: expected visible circular bezel"
+            );
+
+            // The diagonal handle is drawn extending down-right from the rim.
+            let diag = ((ml.radius + 10 * ml.step) * 707) / 1000;
+            let (hx, hy) = (cx + diag, cy + diag);
+            assert_ne!(
+                px_at(&zoomed, hx, hy),
+                px_at(&plain, hx, hy),
+                "split={split_grid} zoom={zoom}: expected visible magnifying-glass handle at ({hx},{hy})"
+            );
+
+            if zoom == 2 {
+                if !split_grid {
+                    single_2x = Some(zoomed);
+                } else if let Some(ref single) = single_2x {
+                    assert_eq!(
+                        zoomed, *single,
+                        "split-grid magnified output must match single-pass"
+                    );
+                }
+            }
+        }
+
+        // Turning the magnifier off restores the plain frame identically.
+        tank.set_magnifier(None);
+        assert_eq!(plain, render_sized(gpu, &mut tank, format, (tw, th)));
     }
 }

@@ -39,7 +39,7 @@
 
 use core::time::Duration;
 
-use desktank_render::{BrushPreview, FieldOverlay, Layout, Tank, TankConfig};
+use desktank_render::{BrushPreview, FieldOverlay, Layout, Magnifier, Tank, TankConfig};
 use desktank_sim::tools::{
     self, AddRefused, Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools,
 };
@@ -110,6 +110,13 @@ pub fn grid_for(width: u32, height: u32, scale: u32) -> Vec<u32> {
 #[must_use]
 pub fn brush_range() -> Vec<u32> {
     vec![tools::MIN_RADIUS, tools::MAX_RADIUS]
+}
+
+/// Available magnification factors for the magnify tool (`[2, 4, 6, 8]`).
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = zoomLevels))]
+#[must_use]
+pub fn zoom_levels() -> Vec<u32> {
+    tools::ZOOM_LEVELS.to_vec()
 }
 
 /// A tank on the page: the world, its pacing and the interact tools, plus
@@ -547,6 +554,40 @@ impl WebTank {
         self.tools.radius()
     }
 
+    /// Active magnification factor for the magnify tool (one of
+    /// [`zoom_levels`]).
+    #[must_use]
+    pub fn zoom(&self) -> u32 {
+        self.tools.zoom()
+    }
+
+    /// Sets the magnification factor to the closest level in [`zoom_levels`]
+    /// and returns it.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setZoom))]
+    pub fn set_zoom(&mut self, zoom: u32) -> u32 {
+        if self.tools.set_zoom(zoom) {
+            self.sync_cursor();
+        }
+        self.tools.zoom()
+    }
+
+    /// Steps the magnification level up (positive) or down (negative) within
+    /// [`zoom_levels`] and returns the new level.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = stepZoom))]
+    pub fn step_zoom(&mut self, steps: i32) -> u32 {
+        if self.tools.step_zoom(steps) {
+            self.sync_cursor();
+        }
+        self.tools.zoom()
+    }
+
+    /// Whether the magnify tool is currently selected.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = isMagnify))]
+    #[must_use]
+    pub fn is_magnify(&self) -> bool {
+        self.tools.tool() == Tool::Magnify
+    }
+
     /// Turns easy mode on or off (SPEC §2.4: only old age kills). Off by
     /// default.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setEasyMode))]
@@ -600,7 +641,7 @@ impl WebTank {
             return 0;
         };
         let out = self.tools.release(self.tank.world_mut(), button);
-        self.dirty |= !matches!(out, Outcome::None);
+        self.dirty |= !matches!(out, Outcome::None | Outcome::Zoomed(_));
         self.sync_cursor();
         u32::from(matches!(out, Outcome::Removed(_)))
     }
@@ -1049,6 +1090,7 @@ impl WebTank {
                     Tool::Glue => "glue",
                     Tool::Net => "net",
                     Tool::Inspect => "inspect",
+                    Tool::Magnify => "magnify",
                     Tool::Pour | Tool::Place(_) | Tool::AddCreature(_) | Tool::Plant => "pour",
                 }
                 .to_owned(),
@@ -1129,7 +1171,7 @@ impl WebTank {
                 };
                 0
             }
-            Outcome::None => 0,
+            Outcome::None | Outcome::Zoomed(_) => 0,
         };
         self.dirty |= changed > 0;
         self.edited(changed);
@@ -1144,7 +1186,7 @@ impl WebTank {
         }
     }
 
-    /// Gives the tank the brush outline to draw (or none).
+    /// Gives the tank the brush outline and magnifier lens to draw (or none).
     fn sync_cursor(&mut self) {
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
@@ -1153,6 +1195,11 @@ impl WebTank {
             radius,
         });
         self.tank.set_cursor(cursor);
+        let magnifier = self
+            .tools
+            .magnifier()
+            .map(|(x, y, zoom)| Magnifier { cell: (x, y), zoom });
+        self.tank.set_magnifier(magnifier);
     }
 
     /// Draws to the attached graphics, if any. Returns whether a frame was

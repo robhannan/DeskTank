@@ -61,6 +61,9 @@ struct View {
     // Material ids of the runner (x) and floating leaf (y) parts; -1 if
     // missing.
     plant_parts2: vec4<f32>,
+    // Circular magnifier lens in target pixels: centre (xy), inner radius (z),
+    // and bezel/handle pixel-art block size (w); z = 0 outside the lens pass.
+    lens: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -272,8 +275,24 @@ fn grid_post(rgb_in: vec3<f32>, cell: vec2<f32>) -> vec3<f32> {
     return rgb;
 }
 
+// True during the magnifier pass when `pos` lies outside the circular glass
+// lens (snapped to the bezel's pixel-art grid so the rim meets the glass
+// cleanly with no gaps). Always false in the main pass (`view.lens.z == 0`).
+fn outside_lens(pos: vec2<f32>) -> bool {
+    if view.lens.z <= 0.0 {
+        return false;
+    }
+    let step = max(view.lens.w, 1.0);
+    let p = floor((pos - view.lens.xy) / step) + 0.5;
+    let r = view.lens.z / step;
+    return dot(p, p) > r * r;
+}
+
 @fragment
 fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) {
+        discard;
+    }
     let h = hud_at(pos.xy);
     if h.a > 0.5 {
         return out(h.rgb);
@@ -341,6 +360,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 // shows behind any plant art (or anything, where a plant pass draws opaque).
 @fragment
 fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) {
+        discard;
+    }
     let h = hud_at(pos.xy);
     if h.a > 0.5 {
         return out(h.rgb);
@@ -372,6 +394,9 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 // rest are discarded.
 @fragment
 fn fs_leaves(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) {
+        discard;
+    }
     let src = plant_source(pos.xy);
     if src.part < 0 || !is_leafy(src.part) {
         discard;
@@ -382,6 +407,9 @@ fn fs_leaves(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_stems(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) {
+        discard;
+    }
     let src = plant_source(pos.xy);
     if src.part < 0 || is_leafy(src.part) {
         discard;
@@ -2202,6 +2230,9 @@ fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
 // (it stays on top; creatures show beside its shorter row), and open
 // texels without a glow's halo.
 fn sprite_skipped(v: SpriteOut) -> bool {
+    if outside_lens(v.pos.xy) {
+        return true;
+    }
     if view.hud.w > 0.5 {
         let p = floor((v.pos.xy - view.hud.xy) / view.hud.z);
         if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy)
@@ -2252,4 +2283,130 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         lit = min(lit + v.glow.rgb * e * vec3<f32>(0.55, 1.0, 0.55), vec3<f32>(1.0));
     }
     return out(lit);
+}
+
+// Pixel-art magnifying glass overlay: circular metallic bezel, subtle glass
+// glint, 4-tick centre reticle, and a 45-degree diagonal handle extending from
+// the bottom-right of the rim. Drawn after the circular magnified grid and
+// sprites, staying behind the palette strip when the two overlap.
+@fragment
+fn fs_lens_frame(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    let step = max(view.lens.w, 1.0);
+    let p = floor((pos.xy - view.lens.xy) / step) + 0.5;
+    let r = view.lens.z / step;
+    let dist = length(p);
+
+    // Inside the circular glass: subtle edge tint, upper-left curved glass
+    // glint, and a 4-tick centre reticle leaving the centred cell clear.
+    if dist < r {
+        let rel = floor(pos.xy) - view.lens.xy;
+        let dc = abs(rel);
+        let gap = min(max(3.0, view.lens.z - 5.0), max(3.0, floor(view.scale * 0.5) + 2.0));
+        let tick = gap + 4.0;
+        let on_x = dc.y < 0.5 && dc.x >= gap && dc.x < tick;
+        let on_y = dc.x < 0.5 && dc.y >= gap && dc.y < tick;
+        if on_x || on_y {
+            return vec4<f32>(out(vec3<f32>(0.957, 0.914, 0.784)).rgb, 0.52);
+        }
+        // Upper-left curved glass glint (primary crescent + small specular dot).
+        let glint_band = dist >= r - 4.8 && dist <= r - 2.6;
+        let main_arc = glint_band && p.x < -0.18 * r && p.y < -0.18 * r && abs(p.x - p.y) < r * 0.48;
+        let spec_dot = dist >= r - 4.6 && dist <= r - 3.0 && p.x < -0.58 * r && p.y > -0.22 * r && p.y < -0.06 * r;
+        if main_arc || spec_dot {
+            return vec4<f32>(out(vec3<f32>(0.92, 0.97, 1.0)).rgb, select(0.32, 0.42, spec_dot));
+        }
+        // Subtle cool inner rim sheen right inside the bezel.
+        if dist >= r - 1.0 {
+            return vec4<f32>(out(vec3<f32>(0.76, 0.91, 1.0)).rgb, 0.16);
+        }
+        discard;
+    }
+
+    // Circular metallic bezel (4 art pixels thick: dark inner lip, 2-px
+    // top-left lit metallic ring, dark outer outline).
+    if dist <= r + 4.0 {
+        let light = -(p.x + p.y) / max(dist * 1.4142135, 1.0);
+        var rgb = vec3<f32>(0.043, 0.071, 0.110); // dark outline (#0b121c)
+        if dist < r + 1.0 {
+            // Inner recessed lip: darker bottom-right, subtle highlight top-left.
+            rgb = select(vec3<f32>(0.075, 0.125, 0.188), vec3<f32>(0.24, 0.34, 0.45), light > 0.35);
+        } else if dist < r + 3.0 {
+            // Brushed silver-steel bezel with warm ivory top-left highlight.
+            if light > 0.38 {
+                rgb = vec3<f32>(0.957, 0.914, 0.784);
+            } else if light > -0.15 {
+                rgb = vec3<f32>(0.580, 0.678, 0.765);
+            } else {
+                rgb = vec3<f32>(0.235, 0.310, 0.404);
+            }
+        }
+        return vec4<f32>(out(rgb).rgb, 1.0);
+    }
+
+    // 45-degree diagonal handle extending down-right from the rim: metallic
+    // ferrule collar + shaded walnut grip + metallic pommel ring.
+    let along = (p.x + p.y) * 0.70710678;
+    let across = (p.x - p.y) * 0.70710678;
+    let handle_len = clamp(r * 0.72, 14.0, 44.0);
+    let collar_end = r + 7.5;
+    let handle_end = r + 3.5 + handle_len;
+    let cap_centre = handle_end - 3.6;
+    if along >= r + 2.5 && along <= handle_end + 1.0 {
+        let in_collar = along < collar_end;
+        let half_w = select(3.6, 2.6, in_collar);
+        let a_abs = abs(across);
+        let in_body = select(
+            a_abs <= half_w,
+            length(vec2<f32>(along - cap_centre, across)) <= half_w,
+            along > cap_centre,
+        );
+        if in_body {
+            let on_edge = select(
+                a_abs > half_w - 1.05,
+                length(vec2<f32>(along - cap_centre, across)) > half_w - 1.05,
+                along > cap_centre,
+            );
+            var rgb = vec3<f32>(0.043, 0.071, 0.110); // dark outline
+            if !on_edge {
+                let pommel = along > cap_centre - 1.8 && along < cap_centre + 0.4;
+                if in_collar || pommel {
+                    // Metallic collar / pommel band matching the bezel.
+                    if across > 0.6 {
+                        rgb = vec3<f32>(0.92, 0.88, 0.76);
+                    } else if across > -0.8 {
+                        rgb = vec3<f32>(0.56, 0.66, 0.75);
+                    } else {
+                        rgb = vec3<f32>(0.24, 0.31, 0.40);
+                    }
+                } else {
+                    // Warm dark walnut grip, lit along upper-right edge.
+                    if across > 0.9 {
+                        rgb = vec3<f32>(0.58, 0.38, 0.25);
+                    } else if across > -1.0 {
+                        rgb = vec3<f32>(0.38, 0.23, 0.15);
+                    } else {
+                        rgb = vec3<f32>(0.22, 0.13, 0.08);
+                    }
+                }
+            }
+            return vec4<f32>(out(rgb).rgb, 1.0);
+        }
+        // Soft drop shadow along the lower-left underside of the handle.
+        let in_shadow = across < -half_w && across >= -(half_w + 1.6) && along < handle_end;
+        if in_shadow {
+            return vec4<f32>(out(vec3<f32>(0.02, 0.04, 0.07)).rgb, 0.42);
+        }
+    }
+
+    // Soft drop shadow hugging the bottom-right outer rim of the bezel.
+    if dist <= r + 5.6 && (p.x + p.y) > 0.0 {
+        return vec4<f32>(out(vec3<f32>(0.02, 0.04, 0.07)).rgb, 0.42);
+    }
+
+    discard;
+    // HLSL FXC requires a return statement on all control paths even after discard.
+    return vec4<f32>(0.0);
 }

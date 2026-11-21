@@ -36,7 +36,7 @@ mod timer;
 pub use wgpu;
 
 pub use gpu::{Gpu, GpuError, GpuOptions};
-pub use hud::{BrushPreview, Palette, PaletteHit, PaletteLayout};
+pub use hud::{BrushPreview, Magnifier, MagnifierLayout, Palette, PaletteHit, PaletteLayout};
 pub use layout::{Layout, even_scale};
 pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;
