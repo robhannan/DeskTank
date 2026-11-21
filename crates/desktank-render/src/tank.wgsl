@@ -2407,4 +2407,6 @@ fn fs_lens_frame(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     }
 
     discard;
+    // HLSL FXC requires a return statement on all control paths even after discard.
+    return vec4<f32>(0.0);
 }
