@@ -191,12 +191,17 @@ impl World {
             return None;
         }
         let quirks = Quirks::of(self.seed, c.id, self.tick);
-        let len = k.w * ONE;
-        let (along, across) = school::slot(quirks, len);
+        // Places are laid out in the full-grown length, so young fish
+        // spread through the school too; personal space is their own.
+        let grown = self.kind(c.species).map_or(k.w, |g| g.w) * ONE;
+        let shape = school::shape(Quirks::of(self.seed, lead.id, self.tick));
+        let (along, across) = school::slot(quirks, grown, shape);
         let (hx, hy) = school::axis(k, lead);
         let mut tx = lead.x + 8 * lead.vx + (along * hx - across * hy) / ONE;
         let mut ty = lead.y + 8 * lead.vy + (along * hy + across * hx) / ONE;
+        let len = k.w * ONE;
         let spacing = school::spacing(quirks, len);
+        let (mut px, mut py) = (0, 0);
         for m in std::iter::once(lead).chain(mates).filter(|m| m.id != c.id) {
             // Personal space is a body long and half as tall, like the
             // fish, so close neighbours stack loosely rather than in a disc.
@@ -209,9 +214,21 @@ impl World {
             }
             let d = i32::try_from(dist(dx, dy)).unwrap_or(spacing).max(1);
             let push = (spacing - d).max(0) * 3;
-            tx += dx * push / d;
-            ty += dy * push / d;
+            px += dx * push / d;
+            py += dy * push / d;
         }
+        // However crowded it is, the push is at most its personal space:
+        // summed over a packed clump it used to shove every fish round it
+        // out to one radius, a ring.
+        let p = dist(px, py);
+        if p > i64::from(spacing) {
+            // In i64: a big body in a packed clump can push past i32 here.
+            let scale =
+                |v: i32| i32::try_from(i64::from(v) * i64::from(spacing) / p).unwrap_or(spacing);
+            (px, py) = (scale(px), scale(py));
+        }
+        tx += px;
+        ty += py;
         // A slot reaches 3.5 lengths from the lead: keep it to the rows
         // that hold the whole body in the species' zone, as a wander
         // target is, so a follower near the edge isn't led out of its band.
@@ -221,7 +238,7 @@ impl World {
         if y0 <= y1 {
             ty = ty.clamp(centre_of(y0), centre_of(y1));
         }
-        let far = dist(tx - c.x, ty - c.y) > i64::from(school::CATCH_UP * len);
+        let far = dist(tx - c.x, ty - c.y) > i64::from(school::CATCH_UP * grown);
         Some((tx, ty, school::pace(quirks, k, far)))
     }
 }

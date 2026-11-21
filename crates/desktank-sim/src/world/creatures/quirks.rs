@@ -27,6 +27,8 @@ pub(super) mod salt {
     pub const WOBBLE_ACROSS: u64 = 0x5103;
     pub const SPACING: u64 = 0x5104;
     pub const PACE: u64 = 0x5105;
+    pub const SHAPE_ALONG: u64 = 0x5106;
+    pub const SHAPE_ACROSS: u64 = 0x5107;
     pub const SPEED: u64 = 0x5200;
     pub const MOOD: u64 = 0x5201;
     pub const RESTLESS: u64 = 0x5202;
