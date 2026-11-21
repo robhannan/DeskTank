@@ -1,0 +1,25 @@
+# Live food: a pinch of live bloodworms sinks to the starter bed and
+# wriggles over it beside a few frozen bloodworms, while a harlequin
+# rasbora on the far side comes over for them. Run for 10 s.
+ticks = 200
+
+[world]
+starter = true
+
+[[pour]]
+x = 132
+y = 30
+radius = 1
+material = "bloodworm"
+
+[[creature]]
+species = "live_bloodworm"
+x = 22
+y = 60
+count = 7
+dx = 11
+
+[[creature]]
+species = "harlequin_rasbora"
+x = 140
+y = 40

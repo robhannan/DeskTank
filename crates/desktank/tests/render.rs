@@ -236,6 +236,15 @@ fn invertebrates_scene_matches_reference() {
     check("invertebrates");
 }
 
+/// Live food: a pinch of live bloodworms wriggling on the starter bed by a
+/// few frozen ones, with a harlequin coming over; at scale 4 too, for the
+/// worms' fine frames.
+#[test]
+fn live_food_scene_matches_reference() {
+    check("live_food");
+    check_named("live_food", "live_food_x4", None, SIZE_X4);
+}
+
 /// More fish: a harlequin rasbora school, male guppies and honey gouramis
 /// come up for flakes over the starter bed, and otocinclus on a rock, the
 /// glass and the bed.

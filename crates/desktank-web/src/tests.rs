@@ -129,6 +129,14 @@ fn palette_groups_follow_the_sim() {
         groups[slot(&t, "device bubbler") as usize],
         "devices Devices"
     );
+    // Live food is in the Food group, not Creatures, and not a species the
+    // palette stocks.
+    assert_eq!(t.live_foods(), ["live_bloodworm"]);
+    assert_eq!(
+        groups[slot(&t, "live_food live_bloodworm") as usize],
+        "food Food"
+    );
+    assert!(!t.species().contains(&"live_bloodworm".to_owned()));
 }
 
 #[test]

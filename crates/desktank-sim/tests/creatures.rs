@@ -3,7 +3,7 @@
 //! inspect and add tools work on them.
 #![allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
 
-use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
+use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
 use desktank_sim::{
     BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, MaterialId, MaterialTable, MovementClass,
     Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig, WorldError,
@@ -209,7 +209,13 @@ fn zone_fractions(seed: u64, minutes: u32) -> Vec<(String, f64)> {
     w.set_easy_mode(true);
     sand_bed(&mut w, 12);
     w.paint(60, 70, 6, id(&w, "rock"), Brush::Replace).unwrap();
-    let ids: Vec<_> = w.species().iter().map(|s| (s.id, s.name.clone())).collect();
+    // Live food is eaten even in easy mode (tests/live_food.rs).
+    let ids: Vec<_> = w
+        .species()
+        .iter()
+        .filter(|s| !s.live_food)
+        .map(|s| (s.id, s.name.clone()))
+        .collect();
     for (k, (s, _)) in ids.iter().enumerate() {
         // Two of each fit under the population cap, but one blinker (30×22 cells).
         let one = w.species().get(*s).unwrap().name == "blinker";
@@ -538,13 +544,27 @@ fn the_palette_adds_creatures_of_each_species() {
     let adders: Vec<_> = palette
         .iter()
         .filter_map(|&i| match i {
-            PaletteItem::Tool(Tool::AddCreature(s)) => Some(s),
+            PaletteItem::Tool(Tool::AddCreature(s)) if w.species().get(s)?.stocked() => Some(s),
             _ => None,
         })
         .collect();
-    // Every species but the cheat-only crabs and blinker.
-    let stocked = w.species().iter().filter(|s| !s.cheat_only).count();
-    assert_eq!((adders.len(), w.species().len()), (stocked, stocked + 3));
+    // The Creatures group holds only stocked species (no live food).
+    let (_, group) = Tools::palette_groups(&w)
+        .into_iter()
+        .find(|(g, _)| *g == PaletteGroup::Creatures)
+        .unwrap();
+    assert!(group.iter().all(|&i| matches!(
+        i,
+        PaletteItem::Tool(Tool::AddCreature(s)) if w.species().get(s).is_some_and(desktank_sim::Species::stocked)
+    )));
+    // Every species but the cheat-only crabs and blinker, and live food
+    // (its slot is in the Food group: tests/live_food.rs).
+    let stocked = w.species().iter().filter(|s| s.stocked()).count();
+    let live = w.species().iter().filter(|s| s.live_food).count();
+    assert_eq!(
+        (adders.len(), w.species().len()),
+        (stocked, stocked + 3 + live)
+    );
     let mut t = Tools::new(id(&w, "sand"));
     for (k, &s) in adders.iter().enumerate() {
         t.select(PaletteItem::Tool(Tool::AddCreature(s)));

@@ -1,0 +1,108 @@
+# Live bloodworms (SPEC §2.4 *Live food*): the blood-red larvae of
+# Chironomus midges, 1–2 cm long and about a millimetre thick, sold live
+# as fish food. A pinch sinks to the bed, where each worm thrashes along
+# in figure-of-eight wriggles and squirms away from a fish that chases it.
+# Fish whose diet holds frozen bloodworms (the `bloodworm` material) eat
+# them whole; one left uneaten dies after about an hour of world time and
+# becomes a cell of frozen bloodworm, which rots like any food. Live food
+# is never stocked or bred and doesn't count against the population cap.
+id = 27
+name = "live_bloodworm"
+live_food = "bloodworm"
+zone = "bottom"
+depth = [0.85, 1.0]
+min_depth = 4
+# Real-world body length in cm, at two cells per cm.
+length_cm = 1.5
+# On the life clock (a day per 10 world minutes): about an hour of world
+# time in the tank (live bloodworms keep for days in a fridge, not in a
+# warm tank full of fish). It arrives grown.
+lifespan_days = 6
+maturity_days = 1
+temperament = "peaceful"
+speed = 0.8
+max_speed = 2.0
+diet = []
+
+[sprite]
+# Facing right (the dark head capsule leads); two texels per cell side. A
+# 6-texel (1.5 cm) worm one texel thick in an 8x4-texel (4x2-cell) frame,
+# lying on the bed; four frames of a travelling wave, stronger towards
+# the tail, with darker segment rings every third texel.
+colours = { r = "#b8283a", d = "#86182a", h = "#e46470", m = "#64101e", k = "#3a1c16" }
+frames = [
+    [
+        "........",
+        "........",
+        ".rrdrrk.",
+        "..rd....",
+    ],
+    [
+        "........",
+        "...dr...",
+        "..rdrrk.",
+        ".rr.....",
+    ],
+    [
+        "........",
+        "..rd....",
+        ".rrdrrk.",
+        "........",
+    ],
+    [
+        "........",
+        ".rr.....",
+        "..rdrrk.",
+        "...dr...",
+    ],
+]
+# The palette icon, at one pixel per cell: a pinch of two worms.
+icon = [
+    ".rdrk.",
+    "r.....",
+    ".rrdrk",
+]
+# The same four poses at four texels per cell side (16x8): two texels
+# thick with a pale back and a dark belly.
+fine_frames = [
+    [
+        "................",
+        "................",
+        "................",
+        "................",
+        "........rhdr....",
+        "..hr..rdrmmrhd..",
+        "..mrdhrmm..mmk..",
+        "...mmmm......k..",
+    ],
+    [
+        "................",
+        "................",
+        "................",
+        "................",
+        ".....rhdhr......",
+        "....drmmmrd..k..",
+        "..hhdm...mdhhk..",
+        "..mmm.....mmmm..",
+    ],
+    [
+        "................",
+        "................",
+        "................",
+        "....dr..........",
+        "...rdrr......k..",
+        "..hrmmrdr..rhk..",
+        "..mm..mmrhdrmm..",
+        "........mmmm....",
+    ],
+    [
+        "................",
+        "................",
+        "................",
+        "..hr............",
+        "..mrd.....dhhd..",
+        "...mdr...rdmmk..",
+        "....mrhdhrm..k..",
+        ".....mmmmm......",
+    ],
+]
