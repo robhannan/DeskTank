@@ -317,7 +317,7 @@ impl World {
         });
         BreedTick {
             males,
-            population: list.len(),
+            population: list.iter().filter(|c| !self.is_live(c.species)).count(),
             births: Vec::new(),
             lays: Vec::new(),
         }
@@ -578,7 +578,7 @@ impl World {
                 let (x, y) = (i % self.width, i / self.width);
                 let alleles = inherit(clutch.mother, clutch.sire, k.morphs, k.wild, &mut rng);
                 let female = rng.next_u32() & 1 == 1;
-                if self.creatures.list.len() >= self.creatures.cap {
+                if self.stock_count() >= self.creatures.cap {
                     let rot = self.creatures.detritus.unwrap_or(self.creatures.water);
                     self.write_cell(x, y, rot, &mut None);
                     continue;
@@ -626,6 +626,7 @@ impl World {
                 j != i
                     && !eaten.contains(&j)
                     && q.held_until < self.tick
+                    && !self.is_live(q.species)
                     && self.length_mm(q) <= k.prey_mm
                     && q.band().abs_diff(p.band()) <= BAND_REACH
                     && !reach.intersect(self.creature_body(q)).is_empty()

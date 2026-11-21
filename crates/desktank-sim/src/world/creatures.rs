@@ -52,11 +52,15 @@
 //!   carpet patch) are in [`habits`].
 //! - **Names** and the inspect card are in [`naming`].
 //! - **Hunting, fleeing to cover and territory** are in [`pursuit`].
+//! - **Live food** (bloodworms) are creatures of a `live_food` species,
+//!   kept to [`MAX_LIVE_FOOD`] beside the population cap, eaten whole by
+//!   species whose diet holds the food they count as (see [`live`]).
 
 mod bottom;
 mod breeding;
 mod habits;
 mod lifecycle;
+mod live;
 mod naming;
 pub mod pursuit;
 mod steering;
@@ -83,13 +87,14 @@ pub use lifecycle::{
     BITE_ENERGY, CORPSE_SINK, Corpse, DeathCause, ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS,
     LifeStage, MAX_CORPSES, POOR_QUALITY, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, STRESS_LIMIT,
 };
+pub use live::{LIVE_FOOD_BITES, MAX_LIVE_FOOD, PINCH};
 pub use naming::{CreatureCard, MAX_NAME_CHARS, clean_name};
 
 /// The default population cap per display (SPEC §2.4), which protects the
 /// budget; [`World::set_creature_cap`] changes it.
 pub const DEFAULT_CREATURE_CAP: usize = 60;
 /// Highest population cap a tank may set (with [`MAX_CORPSES`], within the
-/// renderer's 256 sprites).
+/// renderer's sprites with [`MAX_LIVE_FOOD`]).
 pub const MAX_CREATURE_CAP: usize = 128;
 
 /// One cell in fixed point.
@@ -485,6 +490,15 @@ struct Kind {
     /// to burrow (0: it doesn't); see [`bottom`].
     swim_every: u64,
     burrow_every: u64,
+    /// It is live food (not stock: see [`live`]).
+    live: bool,
+    /// The material a live food dies into.
+    food_as: Option<MaterialId>,
+    /// Bits by species id: the live foods it eats (those whose material
+    /// is in its diet).
+    live_prey: [u64; 4],
+    /// It eats some live food.
+    eats_live: bool,
 }
 
 /// The creatures in a world and the per-species and per-material lookups
@@ -543,25 +557,24 @@ impl Creatures {
         water: MaterialId,
         air: MaterialId,
     ) -> Self {
-        let mut swim = vec![false; 256];
-        let mut loose = vec![false; 256];
-        for m in materials.iter() {
-            loose[usize::from(m.id.0)] = bottom::is_loose(m.class, m.palette);
-            swim[usize::from(m.id.0)] = match m.class {
-                MovementClass::Liquid => m.density >= WATER_DENSITY,
-                MovementClass::Buoyant => true,
-                _ => m.passable,
-            };
-        }
+        let swim = per_material(materials, |m| match m.class {
+            MovementClass::Liquid => m.density >= WATER_DENSITY,
+            MovementClass::Buoyant => true,
+            _ => m.passable,
+        });
+        let loose = per_material(materials, |m| bottom::is_loose(m.class, m.palette));
         let mut kinds = vec![None; 256];
-        // Validated to at most 600 s.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let ticks = |every: Option<f32>| {
-            every.map_or(0, |e| {
-                (f64::from(e) * f64::from(TICKS_PER_SECOND)).round() as u64
-            })
-        };
+        let live: Vec<_> = species
+            .iter()
+            .filter_map(|l| l.live_food.then_some((l.id, l.food_as?)))
+            .collect();
         for s in species.iter() {
+            let mut live_prey = [0_u64; 4];
+            for &(id, food) in &live {
+                if s.diet.contains(&food) {
+                    live_prey[usize::from(id.0 >> 6)] |= 1 << (id.0 & 63);
+                }
+            }
             let (w, h) = s.size();
             let per_tick = |cells_per_s: f32| {
                 // Validated to (0, 16] cells per second: under a cell per tick.
@@ -619,8 +632,12 @@ impl Creatures {
                 territory: s
                     .territory_cm
                     .map_or(0, |t| (t * crate::species::CELLS_PER_CM).round() as i32),
-                swim_every: ticks(s.swim_every),
-                burrow_every: ticks(s.burrow_every),
+                swim_every: every_ticks(s.swim_every),
+                burrow_every: every_ticks(s.burrow_every),
+                live: s.live_food,
+                food_as: s.food_as,
+                live_prey,
+                eats_live: live_prey != [0; 4],
             });
         }
         Self {
@@ -764,6 +781,9 @@ impl World {
         x: i64,
         y: i64,
     ) -> Result<CreatureId, WorldError> {
+        if self.is_live(species) {
+            return self.add_pinch(species, x, y);
+        }
         let traits = self
             .species()
             .get(species)
@@ -824,7 +844,11 @@ impl World {
         let base = *self
             .kind(species)
             .ok_or(WorldError::UnknownSpecies(species))?;
-        if self.creatures.list.len() >= self.creatures.cap {
+        if base.live {
+            if self.live_food_count() >= MAX_LIVE_FOOD {
+                return Err(WorldError::PopulationCap(MAX_LIVE_FOOD));
+            }
+        } else if self.stock_count() >= self.creatures.cap {
             return Err(WorldError::PopulationCap(self.creatures.cap));
         }
         let growth = age.min(base.maturity);
@@ -1074,9 +1098,17 @@ impl World {
         let inside =
             |x: i32, y: i32| (0..=w).contains(&i64::from(x)) && (0..=h).contains(&i64::from(y));
         let cap = saved.cap as usize;
-        if !(1..=MAX_CREATURE_CAP).contains(&cap) || saved.list.len() > cap {
+        let live = saved
+            .list
+            .iter()
+            .filter(|c| self.kind(SpeciesId(c.base.species)).is_some_and(|k| k.live))
+            .count();
+        if !(1..=MAX_CREATURE_CAP).contains(&cap)
+            || saved.list.len() - live > cap
+            || live > MAX_LIVE_FOOD
+        {
             return Err(SaveError::Invalid(format!(
-                "{} creatures with a cap of {cap}",
+                "{} creatures ({live} live food) with a cap of {cap}",
                 saved.list.len()
             )));
         }
@@ -1305,9 +1337,14 @@ impl World {
         let mut changed = false;
         let mut dead = Vec::new();
         let mut breeding = self.breed_tick(&list);
+        let mut died_live = Vec::new();
         list.retain_mut(|c| {
             if let Some(cause) = self.live(c, quality, &mut changed) {
-                dead.push(self.corpse_of(c, cause));
+                match self.kind(c.species) {
+                    // Live food dies into a cell of its food, no corpse.
+                    Some(k) if k.live => died_live.push((self.creature_body(c), k.food_as)),
+                    _ => dead.push(self.corpse_of(c, cause)),
+                }
                 return false;
             }
             self.breed(c, &mut breeding);
@@ -1316,6 +1353,14 @@ impl World {
         if !dead.is_empty() {
             self.bury(dead);
             changed = true;
+        }
+        if !died_live.is_empty() {
+            self.drop_live_food(&died_live);
+            changed = true;
+        }
+        // Live food is eaten once a second, in easy mode too: it is food.
+        if self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND)) {
+            changed |= self.eat_live_food(&mut list);
         }
         // Predators hunt once a second, with the water-quality sample.
         if quality.is_some() {
@@ -1416,6 +1461,9 @@ impl World {
         if k.zone == Zone::Bottom {
             c.vy = if self.hopping(&k, c) {
                 -k.top
+            } else if k.live {
+                // Live food sinks faster than it crawls.
+                live::SINK
             } else {
                 k.cruise
             };
@@ -1882,6 +1930,27 @@ fn extent(k: &Kind, turn: u8) -> (i32, i32) {
 
 /// The cells a body turned `turn` and centred at `(x, y)` (fixed point)
 /// covers, rounded outwards; `None` if any part is outside the grid.
+/// A per-material-id lookup of `f`.
+fn per_material(
+    materials: &MaterialTable,
+    f: impl Fn(&crate::material::Material) -> bool,
+) -> Vec<bool> {
+    let mut out = vec![false; 256];
+    for m in materials.iter() {
+        out[usize::from(m.id.0)] = f(m);
+    }
+    out
+}
+
+/// A species' seconds between chances (validated to at most 600 s) in
+/// ticks, 0 for none.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn every_ticks(every: Option<f32>) -> u64 {
+    every.map_or(0, |e| {
+        (f64::from(e) * f64::from(TICKS_PER_SECOND)).round() as u64
+    })
+}
+
 fn body(k: &Kind, turn: u8, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
     let (wide, tall) = extent(k, turn);
     body_box(wide, tall, x, y, width, height)

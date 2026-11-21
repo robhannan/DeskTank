@@ -313,13 +313,20 @@ test("the palette groups the sim's tools and navigates with the keyboard", async
   expect(names).toEqual(entries);
   const materials = await page.evaluate(() => window.desktank.tank.materials());
   const species = await page.evaluate(() => window.desktank.tank.species());
-  for (const e of entries) {
+  const liveFoods = await page.evaluate(() => window.desktank.tank.liveFoods());
+  expect(liveFoods).toContain("live_bloodworm");
+  for (const [i, e] of entries.entries()) {
     const [kind, name] = e.split(" ");
     if (kind === "creature") expect(species, e).toContain(name);
+    else if (kind === "live_food") {
+      expect(liveFoods, e).toContain(name);
+      expect(groups[i].split(" ")[0], `${e} is in the Food group`).toBe("food");
+    }
     else if (kind === "plant") expect(name, e).toBe("plants");
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
+  expect(entries.filter((e) => e.startsWith("live_food ")).length).toBe(liveFoods.length);
   expect(entries.filter((e) => e.startsWith("plant ")).length, "one plants slot").toBe(1);
 
   // One tab per sim group, in order; it opens on the selection's group

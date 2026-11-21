@@ -34,8 +34,10 @@ use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, TICKS_PE
 /// the stack within WebGL2's guaranteed 2048 texels tall now that species
 /// carry several colour morphs of large art (the axolotl alone has three).
 pub const ATLAS_WIDTH: usize = 512;
-/// Most sprites drawn in a frame (the population cap is lower).
-pub const MAX_SPRITES: usize = 256;
+/// Most sprites drawn in a frame: every creature the cap allows, live
+/// food and corpses.
+pub const MAX_SPRITES: usize =
+    desktank_sim::MAX_CREATURE_CAP + desktank_sim::MAX_LIVE_FOOD + desktank_sim::MAX_CORPSES;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),

@@ -251,10 +251,10 @@ impl World {
     }
 
     /// Sets the population cap, within 1..=[`super::MAX_CREATURE_CAP`] and
-    /// never below the creatures already in the tank, so the population
+    /// never below the creatures already in the tank (live food aside), so the population
     /// never exceeds it. Returns the cap set. Saved with the tank.
     pub fn set_creature_cap(&mut self, cap: usize) -> usize {
-        let low = self.creatures.list.len().max(1);
+        let low = self.stock_count().max(1);
         self.creatures.cap = cap.clamp(low, super::MAX_CREATURE_CAP);
         self.creatures.cap
     }
