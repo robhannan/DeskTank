@@ -324,6 +324,21 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
 .name[hidden] { display: none; }
 .name input { width: min(24ch, 50vw); font: inherit; }
 .name output { opacity: 0.85; }
+
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 4px 8px;
+  background: rgba(5, 11, 17, 0.85);
+  border: 2px solid var(--accent);
+  pointer-events: auto;
+}
+
+.device-actions[hidden] { display: none; }
+.device-guard { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.device-guard[hidden] { display: none; }
 .cheat input { width: min(24ch, 60vw); font: inherit; }
 .cheat output { opacity: 0.85; }
 

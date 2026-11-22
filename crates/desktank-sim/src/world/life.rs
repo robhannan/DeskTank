@@ -159,7 +159,7 @@ impl Registry {
 #[derive(Clone, Debug)]
 #[allow(clippy::struct_excessive_bools)] // independent dirty flags
 pub(super) struct Life {
-    eco: Ecology,
+    pub(super) eco: Ecology,
     flags: Vec<u8>,
     living: Registry,
     devices: Registry,
@@ -216,7 +216,7 @@ pub(super) struct Life {
     devices_dirty: bool,
     /// Bumped whenever a field changes, for renderers.
     pub(super) version: u64,
-    water: Option<MaterialId>,
+    pub(super) water: Option<MaterialId>,
     air: Option<MaterialId>,
 }
 
@@ -521,6 +521,7 @@ impl World {
             e.water_cells,
             e.pollutant_cells,
             e.plant_cells,
+            self.filter_bio_capacity(),
         );
         e
     }
@@ -680,6 +681,7 @@ impl World {
             self.recompute_current();
         }
         self.run_devices();
+        self.run_intakes();
         self.run_current();
         self.random_ticks();
         self.run_spawns();
@@ -706,7 +708,9 @@ impl World {
             if self.life.any_blocked_dirty {
                 self.refresh_blocked();
             }
-            if mem::take(&mut self.life.blocked_flipped) {
+            let rebuild_devices = mem::take(&mut self.life.devices_dirty);
+            let rebuild_obstacles = mem::take(&mut self.life.blocked_flipped);
+            if rebuild_devices || rebuild_obstacles {
                 self.recompute_current();
             }
         }
@@ -793,7 +797,14 @@ impl World {
         let plants = self.plant_cells();
         #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // counts ≪ 2^24
         let mean = (nutrient_sum / water.max(1) as f64) as f32;
-        quality_score(&self.life.eco, mean, water, pollutants, plants)
+        quality_score(
+            &self.life.eco,
+            mean,
+            water,
+            pollutants,
+            plants,
+            self.filter_bio_capacity(),
+        )
     }
 
     /// Visits up to the budget of living cells (see the module docs).
@@ -891,7 +902,7 @@ impl World {
             }
         }
         if let Some(d) = decay {
-            let age = cell.state.saturating_add(k);
+            let age = cell.state.saturating_add(self.decay_step(m, k));
             if age >= d.after_ticks {
                 self.write_cell(x, y, d.into, &mut None);
                 self.release(d.release, x, y);
@@ -948,6 +959,24 @@ impl World {
             self.release(rule.release, x, y);
             return;
         }
+    }
+
+    /// Effective decay age increment for material `m` over `k` ticks:
+    /// pollutants break down faster with a mature running filter (DV3).
+    fn decay_step(&self, m: usize, k: u16) -> u16 {
+        if self.life.flags[m] & POLLUTANT == 0 {
+            return k;
+        }
+        let bio = self.filter_bio_capacity();
+        if bio <= 0.0 {
+            return k;
+        }
+        let boost = 1.0 + self.life.eco.filtration.waste_boost * bio;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to u16
+        let scaled = (f64::from(k) * f64::from(boost))
+            .round()
+            .clamp(f64::from(k), f64::from(u16::MAX)) as u16;
+        scaled
     }
 
     /// Tries `[[grow]]` rule `r` of the living cell `cell` at index `i`,
@@ -1200,13 +1229,13 @@ impl World {
 
         // Directed outlets and paired per-device intakes, then any legacy
         // outlet cells.
-        let mut jet_sources: Vec<(usize, usize, [f32; 2])> = Vec::new();
-        let mut intake_sources: Vec<(usize, usize, [f32; 2])> = Vec::new();
+        let mut jet_sources: Vec<(usize, usize, [f32; 2], f32)> = Vec::new();
+        let mut intake_sources: Vec<(usize, usize, [f32; 2], f32)> = Vec::new();
         let mut paired_flows = Vec::new();
-        for (((nx, ny), dir), intakes) in device_flows {
+        for (((nx, ny), dir), intakes, scale) in device_flows {
             let open_nozzle = find_open(blocked, fw, fh, nx / FIELD_SCALE, ny / FIELD_SCALE, dir);
             if let Some((ox, oy)) = open_nozzle {
-                jet_sources.push((ox, oy, dir));
+                jet_sources.push((ox, oy, dir, scale));
             }
             let inward = [-dir[0], -dir[1]];
             let mut open_intakes = Vec::with_capacity(intakes.len());
@@ -1214,14 +1243,14 @@ impl World {
                 if let Some((ox, oy)) =
                     find_open(blocked, fw, fh, ix / FIELD_SCALE, iy / FIELD_SCALE, dir)
                 {
-                    intake_sources.push((ox, oy, inward));
+                    intake_sources.push((ox, oy, inward, scale));
                     open_intakes.push((ox, oy));
                 }
             }
             if let Some(nozzle_cell) = open_nozzle
                 && !open_intakes.is_empty()
             {
-                paired_flows.push((nozzle_cell, open_intakes));
+                paired_flows.push((nozzle_cell, open_intakes, scale));
             }
         }
         let mut legacy = BTreeSet::new();
@@ -1238,7 +1267,7 @@ impl World {
         for (fy, fx, right) in legacy {
             let dir = [if right { 1.0 } else { -1.0 }, 0.0];
             if let Some((ox, oy)) = find_open(blocked, fw, fh, fx, fy, dir) {
-                jet_sources.push((ox, oy, dir));
+                jet_sources.push((ox, oy, dir, 1.0));
             }
         }
 
@@ -1258,7 +1287,7 @@ impl World {
         let reach = (cfg.reach as usize).div_ceil(FIELD_SCALE).max(1);
         #[allow(clippy::cast_precision_loss)] // small counts
         let (reach_f, spread_f) = (reach as f32, cfg.spread as f32);
-        for &(fx, fy, [dx, dy]) in &jet_sources {
+        for &(fx, fy, [dx, dy], scale) in &jet_sources {
             let y0 = fy.saturating_sub(reach);
             let y1 = (fy + reach).min(fh - 1);
             let x0 = fx.saturating_sub(reach);
@@ -1281,7 +1310,7 @@ impl World {
                     if transverse <= 0.0 || !line_of_sight(blocked, fw, fx, fy, bx, by) {
                         continue;
                     }
-                    let speed = cfg.speed * (1.0 - along / reach_f) * transverse;
+                    let speed = cfg.speed * scale * (1.0 - along / reach_f) * transverse;
                     initial[b][0] += dx * speed;
                     initial[b][1] += dy * speed;
                 }
@@ -1293,7 +1322,7 @@ impl World {
             let ireach = (cfg.intake_reach as usize).div_ceil(FIELD_SCALE).max(1);
             #[allow(clippy::cast_precision_loss)] // small counts
             let r_max = ireach as f32;
-            for &(fx, fy, [in_x, in_y]) in &intake_sources {
+            for &(fx, fy, [in_x, in_y], scale) in &intake_sources {
                 let y0 = fy.saturating_sub(ireach);
                 let y1 = (fy + ireach).min(fh - 1);
                 let x0 = fx.saturating_sub(ireach);
@@ -1308,10 +1337,10 @@ impl World {
                         let (rx, ry) = (fx as f32 - bx as f32, fy as f32 - by as f32);
                         let dist = (rx * rx + ry * ry).sqrt();
                         if dist == 0.0 {
-                            initial[b][0] += in_x * cfg.intake_speed * 0.5;
-                            initial[b][1] += in_y * cfg.intake_speed * 0.5;
+                            initial[b][0] += in_x * cfg.intake_speed * scale * 0.5;
+                            initial[b][1] += in_y * cfg.intake_speed * scale * 0.5;
                         } else if dist < r_max && line_of_sight(blocked, fw, fx, fy, bx, by) {
-                            let speed = cfg.intake_speed * (1.0 - dist / r_max);
+                            let speed = cfg.intake_speed * scale * (1.0 - dist / r_max);
                             initial[b][0] += (rx / dist) * speed;
                             initial[b][1] += (ry / dist) * speed;
                         }
@@ -1320,8 +1349,8 @@ impl World {
             }
             // Pair each device's nozzle (+q) with its own open intakes (-q / n)
             // and zero out net divergence per connected open-water chamber.
-            for ((nx, ny), open_intakes) in paired_flows {
-                let q = cfg.intake_speed;
+            for ((nx, ny), open_intakes, scale) in paired_flows {
+                let q = cfg.intake_speed * scale;
                 #[allow(clippy::cast_precision_loss)] // small intake count
                 let share = q / open_intakes.len() as f32;
                 target_div[ny * fw + nx] += q;
@@ -1867,13 +1896,14 @@ fn project_mac_flow(
 
 /// The water-quality score (SPEC §2.3) from a mean nutrient level over
 /// `water` water cells holding `pollutants` pollutant cells, with `plants`
-/// plant cells in the tank.
+/// plant cells and `filter_bio` effective biological filtration in the tank.
 fn quality_score(
     eco: &Ecology,
     mean_nutrient: f32,
     water: usize,
     pollutants: usize,
     plants: usize,
+    filter_bio: f32,
 ) -> f32 {
     let q = eco.quality;
     #[allow(clippy::cast_precision_loss)] // counts ≪ 2^24
@@ -1882,7 +1912,10 @@ fn quality_score(
         ((mean_nutrient - q.nutrient_ok) / (q.nutrient_bad - q.nutrient_ok)).clamp(0.0, 1.0);
     let pollution = (per_mille(pollutants) / q.pollution_bad).min(1.0);
     let plants = (per_mille(plants) / q.plant_full).min(1.0);
-    (1.0 - q.nutrient_weight * excess - q.pollution_weight * pollution + q.plant_bonus * plants)
+    let filter = filter_bio.clamp(0.0, 1.0);
+    (1.0 - q.nutrient_weight * excess - q.pollution_weight * pollution
+        + q.plant_bonus * plants
+        + q.filter_bonus * filter)
         .clamp(0.0, 1.0)
 }
 

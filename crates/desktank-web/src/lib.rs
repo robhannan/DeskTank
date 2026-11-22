@@ -46,8 +46,8 @@ use desktank_sim::tools::{
     self, AddRefused, Button, Inspection, Outcome, PaletteItem, PalettePath, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, MAX_CREATURE_CAP, MaterialTable, Propagule,
-    Script, World, WorldConfig, cheats, save,
+    CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
+    Propagule, RinseKind, Script, World, WorldConfig, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -727,6 +727,60 @@ impl WebTank {
             .map(|c| c.name().unwrap_or("").to_owned())
     }
 
+    /// Rinses or replaces device `id`'s filter media (`mode`: `"gentle"`,
+    /// `"hard"` or `"replace"`) and returns its updated inspect line (D27, DV3).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if `mode` is unknown or the device is no longer in
+    /// the tank.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = rinseDevice))]
+    pub fn rinse_device(&mut self, id: u32, mode: &str) -> Result<String, String> {
+        let kind = match mode {
+            "gentle" => RinseKind::Gentle,
+            "hard" => RinseKind::Hard,
+            "replace" => RinseKind::Replace,
+            _ => return Err(format!("unknown rinse mode {mode:?}")),
+        };
+        let dev_id = u16::try_from(id)
+            .map(DeviceId)
+            .map_err(|_| "That device is no longer in the tank".to_owned())?;
+        if !self.tank.world_mut().rinse_device(dev_id, kind) {
+            return Err("That device is no longer in the tank".to_owned());
+        }
+        self.dirty = true;
+        let world = self.tank.world();
+        let (x, y) = world.device(dev_id).map_or((0, 0), |d| (d.x, d.y));
+        device_inspect_line(world, dev_id, x, y)
+            .ok_or_else(|| "That device is no longer in the tank".to_owned())
+    }
+
+    /// Toggles device `id`'s intake guard and returns its updated inspect
+    /// line (D27, DV3).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if the device is no longer in the tank.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = toggleDeviceGuard))]
+    pub fn toggle_device_guard(&mut self, id: u32) -> Result<String, String> {
+        let dev_id = u16::try_from(id)
+            .map(DeviceId)
+            .map_err(|_| "That device is no longer in the tank".to_owned())?;
+        if self
+            .tank
+            .world_mut()
+            .toggle_device_intake_guard(dev_id)
+            .is_none()
+        {
+            return Err("That device is no longer in the tank".to_owned());
+        }
+        self.dirty = true;
+        let world = self.tank.world();
+        let (x, y) = world.device(dev_id).map_or((0, 0), |d| (d.x, d.y));
+        device_inspect_line(world, dev_id, x, y)
+            .ok_or_else(|| "That device is no longer in the tank".to_owned())
+    }
+
     /// The material name at cell `(x, y)`, or `""` outside the grid (tests).
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = materialAt))]
     #[must_use]
@@ -1132,18 +1186,8 @@ impl WebTank {
                         })
                     }
                     Inspection::Device { id, x, y } => {
-                        // `device <kind> <id> <glass> <flow> <x> <y>` (D27):
-                        // DV1 shows the jet only; filtering comes in DV3.
-                        let world = self.tank.world();
-                        world.device_status(id).map_or_else(String::new, |s| {
-                            let glass = if s.facing_left { "right" } else { "left" };
-                            format!(
-                                "device {} {} {glass} {:.1} {x} {y}",
-                                s.kind.name(),
-                                id.0,
-                                s.flow
-                            )
-                        })
+                        // `device <kind> <id> <glass> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>` (D27, DV3).
+                        device_inspect_line(self.tank.world(), id, x, y).unwrap_or_default()
                     }
                     Inspection::Creature {
                         id,
@@ -1300,6 +1344,23 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
         dash(card.carrying_days.map(|d| d.to_string())),
         card.name.as_deref().unwrap_or(""),
     )
+}
+
+/// Formats a device's inspect line for `web/main.ts` (D27, DV3):
+/// `device <kind> <id> <glass> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`.
+fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
+    let s = world.device_status(id)?;
+    let glass = if s.facing_left { "right" } else { "left" };
+    let guard = if s.intake_guard { "on" } else { "off" };
+    let fry_safe = if s.fry_safe { "yes" } else { "no" };
+    Some(format!(
+        "device {} {} {glass} {:.1} {:.0} {:.0} {guard} {fry_safe} {x} {y}",
+        s.kind.name(),
+        id.0,
+        s.flow,
+        s.media_load * 100.0,
+        s.maturity * 100.0,
+    ))
 }
 
 fn to_button(code: u32) -> Option<Button> {

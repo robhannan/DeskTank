@@ -62,4 +62,17 @@ pollution_bad = 20.0
 pollution_weight = 0.4
 plant_full = 20.0
 plant_bonus = 0.2
+filter_bonus = 0.15
 algae = "algae"
+
+# Mechanical and biological filtration (D27, DV3): intakes capture these
+# suspended materials into media load (reaching 100% after `capacity` cells),
+# flow falls with load down to `clog_floor` (never below ~30%), media
+# matures over `maturity_days` life-days, and a mature filter speeds up
+# pollutant breakdown by up to `waste_boost` (1 + waste_boost at full bio).
+[filtration]
+capture = ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer", "waste", "detritus", "dead_plant", "algae"]
+capacity = 200.0
+clog_floor = 0.3
+maturity_days = 7.0
+waste_boost = 2.0

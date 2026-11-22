@@ -289,7 +289,35 @@ struct QualityDef {
     pollution_weight: f32,
     plant_full: f32,
     plant_bonus: f32,
+    #[serde(default = "default_filter_bonus")]
+    filter_bonus: f32,
     algae: String,
+}
+
+fn default_filter_bonus() -> f32 {
+    0.15
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FiltrationDef {
+    capture: Vec<String>,
+    capacity: f32,
+    clog_floor: f32,
+    maturity_days: f32,
+    waste_boost: f32,
+}
+
+impl Default for FiltrationDef {
+    fn default() -> Self {
+        Self {
+            capture: Vec::new(),
+            capacity: 200.0,
+            clog_floor: 0.3,
+            maturity_days: 7.0,
+            waste_boost: 2.0,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,6 +330,8 @@ struct FieldsFile {
     bubbler: BubblerDef,
     water_change: WaterChangeDef,
     quality: QualityDef,
+    #[serde(default)]
+    filtration: FiltrationDef,
 }
 
 /// A field amount added when a rule fires.
@@ -495,9 +525,26 @@ pub struct QualityConfig {
     pub plant_full: f32,
     /// Score added by plants, at most.
     pub plant_bonus: f32,
+    /// Score added by a mature running filter, at most (DV3).
+    pub filter_bonus: f32,
     /// The material whose cover of the substrate is reported.
     pub algae: Option<MaterialId>,
     pub(crate) pollutants: MaterialSet,
+}
+
+/// Mechanical and biological filtration settings (D27, DV3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FiltrationConfig {
+    /// Suspended materials an intake captures into media load.
+    pub(crate) capture: MaterialSet,
+    /// Captured cells that fill media load from 0 to 1.
+    pub capacity: f32,
+    /// Minimum flow fraction at full clog (~0.3).
+    pub clog_floor: f32,
+    /// Life-days for fresh media to reach 100% maturity.
+    pub maturity_days: f32,
+    /// Extra pollutant breakdown speed at full biological filtration (`1 + waste_boost`).
+    pub waste_boost: f32,
 }
 
 /// A diffusing field's constants.
@@ -570,6 +617,8 @@ pub struct Ecology {
     pub water_change: WaterChangeConfig,
     /// The water-quality score.
     pub quality: QualityConfig,
+    /// Mechanical and biological filtration (DV3).
+    pub filtration: FiltrationConfig,
 }
 
 impl Ecology {
@@ -628,6 +677,7 @@ impl Ecology {
             spawns: Vec::new(),
             water_change: water_change(&f.water_change, materials, strict)?,
             quality: quality(&f.quality, materials, strict)?,
+            filtration: filtration(&f.filtration, materials, strict)?,
         };
         for (name, d) in [("nutrient", eco.nutrient), ("co2", eco.co2)] {
             if !stable(d.diffusion, eco.current.speed) {
@@ -1022,7 +1072,11 @@ fn quality(
     if !(pos(d.pollution_bad) && pos(d.plant_full)) {
         return Err(invalid(&what, "pollution_bad and plant_full must be > 0"));
     }
-    if !(unit(d.nutrient_weight) && unit(d.pollution_weight) && unit(d.plant_bonus)) {
+    if !(unit(d.nutrient_weight)
+        && unit(d.pollution_weight)
+        && unit(d.plant_bonus)
+        && unit(d.filter_bonus))
+    {
         return Err(invalid(&what, "weights and bonus must be within 0..=1"));
     }
     Ok(QualityConfig {
@@ -1033,8 +1087,36 @@ fn quality(
         pollution_weight: d.pollution_weight,
         plant_full: d.plant_full,
         plant_bonus: d.plant_bonus,
+        filter_bonus: d.filter_bonus,
         algae: lookup(&d.algae, materials, strict)?,
         pollutants: set(&d.pollutants, materials, strict)?,
+    })
+}
+
+fn filtration(
+    d: &FiltrationDef,
+    materials: &MaterialTable,
+    strict: bool,
+) -> Result<FiltrationConfig, EcologyError> {
+    let what = || "filtration".to_owned();
+    if !(d.capacity.is_finite() && d.capacity > 0.0) {
+        return Err(invalid(&what, "capacity must be > 0"));
+    }
+    if !(d.clog_floor.is_finite() && d.clog_floor > 0.0 && d.clog_floor <= 1.0) {
+        return Err(invalid(&what, "clog_floor must be within (0, 1]"));
+    }
+    if !(d.maturity_days.is_finite() && d.maturity_days > 0.0) {
+        return Err(invalid(&what, "maturity_days must be > 0"));
+    }
+    if !(d.waste_boost.is_finite() && d.waste_boost >= 0.0) {
+        return Err(invalid(&what, "waste_boost must be >= 0"));
+    }
+    Ok(FiltrationConfig {
+        capture: set(&d.capture, materials, strict)?,
+        capacity: d.capacity,
+        clog_floor: d.clog_floor,
+        maturity_days: d.maturity_days,
+        waste_boost: d.waste_boost,
     })
 }
 
