@@ -1,6 +1,6 @@
 id = 19
 name = "flowerhorn"
-palette = "animals/centrepiece"
+palette = "fish/centrepiece"
 zone = "mid"
 depth = [0.2, 0.88]
 min_depth = 30

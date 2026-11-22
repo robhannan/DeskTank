@@ -138,18 +138,22 @@ fn palette_categories_follow_the_sim() {
     );
     assert_eq!(
         cat("creature axolotl"),
-        "animals/amphibians\tAnimals\tAmphibians"
+        "amphibians\tAmphibians\tAmphibians"
     );
     // Fish are split by stocking role.
     for (fish, sub) in [
-        ("neon_tetra", "schooling\tAnimals\tSchooling"),
-        ("betta", "centrepiece\tAnimals\tCentrepiece"),
-        ("fancy_goldfish", "coldwater\tAnimals\tColdwater"),
-        ("otocinclus", "cleanup\tAnimals\tClean-up crew"),
+        ("neon_tetra", "schooling\tFish\tSchooling"),
+        ("betta", "centrepiece\tFish\tCentrepiece"),
+        ("fancy_goldfish", "coldwater\tFish\tColdwater"),
+        ("otocinclus", "cleanup\tFish\tClean-up crew"),
     ] {
-        assert_eq!(cat(&format!("creature {fish}")), format!("animals/{sub}"));
+        assert_eq!(cat(&format!("creature {fish}")), format!("fish/{sub}"));
     }
-    // Live food is in Food › Live, not Animals, and not a species the
+    assert_eq!(
+        cat("creature nerite"),
+        "invertebrates/snails\tInvertebrates\tSnails"
+    );
+    // Live food is in Food › Live, not Fish, and not a species the
     // palette stocks.
     assert_eq!(t.live_foods(), ["live_bloodworm"]);
     assert_eq!(cat("live_food live_bloodworm"), "food/live\tFood\tLive");

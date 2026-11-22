@@ -678,7 +678,8 @@ target computes the same bits.
   are alive. A species with `live_food = "<material>"` is live food: a
   small creature moved by the usual systems, offered from **Food › Live**
   in the palette (a click adds a pinch of `PINCH` = 5, scattered within 3
-  cells of the pointer) and never from Animals, `spawn` or
+  cells of the pointer) and never from Fish, Invertebrates or
+  Amphibians, `spawn` or
   `scene::stock`. It never breeds (no `[breeding]`, `[genetics]`,
   `prey_cm`, territory or diet is allowed), and it doesn't count against
   the population cap: a tank holds at most `MAX_LIVE_FOOD` = 32 live
@@ -739,13 +740,17 @@ target computes the same bits.
     - **Care**: root tabs, liquid fertiliser, waste, detritus;
     - **Plants**: Stem, Rosette, Carpet, Floating, Moss & epiphytes
       (one item per plant species), Algae;
-    - **Animals**: the fish by stocking role, Schooling (neon tetra,
-      harlequin rasbora, guppy), Centrepiece (angelfish, betta,
-      flowerhorn, honey gourami, pea puffer), Coldwater (common and
-      fancy goldfish), Clean-up crew (corydoras, kuhli loach,
-      bristlenose pleco, otocinclus); then Shrimp & crabs, Snails,
-      Amphibians (one item per stocked species; cheat-only species
-      aren't offered).
+    - **Fish**, by stocking role: Schooling (neon tetra, harlequin
+      rasbora, guppy), Centrepiece (angelfish, betta, flowerhorn, honey
+      gourami, pea puffer), Coldwater (common and fancy goldfish),
+      Clean-up crew (corydoras, kuhli loach, bristlenose pleco,
+      otocinclus);
+    - **Invertebrates**: Shrimp & crabs, Snails;
+    - **Amphibians**: the frogs and the axolotl (one sub-category, so no
+      sub-tab row).
+
+    The stocking tabs have one item per stocked species; cheat-only
+    species aren't offered.
 
     The open tab opens into a lighter panel holding its sub-tabs and
     items, and sub-tabs are framed in their own colour, so the two

@@ -207,7 +207,7 @@ test("the propagule chips offer the species' own methods and pour seeds", async 
   await expect(row.getByRole("radio", { name: "Buds" })).toBeFocused();
   expect(await tank("plantPropagule")).toBe("buds");
   // Another tab hides the chips; a non-plant item too.
-  await page.getByRole("tab", { name: "Animals" }).click();
+  await page.getByRole("tab", { name: "Fish", exact: true }).click();
   await expect(row).toBeHidden();
   await choose(page, "Sand");
   await expect(row).toBeHidden();

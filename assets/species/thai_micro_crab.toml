@@ -6,7 +6,7 @@
 # two cells away.
 id = 7
 name = "thai_micro_crab"
-palette = "animals/shrimp"
+palette = "invertebrates/shrimp"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 6

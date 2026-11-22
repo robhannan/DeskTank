@@ -2,7 +2,7 @@
 # takes flakes and bloodworms.
 id = 1
 name = "neon_tetra"
-palette = "animals/schooling"
+palette = "fish/schooling"
 zone = "mid"
 # The band of the water column it keeps to: 0 is the surface, 1 the floor.
 depth = [0.25, 0.7]

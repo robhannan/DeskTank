@@ -300,18 +300,22 @@ test.describe("touch", () => {
     }
     // Every item can be reached through its tab and sub-tab.
     await choose(page, "Neon tetra");
-    await expect(page.getByRole("tab", { name: "Animals" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tab", { name: "Fish", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("tab", { name: "Schooling", exact: true })).toHaveAttribute("aria-selected", "true");
-    // Animals' seven sub-tabs wrap rather than scroll.
-    await expect(page.locator("#subtabs").getByRole("tab")).toHaveCount(7);
-    const scrolls = await page.locator("#subtabs").evaluate((el) => el.scrollWidth > el.clientWidth);
-    expect(scrolls, "#subtabs with Animals open").toBe(false);
-    const rows = await page.locator("#subtabs").getByRole("tab").evaluateAll((els: HTMLElement[]) => {
-      const right = Math.max(...els.map((b) => b.getBoundingClientRect().right));
-      return { rows: new Set(els.map((b) => b.offsetTop)).size, fits: right <= innerWidth };
-    });
-    expect(rows.rows, "the sub-tabs wrap onto several rows").toBeGreaterThan(1);
-    expect(rows.fits, "every sub-tab is on screen").toBe(true);
+    // The nine tabs and Plants' six sub-tabs wrap rather than scroll.
+    await expect(page.locator("#tabs").getByRole("tab")).toHaveCount(9);
+    await choose(page, "Hygrophila");
+    await expect(page.locator("#subtabs").getByRole("tab")).toHaveCount(6);
+    for (const id of ["#tabs", "#subtabs"]) {
+      const scrolls = await page.locator(id).evaluate((el) => el.scrollWidth > el.clientWidth);
+      expect(scrolls, `${id} with Plants open`).toBe(false);
+      const rows = await page.locator(id).getByRole("tab").evaluateAll((els: HTMLElement[]) => {
+        const right = Math.max(...els.map((b) => b.getBoundingClientRect().right));
+        return { rows: new Set(els.map((b) => b.offsetTop)).size, fits: right <= innerWidth };
+      });
+      expect(rows.rows, `${id} wrap onto several rows`).toBeGreaterThan(1);
+      expect(rows.fits, `every one of ${id} is on screen`).toBe(true);
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no page overflow").toBe(true);
   });
 });
@@ -333,7 +337,7 @@ test("the palette follows the sim's category tree and navigates with the keyboar
     const [kind, name] = e.split(" ");
     if (kind === "creature") {
       expect(species, e).toContain(name);
-      expect(path(i), `${e} is under Animals`).toMatch(/^animals\//);
+      expect(path(i), `${e} is under Fish, Invertebrates or Amphibians`).toMatch(/^(fish\/|invertebrates\/|amphibians$)/);
     } else if (kind === "live_food") {
       expect(liveFoods, e).toContain(name);
       expect(path(i), `${e} is in Food › Live`).toBe("food/live");
@@ -347,7 +351,10 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   // One tab per top category, in order; it opens on the selection's
   // (sand, in Build › Substrate), showing only that sub-category's items.
   const tabs = page.locator("#tabs").getByRole("tab");
-  await expect(tabs).toHaveText(["Tools", "Build", "Water", "Food", "Care", "Plants", "Animals"]);
+  await expect(tabs).toHaveText(["Tools", "Build", "Water", "Food", "Care", "Plants", "Fish", "Invertebrates", "Amphibians"]);
+  // On a desktop all nine sit in one row, so the open tab joins its panel.
+  const tops = await tabs.evaluateAll((els: HTMLElement[]) => new Set(els.map((b) => b.offsetTop)).size);
+  expect(tops, "one row of tabs").toBe(1);
   const subs = page.locator("#subtabs").getByRole("tab");
   const tab = (name: string) => page.getByRole("tab", { name, exact: true });
   await expect(tab("Build")).toHaveAttribute("aria-selected", "true");
@@ -356,10 +363,20 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   const radios = page.locator("#palette").getByRole("radio");
   await expect(radios).toHaveText(["Sand", "Gravel", "Aquasoil"]);
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
-  // Animals splits the fish by stocking role.
-  await tab("Animals").click();
-  await expect(subs).toHaveText(["Schooling", "Centrepiece", "Coldwater", "Clean-up crew", "Shrimp & crabs", "Snails", "Amphibians"]);
+  // Fish are split by stocking role; invertebrates into shrimp and snails;
+  // amphibians are one sub-category, with no sub-tab row.
+  await tab("Fish").click();
+  await expect(subs).toHaveText(["Schooling", "Centrepiece", "Coldwater", "Clean-up crew"]);
   await expect(radios).toHaveText(["Neon tetra", "Guppy", "Harlequin rasbora"]);
+  await tab("Invertebrates").click();
+  await expect(subs).toHaveText(["Shrimp & crabs", "Snails"]);
+  await expect(radios).toHaveText(["Cherry shrimp", "Amano shrimp", "Thai micro crab"]);
+  await tab("Snails").click();
+  await expect(radios).toHaveText(["Nerite", "Mystery snail", "Ramshorn snail"]);
+  await tab("Amphibians").click();
+  await expect(page.locator("#subtabs")).toBeHidden();
+  await expect(radios).toHaveText(["African dwarf frog", "Axolotl", "Common frog"]);
+  await tab("Fish").click();
   await tab("Clean-up crew").click();
   await expect(radios).toHaveText(["Corydoras", "Otocinclus", "Bristlenose pleco", "Kuhli loach"]);
   await expect(page.getByRole("radio", { name: "Sand" })).toBeHidden();
@@ -429,6 +446,31 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await page.keyboard.press("g");
   await page.keyboard.press("Shift+G");
   await expect(tab("Substrate"), "back on the selection's sub-category").toHaveAttribute("aria-selected", "true");
+  // G steps through all nine tabs and wraps; Shift+G back. The selection's
+  // tab is marked wherever the others are open.
+  const order = ["Build", "Water", "Food", "Care", "Plants", "Fish", "Invertebrates", "Amphibians", "Tools", "Build"];
+  for (const name of order.slice(1)) {
+    await page.keyboard.press("g");
+    await expect(tab(name)).toHaveAttribute("aria-selected", "true");
+  }
+  for (const name of [...order].reverse().slice(1)) {
+    await page.keyboard.press("Shift+G");
+    await expect(tab(name)).toHaveAttribute("aria-selected", "true");
+  }
+  await choose(page, "Nerite");
+  await tab("Fish").click();
+  await expect(page.locator("#tab-invertebrates")).toHaveAttribute("data-holds", "");
+  await expect(page.locator("#tab-fish")).not.toHaveAttribute("data-holds", "");
+  await tab("Invertebrates").click();
+  await expect(tab("Snails"), "opens on the selection's sub-category").toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#sub-invertebrates-snails")).not.toHaveAttribute("data-holds", "");
+  await tab("Shrimp & crabs").click();
+  await expect(page.locator("#sub-invertebrates-snails")).toHaveAttribute("data-holds", "");
+  await choose(page, "Axolotl");
+  await tab("Fish").click();
+  await expect(page.locator("#tab-amphibians")).toHaveAttribute("data-holds", "");
+  await expect(page.locator("#tab-invertebrates")).not.toHaveAttribute("data-holds", "");
+  await choose(page, "Sand");
 
   // Scrolling over the palette steps through the sub-categories, on into
   // the next tab.

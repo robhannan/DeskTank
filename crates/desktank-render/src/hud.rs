@@ -623,9 +623,9 @@ mod tests {
         .unwrap();
         let tree = desktank_sim::tools::Tools::palette_tree(&w);
         let subs = tree.iter().map(|t| t.subs.len()).max().unwrap();
-        // Animals' seven sub-tabs (four of them fish by stocking role) are
-        // the widest sub-tab row; it fits beside the rest.
-        assert_eq!(subs, 7);
+        // Plants' six sub-tabs are the widest sub-tab row; Fish has four.
+        assert_eq!(subs, 6);
+        assert_eq!(tree.len(), 9, "nine top tabs");
         let widest = tree
             .iter()
             .flat_map(|t| &t.subs)
@@ -635,6 +635,23 @@ mod tests {
         let n = tree.len().max(subs).max(widest);
         assert_eq!(image_size(tree.len(), subs, widest).0, row_width(n));
         assert!(GAP + u32::try_from(n).unwrap() * ROW <= MAX_SIZE.0);
+        // All nine tabs fit on one row, every one clickable, from the
+        // window's minimum size (160 × 90) up.
+        for target in [(160, 90), (320, 180), (1280, 720), (3840, 2160)] {
+            let grid = Layout::fit((320, 180), target);
+            let p = PaletteLayout::fit(target, &grid, tree.len(), subs, widest);
+            assert!(p.origin.0 + p.size().0 <= target.0, "{target:?}");
+            let last = u32::try_from(tree.len() - 1).unwrap();
+            let centre =
+                |slot: u32| f64::from(p.origin.0 + p.scale * (GAP + slot * ROW + SLOT / 2));
+            let y = f64::from(p.origin.1 + p.scale * (GAP + SLOT / 2));
+            assert_eq!(p.hit(centre(0), y), Some(PaletteHit::Tab(0)), "{target:?}");
+            assert_eq!(
+                p.hit(centre(last), y),
+                Some(PaletteHit::Tab(tree.len() - 1)),
+                "{target:?}"
+            );
+        }
     }
 
     #[test]

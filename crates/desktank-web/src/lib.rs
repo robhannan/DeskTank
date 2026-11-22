@@ -304,7 +304,7 @@ impl WebTank {
     }
 
     /// Each palette item's sub-category, as `"<path>\t<tab label>\t<sub
-    /// label>"` (e.g. `"animals/schooling\tAnimals\tSchooling"`, or
+    /// label>"` (e.g. `"fish/schooling\tFish\tSchooling"`, or
     /// `"water\tWater\tWater"` for a tab's only sub-category); the path's
     /// first part is the tab's name. Items of a sub-category are
     /// consecutive, sub-categories of a tab too, all in palette order.

@@ -549,15 +549,19 @@ fn the_palette_adds_creatures_of_each_species() {
             _ => None,
         })
         .collect();
-    // The Animals tab holds only stocked species (no live food).
-    let animals = Tools::palette_tree(&w)
+    // The Fish, Invertebrates and Amphibians tabs hold only stocked
+    // species (no live food), and every stocked species is in one of them.
+    let stocking: Vec<_> = Tools::palette_tree(&w)
         .into_iter()
-        .find(|t| t.name == "animals")
-        .unwrap();
-    assert!(animals.subs.iter().flat_map(|s| &s.items).all(|&i| matches!(
+        .filter(|t| ["fish", "invertebrates", "amphibians"].contains(&t.name))
+        .flat_map(|t| t.subs)
+        .flat_map(|s| s.items)
+        .collect();
+    assert!(stocking.iter().all(|&i| matches!(
         i,
         PaletteItem::Tool(Tool::AddCreature(s)) if w.species().get(s).is_some_and(desktank_sim::Species::stocked)
     )));
+    assert_eq!(stocking.len(), adders.len());
     // Every species but the cheat-only crabs and blinker, and live food
     // (its slot is in Food › Live: tests/live_food.rs).
     let stocked = w.species().iter().filter(|s| s.stocked()).count();

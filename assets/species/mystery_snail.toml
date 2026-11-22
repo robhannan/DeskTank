@@ -1,6 +1,6 @@
 id = 22
 name = "mystery_snail"
-palette = "animals/snails"
+palette = "invertebrates/snails"
 zone = "surfaces"
 depth = [0.0, 1.0]
 min_depth = 18

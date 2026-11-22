@@ -54,9 +54,9 @@ pub const DEFAULT_ZOOM: u32 = ZOOM_LEVELS[0];
 /// [`Tools::palette_tree`] gives them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaletteTab {
-    /// Its name (`"animals"`).
+    /// Its name (`"fish"`).
     pub name: &'static str,
-    /// Its label (`"Animals"`).
+    /// Its label (`"Fish"`).
     pub label: &'static str,
     /// Its sub-categories with items, in palette order. Hosts show a
     /// sub-tab row only when there are several.
@@ -1161,7 +1161,15 @@ mod tests {
         assert_eq!(
             tops,
             [
-                "Tools", "Build", "Water", "Food", "Care", "Plants", "Animals"
+                "Tools",
+                "Build",
+                "Water",
+                "Food",
+                "Care",
+                "Plants",
+                "Fish",
+                "Invertebrates",
+                "Amphibians"
             ],
             "every top category is filled"
         );
@@ -1210,11 +1218,11 @@ mod tests {
             ),
             ("plants/algae", vec!["algae"]),
             (
-                "animals/schooling",
+                "fish/schooling",
                 vec!["neon_tetra", "guppy", "harlequin_rasbora"],
             ),
             (
-                "animals/centrepiece",
+                "fish/centrepiece",
                 vec![
                     "betta",
                     "honey_gourami",
@@ -1223,12 +1231,9 @@ mod tests {
                     "flowerhorn",
                 ],
             ),
+            ("fish/coldwater", vec!["common_goldfish", "fancy_goldfish"]),
             (
-                "animals/coldwater",
-                vec!["common_goldfish", "fancy_goldfish"],
-            ),
-            (
-                "animals/cleanup",
+                "fish/cleanup",
                 vec![
                     "corydoras",
                     "otocinclus",
@@ -1237,15 +1242,15 @@ mod tests {
                 ],
             ),
             (
-                "animals/shrimp",
+                "invertebrates/shrimp",
                 vec!["cherry_shrimp", "amano_shrimp", "thai_micro_crab"],
             ),
             (
-                "animals/snails",
+                "invertebrates/snails",
                 vec!["nerite", "mystery_snail", "ramshorn_snail"],
             ),
             (
-                "animals/amphibians",
+                "amphibians",
                 vec!["african_dwarf_frog", "axolotl", "common_frog"],
             ),
         ];

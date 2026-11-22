@@ -123,7 +123,9 @@ canvas {
   margin: 10px 0;
 }
 
-.tools { flex-wrap: nowrap; }
+/* The palette takes the whole width, so its nine tabs fit one row on a
+   desktop; the brush and zoom sit under it. */
+.tools { flex-wrap: wrap; }
 
 /* The tabs, the open tab's sub-tabs, its items and a selected plant's
    propagule chips; every row wraps, so nothing scrolls sideways at phone
@@ -136,7 +138,7 @@ canvas {
   --tab-body: #1f3a56;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1 100%;
   min-width: 0;
 }
 
@@ -367,11 +369,9 @@ input[type="range"] { accent-color: var(--accent); vertical-align: middle; }
 
 label { white-space: nowrap; }
 
-/* Phones: the brush slider gets its own row under the palette. */
+/* Phones: touch-sized palette targets. */
 @media (max-width: 600px) {
   main { padding: 10px; }
-  .tools { flex-wrap: wrap; }
-  .palette-box { flex-basis: 100%; }
   .swatch, #tabs [role="tab"], .subtabs [role="tab"], .propagules .chip { min-height: 44px; padding: 6px 8px; }
   #tabs [role="tab"][aria-selected="true"] { padding-bottom: 8px; }
 }

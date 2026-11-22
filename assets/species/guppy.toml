@@ -6,7 +6,7 @@
 # bloodworms, and fry.
 id = 9
 name = "guppy"
-palette = "animals/schooling"
+palette = "fish/schooling"
 zone = "mid"
 depth = [0.1, 0.55]
 min_depth = 20

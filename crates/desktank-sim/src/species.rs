@@ -256,7 +256,7 @@ pub struct Species {
     /// Added only by its own cheat (SPEC §2.5): left out of the palette,
     /// the `spawn` cheat and stocking, and it never breeds.
     pub cheat_only: bool,
-    /// The palette sub-category it is offered in (`palette = "animals/schooling"`),
+    /// The palette sub-category it is offered in (`palette = "fish/schooling"`),
     /// or `None` if the palette doesn't offer it (the cheat-only species).
     pub palette: Option<PalettePath>,
     /// Live food (bloodworms; SPEC §2.4 *Live food*): offered from the
