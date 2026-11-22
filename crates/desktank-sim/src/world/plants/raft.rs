@@ -312,9 +312,14 @@ impl World {
                     rest += milli;
                     n_rest += 1;
                 }
-                let [vx, vy] = self.current_at_cell(i % width, y);
-                cur_x += vx;
-                cur_y += vy;
+                let mut cur = self.current_at_cell(i % width, y);
+                if ball && cur == [0.0, 0.0] && y >= crate::field::FIELD_SCALE {
+                    // A marimo resting on a bed whose 8x8 field block is mostly
+                    // substrate still sits in open water just above it.
+                    cur = self.current_at_cell(i % width, y - crate::field::FIELD_SCALE);
+                }
+                cur_x += cur[0];
+                cur_y += cur[1];
             }
             mass += leaves + rest;
             let yi = i64::try_from(y).unwrap_or(i64::MAX);

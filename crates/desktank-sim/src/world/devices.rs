@@ -44,6 +44,10 @@ impl Devices {
         self.table.values()
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
+
     pub(super) fn kinds(&self) -> &DeviceKinds {
         &self.kinds
     }
@@ -221,8 +225,10 @@ impl World {
     #[must_use]
     pub fn device_status(&self, id: DeviceId) -> Option<DeviceStatus> {
         let d = self.device(id)?;
-        let (nx, ny) = d.nozzle(self.devices.kinds.get(d.kind));
-        let [vx, vy] = self.current_at_cell(nx, ny);
+        let art = self.devices.kinds.get(d.kind);
+        let (nx, ny) = d.nozzle(art);
+        let [dx, dy] = d.nozzle_dir(art);
+        let [vx, vy] = self.nozzle_flow(nx, ny, [dx, dy]);
         Some(DeviceStatus {
             kind: d.kind,
             flow: vx.hypot(vy),
@@ -393,6 +399,10 @@ impl World {
                     self.write_cell(i % self.width, i / self.width, outlet, &mut None);
                 }
             }
+        }
+        if !self.devices.is_empty() {
+            self.refresh_all_blocked();
+            self.recompute_current_quiet();
         }
     }
 }

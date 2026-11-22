@@ -71,12 +71,17 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
     cups.
 - **Flow** (DV2). The current is a static 2D vector field (`[vx, vy]` in
   cells per second) at 1/8 resolution ([world](world.md) §2.1 *Devices*),
-  rebuilt only when a device is added or removed: each device's nozzle
-  drives a directed jet (`nozzle_dir`), and each intake (`intakes`) draws
-  water radially inwards. Dissolved fields (nutrients, CO₂) advect in 2D;
-  floaters, non-water dense liquids, light loose powders (density < 1.5),
-  rising bubbles, marimo and creatures follow the current's direction.
-  The Flow overlay renders speed tint and per-block directional arrows.
+  rebuilt only when a device is added or removed or when an 8×8 block
+  flips between open water and blocked (mostly solid hardscape/substrate/device
+  or pure air): each device's nozzle drives a directed jet (`nozzle_dir`)
+  and each intake (`intakes`) draws water radially inwards, projected
+  onto an incompressible MAC flow (`∇ · u = target_div`, zero normal
+  flow at tank walls and blocked cells) so jets deflect off walls and
+  rocks and circulate back towards intakes. Dissolved fields (nutrients,
+  CO₂) advect in 2D; floaters, non-water dense liquids, light loose
+  powders (density < 1.5), rising bubbles, marimo and creatures follow
+  the current's direction. The Flow overlay renders speed tint and
+  per-block directional arrows.
 - **Filtration** (DV3). Intakes capture suspended particles (food,
   waste, detritus, algae in the water) into the device's **media load**.
   Load clogs the filter and flow drops as it clogs, but **never below
@@ -112,10 +117,11 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   converts them into prefab bubblers. Nothing places outlet cells any
   more; scripts naming `filter_outlet` place an internal filter.
 - **Resources** ([architecture](architecture.md) §6). An idle device adds no per-tick work of its own:
-  the current is rebuilt only when a device is added or removed, intake
-  work (DV3) touches only intake cells, and a device's state changes only
-  when it works. The current pass (`run_current`) tracks carryable cells
-  per 8×8 field block (recounted only where cells changed) and skips
-  blocks with nothing to carry, so a settled tank scans zero blocks per
-  tick. Sprites stay within the WebGL2 limits (one atlas, the creature
-  instance buffer).
+  the current is rebuilt only when a device changes or a dirty block's
+  open/blocked state flips, intake work (DV3) touches only intake cells,
+  and a device's state changes only when it works. The current pass
+  (`run_current`) tracks carryable cells per 8×8 field block (recounted
+  only where cells changed) and skips blocks with nothing to carry, so a
+  settled tank performs zero rebuilds and zero block scans per tick.
+  Sprites stay within the WebGL2 limits (one atlas, the creature instance
+  buffer).

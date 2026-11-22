@@ -52,6 +52,11 @@ const POLLUTANT: u8 = 16;
 /// A cell the 2D current can carry (floaters, non-water dense liquids and
 /// light loose powders).
 const CARRYABLE: u8 = 32;
+/// Solid or heavy substrate cell that blocks water flow (rocks, driftwood,
+/// substrate, devices).
+const SOLID_BLOCKING: u8 = 64;
+/// Light fluid cell (air above the water line).
+const AIR_CELL: u8 = 128;
 /// Liquids at least this dense count as water for light and current.
 const WATERY_DENSITY: f32 = 0.5;
 /// Powders lighter than this are loose enough to be carried by the current;
@@ -152,6 +157,7 @@ impl Registry {
 
 /// Life state owned by the world.
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)] // independent dirty flags
 pub(super) struct Life {
     eco: Ecology,
     flags: Vec<u8>,
@@ -191,6 +197,15 @@ pub(super) struct Life {
     any_movers_dirty: bool,
     /// Total carryable cells across the tank.
     total_movers: usize,
+    /// Per field cell: true if mostly solid (rock, substrate, driftwood,
+    /// device) or completely air, so current cannot flow through it.
+    blocked: Vec<bool>,
+    /// Field cells whose blocked state needs recounting.
+    blocked_dirty: Vec<bool>,
+    any_blocked_dirty: bool,
+    /// Set when any block's blocked/open state flipped, triggering a debounced
+    /// current rebuild on the next `FIELD_EVERY` tick.
+    blocked_flipped: bool,
     /// Blocks `run_current` actually scanned (for settled-cost tests).
     current_scans: u64,
     /// 2D current per field cell, `[vx, vy]` in cells per second (`+x` right,
@@ -220,30 +235,46 @@ impl Life {
     ) -> Self {
         let (width, height) = size;
         let water = materials.id("water");
-        let mut flags = vec![0u8; 256];
-        // Unknown IDs behave as solid (see `World`), so they block light.
+        let algae = eco.quality.algae;
+        let egg = materials.id("egg");
+        // Unknown IDs behave as solid (see `World`), so they block light and flow.
+        let mut flags = vec![SOLID_BLOCKING; 256];
         let mut opacity_of = vec![u8::MAX; 256];
         for m in materials.iter() {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // validated 0..=1
             let o = (m.opacity * 255.0).round() as u8;
             opacity_of[usize::from(m.id.0)] = o;
             let f = &mut flags[usize::from(m.id.0)];
+            *f = 0;
             if eco.behaviour[usize::from(m.id.0)].is_living() || plants.contains(&m.id) {
                 *f |= LIVING;
             }
             if Some(m.id) == eco.bubbler.material || Some(m.id) == eco.current.material {
                 *f |= DEVICE;
             }
-            if m.class == MovementClass::Liquid && m.density >= WATERY_DENSITY {
-                *f |= WATERY;
-                if Some(m.id) != water {
-                    *f |= CARRYABLE;
+            if m.class == MovementClass::Liquid {
+                if m.density >= WATERY_DENSITY {
+                    *f |= WATERY;
+                    if Some(m.id) != water {
+                        *f |= CARRYABLE;
+                    }
+                } else {
+                    *f |= AIR_CELL;
                 }
             }
             if m.class == MovementClass::Floating
                 || (m.class == MovementClass::Powder && m.density < LOOSE_POWDER_MAX_DENSITY)
             {
                 *f |= CARRYABLE;
+            }
+            if m.class == MovementClass::Rigid
+                || (m.class == MovementClass::Powder && m.density >= LOOSE_POWDER_MAX_DENSITY)
+                || (m.class == MovementClass::Solid
+                    && !plants.contains(&m.id)
+                    && Some(m.id) != algae
+                    && Some(m.id) != egg)
+            {
+                *f |= SOLID_BLOCKING;
             }
             if foods.contains(&m.id) {
                 *f |= FOOD;
@@ -279,6 +310,10 @@ impl Life {
             movers_dirty: vec![true; blocks],
             any_movers_dirty: true,
             total_movers: 0,
+            blocked: vec![false; blocks],
+            blocked_dirty: vec![true; blocks],
+            any_blocked_dirty: true,
+            blocked_flipped: false,
             current_scans: 0,
             current: vec![[0.0, 0.0]; blocks],
             current_blocks: Vec::new(),
@@ -509,6 +544,8 @@ impl World {
         }
         self.update_light();
         self.refresh_movers();
+        self.refresh_blocked();
+        self.life.blocked_flipped = false;
         self.recompute_current();
     }
 
@@ -589,6 +626,12 @@ impl World {
             registry.total = lists.iter().map(Vec::len).sum();
             registry.lists = lists;
         }
+        life.blocked.fill(false);
+        life.blocked_dirty.fill(true);
+        life.any_blocked_dirty = true;
+        life.blocked_flipped = false;
+        self.refresh_blocked();
+        self.life.blocked_flipped = false;
         self.recompute_current();
         let life = &mut self.life;
         life.budget = usize::try_from(saved.budget).unwrap_or(usize::MAX).max(1);
@@ -627,7 +670,13 @@ impl World {
                 self.refresh_registries(ci, r);
             }
         }
-        if mem::take(&mut self.life.devices_dirty) {
+        if self.life.any_blocked_dirty {
+            self.refresh_blocked();
+        }
+        let has_flow = !self.devices.is_empty() || self.life.devices.total > 0;
+        let rebuild_devices = mem::take(&mut self.life.devices_dirty);
+        let rebuild_obstacles = has_flow && mem::take(&mut self.life.blocked_flipped);
+        if rebuild_devices || rebuild_obstacles {
             self.recompute_current();
         }
         self.run_devices();
@@ -638,6 +687,29 @@ impl World {
         // the tidy then keeps the table matching the grid.
         self.update_plants();
         self.tidy_plants();
+        // Keep `blocked` and `current` in sync with `after_tick` edits so a
+        // tank saved at the end of any tick matches one loaded from that save.
+        if has_flow {
+            let fw = self.life.light.width();
+            for c in &self.chunks {
+                let r = c.changed_next;
+                if r.is_empty() {
+                    continue;
+                }
+                for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
+                    for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {
+                        self.life.blocked_dirty[fy * fw + fx] = true;
+                    }
+                }
+                self.life.any_blocked_dirty = true;
+            }
+            if self.life.any_blocked_dirty {
+                self.refresh_blocked();
+            }
+            if mem::take(&mut self.life.blocked_flipped) {
+                self.recompute_current();
+            }
+        }
         if self.tick.is_multiple_of(FIELD_EVERY) {
             self.step_fields();
         }
@@ -665,10 +737,12 @@ impl World {
                 life.opacity_dirty[b] = true;
                 life.census_dirty[b] = true;
                 life.movers_dirty[b] = true;
+                life.blocked_dirty[b] = true;
             }
         }
         life.any_opacity_dirty = true;
         life.any_movers_dirty = true;
+        life.any_blocked_dirty = true;
     }
 
     /// The water-quality score as [`World::ecosystem`] computes it, from
@@ -1040,10 +1114,80 @@ impl World {
         self.life.devices_dirty = true;
     }
 
+    /// Marks every field block dirty and recomputes `blocked` without setting
+    /// `blocked_flipped` (for load-time migration).
+    pub(super) fn refresh_all_blocked(&mut self) {
+        self.life.blocked_dirty.fill(true);
+        self.life.any_blocked_dirty = true;
+        self.refresh_blocked();
+        self.life.blocked_flipped = false;
+    }
+
+    /// Recounts whether each dirty field block is blocked (mostly solid or
+    /// completely air), setting `blocked_flipped` if any block changed state.
+    pub(super) fn refresh_blocked(&mut self) {
+        let life = &mut self.life;
+        life.any_blocked_dirty = false;
+        let fw = life.light.width();
+        for (b, dirty) in life.blocked_dirty.iter_mut().enumerate() {
+            if !mem::take(dirty) {
+                continue;
+            }
+            let (x0, y0) = ((b % fw) * FIELD_SCALE, (b / fw) * FIELD_SCALE);
+            let (x1, y1) = (
+                (x0 + FIELD_SCALE).min(self.width),
+                (y0 + FIELD_SCALE).min(self.height),
+            );
+            let area = (x1 - x0) * (y1 - y0);
+            let (mut solid, mut air) = (0usize, 0usize);
+            for y in y0..y1 {
+                for c in &self.cells[y * self.width + x0..y * self.width + x1] {
+                    let f = life.flags[usize::from(c.material.0)];
+                    solid += usize::from(f & SOLID_BLOCKING != 0);
+                    air += usize::from(f & AIR_CELL != 0);
+                }
+            }
+            let is_blocked = solid * 2 > area || air == area;
+            if life.blocked[b] != is_blocked {
+                life.blocked[b] = is_blocked;
+                life.blocked_flipped = true;
+            }
+        }
+    }
+
+    /// Flow vector at the open water cell immediately outside a device nozzle.
+    pub(super) fn nozzle_flow(&self, x: usize, y: usize, dir: [f32; 2]) -> [f32; 2] {
+        let life = &self.life;
+        if life.current_blocks.is_empty() {
+            return [0.0, 0.0];
+        }
+        let (fw, fh) = (life.light.width(), life.light.height());
+        let Some((ox, oy)) =
+            find_open(&life.blocked, fw, fh, x / FIELD_SCALE, y / FIELD_SCALE, dir)
+        else {
+            return [0.0, 0.0];
+        };
+        life.current[oy * fw + ox]
+    }
+
+    /// Rebuilds the 2D current field without waking resting fields or rafts
+    /// (used after migrating legacy outlets on load so saved wake state stays
+    /// intact).
+    pub(super) fn recompute_current_quiet(&mut self) {
+        self.recompute_current_inner(false);
+    }
+
     /// Rebuilds the 2D current field from device nozzles (directed jets),
-    /// device intakes (radial sinks) and any legacy filter outlet cells.
-    #[allow(clippy::many_single_char_names)] // field maths
-    fn recompute_current(&mut self) {
+    /// device intakes (radial sinks) and any legacy filter outlet cells,
+    /// then projects onto an obstacle- and wall-aware incompressible flow on
+    /// the 1/8-resolution MAC grid so jets deflect off walls and rocks and
+    /// circulate back towards intakes.
+    pub(super) fn recompute_current(&mut self) {
+        self.recompute_current_inner(true);
+    }
+
+    #[allow(clippy::many_single_char_names, clippy::too_many_lines)] // field maths
+    fn recompute_current_inner(&mut self, wake: bool) {
         let jets = self.device_jets();
         let intakes = self.device_intakes();
         self.devices.rebuilds += 1;
@@ -1053,13 +1197,18 @@ impl World {
         let outlet = life.eco.current.material;
         let cfg = life.eco.current;
         let (fw, fh) = (life.light.width(), life.light.height());
+        let blocked = &life.blocked;
 
-        // Directed outlets: device nozzles first, then any legacy outlet cells
-        // (deduplicated per field cell and direction).
-        let mut jet_sources: Vec<(usize, usize, [f32; 2])> = jets
-            .into_iter()
-            .map(|((x, y), dir)| (x / FIELD_SCALE, y / FIELD_SCALE, dir))
-            .collect();
+        // Directed outlets: device nozzles first, then any legacy outlet cells.
+        let mut jet_sources: Vec<(usize, usize, [f32; 2])> = Vec::new();
+        let mut open_nozzles: Vec<Option<(usize, usize)>> = Vec::with_capacity(jets.len());
+        for ((x, y), dir) in jets {
+            let open = find_open(blocked, fw, fh, x / FIELD_SCALE, y / FIELD_SCALE, dir);
+            open_nozzles.push(open);
+            if let Some((ox, oy)) = open {
+                jet_sources.push((ox, oy, dir));
+            }
+        }
         let mut legacy = BTreeSet::new();
         for list in &life.devices.lists {
             for &i in list {
@@ -1072,19 +1221,39 @@ impl World {
             }
         }
         for (fy, fx, right) in legacy {
-            jet_sources.push((fx, fy, [if right { 1.0 } else { -1.0 }, 0.0]));
+            let dir = [if right { 1.0 } else { -1.0 }, 0.0];
+            if let Some((ox, oy)) = find_open(blocked, fw, fh, fx, fy, dir) {
+                jet_sources.push((ox, oy, dir));
+            }
         }
 
+        if jet_sources.is_empty() && intakes.is_empty() {
+            if wake {
+                life.nutrient.wake();
+                life.co2.wake();
+                self.wake_rafts();
+            }
+            self.life.version += 1;
+            return;
+        }
+
+        // Seed unoccluded open-water velocity from jets and intakes.
+        let n_cells = fw * fh;
+        let mut initial = vec![[0.0_f32; 2]; n_cells];
         let reach = (cfg.reach as usize).div_ceil(FIELD_SCALE).max(1);
         #[allow(clippy::cast_precision_loss)] // small counts
         let (reach_f, spread_f) = (reach as f32, cfg.spread as f32);
-        for (fx, fy, [dx, dy]) in jet_sources {
+        for &(fx, fy, [dx, dy]) in &jet_sources {
             let y0 = fy.saturating_sub(reach);
             let y1 = (fy + reach).min(fh - 1);
             let x0 = fx.saturating_sub(reach);
             let x1 = (fx + reach).min(fw - 1);
             for by in y0..=y1 {
                 for bx in x0..=x1 {
+                    let b = by * fw + bx;
+                    if blocked[b] {
+                        continue;
+                    }
                     #[allow(clippy::cast_precision_loss)] // field coords ≤ 1024
                     let (rx, ry) = (bx as f32 - fx as f32, by as f32 - fy as f32);
                     let along = rx * dx + ry * dy;
@@ -1094,64 +1263,103 @@ impl World {
                     let across = (rx * -dy + ry * dx).abs();
                     let half = 1.0 + along / spread_f;
                     let transverse = (1.0 - across / (half + 0.5)).max(0.0);
-                    if transverse <= 0.0 {
+                    if transverse <= 0.0 || !line_of_sight(blocked, fw, fx, fy, bx, by) {
                         continue;
                     }
                     let speed = cfg.speed * (1.0 - along / reach_f) * transverse;
-                    let v = &mut life.current[by * fw + bx];
-                    v[0] += dx * speed;
-                    v[1] += dy * speed;
+                    initial[b][0] += dx * speed;
+                    initial[b][1] += dy * speed;
                 }
             }
         }
 
-        // Intake sinks: draw water radially towards each intake cell.
+        let mut target_div = vec![0.0_f32; n_cells];
         if cfg.intake_speed > 0.0 && cfg.intake_reach > 0 {
             let ireach = (cfg.intake_reach as usize).div_ceil(FIELD_SCALE).max(1);
             #[allow(clippy::cast_precision_loss)] // small counts
             let r_max = ireach as f32;
+            let mut open_intakes = Vec::with_capacity(intakes.len());
             for ((ix, iy), [in_x, in_y]) in intakes {
-                let (fx, fy) = (ix / FIELD_SCALE, iy / FIELD_SCALE);
+                let Some((fx, fy)) = find_open(
+                    blocked,
+                    fw,
+                    fh,
+                    ix / FIELD_SCALE,
+                    iy / FIELD_SCALE,
+                    [-in_x, -in_y],
+                ) else {
+                    continue;
+                };
+                open_intakes.push((fx, fy));
                 let y0 = fy.saturating_sub(ireach);
                 let y1 = (fy + ireach).min(fh - 1);
                 let x0 = fx.saturating_sub(ireach);
                 let x1 = (fx + ireach).min(fw - 1);
                 for by in y0..=y1 {
                     for bx in x0..=x1 {
+                        let b = by * fw + bx;
+                        if blocked[b] {
+                            continue;
+                        }
                         #[allow(clippy::cast_precision_loss)] // field coords ≤ 1024
                         let (rx, ry) = (fx as f32 - bx as f32, fy as f32 - by as f32);
                         let dist = rx.hypot(ry);
-                        let v = &mut life.current[by * fw + bx];
                         if dist == 0.0 {
-                            v[0] += in_x * cfg.intake_speed * 0.5;
-                            v[1] += in_y * cfg.intake_speed * 0.5;
-                        } else if dist < r_max {
+                            initial[b][0] += in_x * cfg.intake_speed * 0.5;
+                            initial[b][1] += in_y * cfg.intake_speed * 0.5;
+                        } else if dist < r_max && line_of_sight(blocked, fw, fx, fy, bx, by) {
                             let speed = cfg.intake_speed * (1.0 - dist / r_max);
-                            v[0] += (rx / dist) * speed;
-                            v[1] += (ry / dist) * speed;
+                            initial[b][0] += (rx / dist) * speed;
+                            initial[b][1] += (ry / dist) * speed;
                         }
                     }
                 }
             }
+            // Pair nozzle sources (+q) with intake sinks (-q) so net divergence
+            // across open water is zero and circulation closes cleanly.
+            let paired = open_nozzles.iter().flatten().zip(&open_intakes);
+            for (&(nx, ny), &(ix, iy)) in paired {
+                let q = cfg.intake_speed;
+                target_div[ny * fw + nx] += q;
+                target_div[iy * fw + ix] -= q;
+            }
         }
 
-        for (b, v) in life.current.iter_mut().enumerate() {
-            let mag = v[0].hypot(v[1]);
-            if mag > cfg.speed {
-                let scale = cfg.speed / mag;
-                v[0] *= scale;
-                v[1] *= scale;
-            }
-            if mag >= MIN_CURRENT {
-                life.current_blocks.push(b);
+        // Transfer seeded velocities onto open-to-open MAC faces (all tank wall
+        // and blocked-cell faces stay strictly 0.0).
+        let (mut u, mut v) = seed_mac_faces(blocked, fw, fh, &initial);
+        project_mac_flow(blocked, fw, fh, &mut u, &mut v, &target_div);
+
+        // Average MAC faces back to cell-centred 2D vectors; blocked cells stay 0.
+        for y in 0..fh {
+            for x in 0..fw {
+                let b = y * fw + x;
+                if blocked[b] {
+                    continue;
+                }
+                let vx = f32::midpoint(u[y * (fw + 1) + x], u[y * (fw + 1) + x + 1]);
+                let vy = f32::midpoint(v[y * fw + x], v[(y + 1) * fw + x]);
+                let mag = vx.hypot(vy);
+                let (vx, vy) = if mag > cfg.speed {
+                    let s = cfg.speed / mag;
+                    (vx * s, vy * s)
+                } else {
+                    (vx, vy)
+                };
+                life.current[b] = [vx, vy];
+                if mag >= MIN_CURRENT {
+                    life.current_blocks.push(b);
+                }
             }
         }
         // A resting field may now be carried by the new current, and a
         // resting floater set drifting (T6c part 2).
-        life.nutrient.wake();
-        life.co2.wake();
-        life.version += 1;
-        self.wake_rafts();
+        if wake {
+            life.nutrient.wake();
+            life.co2.wake();
+            self.wake_rafts();
+        }
+        self.life.version += 1;
     }
 
     /// The 2D current at cell `(x, y)`, `[vx, vy]` in cells per second (`+x`
@@ -1389,6 +1597,213 @@ impl World {
             life.version += 1;
         }
     }
+}
+
+/// Finds an open (non-blocked) field cell at `(fx, fy)` or up to two steps
+/// along `dir`.
+fn find_open(
+    blocked: &[bool],
+    fw: usize,
+    fh: usize,
+    fx: usize,
+    fy: usize,
+    [dx, dy]: [f32; 2],
+) -> Option<(usize, usize)> {
+    #[allow(clippy::cast_possible_truncation)] // unit vector rounded to -1..=1
+    let (sx, sy) = (dx.round() as isize, dy.round() as isize);
+    for step in 0..=2isize {
+        let Some(x) = fx.checked_add_signed(sx * step) else {
+            break;
+        };
+        let Some(y) = fy.checked_add_signed(sy * step) else {
+            break;
+        };
+        if x >= fw || y >= fh {
+            break;
+        }
+        if !blocked[y * fw + x] {
+            return Some((x, y));
+        }
+    }
+    None
+}
+
+/// Whether the straight segment of field cells from `(x0, y0)` to `(x1, y1)`
+/// stays in open water (no blocked cell in between).
+#[allow(clippy::many_single_char_names)] // grid raycast
+fn line_of_sight(blocked: &[bool], fw: usize, x0: usize, y0: usize, x1: usize, y1: usize) -> bool {
+    let steps = x0.abs_diff(x1).max(y0.abs_diff(y1));
+    if steps <= 1 {
+        return true;
+    }
+    #[allow(clippy::cast_precision_loss)] // field coords ≤ 1024
+    let (fx0, fy0, dx, dy, n) = (
+        x0 as f32,
+        y0 as f32,
+        x1 as f32 - x0 as f32,
+        y1 as f32 - y0 as f32,
+        steps as f32,
+    );
+    for k in 1..steps {
+        #[allow(clippy::cast_precision_loss)]
+        let t = k as f32 / n;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let bx = (fx0 + dx * t).round() as usize;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let by = (fy0 + dy * t).round() as usize;
+        if blocked[by * fw + bx] {
+            return false;
+        }
+    }
+    true
+}
+
+/// Transfers cell-centred seeded velocities onto staggered MAC faces, keeping
+/// every tank-wall and blocked-cell face strictly zero.
+#[allow(clippy::many_single_char_names)] // grid maths
+fn seed_mac_faces(
+    blocked: &[bool],
+    fw: usize,
+    fh: usize,
+    seed: &[[f32; 2]],
+) -> (Vec<f32>, Vec<f32>) {
+    let mut u = vec![0.0_f32; (fw + 1) * fh];
+    let mut v = vec![0.0_f32; fw * (fh + 1)];
+    for y in 0..fh {
+        for x in 1..fw {
+            let l = y * fw + x - 1;
+            let r = l + 1;
+            if !blocked[l] && !blocked[r] {
+                u[y * (fw + 1) + x] = f32::midpoint(seed[l][0], seed[r][0]);
+            }
+        }
+    }
+    for y in 1..fh {
+        for x in 0..fw {
+            let t = (y - 1) * fw + x;
+            let b = y * fw + x;
+            if !blocked[t] && !blocked[b] {
+                v[y * fw + x] = f32::midpoint(seed[t][1], seed[b][1]);
+            }
+        }
+    }
+    (u, v)
+}
+
+/// Projects staggered MAC face velocities `(u, v)` onto a divergence-free
+/// flow (`∇ · u = target_div`) with exact zero normal flow at tank walls and
+/// blocked cells, interleaved with mild viscous smoothing so deflected jets
+/// circulate smoothly around obstacles and walls.
+#[allow(clippy::many_single_char_names)] // stencil maths
+fn project_mac_flow(
+    blocked: &[bool],
+    fw: usize,
+    fh: usize,
+    u: &mut [f32],
+    v: &mut [f32],
+    target_div: &[f32],
+) {
+    const OMEGA: f32 = 1.5;
+    const VISC: f32 = 0.12;
+    let mut u_tmp = vec![0.0_f32; u.len()];
+    let mut v_tmp = vec![0.0_f32; v.len()];
+
+    let project = |u: &mut [f32], v: &mut [f32], sweeps: usize| {
+        for _ in 0..sweeps {
+            for y in 0..fh {
+                for x in 0..fw {
+                    let b = y * fw + x;
+                    if blocked[b] {
+                        continue;
+                    }
+                    let left = x > 0 && !blocked[b - 1];
+                    let right = x + 1 < fw && !blocked[b + 1];
+                    let up = y > 0 && !blocked[b - fw];
+                    let down = y + 1 < fh && !blocked[b + fw];
+                    let s =
+                        f32::from(u8::from(left) + u8::from(right) + u8::from(up) + u8::from(down));
+                    if s == 0.0 {
+                        continue;
+                    }
+                    let ui = y * (fw + 1) + x;
+                    let vi = y * fw + x;
+                    let div = (u[ui + 1] - u[ui]) + (v[vi + fw] - v[vi]) - target_div[b];
+                    let corr = -OMEGA * div / s;
+                    if left {
+                        u[ui] -= corr;
+                    }
+                    if right {
+                        u[ui + 1] += corr;
+                    }
+                    if up {
+                        v[vi] -= corr;
+                    }
+                    if down {
+                        v[vi + fw] += corr;
+                    }
+                }
+            }
+        }
+    };
+
+    for pass in 0..3 {
+        project(u, v, 14);
+        if pass == 2 {
+            break;
+        }
+        // Mild viscous diffusion across open-to-open faces only.
+        u_tmp.copy_from_slice(u);
+        for y in 0..fh {
+            for x in 1..fw {
+                let l = y * fw + x - 1;
+                if blocked[l] || blocked[l + 1] {
+                    continue;
+                }
+                let ui = y * (fw + 1) + x;
+                let c = u_tmp[ui];
+                let mut sum = 0.0;
+                if x > 1 {
+                    sum += u_tmp[ui - 1] - c;
+                }
+                if x + 1 < fw {
+                    sum += u_tmp[ui + 1] - c;
+                }
+                if y > 0 {
+                    sum += u_tmp[ui - (fw + 1)] - c;
+                }
+                if y + 1 < fh {
+                    sum += u_tmp[ui + (fw + 1)] - c;
+                }
+                u[ui] = c + VISC * sum;
+            }
+        }
+        v_tmp.copy_from_slice(v);
+        for y in 1..fh {
+            for x in 0..fw {
+                let t = (y - 1) * fw + x;
+                if blocked[t] || blocked[t + fw] {
+                    continue;
+                }
+                let vi = y * fw + x;
+                let c = v_tmp[vi];
+                let mut sum = 0.0;
+                if x > 0 {
+                    sum += v_tmp[vi - 1] - c;
+                }
+                if x + 1 < fw {
+                    sum += v_tmp[vi + 1] - c;
+                }
+                if y > 1 {
+                    sum += v_tmp[vi - fw] - c;
+                }
+                if y + 1 < fh {
+                    sum += v_tmp[vi + fw] - c;
+                }
+                v[vi] = c + VISC * sum;
+            }
+        }
+    }
+    project(u, v, 16);
 }
 
 /// The water-quality score (SPEC §2.3) from a mean nutrient level over

@@ -768,22 +768,20 @@ impl World {
                 }
                 // A 2D current deflects a rising bubble: horizontally with
                 // probability |vx| / 20, and a downward current can hold its
-                // rise for a tick with probability vy / 20.
+                // rise for a tick with probability vy / 20. Use the chunk RNG
+                // (re-seeded every tick) rather than `life.rng`, which is only
+                // re-seeded in `after_tick` and isn't persisted in saves.
                 let [vx, vy] = self.current_at_cell(x, y);
                 if vx != 0.0 || vy != 0.0 {
-                    let dx = if vx != 0.0
-                        && self
-                            .life
-                            .chance(f64::from(vx.abs()) / f64::from(TICKS_PER_SECOND))
-                    {
-                        if vx > 0.0 { 1 } else { -1 }
-                    } else {
-                        0
-                    };
-                    let hold = vy > 0.0
-                        && self
-                            .life
-                            .chance(f64::from(vy) / f64::from(TICKS_PER_SECOND));
+                    let mut chance =
+                        |p: f64| f64::from(self.rngs[ci].next_u32()) < p * 4_294_967_296.0;
+                    let dx =
+                        if vx != 0.0 && chance(f64::from(vx.abs()) / f64::from(TICKS_PER_SECOND)) {
+                            if vx > 0.0 { 1 } else { -1 }
+                        } else {
+                            0
+                        };
+                    let hold = vy > 0.0 && chance(f64::from(vy) / f64::from(TICKS_PER_SECOND));
                     let dy = if hold { 0 } else { -1 };
                     if (dx != 0 || dy != -1)
                         && let Some(j) = self.enterable(x, y, dx, dy, p.density, false)

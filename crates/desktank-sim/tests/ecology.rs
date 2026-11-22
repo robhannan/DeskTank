@@ -425,8 +425,8 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
         let sign: f64 = if right { 1.0 } else { -1.0 };
         let start = (centroid_x(&with, flake), centroid_x(&with, dye));
         // Less than the flakes' float time, so they stay at the surface.
-        run(&mut with, 100);
-        run(&mut without, 100);
+        run(&mut with, 150);
+        run(&mut without, 150);
         assert!(f64::from(with.current_at(if right { 40 } else { 280 }, 14)[0]) * sign > 1.0);
         let flake_moved = (centroid_x(&with, flake) - start.0) * sign;
         let dye_moved = (centroid_x(&with, dye) - start.1) * sign;
@@ -527,12 +527,77 @@ fn settled_tank_with_bed_and_filter_scans_zero_current_blocks() {
     run(&mut w, 200);
     assert_eq!(w.awake_chunks(), 0, "tank settled");
     let scans = w.current_block_scans();
+    let rebuilds = w.device_rebuilds();
     run(&mut w, 200);
+    assert_eq!(
+        w.device_rebuilds(),
+        rebuilds,
+        "settled tank with sand bed and filter performs zero current rebuilds"
+    );
     assert_eq!(
         w.current_block_scans(),
         scans,
         "settled tank with sand bed and filter performs zero current block scans"
     );
+}
+
+#[test]
+fn a_jet_deflects_off_the_far_wall_and_circulates_back() {
+    let mut w = world(160, 80, 51, 1.0);
+    // Filter high on the left wall (y = 0..30, nozzle at y = 8).
+    place_filter(&mut w, 4, 15);
+    run(&mut w, 5);
+    // Upper jet flows rightwards across the tank.
+    assert!(
+        w.current_at(80, 10)[0] > 1.0,
+        "jet should flow right across upper tank: {:?}",
+        w.current_at(80, 10)
+    );
+    // Near the far right wall, the incompressible projection deflects flow downward.
+    assert!(
+        w.current_at(154, 28)[1] > 0.5,
+        "far wall should deflect jet downwards: {:?}",
+        w.current_at(154, 28)
+    );
+    // Across the lower tank, return circulation flows back leftwards towards the intake.
+    assert!(
+        w.current_at(80, 68)[0] < -0.25,
+        "return circulation should flow left across lower tank: {:?}",
+        w.current_at(80, 68)
+    );
+}
+
+#[test]
+fn a_rock_obstacle_blocks_and_deflects_the_2d_current() {
+    let mut w = world(160, 80, 53, 1.0);
+    place_filter(&mut w, 4, 30);
+    // Place a glued rock directly in front of the nozzle (nozzle at y = 23).
+    let rock = id(&w, "rock");
+    w.paint(68, 28, 12, rock, Brush::Pour).unwrap();
+    let body = w.body_at(68, 28).expect("rock body");
+    w.set_anchored(body, true);
+    run(&mut w, 10);
+    // Inside the solid rock: zero current.
+    assert_eq!(
+        w.current_at(68, 28),
+        [0.0, 0.0],
+        "current inside a solid rock must be zero"
+    );
+    // Above and below the rock: flow deflects around it (upward above-left,
+    // downward below-left).
+    let above_left = w.current_at(50, 16);
+    let below_left = w.current_at(50, 40);
+    assert!(
+        above_left[1] < -0.1 || below_left[1] > 0.1,
+        "flow should deflect vertically around rock: above_left={above_left:?}, below_left={below_left:?}"
+    );
+    // Once settled, no more rebuilds or current block scans occur.
+    run(&mut w, 200);
+    assert_eq!(w.awake_chunks(), 0, "rock tank settled");
+    let (rebuilds, scans) = (w.device_rebuilds(), w.current_block_scans());
+    run(&mut w, 100);
+    assert_eq!(w.device_rebuilds(), rebuilds);
+    assert_eq!(w.current_block_scans(), scans);
 }
 
 #[test]

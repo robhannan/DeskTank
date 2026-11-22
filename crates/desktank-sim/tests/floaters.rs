@@ -193,10 +193,11 @@ fn floaters_drift_with_the_current_and_stop_at_the_glass() {
     assert!(moved >= 20, "drifted {moved} cells in 15 s of current");
     assert_eq!(still, 0, "no current: it stays put");
     check_table(&with);
-    // Downstream it fetches up against the glass and rests there.
+    // Downstream it reaches the far-glass boundary (where the incompressible
+    // current turns downward) and rests there.
     run(&mut with, 2 * MINUTE);
     let p = of_species(&with, s)[0];
-    assert!(p.bounds.x1 >= WIDTH - 1, "at the far glass: {p:?}");
+    assert!(p.bounds.x1 >= WIDTH - 8, "near the far glass: {p:?}");
     let leaf = id(&with, "floating_leaf");
     for (_, y) in cells_of(&with, p.id.0, leaf) {
         assert_eq!(y, with.surface_row(), "still in the top water row");

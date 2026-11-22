@@ -101,16 +101,19 @@
   above it back into water, which leaves a small mound over a running
   bubbler. The **internal filter** ([devices](devices.md), D27; the bare
   **filter outlet** before DV1) drives a static 2D vector current field
-  (1/8 resolution, rebuilt only on device changes): each nozzle emits a
-  directed jet fading over `reach` cells and widening as it goes, and
-  each intake draws water radially inwards over `intake_reach` cells.
-  The current carries floating cells, non-water dense liquids and light
-  loose powders (density < 1.5, excluding substrate) along both axes
-  with probability `|v| / 20` per tick per axis, skipping field blocks
-  with no carryable cells so a settled tank scans nothing. Water is the
-  medium and never starts a swap. Rising bubbles deflect along the 2D
-  current, rafts and marimo follow its mean vector, and creatures drift
-  with it (swimmers more than bottom walkers).
+  (1/8 resolution, rebuilt only when devices change or an 8×8 block flips
+  between open water and solid/air): each nozzle emits a directed jet and
+  each intake draws water radially inwards, projected onto an
+  incompressible MAC flow with zero normal velocity at tank walls and
+  blocked cells so jets deflect around rocks and off the far wall to
+  circulate back towards intakes. The current carries floating cells,
+  non-water dense liquids and light loose powders (density < 1.5,
+  excluding substrate) along both axes with probability `|v| / 20` per
+  tick per axis, skipping field blocks with no carryable cells so a
+  settled tank scans nothing. Water is the medium and never starts a
+  swap. Rising bubbles deflect along the 2D current, rafts and marimo
+  follow its mean vector, and creatures drift with it (swimmers more
+  than bottom walkers).
 - **Movement rules.**
   - The movement pass runs bottom-up for falling materials and top-down
     for buoyant ones. The horizontal sweep direction alternates every

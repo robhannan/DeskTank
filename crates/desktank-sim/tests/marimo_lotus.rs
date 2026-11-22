@@ -180,12 +180,13 @@ fn a_marimo_sinks_to_the_bed_and_grows_round() {
 fn a_current_nudges_a_marimo_along_the_bottom() {
     let make = |outlet: bool| {
         let mut w = tank(2, 0.9);
-        pour(&mut w, "marimo", 80, 60);
+        pour(&mut w, "marimo", 60, 60);
         run(&mut w, 3 * MINUTE);
         if outlet {
-            // An internal filter low on the left wall: its spreading jet
-            // reaches the bed downstream and nudges the marimo right.
-            place_filter(&mut w, 2, FLOOR as i64 - 15);
+            // An internal filter high on the right wall: its leftward jet
+            // deflects down the left wall and circulates back rightwards along
+            // the bed, nudging the marimo right.
+            place_filter(&mut w, WIDTH as i64 - 2, 24);
         }
         w
     };

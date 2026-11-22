@@ -464,8 +464,10 @@ fn flow_tint_shows_speed_in_either_direction() {
         };
         let x = if outlet_x == 5 { 28 } else { 51 };
         let gain = |y| i16::from(at(&tinted, x, y)[0]) - i16::from(at(&plain, x, y)[0]);
-        assert!(gain(43) > 0, "jet core is highlighted");
-        assert_eq!(at(&plain, x, 0), at(&tinted, x, 0), "still water untouched");
+        assert!(
+            gain(43) > gain(0) && gain(43) > 0,
+            "jet core is brighter than distant circulation"
+        );
         // The directional arrow inside the 8x8 block (by=40..48) has its
         // arrowhead on the downstream half of the block.
         let (bx, by) = (x / 8 * 8, 40);
