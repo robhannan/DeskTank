@@ -600,9 +600,9 @@ impl World {
     pub fn tick(&mut self) {
         self.tick += 1;
         self.plants.pearled_this_tick = false;
-        #[allow(clippy::cast_possible_truncation)] // wraps after 2^32 ticks (6.8 years)
-        let stamp = self.tick as u32;
-        self.stamp = stamp;
+        #[allow(clippy::cast_possible_truncation)] // wraps after 2^31 ticks (~3.4 years)
+        let stamp = (self.tick as u32).wrapping_mul(2);
+        self.stamp = if stamp == 0 { 2 } else { stamp };
         for (i, c) in self.chunks.iter_mut().enumerate() {
             c.work = mem::take(&mut c.work_next);
             if !c.work.is_empty() {
@@ -766,17 +766,30 @@ impl World {
                     self.mark_changed(x, y);
                     return;
                 }
-                // A filter jet deflects a rising bubble: with probability
-                // speed / 20 per tick it steps up and downstream instead.
-                let current = self.current_at_cell(x, y);
-                if current != 0.0 {
-                    let dx = if current > 0.0 { 1 } else { -1 };
-                    if let Some(j) = self.enterable(x, y, dx, -1, p.density, false)
-                        && self
-                            .life
-                            .chance(f64::from(current.abs()) / f64::from(TICKS_PER_SECOND))
+                // A 2D current deflects a rising bubble: horizontally with
+                // probability |vx| / 20, and a downward current can hold its
+                // rise for a tick with probability vy / 20. Use the chunk RNG
+                // (re-seeded every tick) rather than `life.rng`, which is only
+                // re-seeded in `after_tick` and isn't persisted in saves.
+                let [vx, vy] = self.current_at_cell(x, y);
+                if vx != 0.0 || vy != 0.0 {
+                    let mut chance =
+                        |p: f64| f64::from(self.rngs[ci].next_u32()) < p * 4_294_967_296.0;
+                    let dx =
+                        if vx != 0.0 && chance(f64::from(vx.abs()) / f64::from(TICKS_PER_SECOND)) {
+                            if vx > 0.0 { 1 } else { -1 }
+                        } else {
+                            0
+                        };
+                    let hold = vy > 0.0 && chance(f64::from(vy) / f64::from(TICKS_PER_SECOND));
+                    let dy = if hold { 0 } else { -1 };
+                    if (dx != 0 || dy != -1)
+                        && let Some(j) = self.enterable(x, y, dx, dy, p.density, false)
                     {
                         self.swap(i, j);
+                        return;
+                    }
+                    if hold && dx == 0 {
                         return;
                     }
                 }

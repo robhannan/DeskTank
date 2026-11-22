@@ -1487,8 +1487,11 @@ impl World {
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.
         // Hoppers (shrimp) kick upwards now and then and sink back.
+        let mut bottom_walking = false;
         if k.zone == Zone::Bottom {
-            c.vy = if self.hopping(&k, c) {
+            let hopping = self.hopping(&k, c);
+            bottom_walking = !hopping;
+            c.vy = if hopping {
                 -k.top
             } else if k.live {
                 // Live food sinks faster than it crawls.
@@ -1497,6 +1500,7 @@ impl World {
                 k.cruise
             };
         }
+        self.apply_current(c, bottom_walking);
 
         // Move, sliding along whatever blocks one axis; a plant in the way
         // sends it to another band.
@@ -1580,6 +1584,36 @@ impl World {
         if lost || (self.tick + u64::from(c.id.0)).is_multiple_of(SEARCH_EVERY) {
             c.food = self.nearest_food(k, c);
         }
+    }
+
+    /// Nudges a creature's velocity with the 2D water current at its centre.
+    /// Does nothing when the tank has no current. Bottom walkers feel a
+    /// gentler horizontal push so they keep to the bed.
+    pub(super) fn apply_current(&self, c: &mut Creature, bottom_walking: bool) {
+        let (Some(cx), Some(cy)) = (
+            usize::try_from(c.x / ONE).ok(),
+            usize::try_from(c.y / ONE).ok(),
+        ) else {
+            return;
+        };
+        let [vx, vy] = self.current_at_cell(cx, cy);
+        if vx == 0.0 && vy == 0.0 {
+            return;
+        }
+        #[allow(clippy::cast_precision_loss)] // small exact constants
+        let per_second = ONE as f32 / TICKS_PER_SECOND as f32;
+        let factor = if bottom_walking { 0.15 } else { 0.35 };
+        #[allow(clippy::cast_possible_truncation)] // bounded by current speed (≤ 20 cells/s)
+        let dx = (vx * per_second * factor).round() as i32;
+        #[allow(clippy::cast_possible_truncation)]
+        let dy = if bottom_walking {
+            0
+        } else {
+            (vy * per_second * factor).round() as i32
+        };
+        let limit = 16 * ONE;
+        c.vx = (c.vx + dx).clamp(-limit, limit);
+        c.vy = (c.vy + dy).clamp(-limit, limit);
     }
 
     /// Moves `c` by its velocity, or along one axis if the other is

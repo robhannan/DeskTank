@@ -119,11 +119,14 @@ fn top_water_row(w: &World) -> usize {
     w.surface_row()
 }
 
-/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
-/// they still drive the jet, which this exercises.
-fn legacy_outlet(w: &mut World, x: i64, y: i64) {
-    let m = w.materials().id("filter_outlet").unwrap();
-    w.paint(x, y, 1, m, Brush::Pour).unwrap();
+/// Places an internal filter on the left glass near the surface.
+fn place_filter(w: &mut World, x: i64, y: i64) {
+    assert!(
+        w.add_device(desktank_sim::DeviceKind::InternalFilter, x, y, false)
+            .unwrap()
+            .is_some(),
+        "internal filter should fit at ({x}, {y})"
+    );
 }
 
 #[test]
@@ -169,9 +172,9 @@ fn floaters_drift_with_the_current_and_stop_at_the_glass() {
     let make = |outlet: bool| {
         let mut w = tank(2);
         if outlet {
-            // A jet along the surface, rightwards from the left wall.
-            let row = w.surface_row() as i64 + 2;
-            legacy_outlet(&mut w, 2, row);
+            // An internal filter near the surface, jetting right from the left wall.
+            let row = w.surface_row() as i64 + 15;
+            place_filter(&mut w, 2, row);
         }
         bud(&mut w, "duckweed", 30, 3);
         run(&mut w, MINUTE / 4);
@@ -190,10 +193,11 @@ fn floaters_drift_with_the_current_and_stop_at_the_glass() {
     assert!(moved >= 20, "drifted {moved} cells in 15 s of current");
     assert_eq!(still, 0, "no current: it stays put");
     check_table(&with);
-    // Downstream it fetches up against the glass and rests there.
+    // Downstream it reaches the far-glass boundary (where the incompressible
+    // current turns downward) and rests there.
     run(&mut with, 2 * MINUTE);
     let p = of_species(&with, s)[0];
-    assert!(p.bounds.x1 >= WIDTH - 1, "at the far glass: {p:?}");
+    assert!(p.bounds.x1 >= WIDTH - 8, "near the far glass: {p:?}");
     let leaf = id(&with, "floating_leaf");
     for (_, y) in cells_of(&with, p.id.0, leaf) {
         assert_eq!(y, with.surface_row(), "still in the top water row");
@@ -321,8 +325,8 @@ fn a_floater_stripped_of_its_leaves_dies() {
 #[test]
 fn a_saved_drifting_floater_continues_exactly() {
     let mut w = tank(6);
-    let row = w.surface_row() as i64 + 2;
-    legacy_outlet(&mut w, 2, row);
+    let row = w.surface_row() as i64 + 15;
+    place_filter(&mut w, 2, row);
     for x in [20, 40, 60] {
         bud(&mut w, "duckweed", x, 3);
         bud(&mut w, "frogbit", x + 8, 8);

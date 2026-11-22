@@ -425,8 +425,8 @@ mod tests {
         for _ in 0..2 {
             loaded.tick();
         }
-        assert!(loaded.current_at(30, 32) > 1.0);
-        assert!(loaded.current_at(30, 68) > 1.0);
+        assert!(loaded.current_at(30, 32)[0] > 1.0);
+        assert!(loaded.current_at(30, 68)[0] > 1.0);
         // It saves as version 12 and loads to the same state.
         let again = encode(&loaded);
         assert_eq!(check(&again), Ok(FORMAT_VERSION));

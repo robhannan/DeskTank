@@ -20,15 +20,17 @@ surface = 1.0
 water = 0.04
 opaque = 0.9
 
-# The filter outlet's jet: `speed` in cells per second at the nozzle,
-# fading to nothing over `reach` cells, and widening by one field row on
-# each side every `spread` field cells. It points away from the nearer side
-# wall.
+# The 2D current field (D27, DV2): directed jets start at `speed` cells per
+# second at the nozzle, fading over `reach` cells and widening by one field
+# row on each side every `spread` field cells. Intakes draw water radially
+# inwards at up to `intake_speed` cells per second over `intake_reach` cells.
 [current]
 material = "filter_outlet"
 speed = 10.0
 reach = 160
 spread = 4
+intake_speed = 4.0
+intake_reach = 32
 
 # The bubbler releases `emits` from each top cell with water above, at
 # `rate` per second per cell.

@@ -85,6 +85,8 @@ struct View {
 @group(0) @binding(7) var plant_species: texture_2d<f32>;
 // Per cell: a plant cell's depth band (D21) in bands / 255 (0 elsewhere).
 @group(0) @binding(8) var bands: texture_2d<f32>;
+// 2D flow vector (vx, vy) per 8x8-cell field cell (128/255 = 0), for the overlay.
+@group(0) @binding(9) var flow: texture_2d<f32>;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
 const BACK_BAND: f32 = 7.0;
@@ -170,6 +172,14 @@ fn field_at(cell: vec2<f32>) -> vec4<f32> {
     let c = textureLoad(fields, vec2<i32>(lo.x, hi.y), 0);
     let d = textureLoad(fields, vec2<i32>(hi.x, hi.y), 0);
     return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+
+// The 2D flow vector for one 8x8-cell field block, in [-1, 1] per axis.
+fn flow_block(block: vec2<i32>) -> vec2<f32> {
+    let size = vec2<i32>(textureDimensions(flow));
+    let b = clamp(block, vec2<i32>(0), size - 1);
+    let raw = textureLoad(flow, b, 0).rg;
+    return (raw * 255.0 - 128.0) / 127.0;
 }
 
 // Whether `cell` is inside the brush disc (the same test as World::paint).
@@ -261,7 +271,23 @@ fn grid_post(rgb_in: vec3<f32>, cell: vec2<f32>) -> vec3<f32> {
             rgb = rgb * mix(0.15, 1.0, f.b);
         } else {
             let tint = mix(vec3<f32>(0.05, 0.8, 0.85), vec3<f32>(1.0, 0.94, 0.35), f.a);
-            rgb = mix(rgb, tint, 0.75 * f.a);
+            rgb = mix(rgb, tint, 0.55 * f.a);
+            let block = floor(cell / 8.0);
+            let bv = flow_block(vec2<i32>(block));
+            let speed = length(bv);
+            if speed > 0.03 {
+                let dir = bv / speed;
+                let perp = vec2<f32>(-dir.y, dir.x);
+                let p = cell - (block * 8.0 + 3.5);
+                let along = dot(p, dir);
+                let across = abs(dot(p, perp));
+                let shaft = along >= -2.5 && along <= 2.2 && across <= 0.55;
+                let head = along >= 0.3 && along <= 2.8 && across <= (2.8 - along) * 0.85;
+                if shaft || head {
+                    let alpha = 0.85 * smoothstep(0.03, 0.25, speed);
+                    rgb = mix(rgb, vec3<f32>(0.95, 1.0, 1.0), alpha);
+                }
+            }
         }
     }
     // Brush outline: disc cells with a 4-neighbour outside the disc.

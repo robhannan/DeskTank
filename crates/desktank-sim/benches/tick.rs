@@ -296,17 +296,16 @@ fn bench_floaters(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::
     g.bench_function("settled_floaters", |b| {
         b.iter(|| black_box(&mut floating).tick());
     });
-    // The same floaters a few seconds after a filter outlet near the
+    // The same floaters a few seconds after an internal filter near the
     // surface starts a current: the rafts in its jet drift, each stepped
     // every tick. Each sample ticks a fresh copy, so they never all fetch
     // up against the far glass.
     let mut drifting = floating.clone();
-    let row = i64::try_from(drifting.surface_row()).expect("row") + 3;
-    // A legacy outlet (D27: old saves only), for a jet at the surface.
-    let outlet = drifting.materials().id("filter_outlet").expect("outlet");
+    let row = i64::try_from(drifting.surface_row()).expect("row") + 15;
     drifting
-        .paint(1, row, 1, outlet, desktank_sim::Brush::Pour)
-        .expect("outlet");
+        .add_device(desktank_sim::DeviceKind::InternalFilter, 1, row, false)
+        .expect("filter")
+        .expect("fits");
     let drifting = advance(drifting, 5 * 20);
     g.bench_function("drifting_floaters", |b| {
         b.iter_batched_ref(|| drifting.clone(), World::tick, BatchSize::LargeInput);

@@ -74,11 +74,14 @@ fn scatter(w: &mut World, m: MaterialId, n: usize, y0: usize) {
     }
 }
 
-/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
-/// they still drive the jet, which this exercises.
-fn legacy_outlet(w: &mut World, x: i64, y: i64) {
-    let m = w.materials().id("filter_outlet").unwrap();
-    w.paint(x, y, 1, m, Brush::Pour).unwrap();
+/// Places an internal filter on the side glass near `(x, y)`.
+fn place_filter(w: &mut World, x: i64, y: i64) {
+    assert!(
+        w.add_device(desktank_sim::DeviceKind::InternalFilter, x, y, false)
+            .unwrap()
+            .is_some(),
+        "internal filter should fit at ({x}, {y})"
+    );
 }
 
 #[test]
@@ -365,7 +368,7 @@ fn rising_bubbles_follow_the_signed_filter_current() {
             };
             let mut w = World::with_ecology(config, table, ecology).unwrap();
             if let Some(x) = outlet {
-                legacy_outlet(&mut w, x, 40);
+                place_filter(&mut w, x, 40);
             }
             let bubble = id(&w, material);
             for x in (44..84).step_by(3) {
@@ -392,7 +395,7 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
         include_str!("../../../assets/materials/water.toml"),
         include_str!("../../../assets/materials/air.toml"),
         include_str!("../../../assets/materials/flake_food.toml"),
-        include_str!("../../../assets/materials/filter_outlet.toml"),
+        include_str!("../../../assets/materials/device.toml"),
     ] {
         sources.push(src);
     }
@@ -409,12 +412,12 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
             let mut w = World::with_ecology(config, table.clone(), eco).unwrap();
             let x = if right { 6 } else { 313 };
             if outlet {
-                legacy_outlet(&mut w, x, 10);
+                place_filter(&mut w, x, 20);
             }
             let (flake, dye) = (id(&w, "flake_food"), id(&w, "dye"));
             let mid = if right { 60 } else { 260 };
             w.paint(mid, 1, 2, flake, Brush::Pour).unwrap();
-            w.paint(mid, 12, 3, dye, Brush::Replace).unwrap();
+            w.paint(mid, 14, 3, dye, Brush::Replace).unwrap();
             w
         };
         let (mut with, mut without) = (make(true), make(false));
@@ -422,9 +425,9 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
         let sign: f64 = if right { 1.0 } else { -1.0 };
         let start = (centroid_x(&with, flake), centroid_x(&with, dye));
         // Less than the flakes' float time, so they stay at the surface.
-        run(&mut with, 100);
-        run(&mut without, 100);
-        assert!(f64::from(with.current_at(if right { 40 } else { 280 }, 10)) * sign > 1.0);
+        run(&mut with, 150);
+        run(&mut without, 150);
+        assert!(f64::from(with.current_at(if right { 40 } else { 280 }, 14)[0]) * sign > 1.0);
         let flake_moved = (centroid_x(&with, flake) - start.0) * sign;
         let dye_moved = (centroid_x(&with, dye) - start.1) * sign;
         let flake_drift = (centroid_x(&without, flake) - start.0).abs();
@@ -443,6 +446,158 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
             "the current conserves liquid"
         );
     }
+}
+
+#[test]
+fn an_intake_draws_loose_particles_towards_it() {
+    for right in [true, false] {
+        let make = |filter: bool| {
+            let mut w = world(160, 80, 19, 1.0);
+            let x = if right { 4 } else { 155 };
+            if filter {
+                // Filter low on the wall (y = 50..80, intake at y = 74).
+                place_filter(&mut w, x, 65);
+            }
+            // Drop loose detritus in front of the lower intake slots.
+            let detritus = id(&w, "detritus");
+            let px = if right { 26 } else { 133 };
+            w.paint(px, 68, 2, detritus, Brush::Replace).unwrap();
+            w
+        };
+        let (mut with, mut without) = (make(true), make(false));
+        let detritus = id(&with, "detritus");
+        let start = centroid_x(&with, detritus);
+        run(&mut with, 200);
+        run(&mut without, 200);
+        // Towards the filter's glass: leftwards when filter is on the left,
+        // rightwards when filter is on the right.
+        let towards = if right { -1.0 } else { 1.0 };
+        let pulled = (centroid_x(&with, detritus) - start) * towards;
+        let still = (centroid_x(&without, detritus) - start).abs();
+        assert!(
+            pulled > 4.0 + still,
+            "intake should draw detritus towards it: pulled {pulled}, still {still}"
+        );
+    }
+}
+
+#[test]
+fn swimmers_follow_the_2d_current_direction() {
+    for right in [true, false] {
+        let make = |filter: bool| {
+            let mut w = world(240, 80, 31, 0.95);
+            let x = if right { 4 } else { 235 };
+            if filter {
+                place_filter(&mut w, x, 36);
+            }
+            let tetra = w.species().id("neon_tetra").unwrap();
+            let fx = if right { 40 } else { 200 };
+            w.add_creature(tetra, fx, 30).unwrap();
+            w
+        };
+        let (mut with, mut without) = (make(true), make(false));
+        run(&mut with, 40);
+        run(&mut without, 40);
+        let sign = if right { 1.0 } else { -1.0 };
+        let dx =
+            f64::from(with.creatures()[0].centre().0 - without.creatures()[0].centre().0) * sign;
+        assert!(
+            dx > 2.0,
+            "swimmer in jet should drift downstream relative to still water: dx={dx}"
+        );
+    }
+}
+
+#[test]
+fn settled_tank_with_bed_and_filter_scans_zero_current_blocks() {
+    let mut w = world(160, 80, 41, 0.9);
+    let sand = id(&w, "sand");
+    w.fill_rect(
+        desktank_sim::Rect {
+            x0: 0,
+            y0: 68,
+            x1: 160,
+            y1: 80,
+        },
+        sand,
+        Brush::Replace,
+    )
+    .unwrap();
+    place_filter(&mut w, 4, 40);
+    run(&mut w, 200);
+    assert_eq!(w.awake_chunks(), 0, "tank settled");
+    let scans = w.current_block_scans();
+    let rebuilds = w.device_rebuilds();
+    run(&mut w, 200);
+    assert_eq!(
+        w.device_rebuilds(),
+        rebuilds,
+        "settled tank with sand bed and filter performs zero current rebuilds"
+    );
+    assert_eq!(
+        w.current_block_scans(),
+        scans,
+        "settled tank with sand bed and filter performs zero current block scans"
+    );
+}
+
+#[test]
+fn a_jet_deflects_off_the_far_wall_and_circulates_back() {
+    let mut w = world(160, 80, 51, 1.0);
+    // Filter high on the left wall (y = 0..30, nozzle at y = 8).
+    place_filter(&mut w, 4, 15);
+    run(&mut w, 5);
+    // Upper jet flows rightwards across the tank.
+    assert!(
+        w.current_at(80, 10)[0] > 1.0,
+        "jet should flow right across upper tank: {:?}",
+        w.current_at(80, 10)
+    );
+    // Near the far right wall, the incompressible projection deflects flow downward.
+    assert!(
+        w.current_at(154, 28)[1] > 0.5,
+        "far wall should deflect jet downwards: {:?}",
+        w.current_at(154, 28)
+    );
+    // Across the lower tank, return circulation flows back leftwards towards the intake.
+    assert!(
+        w.current_at(80, 68)[0] < -0.25,
+        "return circulation should flow left across lower tank: {:?}",
+        w.current_at(80, 68)
+    );
+}
+
+#[test]
+fn a_rock_obstacle_blocks_and_deflects_the_2d_current() {
+    let mut w = world(160, 80, 53, 1.0);
+    place_filter(&mut w, 4, 30);
+    // Place a glued rock directly in front of the nozzle (nozzle at y = 23).
+    let rock = id(&w, "rock");
+    w.paint(68, 28, 12, rock, Brush::Pour).unwrap();
+    let body = w.body_at(68, 28).expect("rock body");
+    w.set_anchored(body, true);
+    run(&mut w, 10);
+    // Inside the solid rock: zero current.
+    assert_eq!(
+        w.current_at(68, 28),
+        [0.0, 0.0],
+        "current inside a solid rock must be zero"
+    );
+    // Above and below the rock: flow deflects around it (upward above-left,
+    // downward below-left).
+    let above_left = w.current_at(50, 16);
+    let below_left = w.current_at(50, 40);
+    assert!(
+        above_left[1] < -0.1 || below_left[1] > 0.1,
+        "flow should deflect vertically around rock: above_left={above_left:?}, below_left={below_left:?}"
+    );
+    // Once settled, no more rebuilds or current block scans occur.
+    run(&mut w, 200);
+    assert_eq!(w.awake_chunks(), 0, "rock tank settled");
+    let (rebuilds, scans) = (w.device_rebuilds(), w.current_block_scans());
+    run(&mut w, 100);
+    assert_eq!(w.device_rebuilds(), rebuilds);
+    assert_eq!(w.current_block_scans(), scans);
 }
 
 #[test]
