@@ -567,10 +567,28 @@ impl WebTank {
         self.tools.zoom()
     }
 
+    /// Whether the selected tool places a device that can be flipped onto the
+    /// other side glass (D27).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = canFlipDevice))]
+    #[must_use]
+    pub fn can_flip_device(&self) -> bool {
+        self.tools.can_flip(self.tank.world())
+    }
+
+    /// Whether the next placed device is mirrored onto the other side glass.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = deviceFlipped))]
+    #[must_use]
+    pub fn device_flipped(&self) -> bool {
+        self.tools.flipped()
+    }
+
     /// Toggles mirroring the next device placed onto the other side glass
-    /// (D27). Returns the new setting.
+    /// (D27) when the selected tool supports flipping. Returns the setting.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = flipDevice))]
     pub fn flip_device(&mut self) -> bool {
+        if !self.can_flip_device() {
+            return self.tools.flipped();
+        }
         let flipped = self.tools.flip();
         self.sync_cursor();
         flipped

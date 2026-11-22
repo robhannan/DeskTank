@@ -1045,6 +1045,7 @@ function showSelection(focus = false) {
   const items = openItems();
   if (items.length && !items.some((b) => b.tabIndex === 0)) items[0].tabIndex = 0;
   showPropagules();
+  showFlip();
 }
 
 // The selected plant's propagule chips (only its species' own methods),
@@ -1355,9 +1356,24 @@ function chooseMagnifySlot() {
   }
 }
 
-// D27: mirrors the next device placed onto the other side glass; the
-// placement ghost shows where it goes.
+// D27: mirrors the next flippable device placed onto the other side glass;
+// the placement ghost shows where it goes. Shown only while a flippable
+// device tool is selected.
+function showFlip() {
+  if (!tank) return;
+  const hide = !tank.canFlipDevice();
+  const hadFocus = hide && document.activeElement === flipBtn;
+  flipBtn.hidden = hide;
+  flipBtn.setAttribute("aria-pressed", String(tank.deviceFlipped()));
+  if (hadFocus) {
+    const selected = swatch(tank.selected());
+    const target = selected && !selected.hidden ? selected : openItems()[0];
+    target?.focus({ preventScroll: true });
+  }
+}
+
 function flipDevice() {
+  if (!tank.canFlipDevice()) return;
   flipBtn.setAttribute("aria-pressed", String(tank.flipDevice()));
   kick();
 }
@@ -1641,7 +1657,7 @@ function wireInput() {
       e.preventDefault();
       nameInput.focus();
       nameInput.select();
-    } else if (e.key === "x" || e.key === "X") {
+    } else if ((e.key === "x" || e.key === "X") && !e.repeat && tank.canFlipDevice()) {
       flipDevice();
     } else if (e.key === "f" || e.key === "F") {
       const next = FIELDS[(FIELDS.indexOf(settings.field) + 1) % FIELDS.length];

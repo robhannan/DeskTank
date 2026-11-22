@@ -774,3 +774,81 @@ test("magnify tool zooms on hover, cycles on click, and adjusts via wheel, keys 
   expect(await stateHash(page)).toBe(hash);
   expect(errors).toEqual([]);
 });
+
+test("flip device button only appears for flippable device tools and X ignores other tools", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const flipBtn = page.locator("#flip");
+  const canFlip = () => page.evaluate(() => window.desktank.tank.canFlipDevice());
+  const flipped = () => page.evaluate(() => window.desktank.tank.deviceFlipped());
+
+  // Hidden by default (Sand is selected) and X does not toggle flip state.
+  await expect(flipBtn).toBeHidden();
+  expect(await canFlip()).toBe(false);
+  expect(await flipped()).toBe(false);
+  await page.keyboard.press("x");
+  await expect(flipBtn).toBeHidden();
+  expect(await flipped()).toBe(false);
+
+  // Stays hidden for non-device tools and non-flippable devices (Bubbler).
+  for (const name of ["Scoop", "Inspect", "Magnify", "Java moss", "Neon tetra", "Bubbler"]) {
+    await choose(page, name);
+    await expect(flipBtn, `${name} should keep Flip device hidden`).toBeHidden();
+    expect(await canFlip(), `${name} should not be flippable`).toBe(false);
+    await page.keyboard.press("x");
+    expect(await flipped(), `X while ${name} is selected should not flip`).toBe(false);
+  }
+
+  // Appears when Internal filter is selected; button and X toggle aria-pressed.
+  await choose(page, "Internal filter");
+  await expect(flipBtn).toBeVisible();
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "false");
+  expect(await canFlip()).toBe(true);
+
+  await flipBtn.click();
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "true");
+  expect(await flipped()).toBe(true);
+
+  // Repeated X keydown events are ignored.
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "x", repeat: true, bubbles: true }));
+  });
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "true");
+  expect(await flipped()).toBe(true);
+
+  // Clicking on the left half while flipped mounts the filter on the right glass.
+  const [w, h] = await gridSize(page);
+  const p = await cellPoint(page, Math.round(w * 0.2), Math.round(h * 0.5));
+  await page.mouse.click(p.x, p.y);
+  expect(await cellCount(page, "device")).toBeGreaterThan(300);
+  await choose(page, "Inspect");
+  await expect(flipBtn).toBeHidden();
+  const rightSide = await cellPoint(page, w - 3, Math.round(h * 0.5));
+  await page.mouse.click(rightSide.x, rightSide.y);
+  await expect(page.locator("#inspect")).toContainText("on the right glass");
+
+  // Pressing X while Inspect is selected does not change flip state.
+  await page.keyboard.press("x");
+  expect(await flipped()).toBe(true);
+
+  // Returning to Internal filter shows the button with its pressed state intact,
+  // and X toggles it back to unflipped.
+  await choose(page, "Internal filter");
+  await expect(flipBtn).toBeVisible();
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("x");
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "false");
+  expect(await flipped()).toBe(false);
+
+  // Hiding #flip while it has keyboard focus moves focus to the newly selected swatch.
+  await flipBtn.focus();
+  await expect(flipBtn).toBeFocused();
+  await page.keyboard.press("1");
+  await expect(flipBtn).toBeHidden();
+  await expect(page.getByRole("radio", { name: "Bubbler" })).toBeFocused();
+
+  // Switching back to Sand hides it again.
+  await choose(page, "Sand");
+  await expect(flipBtn).toBeHidden();
+  expect(errors).toEqual([]);
+});
