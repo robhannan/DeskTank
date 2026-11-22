@@ -285,7 +285,7 @@ fn a_version_2_fixture_loads() {
     assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0xf6de_4336_106b_62f3);
+    assert_eq!(w.state_hash(), 0x8afe_3ee2_1e95_370f);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -383,7 +383,7 @@ fn a_version_3_fixture_loads() {
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0xa27c_ed7f_1831_9970);
+    assert_eq!(hash, 0xdb52_694f_68fb_5390);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -407,7 +407,7 @@ fn a_version_4_fixture_loads() {
     // pin it. A creature without a home hashes as before version 5, so this
     // is the hash version 4 pinned.
     let hash = w.state_hash();
-    assert_eq!(hash, 0x07c8_5bc4_801d_be6e);
+    assert_eq!(hash, 0xcf91_4365_3913_ae8e);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
     let mut again = again;
@@ -440,7 +440,7 @@ fn a_version_5_fixture_loads() {
     // Pinned, so every platform decodes the same state. An unnamed
     // creature hashes as before version 6, so this is the hash version 5
     // pinned.
-    assert_eq!(w.state_hash(), 0x38d9_9bb5_afdb_8907);
+    assert_eq!(w.state_hash(), 0x00be_786e_2ff8_a133);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -474,7 +474,7 @@ fn a_version_6_fixture_loads() {
     );
     assert_eq!(w.creatures().iter().filter_map(|c| c.name()).count(), 3);
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x029c_0413_f990_0954);
+    assert_eq!(w.state_hash(), 0x26af_4abe_d38e_5708);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -617,38 +617,6 @@ fn a_version_8_fixture_loads() {
 /// A creature's id, quarry, fright and home.
 type Pursuit = (u32, Option<u32>, u32, Option<(usize, usize)>);
 
-/// What the version 9 fixture holds: [`bred`] with a second betta, run on
-/// until a predator is hunting, a territorial betta has claimed its
-/// territory and a creature is frightened, all at once (hunting and
-/// territory). The second betta holds a territory while the first hunts:
-/// at 6 cm the betta does most of the hunting.
-fn hunting() -> World {
-    let mut w = bred();
-    let betta = w.species().id("betta").unwrap();
-    let (top, bottom) = w.zone_rows(betta).unwrap();
-    let y = i64::try_from(usize::midpoint(top, bottom)).unwrap();
-    let spot = (100..180)
-        .step_by(10)
-        .find(|&x| w.add_creature(betta, x, y).is_ok());
-    assert!(spot.is_some(), "no room for a second betta");
-    let busy = |w: &World| {
-        let cs = w.creatures();
-        cs.iter().any(|c| c.quarry().is_some())
-            && cs.iter().any(|c| c.fear() > 0)
-            && cs
-                .iter()
-                .any(|c| c.home().is_some() && c.quarry().is_none())
-    };
-    for _ in 0..20_000 {
-        if busy(&w) {
-            break;
-        }
-        w.tick();
-    }
-    assert!(busy(&w), "nothing hunting and frightened");
-    w
-}
-
 #[test]
 fn a_version_9_fixture_loads() {
     // Frozen since version 10: blessing writes only the current version.
@@ -656,7 +624,7 @@ fn a_version_9_fixture_loads() {
     assert_eq!(save::check(&bytes), Ok(9));
     let mut w = save::decode(&bytes, table()).unwrap();
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x2ab9_5592_0c2b_e8ef);
+    assert_eq!(w.state_hash(), 0x01f1_e1d2_bb8e_f9c3);
     let pursuit = |w: &World| -> Vec<Pursuit> {
         w.creatures()
             .iter()
@@ -690,15 +658,14 @@ fn a_version_9_fixture_loads() {
 
 #[test]
 fn a_version_10_fixture_loads() {
+    // Frozen since version 11: pre-v11 driftwood migrates to dry, so it is
+    // no longer compared with a fresh `hunting()` run; instead pin its
+    // decoded hash and verify it carries on identically to its own re-save.
     let path = fixture(10);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&hunting())).unwrap();
-    }
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(save::check(&bytes), Ok(10));
     let mut w = save::decode(&bytes, table()).unwrap();
-    let mut fresh = hunting();
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    assert_eq!(w.state_hash(), 0x4fcd_4c23_9f48_9ca7);
     // The poured stones keep their round outlines.
     let partial = |w: &World| -> Vec<(usize, u16)> {
         (0..w.width() * w.height())
@@ -706,6 +673,8 @@ fn a_version_10_fixture_loads() {
             .collect()
     };
     assert_ne!(partial(&w), Vec::new());
+    let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(w.state_hash(), fresh.state_hash());
     assert_eq!(partial(&w), partial(&fresh));
     for _ in 0..400 {
         w.tick();
@@ -713,6 +682,76 @@ fn a_version_10_fixture_loads() {
     }
     assert_eq!(w.state_hash(), fresh.state_hash());
     assert_eq!(partial(&w), partial(&fresh));
+}
+
+fn waterlogged() -> World {
+    let mut w = World::new(
+        WorldConfig {
+            width: 80,
+            height: 64,
+            seed: 42,
+            water_level: 0.75,
+        },
+        table(),
+    )
+    .unwrap();
+    let wood = id(&w, "driftwood");
+    w.paint(24, 36, 4, wood, Brush::Pour).unwrap();
+    w.paint(52, 24, 3, wood, Brush::Pour).unwrap();
+    let glued = w.body_at(52, 24).unwrap();
+    w.set_anchored(glued, true);
+    for _ in 0..(desktank_sim::DRIFTWOOD_SOAK_EVERY * 40) {
+        w.tick();
+    }
+    w
+}
+
+#[test]
+fn a_version_11_fixture_loads() {
+    let path = fixture(11);
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&waterlogged())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(11));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    let mut fresh = waterlogged();
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    let wood = id(&w, "driftwood");
+    let max_wet = w
+        .cells()
+        .iter()
+        .filter(|c| c.material == wood)
+        .map(|c| desktank_sim::driftwood_wetness(c.variant))
+        .max()
+        .unwrap();
+    assert!(
+        max_wet > 20,
+        "v11 fixture keeps waterlogged driftwood: {max_wet}"
+    );
+    for _ in 0..(desktank_sim::DRIFTWOOD_SOAK_EVERY * 2) {
+        w.tick();
+        fresh.tick();
+    }
+    assert_eq!(w.state_hash(), fresh.state_hash());
+}
+
+#[test]
+fn pre_v11_fixtures_migrate_driftwood_to_dry() {
+    // v1.dtank was saved from `busy()`, which contains driftwood cells with
+    // pre-v11 random colour-noise variants. Migration resets them to dry.
+    let bytes = std::fs::read(fixture(1)).unwrap();
+    let w = save::decode(&bytes, table()).unwrap();
+    let wood = id(&w, "driftwood");
+    let wood_cells: Vec<_> = w.cells().iter().filter(|c| c.material == wood).collect();
+    assert_ne!(wood_cells.len(), 0);
+    for c in wood_cells {
+        assert_eq!(
+            desktank_sim::driftwood_wetness(c.variant),
+            0,
+            "pre-v11 driftwood must migrate to dry"
+        );
+    }
 }
 
 /// A migrated tank's creatures rest whole bands deep, spread over them.

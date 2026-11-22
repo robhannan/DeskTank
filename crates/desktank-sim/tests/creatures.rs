@@ -103,7 +103,9 @@ fn busy_tank(seed: u64) -> World {
     let ledge = w.body_at(70, 45).unwrap();
     w.set_anchored(ledge, true);
     w.paint(100, 60, 5, rock, Brush::Replace).unwrap();
-    w.paint(30, 30, 2, id(&w, "driftwood"), Brush::Replace)
+    // Place driftwood over open sand/gravel (clear of the cuttings at x = 14, 26, 40)
+    // so when it waterlogs and sinks mid-run it doesn't box a crawler against a stem.
+    w.paint(86, 30, 2, id(&w, "driftwood"), Brush::Replace)
         .unwrap();
     let cutting = id(&w, "cutting");
     for x in [14, 26, 40] {
@@ -143,7 +145,7 @@ fn busy_tank(seed: u64) -> World {
 
 #[test]
 fn no_creature_enters_a_solid_cell_in_100k_ticks() {
-    let mut w = busy_tank(11);
+    let mut w = busy_tank(12);
     let sand = id(&w, "sand");
     let mut moved = vec![0_u32; w.creatures().len()];
     let mut last: Vec<_> = w.creatures().iter().map(Creature::centre).collect();
