@@ -660,3 +660,94 @@ fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
         assert_eq!(plain, render_sized(gpu, &mut tank, format, (tw, th)));
     }
 }
+
+/// Waterlogged driftwood renders visibly darker than dry driftwood (both free
+/// and glued, at 4× scale, in single-pass and split-grid pipelines).
+#[test]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn waterlogged_driftwood_renders_darker_than_dry_in_single_and_split_grid() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (gw, gh) = (64usize, 48usize);
+    let (tw, th) = (256u32, 192u32); // scale 4 (fine)
+
+    let mut world = World::new(
+        WorldConfig {
+            width: gw,
+            height: gh,
+            seed: 7,
+            water_level: 0.5,
+        },
+        MaterialTable::builtin().unwrap(),
+    )
+    .unwrap();
+    let wood = world.materials().id("driftwood").unwrap();
+    // Free driftwood in air (stays dry) vs glued driftwood underwater (waterlogs).
+    // Use two glued blocks so both stay at known coordinates: one in air, one in water.
+    let air_rect = desktank_sim::Rect {
+        x0: 8,
+        y0: 6,
+        x1: 20,
+        y1: 14,
+    };
+    let water_rect = desktank_sim::Rect {
+        x0: 36,
+        y0: 30,
+        x1: 48,
+        y1: 38,
+    };
+    world
+        .fill_rect(air_rect, wood, desktank_sim::Brush::Replace)
+        .unwrap();
+    let dry_id = world.body_at(12, 10).unwrap();
+    world.set_anchored(dry_id, true);
+    world
+        .fill_rect(water_rect, wood, desktank_sim::Brush::Replace)
+        .unwrap();
+    let wet_id = world.body_at(40, 34).unwrap();
+    world.set_anchored(wet_id, true);
+
+    for _ in 0..(desktank_sim::DRIFTWOOD_SOAK_EVERY * 135) {
+        world.tick();
+    }
+
+    let mean_luma = |frame: &[u8], r: desktank_sim::Rect| -> f64 {
+        let mut sum = 0u64;
+        let mut count = 0u64;
+        for cy in r.y0 + 1..r.y1 - 1 {
+            for cx in r.x0 + 1..r.x1 - 1 {
+                let px = (cx as u32) * 4 + 2;
+                let py = (cy as u32) * 4 + 2;
+                let i = ((py * tw + px) * 4) as usize;
+                sum += u64::from(frame[i]) + u64::from(frame[i + 1]) + u64::from(frame[i + 2]);
+                count += 3;
+            }
+        }
+        sum as f64 / count as f64
+    };
+
+    let mut single_frame = None;
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let mut tank = Tank::new(world.clone(), TankConfig::default());
+        let frame = render_sized(gpu, &mut tank, format, (tw, th));
+        let dry_luma = mean_luma(&frame, air_rect);
+        let wet_luma = mean_luma(&frame, water_rect);
+        assert!(
+            wet_luma + 15.0 < dry_luma,
+            "split={split_grid}: waterlogged wood ({wet_luma:.1}) should be visibly darker than dry ({dry_luma:.1})"
+        );
+        if !split_grid {
+            single_frame = Some(frame);
+        } else if let Some(ref single) = single_frame {
+            assert_eq!(
+                frame, *single,
+                "split-grid driftwood must match single-pass"
+            );
+        }
+    }
+}

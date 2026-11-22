@@ -99,8 +99,8 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   the card with DV3. Drag-to-move (keeping state) and flow/air dials come
   later. Non-interactive hosts (screensaver, lock screen) just run the
   devices.
-- **Migration** (save format v11). Version 11 saves the device table.
-  Loading a version 10 or older save turns each connected group of
+- **Migration** (save format v12). Version 12 saves the device table.
+  Loading a version 11 or older save turns each connected group of
   legacy `filter_outlet` cells into an internal filter at the group's
   centre on the nearer glass; a group with no room for one (boxed in by
   rock, say) is left as legacy outlet cells, which still drive the jet.

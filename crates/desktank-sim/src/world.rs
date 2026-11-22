@@ -19,7 +19,7 @@ use crate::plants::{PlantSpeciesId, Propagule, plant_variant};
 use crate::rng::{chunk_stream, splitmix64};
 use crate::species::SpeciesId;
 use bodies::Body;
-pub use bodies::{BodyId, BodyInfo};
+pub use bodies::{BodyId, BodyInfo, DRIFTWOOD_AIR_DROP, DRIFTWOOD_DRY_DIV, DRIFTWOOD_SOAK_EVERY};
 
 mod creatures;
 mod devices;
@@ -236,6 +236,8 @@ pub struct World {
     masks: BTreeMap<usize, u16>,
     /// Prefab devices (D27).
     devices: devices::Devices,
+    /// Material id of `driftwood`, if present in the material table.
+    driftwood: Option<MaterialId>,
 }
 
 impl World {
@@ -320,6 +322,7 @@ impl World {
             &plants.living_materials(),
         );
 
+        let driftwood = materials.id("driftwood");
         let mut world = Self {
             width,
             height,
@@ -344,6 +347,7 @@ impl World {
             plants,
             masks: BTreeMap::new(),
             devices,
+            driftwood,
         };
         world.init_life();
         Ok(world)
@@ -690,7 +694,12 @@ impl World {
         }
         let mut cell = Cell::new(material, variant(self.seed, self.tick, i));
         if self.props[usize::from(material.0)].class == MovementClass::Rigid {
-            cell.variant &= !GLUED_VARIANT_BIT;
+            if Some(material) == self.driftwood {
+                // Fresh driftwood starts dry (wetness 0 in bits 1..7).
+                cell.variant = 0;
+            } else {
+                cell.variant &= !GLUED_VARIANT_BIT;
+            }
             let id = self.join_body(group, material);
             cell.state = id;
             if id != 0 && self.body_added(id, i) {
@@ -941,6 +950,20 @@ impl World {
             None => true,
             Some(j) => self.cells[j].material == into,
         }
+    }
+
+    /// Records a visual-only change at `(x, y)` (such as driftwood wetness):
+    /// grows its chunk's changed rectangle for GPU upload without waking any
+    /// chunk's movement pass.
+    pub(in crate::world) fn mark_visual(&mut self, x: usize, y: usize) {
+        let own = (y / CHUNK_SIZE) * self.chunks_x + x / CHUNK_SIZE;
+        let point = Rect {
+            x0: x,
+            y0: y,
+            x1: x + 1,
+            y1: y + 1,
+        };
+        self.chunks[own].changed_next = self.chunks[own].changed_next.union(point);
     }
 
     /// Records a change at `(x, y)`: grows its chunk's changed rectangle

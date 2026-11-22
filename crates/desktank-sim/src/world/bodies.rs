@@ -29,7 +29,10 @@ pub(in crate::world) use motion::{GRAVITY, MAX_SPEED, REST_SPEED, REST_TICKS, st
 pub(in crate::world) use shape::ONE;
 
 use crate::grid::Rect;
-use crate::material::{GLUED_VARIANT_BIT, MaterialId, MovementClass};
+use crate::material::{
+    GLUED_VARIANT_BIT, MAX_DRIFTWOOD_WETNESS, MaterialId, MovementClass, driftwood_variant,
+    driftwood_wetness,
+};
 
 use shape::{Shape, TURN};
 
@@ -41,6 +44,22 @@ use crate::save::{SaveError, v1, v10};
 /// stroke can draw a shape before it drops (2, so a host that runs two
 /// ticks before its next stamp still holds it).
 const HOLD_TICKS: u64 = 2;
+/// Ticks between driftwood waterlogging steps (14 s of world time): a
+/// typical floating piece crosses neutral buoyancy in ~19–21 minutes.
+pub const DRIFTWOOD_SOAK_EVERY: u64 = 280;
+/// Drying runs once every this many soak steps, so soaking beats drying
+/// and a floating piece at the waterline reliably waterlogs and sinks.
+pub const DRIFTWOOD_DRY_DIV: u64 = 2;
+/// Wetness lost per cell above water when a driftwood cell touches air,
+/// giving a natural capillary-wicking gradient above the waterline while
+/// letting pieces completely in air dry back to 0.
+pub const DRIFTWOOD_AIR_DROP: u8 = 12;
+/// Effective density (milli) of fully waterlogged driftwood (1.20), dense
+/// enough to sink gently without burying itself in substrate like rock (2.6).
+const DRIFTWOOD_WET_MILLI: i64 = 1_200;
+/// Liquids at least this dense count as water for soaking driftwood (same
+/// threshold as `world::life::WATERY_DENSITY`).
+const WATERY_DENSITY: f32 = 0.5;
 
 /// A rigid body's id, as stored in its cells' `state` (never 0).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -137,6 +156,48 @@ impl World {
         (rigid && self.bodies.contains_key(&c.state)).then_some(BodyId(c.state))
     }
 
+    /// The body's current effective density relative to water (1.0). For
+    /// driftwood this is the average across its cells as they waterlog
+    /// (0.7 dry to 1.2 fully waterlogged); for other materials it is the
+    /// material's base density.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // density in milli is small (<= 1_000_000)
+    pub fn body_density(&self, id: BodyId) -> Option<f32> {
+        self.bodies.get(&id.0)?;
+        let (_, rho) = self.body_mass_and_density(id.0);
+        Some(rho as f32 / 1000.0)
+    }
+
+    /// Total mass (in cell-milli) and mean density (in milli, >= 1) of body
+    /// `id`. For driftwood, averages per-cell density across its cells.
+    pub(super) fn body_mass_and_density(&self, id: u16) -> (i64, i64) {
+        let Some(b) = self.bodies.get(&id) else {
+            return (1, 1);
+        };
+        let base = self.props[usize::from(b.material.0)].milli.max(1);
+        let n = b.shape.n.max(1);
+        if Some(b.material) != self.driftwood || b.cells.is_empty() {
+            return (n * base, base);
+        }
+        let span = DRIFTWOOD_WET_MILLI - base;
+        let max_w = i64::from(MAX_DRIFTWOOD_WETNESS);
+        let (mut sum_w, mut valid_count) = (0_i64, 0_i64);
+        for &i in &b.cells {
+            if self.is_member(i, id, b.material) {
+                sum_w += i64::from(driftwood_wetness(self.cells[i].variant));
+                valid_count += 1;
+            }
+        }
+        if valid_count == 0 {
+            return (n * base, base);
+        }
+        // Scale to `n` (equal to `valid_count` after `tidy`) and round to nearest milli.
+        let denom = max_w * valid_count;
+        let mass = (n * base + (sum_w * span * n + denom / 2) / denom).max(n);
+        let rho = ((mass + n / 2) / n).max(1);
+        (mass, rho)
+    }
+
     /// Glues (`true`) or unglues a body. A glued body never moves. Returns
     /// whether the flag changed.
     pub fn set_anchored(&mut self, id: BodyId, anchored: bool) -> bool {
@@ -226,7 +287,8 @@ impl World {
     }
 
     /// Per tick, before the movement pass: tidy the bodies edits touched,
-    /// then move the ones that can.
+    /// advance driftwood waterlogging on soak ticks, then move the ones that
+    /// can.
     pub(super) fn update_bodies(&mut self) {
         let dirty: Vec<u16> = self
             .bodies
@@ -237,7 +299,132 @@ impl World {
         for id in dirty {
             self.tidy(id);
         }
+        self.soak_driftwood();
         self.move_bodies();
+    }
+
+    /// Advances per-cell driftwood waterlogging and air drying every
+    /// [`DRIFTWOOD_SOAK_EVERY`] ticks. Synchronous across all driftwood cells
+    /// so update order never biases direction; marks only changed cells
+    /// visually dirty (without waking chunks) and wakes free bodies whose
+    /// wetness changed so they settle deeper or sink once density passes 1.0.
+    fn soak_driftwood(&mut self) {
+        let Some(wood) = self.driftwood else {
+            return;
+        };
+        if !self.tick.is_multiple_of(DRIFTWOOD_SOAK_EVERY) {
+            return;
+        }
+        let allow_dry = (self.tick / DRIFTWOOD_SOAK_EVERY).is_multiple_of(DRIFTWOOD_DRY_DIV);
+        let ids: Vec<u16> = self
+            .bodies
+            .iter()
+            .filter(|(_, b)| b.material == wood)
+            .map(|(&id, _)| id)
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let width = self.width;
+        let height = self.height;
+        let mut updates: Vec<(usize, u8, u16)> = Vec::new();
+        for &id in &ids {
+            let Some(b) = self.bodies.get(&id) else {
+                continue;
+            };
+            for &i in &b.cells {
+                let cell = self.cells[i];
+                if cell.material != wood {
+                    continue;
+                }
+                let cur = driftwood_wetness(cell.variant);
+                let x = i % width;
+                let y = i / width;
+                let mut touches_water = false;
+                let mut touches_air = false;
+                let mut has_wood = false;
+                let mut max_wood = 0u8;
+                let neighbours = [
+                    (x > 0).then(|| i - 1),
+                    (x + 1 < width).then(|| i + 1),
+                    (y > 0).then(|| i - width),
+                    (y + 1 < height).then(|| i + width),
+                ];
+                for j in neighbours.into_iter().flatten() {
+                    let nb = self.cells[j];
+                    if nb.material == wood {
+                        has_wood = true;
+                        max_wood = max_wood.max(driftwood_wetness(nb.variant));
+                    } else {
+                        let p = self.props[usize::from(nb.material.0)];
+                        if p.class == MovementClass::Liquid {
+                            if p.density >= WATERY_DENSITY {
+                                touches_water = true;
+                            } else {
+                                touches_air = true;
+                            }
+                        }
+                    }
+                }
+                let target = if touches_water {
+                    MAX_DRIFTWOOD_WETNESS
+                } else if touches_air {
+                    if has_wood {
+                        max_wood.saturating_sub(DRIFTWOOD_AIR_DROP)
+                    } else {
+                        0
+                    }
+                } else if has_wood {
+                    max_wood.saturating_sub(1)
+                } else {
+                    cur
+                };
+                let next = if cur < target {
+                    cur + 1
+                } else if allow_dry && cur > target {
+                    cur - 1
+                } else {
+                    cur
+                };
+                if next != cur {
+                    updates.push((i, next, id));
+                }
+            }
+        }
+        let mut last_woken = 0u16;
+        for (i, next, id) in updates {
+            let glued = self.cells[i].variant & GLUED_VARIANT_BIT != 0;
+            self.cells[i].variant = driftwood_variant(next, glued);
+            self.mark_visual(i % width, i / width);
+            if id != last_woken {
+                last_woken = id;
+                if let Some(b) = self.bodies.get_mut(&id)
+                    && !b.anchored
+                {
+                    b.awake = true;
+                    b.still = 0;
+                }
+            }
+        }
+    }
+
+    /// Migrates a pre-v11 save: clears the random colour-noise bits of
+    /// driftwood cells and shapes so old saves start with dry driftwood
+    /// (preserving `GLUED_VARIANT_BIT`).
+    pub(super) fn migrate_driftwood_v10(&mut self) {
+        let Some(wood) = self.driftwood else {
+            return;
+        };
+        for c in &mut self.cells {
+            if c.material == wood {
+                c.variant &= GLUED_VARIANT_BIT;
+            }
+        }
+        for b in self.bodies.values_mut() {
+            if b.material == wood {
+                b.shape.reset_variants_to_dry();
+            }
+        }
     }
 
     /// A fresh, empty body; 0 if every id is taken.

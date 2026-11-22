@@ -48,7 +48,9 @@
   - zone preference;
   - bottom-walking for corydoras and shrimp, with short swims now and
     then for bottom dwellers that can swim, and burrowing into loose
-    substrate for kuhli loaches;
+    substrate for kuhli loaches. During the rising half of a swim, a kuhli
+    loach blocked by rock swims upward along its face and resumes its
+    forward arc once its body clears the lip;
   - surface-grazing for snails on glass, rock and plants, turned in
     quarter turns so the foot rests on the face they hold (walls,
     overhangs), with the collision box turned too;

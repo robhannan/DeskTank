@@ -696,7 +696,7 @@ mod saves {
     /// ticks) and its state hash; `tests/web/saves.spec.ts` imports the
     /// same file on the web and checks the same hash.
     const NATIVE_FIXTURE: &str = "../desktank-sim/tests/fixtures/v1.dtank";
-    const NATIVE_HASH: &str = "cd2d746501f8f7c7";
+    const NATIVE_HASH: &str = "7550da115e75bf97";
     /// The native fixture as this build re-saves it natively. A save carries
     /// the build's material and species name tables, so it is not the v1
     /// file's bytes once ids are added; the web test compares its export of

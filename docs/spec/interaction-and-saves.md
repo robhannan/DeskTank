@@ -167,7 +167,10 @@
       rigid bodies' reference shapes: a 4×4 coverage mask per partial cell,
       stored sparsely (version 10; a version 9 tank's rigid cells migrate
       whole, drawn square as before);
-    - the device table (version 11, D27; loading version 10 or older
+    - per-cell driftwood waterlogging stored in the upper seven bits of
+      `Cell::variant` (version 11; pre-v11 driftwood cells migrate to dry
+      while preserving glue);
+    - the device table (version 12, D27; loading version 11 or older
       turns legacy filter outlet cells into internal filters, see
       [devices](devices.md) *Migration*);
     - the ecosystem state.

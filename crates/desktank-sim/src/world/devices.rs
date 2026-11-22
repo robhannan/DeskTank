@@ -14,7 +14,7 @@ use super::{World, WorldError};
 use crate::device::{Device, DeviceId, DeviceKind, DeviceKinds, DeviceStatus, MAX_DEVICES, Mount};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
-use crate::save::{SaveError, v11};
+use crate::save::{SaveError, v12};
 
 /// The world's devices.
 #[derive(Clone, Debug)]
@@ -247,11 +247,11 @@ impl World {
         }
     }
 
-    pub(super) fn save_devices(&self) -> (Vec<v11::Device>, u16) {
+    pub(super) fn save_devices(&self) -> (Vec<v12::Device>, u16) {
         let devices = self
             .devices
             .values()
-            .map(|d| v11::Device {
+            .map(|d| v12::Device {
                 id: d.id.0,
                 kind: d.kind.name().to_owned(),
                 x: u32::try_from(d.x).unwrap_or(u32::MAX),
@@ -266,7 +266,7 @@ impl World {
     /// so the current is worked out with the devices in place).
     pub(super) fn load_devices(
         &mut self,
-        saved: &[v11::Device],
+        saved: &[v12::Device],
         next: u16,
     ) -> Result<(), SaveError> {
         if saved.len() > MAX_DEVICES {
@@ -313,7 +313,7 @@ impl World {
     }
 
     /// Turns legacy filter outlet cells into internal filters (D27), as
-    /// loading a version 10 or older save does: each connected group of
+    /// loading a version 11 or older save does: each connected group of
     /// outlet cells is cleared and an internal filter placed at its centre,
     /// on the glass its jet pointed away from. A group with no room for a
     /// filter is left as legacy outlet cells, which still drive the jet.
