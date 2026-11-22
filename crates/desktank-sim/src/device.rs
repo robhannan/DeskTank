@@ -14,6 +14,9 @@
 //! - **Sponge filter** (DV4): bed-mounted (drops onto substrate/hardscape/floor),
 //!   emits air-driven uplift bubbles and gentle upward flow, is intrinsically
 //!   fry-safe, and invites shrimp to graze its porous foam.
+//! - **HOB filter** (DV5): rim-mounted (hangs on the top edge partly above the
+//!   water line), pours a waterfall into the surface that ripples it, and drops
+//!   its intake tube in the back depth band so fish pass in front of it.
 
 use serde::Deserialize;
 
@@ -53,11 +56,13 @@ pub enum DeviceKind {
     InternalFilter,
     /// A bed-mounted air-driven sponge filter (DV4).
     SpongeFilter,
+    /// A rim-mounted hang-on-back waterfall filter (DV5).
+    HobFilter,
 }
 
 impl DeviceKind {
     /// Every kind, in palette order.
-    pub const ALL: [Self; 2] = [Self::InternalFilter, Self::SpongeFilter];
+    pub const ALL: [Self; 3] = [Self::InternalFilter, Self::SpongeFilter, Self::HobFilter];
 
     /// Its name in saves, scripts and `assets/devices/`.
     #[must_use]
@@ -65,6 +70,7 @@ impl DeviceKind {
         match self {
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
+            Self::HobFilter => "hob_filter",
         }
     }
 
@@ -78,6 +84,7 @@ impl DeviceKind {
         match self {
             Self::InternalFilter => 0,
             Self::SpongeFilter => 1,
+            Self::HobFilter => 2,
         }
     }
 }
@@ -92,15 +99,17 @@ pub enum Mount {
     /// Dropped straight down onto substrate, hardscape or the tank floor,
     /// wholly under the water line (symmetric; wall-flip ignored).
     Bed,
+    /// Hanging on the top rim of the tank (`y = 0`), partly above the water
+    /// line with its intake submerged; mirrors left/right when flipped.
+    Rim,
 }
 
 impl Mount {
-    /// Whether devices with this mount can be flipped between opposite sides
-    /// (left and right glass).
+    /// Whether devices with this mount can be flipped left/right.
     #[must_use]
     pub const fn flippable(self) -> bool {
         match self {
-            Self::SideGlass => true,
+            Self::SideGlass | Self::Rim => true,
             Self::Bed => false,
         }
     }
@@ -144,6 +153,14 @@ pub struct DeviceArt {
     /// Inclusive local cell rows `(y0, y1)` of the foam body that shrimp seek
     /// out and graze, if this device invites shrimp grazing.
     pub graze_rows: Option<(usize, usize)>,
+    /// Local cell row from which this device's footprint occupies only the
+    /// back depth band (`DEPTH_BANDS - 1`, D21) so fish swim and render in
+    /// front of it (e.g. a HOB filter's intake tube). `None` means solid in
+    /// every band.
+    pub back_band_from: Option<usize>,
+    /// Waterfall spillway span `(x0, x1, y)` in local cells (inclusive columns
+    /// `x0..=x1` at lip row `y`, facing right) that drives surface ripples.
+    pub spillway: Option<(usize, usize, usize)>,
     /// The art, facing right (mounted on the left glass).
     pub sprite: Sprite,
 }
@@ -182,6 +199,10 @@ struct ArtDef {
     fry_safe: bool,
     #[serde(default)]
     graze_rows: Option<[usize; 2]>,
+    #[serde(default)]
+    back_band_from: Option<usize>,
+    #[serde(default)]
+    spillway: Option<[usize; 3]>,
     sprite: SpriteDef,
 }
 
@@ -202,6 +223,7 @@ pub struct DeviceKinds {
 const BUILTIN: &[&str] = &[
     include_str!("../../../assets/devices/internal_filter.toml"),
     include_str!("../../../assets/devices/sponge_filter.toml"),
+    include_str!("../../../assets/devices/hob_filter.toml"),
 ];
 
 impl DeviceKinds {
@@ -227,6 +249,7 @@ impl DeviceKinds {
         Ok(Self { arts })
     }
 
+    #[allow(clippy::too_many_lines)] // one validation check per TOML field
     fn parse_art(src: &str) -> Result<DeviceArt, DeviceError> {
         let bad = |file: &str, message: String| DeviceError::Parse {
             file: file.to_owned(),
@@ -308,6 +331,34 @@ impl DeviceKinds {
             }
             None => None,
         };
+        let back_band_from = match def.back_band_from {
+            Some(y) if y > 0 && y < size.1 => Some(y),
+            Some(_) => {
+                return Err(bad(
+                    &def.name,
+                    "back_band_from must be strictly inside sprite height".to_owned(),
+                ));
+            }
+            None => None,
+        };
+        let spillway = match def.spillway {
+            Some([x0, x1, y]) if x0 <= x1 && x1 < size.0 && y < size.1 => {
+                if !in_footprint(x0, y) || !in_footprint(x1, y) {
+                    return Err(bad(
+                        &def.name,
+                        "spillway endpoints must be footprint cells".to_owned(),
+                    ));
+                }
+                Some((x0, x1, y))
+            }
+            Some(_) => {
+                return Err(bad(
+                    &def.name,
+                    "spillway must be [x0, x1, y] within sprite bounds with x0 <= x1".to_owned(),
+                ));
+            }
+            None => None,
+        };
         Ok(DeviceArt {
             kind,
             label: def.label,
@@ -323,6 +374,8 @@ impl DeviceKinds {
             intakes,
             fry_safe: def.fry_safe,
             graze_rows,
+            back_band_from,
+            spillway,
             sprite: art,
         })
     }
@@ -441,7 +494,36 @@ impl Device {
                     core::cmp::Ordering::Equal => [0.0, -1.0],
                 }
             }
+            Mount::Rim => {
+                // Point outwards from the vertical intake strainer's centre column.
+                let sum: usize = self.intakes(art).map(|(x, _)| x).sum();
+                let n = art.intakes.len().max(1);
+                match (ix * n).cmp(&sum) {
+                    core::cmp::Ordering::Less => [-1.0, 0.0],
+                    core::cmp::Ordering::Greater => [1.0, 0.0],
+                    core::cmp::Ordering::Equal => [0.0, 1.0],
+                }
+            }
         }
+    }
+
+    /// World row from which this device's footprint lies in the back depth
+    /// band (`DEPTH_BANDS - 1`), if any.
+    #[must_use]
+    pub fn back_band_row(&self, art: &DeviceArt) -> Option<usize> {
+        art.back_band_from.map(|r| self.y + r)
+    }
+
+    /// Waterfall spillway span `(x0, x1_exclusive, y)` in world cells, if any.
+    #[must_use]
+    pub fn spillway_world(&self, art: &DeviceArt) -> Option<(usize, usize, usize)> {
+        let (x0, x1, y) = art.spillway?;
+        let (lx0, lx1) = if self.facing_left {
+            (art.size.0 - 1 - x1, art.size.0 - 1 - x0)
+        } else {
+            (x0, x1)
+        };
+        Some((self.x + lx0, self.x + lx1 + 1, self.y + y))
     }
 
     /// Bubble outlet cells in the world.
@@ -535,5 +617,41 @@ mod tests {
         assert!(!art.footprint[0]);
         assert!(art.footprint[7]);
         assert!(art.footprint[15 * 15 + 7]);
+    }
+
+    #[test]
+    fn the_hob_filter_is_rim_mounted_with_back_band_tube_and_spillway() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let art = kinds.get(DeviceKind::HobFilter);
+        assert_eq!(art.size, (22, 32));
+        assert_eq!(art.mount, Mount::Rim);
+        assert!(art.mount.flippable());
+        assert!(!art.fry_safe);
+        assert_eq!(art.back_band_from, Some(10));
+        assert_eq!(art.spillway, Some((1, 12, 9)));
+        assert_eq!(art.intakes.len(), 4);
+        assert!(art.nozzle_dir[1] > 0.9, "waterfall jets downwards");
+        // Under the spillway is open water; the intake tube sits on the right.
+        assert!(!art.footprint[15 * 22 + 5]);
+        assert!(art.footprint[15 * 22 + 16]);
+        let unflipped = Device {
+            id: DeviceId(1),
+            kind: DeviceKind::HobFilter,
+            x: 40,
+            y: 0,
+            facing_left: false,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
+        };
+        let flipped = Device {
+            facing_left: true,
+            ..unflipped
+        };
+        assert_eq!(unflipped.spillway_world(art), Some((41, 53, 9)));
+        assert_eq!(flipped.spillway_world(art), Some((49, 61, 9)));
+        assert_eq!(unflipped.back_band_row(art), Some(10));
+        assert!(unflipped.nozzle_dir(art)[0] < 0.0);
+        assert!(flipped.nozzle_dir(art)[0] > 0.0);
     }
 }

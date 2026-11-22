@@ -484,7 +484,13 @@ impl Tank {
             self.palette_dirty = true;
         }
         let palette = self.palette_layout(size);
-        let sway = self.sway_active().then(|| self.sway_phase());
+        let sway_on = self.sway_active();
+        let ripples = self.world.surface_ripples();
+        let phase = if sway_on || !ripples.is_empty() {
+            self.sway_phase()
+        } else {
+            0.0
+        };
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -523,7 +529,9 @@ impl Tank {
             size,
             self.world.surface_row(),
             daylight::tint(self.time_of_day),
-            sway,
+            phase,
+            sway_on,
+            &ripples,
             (palette, self.cursor, self.magnifier, self.field_overlay),
             self.timer.as_ref(),
         );
@@ -801,5 +809,37 @@ mod tests {
         // Turning it off asks for one frame, then 0.
         tank.set_magnifier(None);
         assert_eq!(count_frames(&mut tank, Duration::from_secs(8), 2), 1);
+    }
+
+    #[test]
+    fn settled_hob_tank_draws_no_extra_frames_when_idle() {
+        let mut world = World::new(
+            WorldConfig {
+                width: 96,
+                height: 64,
+                seed: 7,
+                water_level: 0.86,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        world
+            .add_device(desktank_sim::DeviceKind::HobFilter, 48, 0, false)
+            .unwrap()
+            .expect("HOB fits");
+        assert!(world.has_surface_ripples());
+        for _ in 0..120 {
+            world.tick();
+        }
+        assert_eq!(world.awake_chunks(), 0, "HOB tank settled");
+        let mut tank = Tank::new(world, TankConfig::default());
+        let req = tank.tick(Duration::ZERO);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        let frames = count_frames(&mut tank, Duration::ZERO, 10);
+        assert_eq!(
+            frames, 0,
+            "idle tank with HOB filter must draw 0 extra frames, drew {frames}"
+        );
     }
 }

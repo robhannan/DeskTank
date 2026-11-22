@@ -40,12 +40,15 @@ pub enum GroundStyle {
     Algae = 10,
     /// Detritus, dead plant matter and waste: fine organic mulm specks.
     Detritus = 11,
+    /// Prefab device footprint cell (D27): drawn as air above the water line
+    /// and as water at or below it; the device sprite renders on top.
+    Device = 12,
 }
 
 impl GroundStyle {
     /// Every style with its WGSL constant name (checked by `renderer.rs`).
     #[cfg(test)]
-    pub const ALL: [(&'static str, Self); 12] = [
+    pub const ALL: [(&'static str, Self); 13] = [
         ("STYLE_DEFAULT", Self::Default),
         ("STYLE_WATER", Self::Water),
         ("STYLE_AIR", Self::Air),
@@ -58,15 +61,17 @@ impl GroundStyle {
         ("STYLE_BUBBLE", Self::Bubble),
         ("STYLE_ALGAE", Self::Algae),
         ("STYLE_DETRITUS", Self::Detritus),
+        ("STYLE_DEVICE", Self::Device),
     ];
 
     /// Picks the sub-cell style for `m`.
     #[must_use]
     pub fn for_material(m: &Material) -> Self {
         match m.name.as_str() {
-            // A device's footprint cells are drawn as the water behind
-            // its sprite (D27).
-            "water" | "device" => Self::Water,
+            "water" => Self::Water,
+            // A device's footprint cells are drawn as air above the water line
+            // and as water below it; its sprite goes on top (D27, DV5).
+            "device" => Self::Device,
             "air" => Self::Air,
             "liquid_fertiliser" => Self::Fertiliser,
             "sand" => Self::Sand,
@@ -248,7 +253,7 @@ mod tests {
         for m in mats.iter() {
             let style = GroundStyle::for_material(m);
             assert_eq!(texel(&table, m.id.0, 0)[3], style as u8, "{}", m.name);
-            let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser" | "device");
+            let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
             assert_eq!(style.is_depth_tinted(), dense, "{}", m.name);
         }
     }
@@ -260,6 +265,7 @@ mod tests {
         let expected = [
             ("water", GroundStyle::Water),
             ("air", GroundStyle::Air),
+            ("device", GroundStyle::Device),
             ("liquid_fertiliser", GroundStyle::Fertiliser),
             ("sand", GroundStyle::Sand),
             ("gravel", GroundStyle::Gravel),

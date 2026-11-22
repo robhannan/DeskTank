@@ -1318,6 +1318,7 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
             }
         }
         Mount::Bed => "on the bed",
+        Mount::Rim => "on the rim",
     };
     let guard = if status.fry_safe {
         "fry-safe"
