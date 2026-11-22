@@ -1,0 +1,3 @@
+# D23: Android is a native target, led by the screensaver
+
+**Android is a native target, led by the screensaver** (2026-11-20). The same tank as an Android TV or phone **Dream** (screensaver) first, then an app (window mode with touch) and optionally a live wallpaper (§3.6). **Native Rust** (wgpu, Vulkan with a GLES 3.0 fallback) behind a thin Kotlin shim, not a WebView around the web build, since TV devices have weak GPUs and little memory. **TV first, phones second.** Distributed as a **signed APK sideloaded** from GitHub Releases; Google Play is decided later. Android requires every APK to be signed, so a self-generated release key is the one exception to D14. A native iOS app remains a non-goal.
