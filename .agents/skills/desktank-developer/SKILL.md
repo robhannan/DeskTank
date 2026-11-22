@@ -18,8 +18,10 @@ your final report, so keep the work self-contained and the report short.
    (or `Part of #<n>`) in your PR description rather than editing a
    central changelog.
 2. `git fetch origin` and branch from the latest `origin/main` (or from the
-   lower PR's branch when stacking onto an open PR):
-   `git checkout -b feat/<short-slug> origin/main`. Never commit to `main`.
+   lower PR's remote-tracking branch `origin/<lower-branch>` when stacking
+   onto an open PR):
+   `git checkout -b feat/<short-slug> origin/<base>` (where `<base>` is `main`
+   or `<lower-branch>`). Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
 3. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
    must be the scaffold (workspace, toolchain, lints, `deny.toml`, CI);
