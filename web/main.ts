@@ -137,6 +137,7 @@ const capInput = $<HTMLInputElement>("set-creature-cap");
 const capStockOut = $<HTMLOutputElement>("set-creature-cap-stock");
 const brushInput = $<HTMLInputElement>("brush");
 const zoomSelect = $<HTMLSelectElement>("zoom");
+const flipBtn = $<HTMLButtonElement>("flip");
 const paletteEl = $("palette");
 const paletteBox = $("palette-box");
 const tabsEl = $("tabs");
@@ -1226,6 +1227,10 @@ function showInspection() {
     const s = Number(age);
     const old = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
     inspectEl.textContent = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
+  } else if (kind === "device") {
+    // D27: DV1 shows the jet only; filtering comes in DV3.
+    const [name, id, glass, flow, x, y] = rest;
+    inspectEl.textContent = `${label(name)} #${id} · on the ${glass} glass · flow ${flow} cells/s · cell ${x}, ${y}`;
   } else if (kind === "creature") {
     // The name is last and may hold spaces.
     inspected = { id: Number(rest[1]), parts: rest.slice(0, 12), name: rest.slice(12).join(" ") };
@@ -1279,6 +1284,13 @@ function chooseMagnifySlot() {
     showSub(button.dataset.path);
     choose(slot);
   }
+}
+
+// D27: mirrors the next device placed onto the other side glass; the
+// placement ghost shows where it goes.
+function flipDevice() {
+  flipBtn.setAttribute("aria-pressed", String(tank.flipDevice()));
+  kick();
 }
 
 function pickZoom() {
@@ -1491,6 +1503,7 @@ function wireInput() {
     { passive: false },
   );
   zoomSelect.addEventListener("change", pickZoom);
+  flipBtn.addEventListener("click", flipDevice);
   playBtn.addEventListener("click", () => setRunning(!tank.running()));
   stepBtn.addEventListener("click", step);
   $("feed").addEventListener("click", () => {
@@ -1555,6 +1568,8 @@ function wireInput() {
       e.preventDefault();
       nameInput.focus();
       nameInput.select();
+    } else if (e.key === "x" || e.key === "X") {
+      flipDevice();
     } else if (e.key === "f" || e.key === "F") {
       const next = FIELDS[(FIELDS.indexOf(settings.field) + 1) % FIELDS.length];
       update({ field: next });

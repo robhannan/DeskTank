@@ -138,6 +138,15 @@ pub enum Inspection {
         /// The material there.
         material: MaterialId,
     },
+    /// A device (D27), and the cell under the pointer (one of its cells).
+    Device {
+        /// The device.
+        id: crate::DeviceId,
+        /// Column under the pointer.
+        x: usize,
+        /// Row under the pointer.
+        y: usize,
+    },
     /// A creature, and the cell under the pointer.
     Creature {
         /// The creature.
@@ -247,6 +256,8 @@ pub struct Tools {
     zoom: usize,
     pointer: Option<(i64, i64)>,
     stroke: Option<Stroke>,
+    /// Mirror the next placed device onto the other glass.
+    flip: bool,
 }
 
 impl Tools {
@@ -261,9 +272,41 @@ impl Tools {
             zoom: 0,
             pointer: None,
             stroke: None,
+            flip: false,
         }
     }
 
+    /// Whether the next device placed is mirrored onto the other glass.
+    #[must_use]
+    pub fn flipped(&self) -> bool {
+        self.flip
+    }
+
+    /// Toggles [`Tools::flipped`]; returns the new setting.
+    pub fn flip(&mut self) -> bool {
+        self.flip = !self.flip;
+        self.flip
+    }
+
+    /// The ghost of the device the place tool would put down at the
+    /// pointer, and whether it fits there ([`World::device_placement`]).
+    #[must_use]
+    pub fn ghost(&self, world: &World) -> Option<(crate::Device, bool)> {
+        let Tool::Place(p) = self.tool else {
+            return None;
+        };
+        let kind = p.device()?;
+        let (x, y) = self.pointer?;
+        Some(world.device_placement(kind, x, y, self.flip))
+    }
+
+    /// The palette for `world`, grouped: the non-empty groups in
+    /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
+    /// inspect, glue and magnify; each material group lists the materials naming it,
+    /// by ID (the plants group starts with the plants slot); then the
+    /// placeables whose material `world` has, and its stocked species by
+    /// ID ([`crate::Species::stocked`]). Live food species follow the food
+    /// materials in the Food group, where a click adds a pinch.
     /// The palette for `world` as a tree: the top categories in
     /// [`PalettePath::all`] order, each with its non-empty sub-categories
     /// (top categories with none are left out). Tools are scoop, net,
@@ -569,7 +612,11 @@ impl Tools {
             Action::Place => match self.tool {
                 // The device material is in the table: the palette only
                 // offers placeables it has.
-                Tool::Place(p) => Outcome::Painted(world.place(p, cell.0, cell.1).unwrap_or(0)),
+                Tool::Place(p) => Outcome::Painted(
+                    world
+                        .place_flipped(p, cell.0, cell.1, self.flip)
+                        .unwrap_or(0),
+                ),
                 // No room (solid/air there) or a full tank reports why.
                 Tool::AddCreature(s) => match world.add_palette_creature(s, cell.0, cell.1) {
                     Ok(id) => Outcome::Added(id),
@@ -837,8 +884,11 @@ fn inspect(world: &World, c: (i64, i64)) -> Outcome {
             y,
             material,
         },
-        (None, Some(id)) => Inspection::Plant { id, x, y, material },
-        (None, None) => Inspection::Cell { x, y, material },
+        (None, plant) => match (world.device_at(x, y), plant) {
+            (Some(id), _) => Inspection::Device { id, x, y },
+            (None, Some(id)) => Inspection::Plant { id, x, y, material },
+            (None, None) => Inspection::Cell { x, y, material },
+        },
     })
 }
 
@@ -1184,7 +1234,7 @@ mod tests {
             ("build/hardscape", vec!["rock", "driftwood"]),
             (
                 "build/devices",
-                vec!["Place(Bubbler)", "Place(FilterOutlet)"],
+                vec!["Place(Bubbler)", "Place(InternalFilter)"],
             ),
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
             (
@@ -1360,19 +1410,45 @@ mod tests {
     #[test]
     fn place_stamps_one_device_per_click() {
         let mut w = world();
-        let outlet = id(&w, "filter_outlet");
+        let device = id(&w, "device");
+        let cells = w
+            .device_kinds()
+            .get(crate::DeviceKind::InternalFilter)
+            .cells;
         let mut t = Tools::new(id(&w, "sand"));
-        t.select(PaletteItem::Tool(Tool::Place(Placeable::FilterOutlet)));
+        t.select(PaletteItem::Tool(Tool::Place(Placeable::InternalFilter)));
         assert_eq!(t.preview(), None);
+        // The ghost follows the pointer: on the nearer (left) glass, or the
+        // other one when flipped.
+        t.moved(&mut w, (20, 40));
+        let (ghost, fits) = t.ghost(&w).unwrap();
+        assert!(fits && !ghost.facing_left && ghost.x == 0);
+        assert!(t.flip());
+        assert!(t.ghost(&w).unwrap().0.facing_left);
+        assert!(!t.flip());
         assert_eq!(
             t.press(&mut w, Button::Primary, (20, 40)),
-            Outcome::Painted(9)
+            Outcome::Painted(cells)
         );
         assert_eq!(t.moved(&mut w, (60, 40)), Outcome::None);
         assert_eq!(t.hold(&mut w), 0);
         t.release(&mut w, Button::Primary);
-        assert_eq!(count(&w, outlet), 9);
-        assert_eq!(at(&w, 20, 40), outlet);
+        assert_eq!(count(&w, device), cells);
+        assert_eq!(at(&w, 5, 40), device);
+        // Inspect names it; scooping one cell takes the whole device.
+        t.select(PaletteItem::Tool(Tool::Inspect));
+        let found = t.press(&mut w, Button::Primary, (5, 40));
+        assert!(matches!(
+            found,
+            Outcome::Inspected(Inspection::Device { x: 5, y: 40, .. })
+        ));
+        t.release(&mut w, Button::Primary);
+        t.select(PaletteItem::Tool(Tool::Scoop));
+        t.resize(-3);
+        t.press(&mut w, Button::Primary, (5, 40));
+        t.release(&mut w, Button::Primary);
+        assert_eq!(count(&w, device), 0);
+        assert_eq!(w.devices().count(), 0);
     }
 
     #[test]

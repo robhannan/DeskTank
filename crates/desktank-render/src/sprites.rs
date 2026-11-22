@@ -28,16 +28,22 @@
 //! texels that glow differently in their alpha (eye whites [`ALPHA_EYE`],
 //! pupils [`ALPHA_UNLIT`]; still opaque to every other test).
 
-use desktank_sim::{LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL, TICKS_PER_SECOND, World};
+use desktank_sim::{
+    Device, DeviceKind, DeviceKinds, LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL,
+    TICKS_PER_SECOND, World,
+};
 
 /// Atlas width in texels; species shelves stack downwards. 512 wide keeps
 /// the stack within WebGL2's guaranteed 2048 texels tall now that species
 /// carry several colour morphs of large art (the axolotl alone has three).
 pub const ATLAS_WIDTH: usize = 512;
 /// Most sprites drawn in a frame: every creature the cap allows, live
-/// food and corpses.
-pub const MAX_SPRITES: usize =
-    desktank_sim::MAX_CREATURE_CAP + desktank_sim::MAX_LIVE_FOOD + desktank_sim::MAX_CORPSES;
+/// food, corpses, devices and a placement ghost.
+pub const MAX_SPRITES: usize = desktank_sim::MAX_CREATURE_CAP
+    + desktank_sim::MAX_LIVE_FOOD
+    + desktank_sim::MAX_CORPSES
+    + desktank_sim::MAX_DEVICES
+    + 1;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
@@ -62,6 +68,13 @@ pub const LOOK_ALIVE: f32 = 0.0;
 pub const LOOK_ELDER: f32 = 1.0;
 /// A corpse.
 pub const LOOK_DEAD: f32 = 2.0;
+/// A device's placement ghost (D27): drawn see-through, tinted red when
+/// it doesn't fit (the look's second float is 1).
+pub const LOOK_GHOST: f32 = 3.0;
+/// The depth devices are drawn at, in bands (D21): just behind the front
+/// band, so a creature or plant there passes in front of the glass-mounted
+/// body while the rest of the tank is behind it.
+pub const DEVICE_DEPTH: f32 = 1.0;
 /// The look's second float for a living burrower (a corpse's is how far it
 /// has rotted): hidden where loose substrate covers it.
 pub const LOOK_BURROWER: f32 = 1.0;
@@ -86,17 +99,20 @@ pub struct Atlas {
     pub size: (u32, u32),
     /// By species id, then look ([`desktank_sim::Species::look`]).
     entries: Vec<Vec<Entry>>,
+    /// By device kind, in [`DeviceKind::ALL`] order (D27).
+    devices: Vec<Entry>,
     /// By species id: the glow colour (sRGB-encoded, 0–1), strength and
     /// whether it pulses, for species that glow.
     glows: Vec<Option<([f32; 3], f32, bool)>>,
 }
 
 impl Atlas {
-    /// Packs every species' frames. Frames that don't fit the width are
-    /// wrapped onto further rows of the same shelf.
+    /// Packs every species' frames, then every device kind's (D27). Frames
+    /// that don't fit the width are wrapped onto further rows of the same
+    /// shelf.
     #[must_use]
     #[allow(clippy::many_single_char_names)] // texel maths
-    pub fn build(species: &SpeciesTable) -> Self {
+    pub fn build(species: &SpeciesTable, device_kinds: &DeviceKinds) -> Self {
         let mut entries = vec![Vec::new(); 256];
         let mut glows = vec![None; 256];
         let mut placed = Vec::new();
@@ -121,16 +137,45 @@ impl Atlas {
                     size,
                     frames: n,
                 });
-                placed.push((look, size, origin, fine, s.glow.as_ref()));
+                placed.push((
+                    &look.frames,
+                    &look.fine_frames,
+                    size,
+                    origin,
+                    fine,
+                    s.glow.as_ref(),
+                ));
             }
+        }
+        let mut devices = Vec::new();
+        for art in device_kinds.iter() {
+            let size = (art.sprite.width, art.sprite.height);
+            let n = art.sprite.frames.len();
+            let origin = (0, y);
+            y += rows(n, size);
+            let fine = (0, y);
+            y += rows(n, (size.0 * 2, size.1 * 2));
+            devices.push(Entry {
+                origin,
+                fine,
+                size,
+                frames: n,
+            });
+            placed.push((
+                &art.sprite.frames,
+                &art.sprite.fine_frames,
+                size,
+                origin,
+                fine,
+                None,
+            ));
         }
         let height = y.max(1);
         let mut image = vec![0; ATLAS_WIDTH * height * 4];
-        for (look, (w, h), origin, fine, glow) in placed {
-            for (frames, origin, size) in [
-                (&look.frames, origin, (w, h)),
-                (&look.fine_frames, fine, (w * 2, h * 2)),
-            ] {
+        for (base, fine_frames, (w, h), origin, fine, glow) in placed {
+            for (frames, origin, size) in
+                [(base, origin, (w, h)), (fine_frames, fine, (w * 2, h * 2))]
+            {
                 for (f, texels) in frames.iter().enumerate() {
                     let (fx, fy) = Self::frame_origin(origin, size, f);
                     for (i, t) in texels.iter().enumerate() {
@@ -156,6 +201,7 @@ impl Atlas {
             image,
             size: (side(ATLAS_WIDTH), side(height)),
             entries,
+            devices,
             glows,
         }
     }
@@ -194,7 +240,20 @@ impl Atlas {
     /// ones (D21; ties keep the world's order, creatures before corpses).
     /// `sprites` is scratch space, reused between frames. Returns the
     /// count.
+    #[cfg(test)]
     pub fn instances(&self, world: &World, sprites: &mut Vec<Sprite>, out: &mut Vec<f32>) -> u32 {
+        self.instances_with(world, None, sprites, out)
+    }
+
+    /// [`Atlas::instances`], then one per device (at [`DEVICE_DEPTH`]) and
+    /// the placement `ghost` if any (whether it fits), drawn last.
+    pub fn instances_with(
+        &self,
+        world: &World,
+        ghost: Option<(Device, bool)>,
+        sprites: &mut Vec<Sprite>,
+        out: &mut Vec<f32>,
+    ) -> u32 {
         out.clear();
         sprites.clear();
         let tick = world.tick_count();
@@ -267,12 +326,52 @@ impl Atlas {
                 burrower: false,
             });
         }
+        for d in world.devices() {
+            if sprites.len() == MAX_SPRITES - 1 {
+                break;
+            }
+            sprites.push(self.device_sprite(world, d, [LOOK_ALIVE, 0.0], DEVICE_DEPTH));
+        }
         // Stable, so equal depths keep the world's order.
         sprites.sort_by(|a, b| b.depth.total_cmp(&a.depth));
+        if let Some((d, fits)) = ghost {
+            let look = [LOOK_GHOST, if fits { 0.0 } else { 1.0 }];
+            sprites.push(self.device_sprite(world, &d, look, 0.0));
+        }
         for s in sprites.iter() {
             s.push(out);
         }
         u32::try_from(sprites.len()).unwrap_or(u32::MAX)
+    }
+}
+
+impl Atlas {
+    /// A device's sprite: its art's box, mirrored on the right glass.
+    fn device_sprite(&self, world: &World, d: &Device, look: [f32; 2], depth: f32) -> Sprite {
+        let art = world.device_kinds().get(d.kind);
+        let k = DeviceKind::ALL
+            .iter()
+            .position(|&k| k == d.kind)
+            .unwrap_or(0);
+        let entry = self.devices[k];
+        let (origin, fine) = Self::origins(&entry, 0);
+        let (w, h) = art.size;
+        // Device boxes are small: exact in f32.
+        #[allow(clippy::cast_precision_loss)]
+        let centre = ((d.x * 2 + w) as f32 / 2.0, (d.y * 2 + h) as f32 / 2.0);
+        Sprite {
+            centre,
+            size: art.size,
+            origin,
+            fine,
+            frame: entry.size,
+            flip: d.facing_left,
+            turn: 0,
+            look,
+            depth,
+            glow: [0.0; 4],
+            burrower: false,
+        }
     }
 }
 
@@ -406,7 +505,7 @@ mod tests {
     #[allow(clippy::many_single_char_names)]
     fn packs_every_frame_where_the_instances_point() {
         let mut w = world();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         assert_eq!(
             atlas.image.len(),
             (atlas.size.0 * atlas.size.1 * 4) as usize
@@ -439,7 +538,7 @@ mod tests {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn creatures_are_drawn_in_their_morph_and_sex() {
         let mut w = world();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         assert!(atlas.size.1 <= 2048, "{:?}", atlas.size);
         let (shrimp, guppy) = (
             w.species().id("cherry_shrimp").unwrap(),
@@ -518,7 +617,7 @@ mod tests {
                 .add_creature(id, 20 + 36 * (i % 5), 24 + 20 * (i / 5))
                 .unwrap();
         }
-        let atlas = Atlas::build(world.species());
+        let atlas = Atlas::build(world.species(), world.device_kinds());
         let mut out = Vec::new();
         assert_eq!(
             atlas.instances(&world, &mut Vec::new(), &mut out) as usize,
@@ -562,7 +661,7 @@ mod tests {
             MaterialTable::builtin().unwrap(),
         )
         .unwrap();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         assert!(atlas.size.1 <= 2048, "{:?}", atlas.size);
         let blinker = w.species().id("blinker").unwrap();
         let tetra = w.species().id("neon_tetra").unwrap();
@@ -636,7 +735,7 @@ mod tests {
     #[test]
     fn only_burrowers_are_hidden_by_the_substrate() {
         let mut w = world();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         let loach = w.species().id("kuhli_loach").unwrap();
         let cory = w.species().id("corydoras").unwrap();
         w.add_creature(loach, 20, 30).unwrap();
@@ -654,7 +753,7 @@ mod tests {
     #[test]
     fn a_crawler_on_the_glass_is_turned_with_its_quad_swapped() {
         let mut w = world();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         let nerite = w.species().id("nerite").unwrap();
         // Against the left glass: the foot turns to point left.
         w.add_creature(nerite, 2, 30).unwrap();
@@ -705,7 +804,7 @@ mod tests {
     #[allow(clippy::float_cmp, clippy::cast_precision_loss)] // small exact values
     fn fry_are_drawn_small_elders_grey_and_corpses_belly_up() {
         let mut w = world();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         let tetra = w.species().id("neon_tetra").unwrap();
         let s = w.species().get(tetra).unwrap();
         let (full_w, full_h) = s.size();
@@ -749,7 +848,7 @@ mod tests {
     #[test]
     fn creatures_are_drawn_back_to_front() {
         let mut w = world();
-        let atlas = Atlas::build(w.species());
+        let atlas = Atlas::build(w.species(), w.device_kinds());
         let tetra = w.species().id("neon_tetra").unwrap();
         for i in 0..12 {
             w.add_creature(tetra, 6 + 5 * (i % 6), 12 + 14 * (i / 6))

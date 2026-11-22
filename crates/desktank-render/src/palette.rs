@@ -61,7 +61,9 @@ impl GroundStyle {
     #[must_use]
     pub fn for_material(m: &Material) -> Self {
         match m.name.as_str() {
-            "water" => Self::Water,
+            // A device's footprint cells are drawn as the water behind
+            // its sprite (D27).
+            "water" | "device" => Self::Water,
             "air" => Self::Air,
             "liquid_fertiliser" => Self::Fertiliser,
             "sand" => Self::Sand,
@@ -128,6 +130,12 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
         columns[i] = SHADES.map(|k| m.colour.map(|c| scale(c, k)));
         styles[i] = GroundStyle::for_material(m);
         rigid[i] = m.class == MovementClass::Rigid;
+    }
+    // A device's footprint cells are drawn as the water behind it; its
+    // sprite goes on top (D27).
+    if let (Some(device), Some(water)) = (materials.id("device"), materials.id("water")) {
+        let (d, w) = (usize::from(device.0), usize::from(water.0));
+        columns[d] = columns[w];
     }
     let mut out = vec![0; SIDE * SIDE * 4];
     for (variant, row) in out.as_chunks_mut::<{ SIDE * 4 }>().0.iter_mut().enumerate() {
@@ -216,7 +224,7 @@ mod tests {
         for m in mats.iter() {
             let style = GroundStyle::for_material(m);
             assert_eq!(texel(&table, m.id.0, 0)[3], style as u8, "{}", m.name);
-            let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
+            let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser" | "device");
             assert_eq!(style.is_depth_tinted(), dense, "{}", m.name);
         }
     }

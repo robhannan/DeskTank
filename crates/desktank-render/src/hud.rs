@@ -11,7 +11,7 @@
 //! with [`PaletteLayout`], which places it exactly as it is drawn.
 
 use desktank_sim::tools::{PaletteItem, Tool};
-use desktank_sim::{MaterialTable, Placeable, PlantSpeciesTable, SpeciesTable};
+use desktank_sim::{DeviceKinds, MaterialTable, PlantSpeciesTable, SpeciesTable};
 
 use crate::Layout;
 
@@ -58,12 +58,10 @@ const MAGNIFY: [&str; 8] = [
     ".#####..", "#..#..#.", "#.###.#.", "#..#..#.", ".#####..", ".....##.", "......##", ".......#",
 ];
 
-/// Placeable icons: `#` is the device's colour, `o` a bubble or the jet.
+/// The bubbler's icon: `#` is its colour, `o` a bubble. Prefab devices
+/// draw their art's icon (D27).
 const BUBBLER: [&str; 8] = [
     "...o....", ".o....o.", "....o...", "..o..o..", "........", "..####..", ".######.", "........",
-];
-const OUTLET: [&str; 8] = [
-    "........", "........", "###.....", "####.o.o", "####o.o.", "###.....", "........", "........",
 ];
 const BUBBLE: [u8; 3] = [0xe8, 0xf6, 0xff];
 
@@ -377,6 +375,7 @@ pub fn build(
     materials: &MaterialTable,
     species: &SpeciesTable,
     plants: &PlantSpeciesTable,
+    devices: &DeviceKinds,
 ) -> (Vec<u8>, (u32, u32)) {
     let (w, h) = image_size(palette.tabs.len(), palette.subs.len(), palette.items.len());
     let mut img = vec![0u8; (w * h * 4) as usize];
@@ -451,7 +450,7 @@ pub fn build(
             }
             for y in 0..SLOT - 2 {
                 for x in 0..SLOT - 2 {
-                    let px = slot_pixel(*item, materials, species, plants, x, y);
+                    let px = slot_pixel(*item, materials, species, plants, devices, x, y);
                     put(x0 + 1 + x, top + 1 + y, px);
                 }
             }
@@ -492,6 +491,7 @@ fn slot_pixel(
     materials: &MaterialTable,
     species: &SpeciesTable,
     plants: &PlantSpeciesTable,
+    devices: &DeviceKinds,
     x: u32,
     y: u32,
 ) -> [u8; 3] {
@@ -517,10 +517,20 @@ fn slot_pixel(
             }
         }
         PaletteItem::Tool(Tool::Place(p)) => {
-            let icon = match p {
-                Placeable::Bubbler => BUBBLER,
-                Placeable::FilterOutlet => OUTLET,
-            };
+            // A prefab device's hand-drawn icon, centred (D27).
+            if let Some(kind) = p.device() {
+                let icon = &devices.get(kind).sprite.icon;
+                let (ox, oy) = (
+                    8_usize.saturating_sub(icon.width) / 2,
+                    8_usize.saturating_sub(icon.height) / 2,
+                );
+                let (ix, iy) = (x as usize, y as usize);
+                return (ix >= ox && iy >= oy && ix - ox < icon.width && iy - oy < icon.height)
+                    .then(|| icon.pixels[(iy - oy) * icon.width + ix - ox])
+                    .filter(|p| p[3] > 0)
+                    .map_or(ICON_BG, |p| [p[0], p[1], p[2]]);
+            }
+            let icon = BUBBLER;
             let device = materials
                 .id(p.material_name())
                 .and_then(|id| materials.get(id))
@@ -677,7 +687,7 @@ mod tests {
             items: vec![PaletteItem::Material(sand), PaletteItem::Tool(Tool::Net)],
             selected: Some((1, 0, 1)),
         };
-        let (img, (w, h)) = build(&palette, &mats, &species, &plants);
+        let (img, (w, h)) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
         assert_eq!((w, h), (34, 23));
         let rgb = |img: &[u8], x, y| {
             let p = px(img, w, x, y);
@@ -705,7 +715,7 @@ mod tests {
 
         // Another tab open: the selection marks its tab instead.
         palette.open = 2;
-        let (img, _) = build(&palette, &mats, &species, &plants);
+        let (img, _) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
         assert_eq!(rgb(&img, 16, 10), SELECTED, "mark on the selection's tab");
         assert_eq!(rgb(&img, 12, 12), FRAME, "nothing selected here");
 
@@ -714,7 +724,7 @@ mod tests {
         palette.open = 1;
         palette.subs = vec![PaletteItem::Material(sand), PaletteItem::Material(water)];
         palette.open_sub = 1;
-        let (img, (w3, h3)) = build(&palette, &mats, &species, &plants);
+        let (img, (w3, h3)) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
         assert_eq!((w3, h3), (34, 34));
         assert_eq!(rgb(&img, 12, 1), OPEN, "open tab");
         assert_eq!(rgb(&img, 12, 12), SUB_OPEN, "open sub-tab, unlike a tab");
@@ -726,13 +736,13 @@ mod tests {
         );
         assert_eq!(rgb(&img, 12, 23), FRAME, "selection is in another sub-tab");
         palette.open_sub = 0;
-        let (img, _) = build(&palette, &mats, &species, &plants);
+        let (img, _) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
         assert_eq!(rgb(&img, 12, 23), SELECTED, "selected item");
 
         // A plant slot shows its own species' colour.
         palette.subs.clear();
         let leaf = |palette: &Palette| {
-            let (img, (w, _)) = build(palette, &mats, &species, &plants);
+            let (img, (w, _)) = build(palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
             let p = px(&img, w, GAP + 1 + 3, ROW + GAP + 1);
             [p[0], p[1], p[2]]
         };

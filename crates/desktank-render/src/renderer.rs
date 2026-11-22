@@ -116,7 +116,7 @@ impl Renderer {
         ];
         let hud = create_hud(d);
         let (fields, fields_size) = create_fields(d, world);
-        let atlas = Atlas::build(world.species());
+        let atlas = Atlas::build(world.species(), world.device_kinds());
         let atlas_texture = create_atlas(gpu, &atlas);
         let instances = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprites"),
@@ -267,12 +267,20 @@ impl Renderer {
         bytes
     }
 
-    /// Writes one sprite instance per creature, if they changed since the
-    /// last upload.
-    pub fn upload_sprites(&mut self, gpu: &Gpu, world: &World) {
-        self.sprite_count =
-            self.atlas
-                .instances(world, &mut self.sprite_scratch, &mut self.instance_scratch);
+    /// Writes one sprite instance per creature, corpse and device, and the
+    /// placement `ghost`, if they changed since the last upload.
+    pub fn upload_sprites(
+        &mut self,
+        gpu: &Gpu,
+        world: &World,
+        ghost: Option<(desktank_sim::Device, bool)>,
+    ) {
+        self.sprite_count = self.atlas.instances_with(
+            world,
+            ghost,
+            &mut self.sprite_scratch,
+            &mut self.instance_scratch,
+        );
         let bytes: Vec<u8> = self
             .instance_scratch
             .iter()

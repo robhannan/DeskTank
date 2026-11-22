@@ -439,9 +439,9 @@ fn flow_tint_shows_speed_in_either_direction() {
             water_level: 1.0,
         };
         let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
-        world
-            .place(desktank_sim::Placeable::FilterOutlet, outlet_x, 20)
-            .unwrap();
+        // A legacy 3x3 outlet (D27: old saves only), for a jet at row 20.
+        let outlet = world.materials().id("filter_outlet").unwrap();
+        world.paint(outlet_x, 20, 1, outlet, Brush::Pour).unwrap();
         world.tick();
         let mut tank = Tank::new(world, TankConfig::default());
         let plain = render(gpu, &mut tank, format);
@@ -454,6 +454,54 @@ fn flow_tint_shows_speed_in_either_direction() {
         tank.set_field_overlay(None);
         assert_eq!(plain, render(gpu, &mut tank, format));
     }
+}
+
+/// D27: a device is drawn as its sprite over cells drawn as water, on its
+/// glass; its placement ghost is see-through, lighter than the device.
+#[test]
+fn a_device_and_its_ghost_are_drawn() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let make = |filter: bool| {
+        let config = WorldConfig {
+            width: W as usize,
+            height: H as usize,
+            seed: 4,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        if filter {
+            let kind = desktank_sim::DeviceKind::InternalFilter;
+            assert!(world.add_device(kind, 3, 16, false).unwrap().is_some());
+        }
+        Tank::new(world, TankConfig::default())
+    };
+    let mut plain = make(false);
+    let mut with = make(true);
+    let (a, b) = (
+        render(gpu, &mut plain, format),
+        render(gpu, &mut with, format),
+    );
+    let lum = |p: [u8; 3]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    // The body, grey-black plastic, over what would be blue water; open
+    // water beside it is untouched.
+    let (body, water) = (px(&b, 5, 16), px(&a, 5, 16));
+    assert!(
+        body[2] + 30 < water[2] && body[2] < body[0] + 20,
+        "{body:?}"
+    );
+    assert_eq!(px(&a, 40, 16), px(&b, 40, 16));
+    // A ghost on the other glass: changed, but lighter than the real body.
+    let ghost =
+        with.world()
+            .device_placement(desktank_sim::DeviceKind::InternalFilter, 70, 16, false);
+    assert!(ghost.1 && ghost.0.facing_left);
+    with.set_device_ghost(Some(ghost));
+    let g = render(gpu, &mut with, format);
+    assert_ne!(px(&g, 74, 16), px(&b, 74, 16));
+    assert!(lum(px(&g, 74, 16)) > lum(px(&b, 5, 16)));
+    with.set_device_ghost(None);
+    assert_eq!(render(gpu, &mut with, format), b);
 }
 
 /// The magnifier zooms a single rock cell and a creature sprite inside the

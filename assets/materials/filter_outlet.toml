@@ -1,6 +1,8 @@
-# Filter outlet: a placeable (`desktank_sim::Placeable::FilterOutlet`). Its
-# jet pushes floating and liquid cells away from the nearer side wall
-# (`assets/fields.toml`, [current]).
+# Legacy filter outlet: the bare 3x3 nozzle the internal filter replaced
+# (D27, DV1). Nothing places it any more; a version 10 or older save's
+# outlet cells become internal filters when it loads, and any left over
+# (no room for a filter) still push floating and liquid cells away from
+# the nearer side wall (`assets/fields.toml`, [current]).
 id = 61
 name = "filter_outlet"
 class = "solid"

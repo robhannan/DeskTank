@@ -20,7 +20,8 @@
 //! snapshot (`save::v1::Save` for version 1, `save::v2::Save` for 2,
 //! `save::v3::Save` for 3, `save::v4::Save` for 4, `save::v5::Save` for 5,
 //! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8,
-//! `save::v9::Save` for 9, `save::v10::Save` for 10).
+//! `save::v9::Save` for 9, `save::v10::Save` for 10, `save::v11::Save`
+//! for 11).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -43,7 +44,8 @@
 //! motion as a buoyant body (T6c part 2, version 7); and each plant's
 //! colouration (T6d, version 8); and each creature's quarry, pursuit
 //! counter and fright (hunting and territory, version 9); and the
-//! sub-cell outline masks of rigid cells and bodies' shapes (version 10).
+//! sub-cell outline masks of rigid cells and bodies' shapes (version 10);
+//! and the device table (D27, version 11).
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -72,7 +74,11 @@
 //! no rafts (no build before it had floaters), and version 8 a version 7
 //! tank's plants uncoloured, and version 9 a version 8 tank's creatures
 //! calm, with no quarry and no rest from a chase, and version 10 a
-//! version 9 tank's rigid cells whole.
+//! version 9 tank's rigid cells whole. Loading version 10 or older turns
+//! each connected group of legacy filter outlet cells into an internal
+//! filter placed at the group's centre on the nearer side glass, leaving
+//! the group as it was where no filter fits (D27); version 11 has no
+//! migration of its own yet.
 
 use thiserror::Error;
 
@@ -82,6 +88,7 @@ use crate::world::{DEPTH_BANDS, LIFE_DAY_TICKS, World, WorldError, default_band}
 
 pub(crate) mod v1;
 pub(crate) mod v10;
+pub(crate) mod v11;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -94,7 +101,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 10;
+pub const FORMAT_VERSION: u16 = 11;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -141,13 +148,18 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v10();
+    let snapshot = world.to_v11();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
-    let payload = lz4_flex::block::compress_prepend_size(&raw);
+    wrap(FORMAT_VERSION, &raw)
+}
+
+/// The envelope around `raw`, a `version` snapshot's encoding.
+fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
+    let payload = lz4_flex::block::compress_prepend_size(raw);
     let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
     out.extend_from_slice(&MAGIC);
-    out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&version.to_le_bytes());
     out.extend_from_slice(&0u16.to_le_bytes());
     // Payloads are far below 4 GiB (MAX_SIDE² cells).
     #[allow(clippy::cast_possible_truncation)]
@@ -166,6 +178,21 @@ pub fn encode(world: &World) -> Vec<u8> {
 /// version, or the snapshot doesn't fit the tables or itself.
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
+    if version == 11 {
+        let raw = decompress(payload)?;
+        let snapshot: v11::Save =
+            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
+        return World::from_v11(snapshot, materials);
+    }
+    // Version 10 and older: their filter outlet cells become internal
+    // filters (D27).
+    let mut world = decode_v10(version, payload, materials)?;
+    world.adopt_legacy_outlets();
+    Ok(world)
+}
+
+/// Decodes a version 1–10 payload.
+fn decode_v10(version: u16, payload: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let raw = decompress(payload)?;
     let payload = |e: postcard::Error| SaveError::Payload(e.to_string());
     let from_v8 = |s: v8::Save| World::from_v9(v9::Save::from_v8(s), materials.clone());
@@ -339,6 +366,66 @@ mod tests {
         assert_eq!(unrun(&r, v.len(), "x").unwrap(), v);
         assert!(unrun(&r, 9, "x").is_err());
         assert_eq!(runs(core::iter::empty::<u8>()), Vec::new());
+    }
+
+    /// D27: loading a version 10 tank turns each filter outlet into an
+    /// internal filter on the nearer glass, at the outlet's height; one
+    /// with no room for a filter stays a legacy outlet.
+    #[test]
+    fn version_10_filter_outlets_become_internal_filters() {
+        let mut w = World::new(
+            crate::WorldConfig {
+                width: 160,
+                height: 90,
+                seed: 3,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let outlet = w.materials().id("filter_outlet").unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        w.paint(3, 40, 1, outlet, crate::Brush::Pour).unwrap();
+        w.paint(40, 75, 1, outlet, crate::Brush::Pour).unwrap();
+        // The right side is solid rock: no room on that glass.
+        let rocky = crate::Rect {
+            x0: 120,
+            y0: 9,
+            x1: 160,
+            y1: 90,
+        };
+        w.fill_rect(rocky, rock, crate::Brush::Replace).unwrap();
+        w.paint(150, 60, 1, outlet, crate::Brush::Replace).unwrap();
+        for _ in 0..20 {
+            w.tick();
+        }
+        let raw = postcard::to_allocvec(&w.to_v10()).unwrap();
+        let bytes = wrap(10, &raw);
+        assert_eq!(check(&bytes), Ok(10));
+        let mut loaded = decode(&bytes, MaterialTable::builtin().unwrap()).unwrap();
+        let devices: Vec<_> = loaded.devices().copied().collect();
+        assert_eq!(devices.len(), 2);
+        let art = loaded.device_kinds().get(crate::DeviceKind::InternalFilter);
+        for (d, row) in devices.iter().zip([40, 75]) {
+            assert!(!d.facing_left && d.x == 0, "on the left glass: {d:?}");
+            assert_eq!(d.y + art.size.1 / 2, row, "{d:?}");
+        }
+        // The walled-in outlet is still there, still driving the jet.
+        let counts = loaded.material_counts();
+        assert_eq!(counts[usize::from(outlet.0)], 9);
+        // Its cells are gone from the glass; the filters drive the jet.
+        assert_ne!(loaded.cell(3, 40).unwrap().material, outlet);
+        for _ in 0..2 {
+            loaded.tick();
+        }
+        assert!(loaded.current_at(30, 32) > 1.0);
+        assert!(loaded.current_at(30, 68) > 1.0);
+        // It saves as version 11 and loads to the same state.
+        let again = encode(&loaded);
+        assert_eq!(check(&again), Ok(FORMAT_VERSION));
+        let back = decode(&again, MaterialTable::builtin().unwrap()).unwrap();
+        assert_eq!(back.state_hash(), loaded.state_hash());
+        assert_eq!(back.devices().count(), 2);
     }
 
     #[test]

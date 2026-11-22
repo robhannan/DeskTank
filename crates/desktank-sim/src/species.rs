@@ -518,7 +518,7 @@ struct MorphDef {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SpriteDef {
+pub(crate) struct SpriteDef {
     colours: BTreeMap<String, String>,
     frames: Vec<Vec<String>>,
     #[serde(default)]
@@ -1034,7 +1034,7 @@ fn colour_key(colours: &BTreeMap<String, String>) -> Result<BTreeMap<char, [u8; 
 }
 
 /// Turns character rows into RGBA frames.
-fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
+pub(crate) fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
     let key = colour_key(&def.colours)?;
     let first = def
         .frames

@@ -6,10 +6,25 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11};
 use crate::species::SpeciesId;
 
 impl World {
+    /// The world as a version 11 snapshot.
+    pub(crate) fn to_v11(&self) -> v11::Save {
+        let (devices, next_device) = self.save_devices();
+        v11::Save {
+            base: self.to_v10(),
+            devices,
+            next_device,
+        }
+    }
+
+    /// A world restored from a version 11 snapshot, on `materials`.
+    pub(crate) fn from_v11(s: v11::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        Self::from_v10_with(s.base, materials, Some((&s.devices, s.next_device)))
+    }
+
     /// The world as a version 10 snapshot.
     pub(crate) fn to_v10(&self) -> v10::Save {
         v10::Save {
@@ -21,7 +36,16 @@ impl World {
 
     /// A world restored from a version 10 snapshot, on `materials`.
     pub(crate) fn from_v10(s: v10::Save, materials: MaterialTable) -> Result<Self, SaveError> {
-        let mut w = Self::from_v9(s.base, materials)?;
+        Self::from_v10_with(s, materials, None)
+    }
+
+    /// [`World::from_v10`] with a version 11 device table.
+    fn from_v10_with(
+        s: v10::Save,
+        materials: MaterialTable,
+        devices: Option<(&[v11::Device], u16)>,
+    ) -> Result<Self, SaveError> {
+        let mut w = Self::from_v9_with(s.base, materials, devices)?;
         w.load_masks(&s.masks)?;
         w.load_shape_masks(s.shapes)?;
         Ok(w)
@@ -93,6 +117,16 @@ impl World {
 
     /// A world restored from a version 9 snapshot, on `materials`.
     pub(crate) fn from_v9(s: v9::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        Self::from_v9_with(s, materials, None)
+    }
+
+    /// [`World::from_v9`] with a version 11 device table, restored before
+    /// the life lists so the current is worked out with the devices.
+    fn from_v9_with(
+        s: v9::Save,
+        materials: MaterialTable,
+        devices: Option<(&[v11::Device], u16)>,
+    ) -> Result<Self, SaveError> {
         let config = WorldConfig {
             width: s.width as usize,
             height: s.height as usize,
@@ -168,6 +202,9 @@ impl World {
 
         w.next_body = s.next_body;
         w.load_bodies(s.bodies)?;
+        if let Some((devices, next)) = devices {
+            w.load_devices(devices, next)?;
+        }
         w.load_life(s.life)?;
         w.load_plants(s.plants)?;
         w.load_rafts(s.rafts)?;

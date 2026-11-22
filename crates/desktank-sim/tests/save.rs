@@ -73,7 +73,8 @@ fn busy(seed: u64, ticks: u32) -> World {
             .unwrap();
     }
     w.place(Placeable::Bubbler, 10, 102).unwrap();
-    w.place(Placeable::FilterOutlet, 190, 40).unwrap();
+    // A legacy outlet, as the old fixtures were written with (D27).
+    legacy_outlet(&mut w, 190, 40);
     for name in [
         "flake_food",
         "sinking_pellet",
@@ -110,6 +111,13 @@ fn busy(seed: u64, ticks: u32) -> World {
 
 fn reload(w: &World) -> World {
     save::decode(&save::encode(w), table()).unwrap()
+}
+
+/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
+/// they still drive the jet, which this exercises.
+fn legacy_outlet(w: &mut World, x: i64, y: i64) {
+    let m = w.materials().id("filter_outlet").unwrap();
+    w.paint(x, y, 1, m, Brush::Pour).unwrap();
 }
 
 #[test]
@@ -285,7 +293,7 @@ fn a_version_2_fixture_loads() {
     assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0xf6de_4336_106b_62f3);
+    assert_eq!(w.state_hash(), 0xccd1_fa1d_8851_bfad);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -383,7 +391,7 @@ fn a_version_3_fixture_loads() {
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0xa27c_ed7f_1831_9970);
+    assert_eq!(hash, 0xe822_a24c_3b66_fd1e);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -404,10 +412,10 @@ fn a_version_4_fixture_loads() {
     // Version 5 migrates it with no homes.
     assert!(w.creatures().iter().all(|c| c.home().is_none()));
     // Decoding is pure, so the decoded state is the same on every platform:
-    // pin it. A creature without a home hashes as before version 5, so this
-    // is the hash version 4 pinned.
+    // pin it (repinned when loading turned its filter outlet into an
+    // internal filter, D27).
     let hash = w.state_hash();
-    assert_eq!(hash, 0x07c8_5bc4_801d_be6e);
+    assert_eq!(hash, 0xc8b2_a645_d636_6c0c);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
     let mut again = again;
@@ -437,10 +445,9 @@ fn a_version_5_fixture_loads() {
     assert!(w.creatures().iter().any(|c| c.species() == owner));
     // Version 6 migrates it with no names.
     assert!(w.creatures().iter().all(|c| c.name().is_none()));
-    // Pinned, so every platform decodes the same state. An unnamed
-    // creature hashes as before version 6, so this is the hash version 5
-    // pinned.
-    assert_eq!(w.state_hash(), 0x38d9_9bb5_afdb_8907);
+    // Pinned, so every platform decodes the same state (repinned when
+    // loading turned its filter outlet into an internal filter, D27).
+    assert_eq!(w.state_hash(), 0x33f5_cb3f_c6e4_309c);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -474,7 +481,7 @@ fn a_version_6_fixture_loads() {
     );
     assert_eq!(w.creatures().iter().filter_map(|c| c.name()).count(), 3);
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x029c_0413_f990_0954);
+    assert_eq!(w.state_hash(), 0x354a_451d_ea63_fe87);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -502,7 +509,7 @@ fn floating() -> World {
     w.fill_rect(rect(0, 56, 160, 64), soil, Brush::Replace)
         .unwrap();
     let row = w.surface_row() as i64;
-    w.place(Placeable::FilterOutlet, 2, row + 2).unwrap();
+    legacy_outlet(&mut w, 2, row + 2);
     for (k, name) in ["duckweed", "frogbit", "duckweed", "frogbit"]
         .into_iter()
         .enumerate()
@@ -528,10 +535,14 @@ fn a_version_7_fixture_loads() {
     let bytes = std::fs::read(fixture(7)).unwrap();
     assert_eq!(save::check(&bytes), Ok(7));
     let mut w = save::decode(&bytes, table()).unwrap();
+    // Its outlet loads as an internal filter (D27), as a fresh tank's does
+    // when adopted.
     let mut fresh = floating();
+    fresh.adopt_legacy_outlets();
+    assert_eq!(w.devices().count(), 1);
     assert_eq!(w.state_hash(), fresh.state_hash());
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x7dae_ff6d_93e9_fadf);
+    assert_eq!(w.state_hash(), 0x0b81_c8aa_0d50_8ce3);
     let floaters = |w: &World| {
         w.plants()
             .filter(|p| {
@@ -656,7 +667,7 @@ fn a_version_9_fixture_loads() {
     assert_eq!(save::check(&bytes), Ok(9));
     let mut w = save::decode(&bytes, table()).unwrap();
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x2ab9_5592_0c2b_e8ef);
+    assert_eq!(w.state_hash(), 0xc188_9449_0185_f13f);
     let pursuit = |w: &World| -> Vec<Pursuit> {
         w.creatures()
             .iter()
@@ -690,14 +701,15 @@ fn a_version_9_fixture_loads() {
 
 #[test]
 fn a_version_10_fixture_loads() {
-    let path = fixture(10);
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&hunting())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    // Frozen since version 11: blessing writes only the current version.
+    let bytes = std::fs::read(fixture(10)).unwrap();
     assert_eq!(save::check(&bytes), Ok(10));
     let mut w = save::decode(&bytes, table()).unwrap();
+    // Its outlet loads as an internal filter (D27), as a fresh tank's does
+    // when adopted.
     let mut fresh = hunting();
+    fresh.adopt_legacy_outlets();
+    assert_eq!(w.devices().count(), 1);
     assert_eq!(w.state_hash(), fresh.state_hash());
     // The poured stones keep their round outlines.
     let partial = |w: &World| -> Vec<(usize, u16)> {
@@ -713,6 +725,57 @@ fn a_version_10_fixture_loads() {
     }
     assert_eq!(w.state_hash(), fresh.state_hash());
     assert_eq!(partial(&w), partial(&fresh));
+}
+
+/// D27: version 11 saves the device table, and a loaded tank's filter
+/// keeps its place, its footprint and its jet.
+#[test]
+fn a_version_11_fixture_loads() {
+    let path = fixture(11);
+    // `busy`'s legacy outlet adopted as an internal filter, run on.
+    let fresh = || {
+        let mut w = busy(5, 300);
+        w.adopt_legacy_outlets();
+        for _ in 0..100 {
+            w.tick();
+        }
+        w
+    };
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&fresh())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(11));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    let mut fresh = fresh();
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    let devices: Vec<_> = w.devices().copied().collect();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices, fresh.devices().copied().collect::<Vec<_>>());
+    let d = devices[0];
+    assert!(d.facing_left, "on the right glass");
+    let art = w.device_kinds().get(d.kind).clone();
+    let art = &art;
+    let device = id(&w, "device");
+    assert!(
+        d.cells(art)
+            .all(|(x, y)| w.cell(x, y).unwrap().material == device
+                && w.device_at(x, y) == Some(d.id))
+    );
+    let (nx, ny) = d.nozzle(art);
+    assert!(w.current_at(nx - 20, ny) < -1.0);
+    for _ in 0..200 {
+        w.tick();
+        fresh.tick();
+    }
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Scooping one of its cells after loading removes it whole.
+    w.set_cell(d.x + 5, d.y + 10, id(&w, "water")).unwrap();
+    assert_eq!(w.devices().count(), 0);
+    assert!(
+        d.cells(art)
+            .all(|(x, y)| w.cell(x, y).unwrap().material != device)
+    );
 }
 
 /// A migrated tank's creatures rest whole bands deep, spread over them.

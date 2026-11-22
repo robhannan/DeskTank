@@ -251,6 +251,13 @@ fn plant_scenes_match_reference_at_scale_4() {
     }
 }
 
+/// Devices (D27, DV1): internal filters on both side glasses, drawn as
+/// sprites (the right one mirrored) over cells drawn as water.
+#[test]
+fn devices_scene_matches_reference() {
+    check("devices");
+}
+
 /// Creatures (T7a): sprites of every species over the starter bed, after
 /// they have swum for 30 s and come for food.
 #[test]

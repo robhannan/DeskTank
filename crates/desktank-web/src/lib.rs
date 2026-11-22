@@ -567,6 +567,15 @@ impl WebTank {
         self.tools.zoom()
     }
 
+    /// Toggles mirroring the next device placed onto the other side glass
+    /// (D27). Returns the new setting.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = flipDevice))]
+    pub fn flip_device(&mut self) -> bool {
+        let flipped = self.tools.flip();
+        self.sync_cursor();
+        flipped
+    }
+
     /// Whether the magnify tool is currently selected.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = isMagnify))]
     #[must_use]
@@ -1055,7 +1064,7 @@ impl WebTank {
                 "material",
                 table.get(m).map_or_else(String::new, |m| m.name.clone()),
             ),
-            PaletteItem::Tool(Tool::Place(p)) => ("device", p.material_name().to_owned()),
+            PaletteItem::Tool(Tool::Place(p)) => ("device", p.name().to_owned()),
             PaletteItem::Tool(Tool::AddCreature(s)) => {
                 let species = self.tank.world().species().get(s);
                 (
@@ -1119,6 +1128,20 @@ impl WebTank {
                                 p.health * 100.0,
                                 p.size(),
                                 p.limit.key()
+                            )
+                        })
+                    }
+                    Inspection::Device { id, x, y } => {
+                        // `device <kind> <id> <glass> <flow> <x> <y>` (D27):
+                        // DV1 shows the jet only; filtering comes in DV3.
+                        let world = self.tank.world();
+                        world.device_status(id).map_or_else(String::new, |s| {
+                            let glass = if s.facing_left { "right" } else { "left" };
+                            format!(
+                                "device {} {} {glass} {:.1} {x} {y}",
+                                s.kind.name(),
+                                id.0,
+                                s.flow
                             )
                         })
                     }
@@ -1189,6 +1212,8 @@ impl WebTank {
             radius,
         });
         self.tank.set_cursor(cursor);
+        let ghost = self.tools.ghost(self.tank.world());
+        self.tank.set_device_ghost(ghost);
         let magnifier = self
             .tools
             .magnifier()
