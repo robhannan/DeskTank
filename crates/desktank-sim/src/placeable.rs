@@ -10,6 +10,9 @@
 //! - The **sponge filter** (DV4) is a bed-mounted prefab device: it drops onto
 //!   substrate, hardscape or the floor, emits rising uplift bubbles and gentle
 //!   upward flow, is intrinsically fry-safe, and invites shrimp to graze it.
+//! - The **HOB filter** (DV5) is a rim-mounted prefab device: it hangs on the
+//!   top edge partly above the water line, pours a waterfall into the surface,
+//!   and drops its intake tube in the back depth band so fish swim in front.
 
 use crate::device::DeviceKind;
 use crate::{World, WorldError};
@@ -27,18 +30,25 @@ pub enum Placeable {
     InternalFilter,
     /// A bed-mounted air-driven sponge filter: gentle uplift, bubbles, fry-safe.
     SpongeFilter,
+    /// A rim-mounted hang-on-back waterfall filter: ripples the surface, back-band intake.
+    HobFilter,
 }
 
 impl Placeable {
     /// Every placeable, in palette order.
-    pub const ALL: [Self; 3] = [Self::Bubbler, Self::InternalFilter, Self::SpongeFilter];
+    pub const ALL: [Self; 4] = [
+        Self::Bubbler,
+        Self::InternalFilter,
+        Self::SpongeFilter,
+        Self::HobFilter,
+    ];
 
     /// The material its cells are made of.
     #[must_use]
     pub fn material_name(self) -> &'static str {
         match self {
             Self::Bubbler => "bubbler",
-            Self::InternalFilter | Self::SpongeFilter => "device",
+            Self::InternalFilter | Self::SpongeFilter | Self::HobFilter => "device",
         }
     }
 
@@ -49,6 +59,7 @@ impl Placeable {
             Self::Bubbler => "bubbler",
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
+            Self::HobFilter => "hob_filter",
         }
     }
 
@@ -69,6 +80,7 @@ impl Placeable {
             Self::Bubbler => None,
             Self::InternalFilter => Some(DeviceKind::InternalFilter),
             Self::SpongeFilter => Some(DeviceKind::SpongeFilter),
+            Self::HobFilter => Some(DeviceKind::HobFilter),
         }
     }
 }

@@ -1243,6 +1243,7 @@ mod tests {
                     "Place(Bubbler)",
                     "Place(InternalFilter)",
                     "Place(SpongeFilter)",
+                    "Place(HobFilter)",
                 ],
             ),
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
@@ -1436,6 +1437,8 @@ mod tests {
         assert!(!t.can_flip(&w), "bubbler does not flip");
         t.select(PaletteItem::Tool(Tool::Place(Placeable::SpongeFilter)));
         assert!(!t.can_flip(&w), "bed-mounted sponge filter does not flip");
+        t.select(PaletteItem::Tool(Tool::Place(Placeable::HobFilter)));
+        assert!(t.can_flip(&w), "rim-mounted HOB filter flips");
         t.select(PaletteItem::Tool(Tool::Place(Placeable::InternalFilter)));
         assert!(t.can_flip(&w), "side-glass internal filter flips");
         assert_eq!(t.preview(), None);

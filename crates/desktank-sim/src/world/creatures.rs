@@ -1438,14 +1438,16 @@ impl World {
         if self.creatures.easy || self.devices.is_empty() || list.is_empty() {
             return false;
         }
-        let mut intakes: Vec<(crate::DeviceId, usize, usize)> = Vec::new();
+        let mut intakes: Vec<(crate::DeviceId, usize, usize, Option<u8>)> = Vec::new();
         for d in self.devices.values() {
             let art = self.devices.kinds().get(d.kind);
             if art.fry_safe || d.intake_guard {
                 continue;
             }
+            let back_row = d.back_band_row(art);
             for (ix, iy) in d.intakes(art) {
-                intakes.push((d.id, ix, iy));
+                let band = back_row.and_then(|r| (iy >= r).then_some(DEPTH_BANDS - 1));
+                intakes.push((d.id, ix, iy, band));
             }
         }
         if intakes.is_empty() {
@@ -1472,8 +1474,13 @@ impl World {
             if body.is_empty() {
                 return true;
             }
-            if let Some(&(dev_id, _, _)) = intakes.iter().find(|&&(_, ix, iy)| {
-                ix + 1 >= body.x0 && ix <= body.x1 && iy + 1 >= body.y0 && iy <= body.y1
+            let c_band = c.band();
+            if let Some(&(dev_id, _, _, _)) = intakes.iter().find(|&&(_, ix, iy, band)| {
+                band.is_none_or(|b| b.abs_diff(c_band) <= BAND_REACH)
+                    && ix + 1 >= body.x0
+                    && ix <= body.x1
+                    && iy + 1 >= body.y0
+                    && iy <= body.y1
             }) {
                 sucked.push(dev_id);
                 false
@@ -1725,7 +1732,7 @@ impl World {
             // Blocked in this band: if the move is clear in a band it can
             // reach, shift there rather than slide, keeping to a shift
             // under way.
-            if c.dodging > 0 && c.z != c.tz && self.only_plants_block(k, c.turn, c.x + dx, c.y + dy)
+            if c.dodging > 0 && c.z != c.tz && self.only_banded_block(k, c.turn, c.x + dx, c.y + dy)
             {
                 return Move::Dodging;
             }
@@ -1759,8 +1766,9 @@ impl World {
     /// back first for an odd one.
     #[allow(clippy::many_single_char_names)] // cell maths
     fn depth_route(&self, k: &Kind, c: &Creature, x: i32, y: i32) -> Option<u8> {
-        // Only plants have bands: anything else in the way blocks them all.
-        if !self.only_plants_block(k, c.turn, x, y) {
+        // Only plants and single-band device sections (e.g. HOB intake tube)
+        // have bands: anything else in the way blocks them all.
+        if !self.only_banded_block(k, c.turn, x, y) {
             return None;
         }
         let here = i32::from(c.band());
@@ -1795,25 +1803,26 @@ impl World {
     }
 
     /// Whether a body turned `turn` at `(x, y)` lies inside the grid and
-    /// overlaps plant cells but nothing else it can't swim through.
-    fn only_plants_block(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
+    /// overlaps only depth-banded obstacles (plants or back-band device parts
+    /// such as a HOB intake tube) and nothing else it can't swim through.
+    fn only_banded_block(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
         let (wide, tall) = extent(k, turn);
         let Some(to) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
         };
-        let mut plant = false;
+        let mut banded = false;
         for row in to.y0..to.y1 {
             for i in row * self.width + to.x0..row * self.width + to.x1 {
                 let m = self.cells[i].material;
                 if !self.creatures.swim[usize::from(m.0)] {
-                    if self.plants.part(m).is_none() {
+                    if self.plants.part(m).is_none() && self.device_cell_band(i).is_none() {
                         return false;
                     }
-                    plant = true;
+                    banded = true;
                 }
             }
         }
-        plant
+        banded
     }
 
     /// The nearest other band in the species' range where a body turned
@@ -2093,6 +2102,9 @@ impl World {
                 }
                 p.abs_diff(band) <= BAND_REACH
             }
+            (Some(band), None) => self
+                .device_cell_band(i)
+                .is_none_or(|dev_band| dev_band.abs_diff(band) <= BAND_REACH),
             _ => true,
         }
     }

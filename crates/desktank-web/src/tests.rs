@@ -490,6 +490,20 @@ fn device_inspect_rinse_and_guard_round_trip() {
             && sponge_line.contains(" 0 0 off yes "),
         "unexpected sponge inspect line: {sponge_line}"
     );
+
+    // DV5: HOB filter mounts on the rim and reports `rim` + `fry_safe = no`.
+    t.select(slot(&t, "device hob_filter"));
+    let hx = i32::try_from(w / 2).unwrap();
+    down(&mut t, PRIMARY, hx, 0);
+    t.pointer_up(PRIMARY);
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, hx, 4);
+    t.pointer_up(PRIMARY);
+    let hob_line = t.take_inspection();
+    assert!(
+        hob_line.starts_with("device hob_filter 3 rim ") && hob_line.contains(" 0 0 off no "),
+        "unexpected HOB inspect line: {hob_line}"
+    );
 }
 
 #[test]
@@ -1054,6 +1068,14 @@ fn flip_device_only_applies_to_flippable_device_tools() {
         assert!(!t.flip_device(), "{entry} should ignore flip_device");
         assert!(!t.device_flipped());
     }
+
+    // HOB filter (rim mount) also supports flipping.
+    t.select(slot(&t, "device hob_filter"));
+    assert!(t.can_flip_device());
+    assert!(t.flip_device());
+    assert!(t.device_flipped());
+    assert!(!t.flip_device());
+    assert!(!t.device_flipped());
 
     // Internal filter supports flipping.
     t.select(slot(&t, "device internal_filter"));

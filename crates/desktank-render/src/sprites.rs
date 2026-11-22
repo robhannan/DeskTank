@@ -38,11 +38,12 @@ use desktank_sim::{
 /// carry several colour morphs of large art (the axolotl alone has three).
 pub const ATLAS_WIDTH: usize = 512;
 /// Most sprites drawn in a frame: every creature the cap allows, live
-/// food, corpses, devices and a placement ghost.
+/// food, corpses, devices (up to two depth-split layers each, e.g. a HOB
+/// body + back-band intake tube) and a placement ghost.
 pub const MAX_SPRITES: usize = desktank_sim::MAX_CREATURE_CAP
     + desktank_sim::MAX_LIVE_FOOD
     + desktank_sim::MAX_CORPSES
-    + desktank_sim::MAX_DEVICES
+    + desktank_sim::MAX_DEVICES * 2
     + 1;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
@@ -325,13 +326,7 @@ impl Atlas {
                 burrower: false,
             });
         }
-        for d in world.devices() {
-            // One slot stays free for the ghost.
-            if sprites.len() + 1 >= MAX_SPRITES {
-                break;
-            }
-            sprites.push(self.device_sprite(world, d, [LOOK_ALIVE, 0.0], DEVICE_DEPTH));
-        }
+        self.push_devices(world, sprites);
         // Stable, so equal depths keep the world's order.
         sprites.sort_by(|a, b| b.depth.total_cmp(&a.depth));
         if let Some((d, fits)) = ghost.filter(|_| sprites.len() < MAX_SPRITES) {
@@ -346,25 +341,85 @@ impl Atlas {
 }
 
 impl Atlas {
-    /// A device's sprite: its art's box, mirrored on the right glass.
+    /// Pushes one sprite per device (or two depth-split slices when the device
+    /// has a back-band section such as a HOB intake tube, DV5), leaving one
+    /// slot free for the placement ghost.
+    fn push_devices(&self, world: &World, sprites: &mut Vec<Sprite>) {
+        for d in world.devices() {
+            let art = world.device_kinds().get(d.kind);
+            if let Some(split) = art.back_band_from
+                && split > 0
+                && split < art.size.1
+            {
+                if sprites.len() + 2 >= MAX_SPRITES {
+                    break;
+                }
+                sprites.push(self.device_sprite_slice(
+                    world,
+                    d,
+                    0,
+                    split,
+                    [LOOK_ALIVE, 0.0],
+                    DEVICE_DEPTH,
+                ));
+                sprites.push(self.device_sprite_slice(
+                    world,
+                    d,
+                    split,
+                    art.size.1,
+                    [LOOK_ALIVE, 0.0],
+                    f32::from(desktank_sim::DEPTH_BANDS - 1),
+                ));
+            } else {
+                if sprites.len() + 1 >= MAX_SPRITES {
+                    break;
+                }
+                sprites.push(self.device_sprite(world, d, [LOOK_ALIVE, 0.0], DEVICE_DEPTH));
+            }
+        }
+    }
+
+    /// A device's sprite: its art's box, mirrored when `facing_left`.
     fn device_sprite(&self, world: &World, d: &Device, look: [f32; 2], depth: f32) -> Sprite {
+        let h = world.device_kinds().get(d.kind).size.1;
+        self.device_sprite_slice(world, d, 0, h, look, depth)
+    }
+
+    /// A vertical cell-aligned slice `row0..row1` of device `d`'s sprite,
+    /// allowing devices with a back-band section (e.g. a HOB's intake tube,
+    /// DV5) to depth-sort independently while sharing one atlas entry.
+    fn device_sprite_slice(
+        &self,
+        world: &World,
+        d: &Device,
+        row0: usize,
+        row1: usize,
+        look: [f32; 2],
+        depth: f32,
+    ) -> Sprite {
         let art = world.device_kinds().get(d.kind);
         let k = DeviceKind::ALL
             .iter()
             .position(|&k| k == d.kind)
             .unwrap_or(0);
         let entry = self.devices[k];
-        let (origin, fine) = Self::origins(&entry, 0);
-        let (w, h) = art.size;
+        let (base_origin, base_fine) = Self::origins(&entry, 0);
+        let w = art.size.0;
+        let h = row1 - row0;
+        let dy_coarse = row0 * TEXELS_PER_CELL;
+        let dy_fine = dy_coarse * 2;
         // Device boxes are small: exact in f32.
         #[allow(clippy::cast_precision_loss)]
-        let centre = ((d.x * 2 + w) as f32 / 2.0, (d.y * 2 + h) as f32 / 2.0);
+        let centre = (
+            (d.x * 2 + w) as f32 / 2.0,
+            ((d.y + row0) * 2 + h) as f32 / 2.0,
+        );
         Sprite {
             centre,
-            size: art.size,
-            origin,
-            fine,
-            frame: entry.size,
+            size: (w, h),
+            origin: (base_origin.0, base_origin.1 + dy_coarse),
+            fine: (base_fine.0, base_fine.1 + dy_fine),
+            frame: (entry.size.0, h * TEXELS_PER_CELL),
             flip: d.facing_left,
             turn: 0,
             look,
@@ -947,28 +1002,54 @@ mod tests {
         w.add_device(DeviceKind::SpongeFilter, 60, 40, false)
             .unwrap()
             .unwrap();
+        w.add_device(DeviceKind::HobFilter, 90, 0, false)
+            .unwrap()
+            .unwrap();
         let mut out = Vec::new();
-        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 2);
+        // Internal (1) + Sponge (1) + HOB split into body & back-band tube (2) = 4.
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 4);
         for d in w.devices() {
             let art = w.device_kinds().get(d.kind);
             let (cw, ch) = art.size;
-            #[allow(clippy::cast_precision_loss)]
-            let centre = ((d.x * 2 + cw) as f32 / 2.0, (d.y * 2 + ch) as f32 / 2.0);
-            let inst = instance_at(&out, centre);
-            let (ox, oy) = (inst[4] as usize, inst[5] as usize);
-            let (fx, fy) = (inst[12] as usize, inst[13] as usize);
-            assert!(ox + art.sprite.width <= ATLAS_WIDTH);
-            assert!(fx + art.sprite.width * 2 <= ATLAS_WIDTH);
-            for (i, t) in art.sprite.frames[0].iter().enumerate() {
-                let (x, y) = (ox + i % art.sprite.width, oy + i / art.sprite.width);
-                let o = (y * ATLAS_WIDTH + x) * 4;
-                assert_eq!(&atlas.image[o..o + 4], t);
-            }
-            let fw = art.sprite.width * 2;
-            for (i, t) in art.sprite.fine_frames[0].iter().enumerate() {
-                let (x, y) = (fx + i % fw, fy + i / fw);
-                let o = (y * ATLAS_WIDTH + x) * 4;
-                assert_eq!(&atlas.image[o..o + 4], t);
+            let slices: Vec<(usize, usize, f32)> = match art.back_band_from {
+                Some(split) => vec![
+                    (0, split, DEVICE_DEPTH),
+                    (split, ch, f32::from(desktank_sim::DEPTH_BANDS - 1)),
+                ],
+                None => vec![(0, ch, DEVICE_DEPTH)],
+            };
+            for (row0, row1, expected_depth) in slices {
+                let sh = row1 - row0;
+                #[allow(clippy::cast_precision_loss)]
+                let centre = (
+                    (d.x * 2 + cw) as f32 / 2.0,
+                    ((d.y + row0) * 2 + sh) as f32 / 2.0,
+                );
+                let inst = instance_at(&out, centre);
+                assert_eq!(inst[14], expected_depth);
+                let (ox, oy) = (inst[4] as usize, inst[5] as usize);
+                let (fx, fy) = (inst[12] as usize, inst[13] as usize);
+                assert!(ox + art.sprite.width <= ATLAS_WIDTH);
+                assert!(fx + art.sprite.width * 2 <= ATLAS_WIDTH);
+                let y0_c = row0 * TEXELS_PER_CELL;
+                let y1_c = row1 * TEXELS_PER_CELL;
+                for y in y0_c..y1_c {
+                    for x in 0..art.sprite.width {
+                        let t = art.sprite.frames[0][y * art.sprite.width + x];
+                        let o = ((oy + y - y0_c) * ATLAS_WIDTH + ox + x) * 4;
+                        assert_eq!(&atlas.image[o..o + 4], &t);
+                    }
+                }
+                let fw = art.sprite.width * 2;
+                let y0_f = y0_c * 2;
+                let y1_f = y1_c * 2;
+                for y in y0_f..y1_f {
+                    for x in 0..fw {
+                        let t = art.sprite.fine_frames[0][y * fw + x];
+                        let o = ((fy + y - y0_f) * ATLAS_WIDTH + fx + x) * 4;
+                        assert_eq!(&atlas.image[o..o + 4], &t);
+                    }
+                }
             }
         }
     }
