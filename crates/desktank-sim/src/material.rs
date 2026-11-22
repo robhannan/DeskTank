@@ -61,6 +61,35 @@ impl MovementClass {
 /// shade range of `desktank_render`'s palette starts on an even byte.
 pub const GLUED_VARIANT_BIT: u8 = 1;
 
+/// Maximum per-cell waterlogging level for driftwood, stored in the upper
+/// seven bits of its cell `variant` byte (`variant >> 1`, 0 = dry, 127 =
+/// fully waterlogged). Bit 0 stays [`GLUED_VARIANT_BIT`].
+pub const MAX_DRIFTWOOD_WETNESS: u8 = 127;
+
+/// Effective density of fully waterlogged driftwood relative to water (1.0):
+/// dense enough to sink gently and settle on substrate without burying itself
+/// like rock (2.6).
+pub const DRIFTWOOD_WET_DENSITY: f32 = 1.2;
+
+/// Extracts a driftwood cell's waterlogging level (`0..=MAX_DRIFTWOOD_WETNESS`)
+/// from its `variant` byte.
+#[must_use]
+pub const fn driftwood_wetness(variant: u8) -> u8 {
+    variant >> 1
+}
+
+/// Packs a driftwood cell's waterlogging level (`0..=MAX_DRIFTWOOD_WETNESS`,
+/// clamped) and glued flag into its `variant` byte.
+#[must_use]
+pub const fn driftwood_variant(wetness: u8, glued: bool) -> u8 {
+    let w = if wetness > MAX_DRIFTWOOD_WETNESS {
+        MAX_DRIFTWOOD_WETNESS
+    } else {
+        wetness
+    };
+    (w << 1) | if glued { GLUED_VARIANT_BIT } else { 0 }
+}
+
 /// Largest allowed `dispersion`, in cells per tick (SPEC §2.1).
 pub const MAX_DISPERSION: u8 = 8;
 /// Default angle of repose, in degrees, for powders that don't set one.
@@ -432,6 +461,25 @@ mod tests {
         assert_eq!(
             rock.get(MaterialId(1)).unwrap().palette,
             Some(PaletteGroup::Substrate)
+        );
+    }
+
+    #[test]
+    fn driftwood_variant_round_trips_wetness_and_glued() {
+        for w in 0..=MAX_DRIFTWOOD_WETNESS {
+            for glued in [false, true] {
+                let v = driftwood_variant(w, glued);
+                assert_eq!(driftwood_wetness(v), w);
+                assert_eq!(v & GLUED_VARIANT_BIT != 0, glued);
+            }
+        }
+        assert_eq!(
+            driftwood_wetness(driftwood_variant(u8::MAX, false)),
+            MAX_DRIFTWOOD_WETNESS
+        );
+        assert_eq!(
+            driftwood_wetness(driftwood_variant(u8::MAX, true)),
+            MAX_DRIFTWOOD_WETNESS
         );
     }
 }

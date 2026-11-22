@@ -1,5 +1,6 @@
-# Waterlogged wood for scaping: a rigid body (D17). Lighter than water, so a
-# piece floats up and rests at the surface unless it is glued down.
+# Wood for scaping: a rigid body (D17). Starts dry and lighter than water
+# (0.7), so an unglued piece floats at the surface until it waterlogs
+# (up to 1.2) and sinks gently to the bed.
 id = 14
 name = "driftwood"
 # The palette group it is poured from (SPEC §2.5).
