@@ -138,7 +138,20 @@ impl World {
             0
         };
         let (tx, ty) = (c.x + dir * SWIM_SLANT * 4 * ONE, c.y + dy * 4);
-        super::steer(k, c, tx, ty, k.top, false);
+        // When a loach meets hardscape, spend the rising part of the swim
+        // climbing its face. The usual shallow arc sends it straight back
+        // into the same pocket, especially at the top of its depth zone.
+        let ahead = c.x + dir * ONE;
+        let climb = k.burrow_every > 0
+            && swim.rising
+            && top - ONE >= i32::try_from(self.surface_row + 2).unwrap_or(i32::MAX) * ONE
+            && super::body(k, c.turn, ahead, c.y, self.width, self.height).is_some()
+            && !self.fits(k, c.turn, ahead, c.y, c.band());
+        if climb {
+            super::steer(k, c, c.x, c.y - 4 * ONE, k.top, true);
+        } else {
+            super::steer(k, c, tx, ty, k.top, false);
+        }
         if self.try_move(k, c) != super::Move::Moved {
             (c.vx, c.vy) = (0, 0);
         }
@@ -625,6 +638,36 @@ mod tests {
                 off[i]
             );
         }
+    }
+
+    #[test]
+    fn loach_swims_out_of_a_rock_pocket() {
+        let mut w = tank(3, "rock", None);
+        let rock = w.materials().id("rock").unwrap();
+        for x0 in [65, 92] {
+            w.fill_rect(
+                Rect {
+                    x0,
+                    x1: x0 + 2,
+                    y0: BED - 14,
+                    y1: BED,
+                },
+                rock,
+                Brush::Replace,
+            )
+            .unwrap();
+        }
+        let id = add(&mut w, "kuhli_loach", 80);
+        for _ in 0..400 * TICKS_PER_SECOND {
+            w.tick();
+            let c = w.creature(id).unwrap();
+            let b = w.creature_body(c);
+            assert!(w.fits(&w.grown_kind(c).unwrap(), c.turn, c.x, c.y, c.band()));
+            if b.x1 <= 65 || b.x0 >= 94 {
+                return;
+            }
+        }
+        panic!("loach stayed between the rocks");
     }
 
     /// Runs `w` for `seconds`, returning the deepest and the last sunk depth
