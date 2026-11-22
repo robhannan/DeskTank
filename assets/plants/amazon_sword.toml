@@ -4,6 +4,7 @@
 # light without CO₂; it spreads slowly by plantlets on long runners.
 id = 8
 name = "amazon_sword"
+palette = "plants/rosette"
 description = "A big rosette of broad sword leaves that feeds through its roots."
 form = "rosette"
 propagation = ["runners"]

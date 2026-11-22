@@ -88,19 +88,21 @@
     </section>
 
     <section class="controls tools" aria-label="Tools" data-owner-only>
-      <div class="palette-box">
-        <div id="groups" class="groups" role="tablist" aria-label="Tool groups"></div>
-        <div id="palette-panel" role="tabpanel"><div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div></div>
+      <div id="palette-box" class="palette-box">
+        <div id="tabs" class="tabs" role="tablist" aria-label="Tool categories"></div>
+        <div class="tab-body">
+          <div id="subtabs" class="tabs subtabs" role="tablist" aria-label="Sub-categories" hidden></div>
+          <div id="palette-panel" role="tabpanel"><div id="palette" class="palette" role="radiogroup" aria-label="Tool"></div></div>
+          <div id="propagules" class="propagules" role="radiogroup" aria-label="The plant starts as" hidden></div>
+        </div>
       </div>
-      <label class="plant-pick">Plants <select id="plant-species" aria-label="Plant species the Plants tool pours"></select></label>
-      <label class="plant-pick">as <select id="plant-propagule" aria-label="How the Plants tool starts the species: seeds, cuttings, fragments or runners"></select></label>
       <label class="brush">Brush <input id="brush" type="range" min="0" max="24" value="3"> <output id="brush-out">3</output></label>
       <label class="zoom-pick">Zoom <select id="zoom" aria-label="Magnification level for the Magnify tool"></select></label>
     </section>
 
     <p id="stats" class="stats" aria-live="off">fps – · tick – · awake chunks – · tick time –</p>
 
-    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush (or zooms with Magnify). Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>1</kbd>–<kbd>0</kbd> tools in the group · <kbd>G</kbd> / <kbd>Shift</kbd>+<kbd>G</kbd> next/previous group · <kbd>[</kbd> <kbd>]</kbd> brush / zoom · <kbd>+</kbd> <kbd>-</kbd> zoom · <kbd>F</kbd> field overlay · <kbd>N</kbd> names the creature just inspected · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
+    <p class="hint">Mouse: left-drag uses the tool · right-drag scoops · wheel sizes the brush (or zooms with Magnify), or over the palette steps through its sub-tabs. Touch: drag pours · two-finger drag scoops · long-press inspects. Keys: <kbd>G</kbd> / <kbd>Shift</kbd>+<kbd>G</kbd> next/previous tab · <kbd>H</kbd> / <kbd>Shift</kbd>+<kbd>H</kbd> next/previous sub-tab · <kbd>1</kbd>–<kbd>0</kbd> items in the sub-tab · <kbd>P</kbd> how the selected plant starts · <kbd>[</kbd> <kbd>]</kbd> brush / zoom · <kbd>+</kbd> <kbd>-</kbd> zoom · <kbd>F</kbd> field overlay · <kbd>N</kbd> names the creature just inspected · <kbd>Space</kbd> play/pause · <kbd>.</kbd> step</p>
 
     <section class="about">
       <h2>What is this?</h2>
