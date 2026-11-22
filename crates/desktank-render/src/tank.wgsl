@@ -1006,6 +1006,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
             return water_bg(at, quarter, fine);
         }
+        // Driftwood encodes per-cell waterlogging in variant >> 1 (and glue in bit 0).
+        let wood_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
         // Flowing horizontal wood grain fibres with gentle organic wave.
         let wave = i32(hash(vec2<i32>(p.x / 6, p.y / 5)) & 3u) - 1;
         let row = u32(p.y + wave + 1024);
@@ -1047,7 +1049,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
                 k = k * 0.90;
             }
         }
-        return clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        return clamp(wood_base * k, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     if style == STYLE_BUBBLE {

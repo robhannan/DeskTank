@@ -250,7 +250,7 @@ matter, aren't offered):
 | Palette category | Materials |
 |---|---|
 | Build › Substrate | sand, gravel, aquasoil (holds nutrients) |
-| Build › Hardscape | rock (rigid), driftwood (rigid, lighter than water) |
+| Build › Hardscape | rock (rigid), driftwood (rigid, starts lighter than water; waterlogs per cell, darkening and sinking over time, and dries in air) |
 | Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
 | Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders); live foods (live bloodworms) are creatures offered from Food › Live (§2.4 *Live food*, D25) |
 | Care | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), waste and **detritus** (waste, dead plant matter and corpses sink and become detritus, which slowly disintegrates into nutrients) |

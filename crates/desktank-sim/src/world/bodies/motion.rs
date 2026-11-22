@@ -85,10 +85,9 @@ impl World {
         let Some(b) = self.bodies.get(&id) else {
             return false;
         };
-        let rho = self.props[usize::from(b.material.0)].milli.max(1);
         let n = b.shape.n.max(1);
-        let mass = n * rho;
-        let (fluid, mean_fluid) = self.displaced(id);
+        let (mass, rho) = self.body_mass_and_density(id);
+        let (fluid, mean_fluid, straddling) = self.displaced(id);
         // Net weight after buoyancy, and the gravity it gives.
         let weight = mass - fluid;
         let g = GRAVITY * weight / mass;
@@ -98,8 +97,9 @@ impl World {
         let Some(b) = self.bodies.get_mut(&id) else {
             return false;
         };
-        // Damp surface bobbing when the displaced fluid nearly balances the load.
-        if g.abs() < GRAVITY / 3 && mean_fluid > 0 {
+        // Damp surface bobbing when straddling a fluid boundary (e.g. air
+        // over water) and displaced fluid nearly balances the load.
+        if straddling && g.abs() < GRAVITY / 3 && mean_fluid > 0 {
             b.vel.1 /= 2;
             if g.abs() <= 3 {
                 b.vel.1 = 0;
@@ -220,19 +220,22 @@ impl World {
     }
 
     /// Σ over the body's cells of the density (milli) of the fluid each
-    /// displaces, and the mean. Each row reads the fluid beside its two
-    /// ends, blended with the row above or below by how far the body sits
-    /// between cells, so buoyancy changes smoothly as a floating body
-    /// crosses the surface. A row with no fluid beside it (buried) gets
-    /// none.
-    fn displaced(&self, id: u16) -> (i64, i64) {
+    /// displaces, the mean, and whether the body straddles fluids of
+    /// different densities (e.g. air over water). Each row reads the fluid
+    /// beside its two ends, blended with the row above or below by how far
+    /// the body sits between cells, so buoyancy changes smoothly as a
+    /// floating body crosses the surface. A row with no fluid beside it
+    /// (buried) gets none.
+    fn displaced(&self, id: u16) -> (i64, i64, bool) {
         let Some(body) = self.bodies.get(&id) else {
-            return (0, 0);
+            return (0, 0, false);
         };
         let width = self.width;
         let frac = (body.pos.1 - body.drawn_com().1).clamp(-ONE, ONE);
         let towards = frac.signum();
         let mut total = 0;
+        let mut min_fluid: Option<i64> = None;
+        let mut max_fluid: Option<i64> = None;
         let mut row_start = 0;
         while row_start < body.cells.len() {
             let y = body.cells[row_start] / width;
@@ -244,6 +247,10 @@ impl World {
             let count = to_i64(end + 1 - row_start);
             let here = self.side_fluid(x0, x1, to_i64(y));
             let next = self.side_fluid(x0, x1, to_i64(y) + towards);
+            for sample in [here, next].into_iter().flatten() {
+                min_fluid = Some(min_fluid.map_or(sample, |m| m.min(sample)));
+                max_fluid = Some(max_fluid.map_or(sample, |m| m.max(sample)));
+            }
             let rho = match (here, next) {
                 (Some(h), Some(nx)) => h + (nx - h) * frac.abs() / ONE,
                 (Some(h), None) => h,
@@ -253,7 +260,8 @@ impl World {
             total += rho * count;
             row_start = end + 1;
         }
-        (total, total / body.shape.n.max(1))
+        let straddling = matches!((min_fluid, max_fluid), (Some(lo), Some(hi)) if lo != hi);
+        (total, total / body.shape.n.max(1), straddling)
     }
 
     /// Mean density (milli) of the fluid cells just left of `x0` and right
@@ -352,7 +360,7 @@ impl World {
             && let Some(o) = self.bodies.get(&other)
         {
             let ov = if dx == 0 { o.vel.1 } else { o.vel.0 };
-            let om = o.shape.n * self.props[usize::from(o.material.0)].milli.max(1);
+            let (om, _) = self.body_mass_and_density(other);
             let dir = if dx == 0 { dy } else { dx };
             if (v - ov) * dir > 0 {
                 let dv = mass * (v - ov) / (mass + om);
@@ -577,6 +585,26 @@ impl World {
             (pos.0 - b.shape.com.0 + ONE / 2).div_euclid(ONE),
             (pos.1 - b.shape.com.1 + ONE / 2).div_euclid(ONE),
         );
+        // Driftwood cells update their wetness in place on the grid; sync
+        // those variants into the reference shape before rasterising so a
+        // turn keeps per-cell wetness.
+        if Some(b.material) == self.driftwood {
+            let (old_anchor, old_drawn, mat) = (b.anchor, b.drawn, b.material);
+            let width = self.width;
+            let height = self.height;
+            let grid_cells = &self.cells;
+            if let Some(b) = self.bodies.get_mut(&id) {
+                b.shape.sync_variants(old_anchor, old_drawn, |wx, wy| {
+                    let x = usize::try_from(wx).ok().filter(|&x| x < width)?;
+                    let y = usize::try_from(wy).ok().filter(|&y| y < height)?;
+                    let c = grid_cells[y * width + x];
+                    (c.material == mat && c.state == id).then_some(c.variant & !GLUED_VARIANT_BIT)
+                });
+            }
+        }
+        let Some(b) = self.bodies.get(&id) else {
+            return false;
+        };
         let Some(cells) = b.shape.raster(anchor, drawn) else {
             return false;
         };

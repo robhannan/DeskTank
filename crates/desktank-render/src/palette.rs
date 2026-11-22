@@ -3,7 +3,10 @@
 //! from their species instead (`plants.rs`, T6d), so their columns only
 //! hold the material colour.
 
-use desktank_sim::{GLUED_VARIANT_BIT, Material, MaterialTable, MovementClass};
+use desktank_sim::{
+    GLUED_VARIANT_BIT, MAX_DRIFTWOOD_WETNESS, Material, MaterialTable, MovementClass,
+    driftwood_wetness,
+};
 
 /// Table side: one column per material ID, one row per variant byte.
 pub const SIDE: usize = 256;
@@ -98,6 +101,9 @@ const UNKNOWN: [u8; 3] = [0xff, 0x00, 0xff];
 const GLUE_MIX: u32 = 44;
 /// The colour glued cells lean towards, sRGB.
 const GLUE_TINT: [u8; 3] = [0xd9, 0xa4, 0x41];
+/// Channel scale (in 1/256) for fully waterlogged driftwood: a darker,
+/// richer wet bogwood tone (~0.56 R, 0.50 G, 0.44 B).
+const DRIFTWOOD_WET_SCALE: [u32; 3] = [143, 128, 113];
 
 /// Liquids at least this dense darken with depth (water, not air).
 const DEPTH_TINT_DENSITY: f32 = 0.5;
@@ -135,8 +141,14 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
         let s = shade(variant as u8);
         #[allow(clippy::cast_possible_truncation)] // variant < 256
         let glued = variant as u8 & GLUED_VARIANT_BIT != 0;
+        #[allow(clippy::cast_possible_truncation)] // variant < 256
+        let wetness = driftwood_wetness(variant as u8);
         for (material, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-            let mut rgb = columns[material][s];
+            let mut rgb = if styles[material] == GroundStyle::Driftwood {
+                waterlog_rgb(columns[material][0], wetness)
+            } else {
+                columns[material][s]
+            };
             if glued && rigid[material] {
                 rgb = glue(rgb);
             }
@@ -159,6 +171,18 @@ fn glue(rgb: [u8; 3]) -> [u8; 3] {
 
 fn scale(c: u8, k: u32) -> u8 {
     u8::try_from(u32::from(c) * k / 256).unwrap_or(u8::MAX)
+}
+
+fn waterlog_rgb(dry: [u8; 3], wetness: u8) -> [u8; 3] {
+    let w = u32::from(wetness);
+    let max_w = u32::from(MAX_DRIFTWOOD_WETNESS);
+    let mut out = dry;
+    for (o, (c, wet_k)) in out.iter_mut().zip(dry.into_iter().zip(DRIFTWOOD_WET_SCALE)) {
+        // Interpolate channel scale from 256 (dry) to wet_k (fully waterlogged).
+        let k = 256 - ((256 - wet_k) * w + max_w / 2) / max_w;
+        *o = scale(c, k);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -248,6 +272,55 @@ mod tests {
             assert_eq!(texel(&table, id, 0)[3], style as u8, "{name}");
             assert_eq!(texel(&table, id, 1)[3], style as u8, "{name} (glued)");
         }
+    }
+
+    #[test]
+    fn driftwood_darkens_with_wetness_and_keeps_glue_tint() {
+        let mats = MaterialTable::builtin().unwrap();
+        let table = build(&mats);
+        let wood = mats.get(mats.id("driftwood").unwrap()).unwrap();
+        let dry = texel(&table, wood.id.0, 0);
+        assert_eq!(&dry[..3], &wood.colour);
+        let wet = texel(
+            &table,
+            wood.id.0,
+            desktank_sim::driftwood_variant(MAX_DRIFTWOOD_WETNESS, false),
+        );
+        // Fully waterlogged driftwood is noticeably darker across all channels.
+        for c in 0..3 {
+            assert!(
+                wet[c] < dry[c],
+                "channel {c}: wet {} vs dry {}",
+                wet[c],
+                dry[c]
+            );
+        }
+        assert!(u32::from(wet[0]) * 2 < u32::from(dry[0]) * 3);
+        // Monotonic darkening for both free and glued driftwood, with glued warmer.
+        let mut prev_free = dry;
+        let mut prev_glued = texel(&table, wood.id.0, desktank_sim::driftwood_variant(0, true));
+        for w in 1..=MAX_DRIFTWOOD_WETNESS {
+            let free = texel(&table, wood.id.0, desktank_sim::driftwood_variant(w, false));
+            let glued = texel(&table, wood.id.0, desktank_sim::driftwood_variant(w, true));
+            for c in 0..3 {
+                assert!(free[c] <= prev_free[c], "free ch {c} at w={w}");
+                assert!(glued[c] <= prev_glued[c], "glued ch {c} at w={w}");
+            }
+            assert!(glued[0] > free[0], "glued stays warmer at w={w}");
+            prev_free = free;
+            prev_glued = glued;
+        }
+        let glued_dry = texel(&table, wood.id.0, desktank_sim::driftwood_variant(0, true));
+        let glued_wet = texel(
+            &table,
+            wood.id.0,
+            desktank_sim::driftwood_variant(MAX_DRIFTWOOD_WETNESS, true),
+        );
+        assert!(
+            glued_wet[0] < glued_dry[0]
+                && glued_wet[1] < glued_dry[1]
+                && glued_wet[2] < glued_dry[2]
+        );
     }
 
     #[test]

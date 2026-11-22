@@ -231,6 +231,62 @@ impl Shape {
         Ok(())
     }
 
+    /// Updates each occupied cell's stored variant from the body's current
+    /// world cells (at `anchor` and `drawn` angle), so a rotation preserves
+    /// per-cell state such as driftwood wetness.
+    pub(super) fn sync_variants(
+        &mut self,
+        anchor: (i64, i64),
+        drawn: i64,
+        variant_at: impl Fn(i64, i64) -> Option<u8>,
+    ) {
+        if drawn.rem_euclid(TURN) == 0 {
+            for j in 0..self.h {
+                for i in 0..self.w {
+                    let k = j * self.w + i;
+                    if self.grid[k] != 0
+                        && let Some(v) = variant_at(anchor.0 + to_i64(i), anchor.1 + to_i64(j))
+                    {
+                        self.grid[k] = u16::from(v) + 1;
+                    }
+                }
+            }
+            return;
+        }
+        let pc = (anchor.0 * ONE + self.com.0, anchor.1 * ONE + self.com.1);
+        for j in 0..self.h {
+            for i in 0..self.w {
+                let k = j * self.w + i;
+                if self.grid[k] == 0 {
+                    continue;
+                }
+                let lx = to_i64(i) * ONE + ONE / 2 - self.com.0;
+                let ly = to_i64(j) * ONE + ONE / 2 - self.com.1;
+                let (rx, ry) = rotate(lx, ly, drawn);
+                let wx = (pc.0 + rx).div_euclid(ONE);
+                let wy = (pc.1 + ry).div_euclid(ONE);
+                let found = variant_at(wx, wy)
+                    .or_else(|| variant_at(wx - 1, wy))
+                    .or_else(|| variant_at(wx + 1, wy))
+                    .or_else(|| variant_at(wx, wy - 1))
+                    .or_else(|| variant_at(wx, wy + 1));
+                if let Some(v) = found {
+                    self.grid[k] = u16::from(v) + 1;
+                }
+            }
+        }
+    }
+
+    /// Resets every occupied cell's stored variant to 0 (dry driftwood),
+    /// used when migrating pre-v11 saves.
+    pub(super) fn reset_variants_to_dry(&mut self) {
+        for cell in &mut self.grid {
+            if *cell != 0 {
+                *cell = 1;
+            }
+        }
+    }
+
     /// The mask of local cell `(i, j)` (inside the bitmap).
     fn mask_at(&self, i: usize, j: usize) -> u16 {
         self.masks.get(j * self.w + i).copied().unwrap_or(FULL_MASK)
