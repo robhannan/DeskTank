@@ -243,9 +243,14 @@ test.describe("touch", () => {
     await tap(x, y);
     expect(await glued(page)).toBe(1);
 
-    await choose(page, "Filter outlet");
+    // D27: the internal filter goes whole onto the nearer (left) glass, and
+    // inspect shows its card.
+    await choose(page, "Internal filter");
     await tap(Math.round(w * 0.2), y);
-    expect(await cellCount(page, "filter_outlet")).toBe(9);
+    expect(await cellCount(page, "device")).toBeGreaterThan(300);
+    await choose(page, "Inspect");
+    await tap(4, y);
+    await expect(page.locator("#inspect")).toHaveText(/^Internal filter #1 · on the left glass · flow /);
 
     const hash = await stateHash(page);
     await choose(page, "Inspect");
@@ -342,6 +347,9 @@ test("the palette follows the sim's category tree and navigates with the keyboar
       expect(liveFoods, e).toContain(name);
       expect(path(i), `${e} is in Food › Live`).toBe("food/live");
     } else if (kind === "plant") expect(path(i), e).toMatch(/^plants\//);
+    // Devices are named by kind (D27): the bubbler is still a material, the
+    // internal filter a prefab device.
+    else if (kind === "device") expect(["bubbler", "internal_filter"], e).toContain(name);
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);

@@ -1,0 +1,9 @@
+# Device body: the footprint cells of a prefab device (docs/spec/devices.md, D27). Each
+# cell's state holds its device's id, so scooping any of them removes the
+# whole device. Solid in every depth band. The renderer draws the cells as
+# the water behind them and the device as a sprite on top.
+id = 62
+name = "device"
+class = "solid"
+density = 2.0
+colour = "#2a2e35"

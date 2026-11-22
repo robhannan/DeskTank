@@ -12,7 +12,7 @@
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use desktank_sim::{Brush, MaterialTable, Placeable, Propagule, Rect, World, WorldConfig};
+use desktank_sim::{Brush, MaterialTable, Propagule, Rect, World, WorldConfig};
 
 /// The default 640×360 tank with a sand column covering 20% of the grid
 /// (160×288 cells) dropped into the middle, above 72 rows of water.
@@ -302,8 +302,10 @@ fn bench_floaters(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::
     // up against the far glass.
     let mut drifting = floating.clone();
     let row = i64::try_from(drifting.surface_row()).expect("row") + 3;
+    // A legacy outlet (D27: old saves only), for a jet at the surface.
+    let outlet = drifting.materials().id("filter_outlet").expect("outlet");
     drifting
-        .place(Placeable::FilterOutlet, 1, row)
+        .paint(1, row, 1, outlet, desktank_sim::Brush::Pour)
         .expect("outlet");
     let drifting = advance(drifting, 5 * 20);
     g.bench_function("drifting_floaters", |b| {

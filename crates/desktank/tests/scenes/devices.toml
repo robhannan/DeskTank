@@ -1,0 +1,31 @@
+# Devices (D27, DV1): an internal filter on each side glass over the
+# starter bed, one high and one low, their jets pushing flakes across the
+# surface and a tetra school between them.
+ticks = 400
+
+[world]
+starter = true
+
+[[place]]
+x = 10
+y = 30
+device = "internal_filter"
+
+[[place]]
+x = 150
+y = 50
+device = "internal_filter"
+
+[[pour]]
+tick = 40
+x = 40
+y = 3
+radius = 3
+material = "flake_food"
+
+[[creature]]
+species = "neon_tetra"
+x = 60
+y = 40
+count = 6
+dx = 8

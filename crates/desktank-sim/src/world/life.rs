@@ -988,23 +988,33 @@ impl World {
         self.life.batch = batch;
     }
 
-    /// Rebuilds the current from the filter outlets: each outlet's field
-    /// cell starts a jet pointing away from the nearer side wall, fading
+    /// Marks the current for a rebuild after this tick's edits (a device
+    /// was added or removed).
+    pub(super) fn mark_devices_dirty(&mut self) {
+        self.life.devices_dirty = true;
+    }
+
+    /// Rebuilds the current from the device nozzles and any legacy filter
+    /// outlet cells: each source's field cell starts a jet pointing away from the nearer side wall, fading
     /// over `reach` cells and widening as it goes.
     fn recompute_current(&mut self) {
+        let jets = self.device_jets();
+        self.devices.rebuilds += 1;
         let life = &mut self.life;
         life.current.fill(0.0);
         life.current_blocks.clear();
-        let Some(outlet) = life.eco.current.material else {
-            return;
-        };
+        let outlet = life.eco.current.material;
         let cfg = life.eco.current;
         let (fw, fh) = (life.light.width(), life.light.height());
         let mut sources = BTreeSet::new();
+        // Device nozzles (D27), then any legacy outlet cells.
+        for ((x, y), right) in jets {
+            sources.insert((y / FIELD_SCALE, x / FIELD_SCALE, right));
+        }
         for list in &life.devices.lists {
             for &i in list {
                 let i = i as usize;
-                if self.cells[i].material == outlet {
+                if Some(self.cells[i].material) == outlet {
                     let x = i % self.width;
                     let right = 2 * x + 1 < self.width;
                     sources.insert((i / self.width / FIELD_SCALE, x / FIELD_SCALE, right));
@@ -1371,11 +1381,44 @@ mod tests {
         }
         assert!(!w.life.nutrient.is_active(), "the field came to rest");
         let before = w.field(crate::FieldKind::Nutrient).values().to_vec();
-        w.place(Placeable::FilterOutlet, 4, 12).unwrap();
+        let rebuilds = w.device_rebuilds();
+        assert!(w.place(Placeable::InternalFilter, 4, 20).unwrap() > 0);
         for _ in 0..40 {
             w.tick();
         }
         assert_ne!(w.field(crate::FieldKind::Nutrient).values(), &before[..]);
+        // The jet was rebuilt once for the new filter, then never again.
+        assert_eq!(w.device_rebuilds(), rebuilds + 1);
+    }
+
+    /// D27: an idle device costs nothing per tick. Once the tank settles
+    /// around a filter, ticking changes no cell, wakes no chunk and
+    /// rebuilds no jet.
+    #[test]
+    fn an_idle_device_costs_no_work() {
+        let config = WorldConfig {
+            width: 128,
+            height: 64,
+            seed: 5,
+            water_level: 1.0,
+        };
+        let mut w = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        assert!(w.place(Placeable::InternalFilter, 4, 30).unwrap() > 0);
+        for _ in 0..400 {
+            w.tick();
+        }
+        let (rebuilds, changed, hash) = (w.device_rebuilds(), w.last_change_tick(), w.state_hash());
+        assert!(
+            w.current_at(20, 22).abs() > 1.0,
+            "the nozzle drives the jet"
+        );
+        for _ in 0..200 {
+            w.tick();
+        }
+        assert_eq!(w.device_rebuilds(), rebuilds);
+        assert_eq!(w.last_change_tick(), changed);
+        assert_eq!(w.awake_chunks(), 0);
+        assert_ne!(w.state_hash(), hash, "the tick still advances");
     }
 
     #[test]

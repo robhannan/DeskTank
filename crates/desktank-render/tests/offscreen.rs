@@ -439,9 +439,9 @@ fn flow_tint_shows_speed_in_either_direction() {
             water_level: 1.0,
         };
         let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
-        world
-            .place(desktank_sim::Placeable::FilterOutlet, outlet_x, 20)
-            .unwrap();
+        // A legacy 3x3 outlet (D27: old saves only), for a jet at row 20.
+        let outlet = world.materials().id("filter_outlet").unwrap();
+        world.paint(outlet_x, 20, 1, outlet, Brush::Pour).unwrap();
         world.tick();
         let mut tank = Tank::new(world, TankConfig::default());
         let plain = render(gpu, &mut tank, format);
@@ -454,6 +454,83 @@ fn flow_tint_shows_speed_in_either_direction() {
         tank.set_field_overlay(None);
         assert_eq!(plain, render(gpu, &mut tank, format));
     }
+}
+
+/// D27: a device is drawn as its sprite over cells drawn as water, on its
+/// glass; its placement ghost is see-through, lighter than the device.
+#[test]
+#[allow(clippy::many_single_char_names)] // pixel maths
+fn a_device_and_its_ghost_are_drawn() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let make = |filter: bool| {
+        let config = WorldConfig {
+            width: W as usize,
+            height: H as usize,
+            seed: 4,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        if filter {
+            let kind = desktank_sim::DeviceKind::InternalFilter;
+            assert!(world.add_device(kind, 3, 16, false).unwrap().is_some());
+        }
+        Tank::new(world, TankConfig::default())
+    };
+    let mut plain = make(false);
+    let mut with = make(true);
+    let (a, b) = (
+        render(gpu, &mut plain, format),
+        render(gpu, &mut with, format),
+    );
+    // At scale 1 a pixel spans 2×2 art texels and its centre falls on a
+    // texel boundary, which rasterisers round differently (lavapipe picked
+    // a slot vent where Metal picked the plastic beside it). So sample a
+    // cell whose whole 3×3 neighbourhood is plain body plastic in the art:
+    // whichever texel a rasteriser picks there is the body colour.
+    let world = with.world();
+    let d = *world.devices().next().unwrap();
+    let art = world.device_kinds().get(d.kind);
+    let (fine, fw) = (&art.sprite.fine_frames[0], art.sprite.width * 2);
+    let base = fine[(art.size.1 / 2 * 4) * fw + 3 * 4];
+    let plain_cell = |cx: usize, cy: usize| {
+        (cy * 4 - 4..cy * 4 + 8).all(|y| (cx * 4 - 4..cx * 4 + 8).all(|x| fine[y * fw + x] == base))
+    };
+    let (cx, cy) = (2..art.size.1 - 2)
+        .flat_map(|cy| (2..art.size.0 - 2).map(move |cx| (cx, cy)))
+        .find(|&(cx, cy)| plain_cell(cx, cy))
+        .expect("a plain patch of plastic");
+    let at = |d: &desktank_sim::Device| {
+        let x = if d.facing_left {
+            art.size.0 - 1 - cx
+        } else {
+            cx
+        };
+        (
+            u32::try_from(d.x + x).unwrap(),
+            u32::try_from(d.y + cy).unwrap(),
+        )
+    };
+    let lum = |p: [u8; 3]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    // The body, grey-black plastic, over what would be blue water; open
+    // water beside it is untouched.
+    let (x, y) = at(&d);
+    let (body, water) = (px(&b, x, y), px(&a, x, y));
+    assert!(
+        body[2] + 30 < water[2] && body[2] < body[0] + 20,
+        "{body:?} at ({x}, {y}) over {water:?}"
+    );
+    assert_eq!(px(&a, 40, 16), px(&b, 40, 16));
+    // A ghost on the other glass: changed, but lighter than the real body.
+    let ghost = world.device_placement(desktank_sim::DeviceKind::InternalFilter, 70, 16, false);
+    assert!(ghost.1 && ghost.0.facing_left);
+    let (gx, gy) = at(&ghost.0);
+    with.set_device_ghost(Some(ghost));
+    let g = render(gpu, &mut with, format);
+    assert_ne!(px(&g, gx, gy), px(&b, gx, gy));
+    assert!(lum(px(&g, gx, gy)) > lum(body), "{:?}", px(&g, gx, gy));
+    with.set_device_ghost(None);
+    assert_eq!(render(gpu, &mut with, format), b);
 }
 
 /// The magnifier zooms a single rock cell and a creature sprite inside the
