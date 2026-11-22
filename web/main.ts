@@ -1361,8 +1361,15 @@ function chooseMagnifySlot() {
 // device tool is selected.
 function showFlip() {
   if (!tank) return;
-  flipBtn.hidden = !tank.canFlipDevice();
+  const hide = !tank.canFlipDevice();
+  const hadFocus = hide && document.activeElement === flipBtn;
+  flipBtn.hidden = hide;
   flipBtn.setAttribute("aria-pressed", String(tank.deviceFlipped()));
+  if (hadFocus) {
+    const selected = swatch(tank.selected());
+    const target = selected && !selected.hidden ? selected : openItems()[0];
+    target?.focus({ preventScroll: true });
+  }
 }
 
 function flipDevice() {

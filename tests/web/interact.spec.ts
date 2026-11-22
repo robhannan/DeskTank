@@ -809,10 +809,18 @@ test("flip device button only appears for flippable device tools and X ignores o
   await expect(flipBtn).toHaveAttribute("aria-pressed", "true");
   expect(await flipped()).toBe(true);
 
+  // Repeated X keydown events are ignored.
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "x", repeat: true, bubbles: true }));
+  });
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "true");
+  expect(await flipped()).toBe(true);
+
   // Clicking on the left half while flipped mounts the filter on the right glass.
   const [w, h] = await gridSize(page);
   const p = await cellPoint(page, Math.round(w * 0.2), Math.round(h * 0.5));
   await page.mouse.click(p.x, p.y);
+  expect(await cellCount(page, "device")).toBeGreaterThan(300);
   await choose(page, "Inspect");
   await expect(flipBtn).toBeHidden();
   const rightSide = await cellPoint(page, w - 3, Math.round(h * 0.5));
@@ -831,6 +839,13 @@ test("flip device button only appears for flippable device tools and X ignores o
   await page.keyboard.press("x");
   await expect(flipBtn).toHaveAttribute("aria-pressed", "false");
   expect(await flipped()).toBe(false);
+
+  // Hiding #flip while it has keyboard focus moves focus to the newly selected swatch.
+  await flipBtn.focus();
+  await expect(flipBtn).toBeFocused();
+  await page.keyboard.press("1");
+  await expect(flipBtn).toBeHidden();
+  await expect(page.getByRole("radio", { name: "Bubbler" })).toBeFocused();
 
   // Switching back to Sand hides it again.
   await choose(page, "Sand");

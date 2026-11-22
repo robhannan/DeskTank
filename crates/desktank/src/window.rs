@@ -1105,6 +1105,7 @@ impl ApplicationHandler for App {
                         if c.eq_ignore_ascii_case("x")
                             && !event.repeat
                             && !s.command()
+                            && !s.modifiers.alt_key()
                             && s.tools.can_flip(s.tank.world()) =>
                     {
                         let side = if s.tools.flip() { "other" } else { "nearer" };
