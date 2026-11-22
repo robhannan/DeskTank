@@ -8,6 +8,15 @@ use super::{
     Creature, FEET, Kind, ONE, REACHED, World, Zone, body, centre_of, dist, extent, school, to_i64,
     zone,
 };
+use crate::rng::splitmix64;
+
+/// How far a hungry shrimp senses a grazeable sponge filter, in cells (DV4).
+const SPONGE_GRAZE_SENSE: i64 = 96;
+/// Ticks a grazing shrimp keeps one perch spot on the sponge before shifting
+/// along the foam (10 world seconds).
+const SPONGE_PERCH_TICKS: u64 = 200;
+/// Salt for deterministic sponge-perch selection.
+const SPONGE_PERCH_SALT: u64 = 0x7370_6f6e_6765;
 
 impl World {
     /// One pixel step at the species' cruising speed. Trace the contour
@@ -122,10 +131,89 @@ impl World {
         self.support_face(k, turn, x, y, band).is_some() || self.at_corner(k, turn, x, y, band)
     }
 
+    /// A graze perch `(tx, ty, device_mid_x)` on the nearest accessible
+    /// shrimp-grazeable device (sponge filter, DV4), if `c` is a hungry shrimp
+    /// with no closer loose food cell. Returns `None` in O(1) when there is no
+    /// grazeable device.
+    #[allow(clippy::many_single_char_names)] // fixed-point cell maths
+    pub(super) fn sponge_graze_target(
+        &self,
+        k: &Kind,
+        c: &Creature,
+        hungry: bool,
+    ) -> Option<(i32, i32, i32)> {
+        if !k.is_shrimp || !hungry || c.fear > 0 || !self.has_grazeable_device() {
+            return None;
+        }
+        let (cx, cy) = (i64::from(c.x >> 8), i64::from(c.y >> 8));
+        // If loose food is already targeted, only prefer a sponge that is closer.
+        let mut best_d2 = SPONGE_GRAZE_SENSE * SPONGE_GRAZE_SENSE;
+        if let Some(fi) = c.food {
+            let fx = to_i64(fi as usize % self.width);
+            let fy = to_i64(fi as usize / self.width);
+            let food_d2 = (fx - cx).pow(2) + (fy - cy).pow(2);
+            best_d2 = best_d2.min(food_d2);
+        }
+        let top_limit = i32::try_from(self.surface_row + 2).unwrap_or(i32::MAX) * ONE;
+        let band = c.band();
+        let mut best: Option<(i64, (i32, i32, i32))> = None;
+
+        for d in self.devices.values() {
+            let art = self.devices.kinds().get(d.kind);
+            let Some((gy0, gy1)) = d.graze_band(art) else {
+                continue;
+            };
+            let (x0, x1) = (d.x, d.x + art.size.0);
+            let (y0, y1) = (gy0, gy1 + 1);
+            let mid_x = to_i64(usize::midpoint(x0, x1));
+            let mid_y = to_i64(usize::midpoint(y0, y1));
+            let d2 = (mid_x - cx).pow(2) + (mid_y - cy).pow(2);
+            if d2 > best_d2 {
+                continue;
+            }
+            let h = splitmix64(
+                self.seed
+                    ^ u64::from(c.id.0).wrapping_mul(SPONGE_PERCH_SALT)
+                    ^ (u64::from(d.id.0) << 16)
+                    ^ (self.tick / SPONGE_PERCH_TICKS),
+            );
+            let fh = (y1 - y0).max(1);
+            let fy_cell = y0 + usize::try_from(h % fh as u64).unwrap_or(0);
+            let fy = centre_of(to_i64(fy_cell));
+            let low_y = centre_of(to_i64(y1.saturating_sub(2).max(y0)));
+            let lx = i32::try_from(x0).unwrap_or(0) * ONE - k.w * ONE / 2;
+            let rx = i32::try_from(x1).unwrap_or(0) * ONE + k.w * ONE / 2;
+            let sy = i32::try_from(y0).unwrap_or(0) * ONE - k.h * ONE / 2;
+            let slx = centre_of(to_i64((x0 + 2).min(x1.saturating_sub(1))));
+            let srx = centre_of(to_i64(x1.saturating_sub(3).max(x0)));
+            let near_left = c.x < centre_of(mid_x);
+            let prefer_shoulder = (h >> 12).is_multiple_of(4);
+            let candidates = match (near_left, prefer_shoulder) {
+                (true, false) => [(lx, fy), (lx, low_y), (slx, sy), (rx, fy), (srx, sy)],
+                (true, true) => [(slx, sy), (lx, fy), (lx, low_y), (srx, sy), (rx, fy)],
+                (false, false) => [(rx, fy), (rx, low_y), (srx, sy), (lx, fy), (slx, sy)],
+                (false, true) => [(srx, sy), (rx, fy), (rx, low_y), (slx, sy), (lx, fy)],
+            };
+            let Some((tx, ty)) = candidates
+                .into_iter()
+                .find(|&(tx, ty)| ty >= top_limit && self.fits(k, 0, tx, ty, band))
+            else {
+                continue;
+            };
+            let target = (tx, ty, centre_of(mid_x));
+            if best.is_none_or(|(bd, _)| d2 < bd) {
+                best = Some((d2, target));
+                best_d2 = d2;
+            }
+        }
+        best.map(|(_, t)| t)
+    }
+
     pub(super) fn steering_target(
         &self,
         k: &Kind,
         c: &mut Creature,
+        sponge: Option<(i32, i32, i32)>,
         rng: &mut Pcg32,
     ) -> (i32, i32, i32) {
         if let Some(target) = super::pursuit::flee_target(k, c) {
@@ -151,6 +239,14 @@ impl World {
             && let Some(target) = self.air_target(k, c)
         {
             return target;
+        }
+        if let Some((gx, gy, _)) = sponge {
+            let speed = if dist(gx - c.x, gy - c.y) > i64::from(6 * ONE) {
+                k.top
+            } else {
+                k.cruise
+            };
+            return (gx, gy, speed);
         }
         if let Some(i) = c.food {
             let i = i as usize;

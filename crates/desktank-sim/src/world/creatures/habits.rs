@@ -58,9 +58,12 @@ impl World {
     }
 
     /// Whether a hungry creature of kind `k` has anything to eat in the
-    /// tank: a food cell, or a corpse if it eats them.
+    /// tank: a food cell, a corpse if it eats them, or a sponge filter if it
+    /// is a shrimp (DV4).
     pub(super) fn anything_to_eat(&self, k: &Kind) -> bool {
-        self.life.food_cells() > 0 || (k.eats_corpses && !self.creatures.corpses.is_empty())
+        self.life.food_cells() > 0
+            || (k.eats_corpses && !self.creatures.corpses.is_empty())
+            || (k.is_shrimp && self.has_grazeable_device())
     }
 
     /// Whether a saved `home` suits a creature of kind `k`: none, or a cell

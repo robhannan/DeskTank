@@ -74,7 +74,8 @@ use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, RinseKind, World, WorldConfig,
+    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, RinseKind, World,
+    WorldConfig,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -1303,11 +1304,21 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
 }
 
-/// The inspect line for device `id` under cell `(x, y)` (D27, DV3).
+/// The inspect line for device `id` under cell `(x, y)` (D27, DV3–DV4).
 fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let status = world.device_status(id)?;
-    let label = &world.device_kinds().get(status.kind).label;
-    let glass = if status.facing_left { "right" } else { "left" };
+    let art = world.device_kinds().get(status.kind);
+    let label = &art.label;
+    let place = match art.mount {
+        Mount::SideGlass => {
+            if status.facing_left {
+                "on the right glass"
+            } else {
+                "on the left glass"
+            }
+        }
+        Mount::Bed => "on the bed",
+    };
     let guard = if status.fry_safe {
         "fry-safe"
     } else if status.intake_guard {
@@ -1321,7 +1332,7 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
         "R rinse · Shift+R hard rinse · M replace media · I guard"
     };
     Some(format!(
-        "{label} #{} · on the {glass} glass · flow {:.1} cells/s · load {:.0}% · maturity {:.0}% · {guard} · at ({x}, {y}) · {hint}",
+        "{label} #{} · {place} · flow {:.1} cells/s · load {:.0}% · maturity {:.0}% · {guard} · at ({x}, {y}) · {hint}",
         id.0,
         status.flow,
         status.media_load * 100.0,

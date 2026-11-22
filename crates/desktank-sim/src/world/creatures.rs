@@ -515,6 +515,9 @@ struct Kind {
     live_prey: [u64; 4],
     /// It eats some live food.
     eats_live: bool,
+    /// Shrimp species (`*_shrimp`): graze sponge filters (DV4) and vulnerable
+    /// to unguarded intakes when small (DV3).
+    is_shrimp: bool,
 }
 
 /// The creatures in a world and the per-species and per-material lookups
@@ -658,6 +661,7 @@ impl Creatures {
                 food_as: s.food_as,
                 live_prey,
                 eats_live: live_prey != [0; 4],
+                is_shrimp: s.name.ends_with("_shrimp"),
             });
         }
         Self {
@@ -1541,11 +1545,12 @@ impl World {
         }
         self.pursue(&k, c);
         self.choose_food(&k, c, hungry);
+        let sponge = self.sponge_graze_target(&k, c, hungry);
 
-        let (tx, ty, speed) = self.steering_target(&k, c, &mut rng);
-        // A walker's swim takes over from wandering, not from food or
-        // fright.
-        if let Some(swim) = swim.filter(|_| c.food.is_none() && c.fear == 0) {
+        let (tx, ty, speed) = self.steering_target(&k, c, sponge, &mut rng);
+        // A walker's swim takes over from wandering, not from food, sponge
+        // grazing, or fright.
+        if let Some(swim) = swim.filter(|_| c.food.is_none() && sponge.is_none() && c.fear == 0) {
             self.swim_step(&k, c, swim);
             if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
                 c.food = None;
@@ -1555,9 +1560,10 @@ impl World {
         steer(&k, c, tx, ty, speed, speed > k.cruise);
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.
-        // Hoppers (shrimp) kick upwards now and then and sink back.
+        // Hoppers (shrimp) kick upwards now and then and sink back, except
+        // while climbing/perching on a sponge filter to graze its foam (DV4).
         let mut bottom_walking = false;
-        if k.zone == Zone::Bottom {
+        if k.zone == Zone::Bottom && sponge.is_none() {
             let hopping = self.hopping(&k, c);
             bottom_walking = !hopping;
             c.vy = if hopping {
@@ -1602,11 +1608,7 @@ impl World {
                 }
             }
         }
-        if c.vx > TURN_SPEED {
-            c.facing_left = false;
-        } else if c.vx < -TURN_SPEED {
-            c.facing_left = true;
-        }
+        update_facing(c, sponge);
         (c.x, c.y, c.facing_left, c.turn) != before
     }
 
@@ -1857,7 +1859,47 @@ impl World {
                 }
             }
         }
-        k.eats_corpses && self.bite_corpse(reach, c)
+        (k.eats_corpses && self.bite_corpse(reach, c))
+            || (k.is_shrimp && self.graze_sponge(reach, c))
+    }
+
+    /// Shrimp biofilm grazing on an adjacent sponge filter's foam body (DV4):
+    /// picks invisible biofilm/mulm off the foam at a steady cadence without
+    /// altering device cells, restoring satiety and energy and gently trimming
+    /// mechanical media load.
+    fn graze_sponge(&mut self, reach: Rect, c: &mut Creature) -> bool {
+        /// Ticks between biofilm nibbles on a sponge filter (1 world second).
+        const SPONGE_GRAZE_INTERVAL: u64 = TICKS_PER_SECOND as u64;
+        /// Tiny mechanical load reduction per shrimp nibble (0.2% of capacity).
+        const SPONGE_GRAZE_CLEAN: f32 = 0.002;
+        if !self.has_grazeable_device()
+            || !(self.tick + u64::from(c.id.0)).is_multiple_of(SPONGE_GRAZE_INTERVAL)
+        {
+            return false;
+        }
+        let mut hit = None;
+        'scan: for y in reach.y0..reach.y1 {
+            for x in reach.x0..reach.x1 {
+                if let Some(dev_id) = self.device_at(x, y)
+                    && let Some(d) = self.device(dev_id)
+                    && let Some((gy0, gy1)) = d.graze_band(self.devices.kinds().get(d.kind))
+                    && (gy0..=gy1).contains(&y)
+                {
+                    hit = Some(dev_id);
+                    break 'scan;
+                }
+            }
+        }
+        let Some(dev_id) = hit else {
+            return false;
+        };
+        c.satiety = c.satiety.saturating_add(BITE / 2).min(FULL);
+        c.energy = c.energy.saturating_add(BITE_ENERGY / 2).min(ENERGY_RESERVE);
+        c.eaten += 1;
+        if self.add_device_load(dev_id, -SPONGE_GRAZE_CLEAN) {
+            self.recompute_current();
+        }
+        true
     }
 
     /// The nearest food cell `c` eats within [`FOOD_SENSE`], skipping those
@@ -2073,6 +2115,19 @@ impl World {
 /// arrival. While wandering vertical speed is held to half, as fish mostly
 /// swim level; `darting` (above cruising speed: after food, hunting or
 /// fleeing) lifts that.
+fn update_facing(c: &mut Creature, sponge: Option<(i32, i32, i32)>) {
+    if c.vx > TURN_SPEED {
+        c.facing_left = false;
+    } else if c.vx < -TURN_SPEED {
+        c.facing_left = true;
+    } else if let Some((gx, gy, mid_x)) = sponge
+        && dist(gx - c.x, gy - c.y) <= i64::from(2 * ONE)
+    {
+        // Perched against the sponge: face inward towards the foam.
+        c.facing_left = mid_x < c.x;
+    }
+}
+
 fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool) {
     let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
     let d = dist(tx - c.x, ty - c.y);
