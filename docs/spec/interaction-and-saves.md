@@ -23,7 +23,9 @@
     sub-category's items:
     - **Tools**: scoop, net, inspect, glue, magnify;
     - **Build**: Substrate (sand, gravel, aquasoil), Hardscape (rock,
-      driftwood), Devices (bubbler, filter outlet);
+      driftwood), Devices (bubbler, internal filter: a see-through
+      placement ghost at the pointer and a flip key (X) or button for the
+      other glass; see [devices](devices.md));
     - **Water**: water, air bubbles, CO₂ bubbles;
     - **Food**: Fish food (flakes, pellets, frozen bloodworms, algae
       wafers), Live (live bloodworms);
@@ -165,6 +167,9 @@
       rigid bodies' reference shapes: a 4×4 coverage mask per partial cell,
       stored sparsely (version 10; a version 9 tank's rigid cells migrate
       whole, drawn square as before);
+    - the device table (version 11, D27; loading version 10 or older
+      turns legacy filter outlet cells into internal filters, see
+      [devices](devices.md) *Migration*);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

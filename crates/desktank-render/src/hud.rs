@@ -666,6 +666,7 @@ mod tests {
 
     #[test]
     fn image_frames_the_open_tabs_and_the_selection() {
+        let kinds = DeviceKinds::builtin().unwrap();
         let mats = MaterialTable::builtin().unwrap();
         let sand = mats.id("sand").unwrap();
         let water = mats.id("water").unwrap();
@@ -687,7 +688,7 @@ mod tests {
             items: vec![PaletteItem::Material(sand), PaletteItem::Tool(Tool::Net)],
             selected: Some((1, 0, 1)),
         };
-        let (img, (w, h)) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
+        let (img, (w, h)) = build(&palette, &mats, &species, &plants, &kinds);
         assert_eq!((w, h), (34, 23));
         let rgb = |img: &[u8], x, y| {
             let p = px(img, w, x, y);
@@ -715,7 +716,7 @@ mod tests {
 
         // Another tab open: the selection marks its tab instead.
         palette.open = 2;
-        let (img, _) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
+        let (img, _) = build(&palette, &mats, &species, &plants, &kinds);
         assert_eq!(rgb(&img, 16, 10), SELECTED, "mark on the selection's tab");
         assert_eq!(rgb(&img, 12, 12), FRAME, "nothing selected here");
 
@@ -724,7 +725,7 @@ mod tests {
         palette.open = 1;
         palette.subs = vec![PaletteItem::Material(sand), PaletteItem::Material(water)];
         palette.open_sub = 1;
-        let (img, (w3, h3)) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
+        let (img, (w3, h3)) = build(&palette, &mats, &species, &plants, &kinds);
         assert_eq!((w3, h3), (34, 34));
         assert_eq!(rgb(&img, 12, 1), OPEN, "open tab");
         assert_eq!(rgb(&img, 12, 12), SUB_OPEN, "open sub-tab, unlike a tab");
@@ -736,13 +737,13 @@ mod tests {
         );
         assert_eq!(rgb(&img, 12, 23), FRAME, "selection is in another sub-tab");
         palette.open_sub = 0;
-        let (img, _) = build(&palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
+        let (img, _) = build(&palette, &mats, &species, &plants, &kinds);
         assert_eq!(rgb(&img, 12, 23), SELECTED, "selected item");
 
         // A plant slot shows its own species' colour.
         palette.subs.clear();
         let leaf = |palette: &Palette| {
-            let (img, (w, _)) = build(palette, &mats, &species, &plants, &DeviceKinds::builtin().unwrap());
+            let (img, (w, _)) = build(palette, &mats, &species, &plants, &kinds);
             let p = px(&img, w, GAP + 1 + 3, ROW + GAP + 1);
             [p[0], p[1], p[2]]
         };

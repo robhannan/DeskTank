@@ -24,7 +24,7 @@
   - nutrients;
   - CO₂;
   - light;
-  - water current from the filter outlet;
+  - water current from the filters' nozzles ([devices](devices.md));
   - in full ecosystem mode, also ammonia, nitrate, O₂ and temperature.
 - **Chunks.** The grid is split into 64×64-cell chunks, and each chunk
   is awake or asleep.
@@ -99,8 +99,9 @@
   each top cell with water above at a configured rate; to keep the water
   level (a bubble pops into air), each release turns the first air cell
   above it back into water, which leaves a small mound over a running
-  bubbler. The **filter outlet** makes a jet in a static current field
-  (1/8 resolution) pointing away from the nearer side wall, fading over
+  bubbler. The **internal filter**'s nozzle ([devices](devices.md), D27;
+  the bare **filter outlet** before DV1) makes a jet in a static current
+  field (1/8 resolution) pointing away from its side wall, fading over
   `reach` cells and widening as it goes; the current swaps floating cells
   and non-water dense liquids one cell downstream with probability
   speed / 20 per tick. Water is the medium and never starts a swap, so a
@@ -237,9 +238,11 @@ second, gated by `when = { field, below | above }`, releasing into a field),
 `[[decay]]` (after t seconds becomes C, optionally releasing), `[[emit]]`
 (adds to a field at a rate, up to a level) and `[[buffer]]` (stores up to a
 capacity and trades with a field towards a level). All values are our own.
-Placeables are a bubbler and a filter outlet: a palette slot places one
-fixed footprint per click (the bubbler drops onto what is below it), made of
-solid device cells that scoop removes like any other cell. All powders fall
+Placeables are a bubbler and the internal filter: a palette slot places one
+per click. The bubbler is a fixed footprint (it drops onto what is below
+it) of solid device cells that scoop removes like any other cell, until
+DV7; the internal filter is a prefab device ([devices](devices.md), D27),
+placed and removed whole. All powders fall
 one cell per tick, so "sinks fast" bloodworms differ by density and repose,
 not speed.
 
