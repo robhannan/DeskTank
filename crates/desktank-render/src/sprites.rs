@@ -327,14 +327,15 @@ impl Atlas {
             });
         }
         for d in world.devices() {
-            if sprites.len() == MAX_SPRITES - 1 {
+            // One slot stays free for the ghost.
+            if sprites.len() + 1 >= MAX_SPRITES {
                 break;
             }
             sprites.push(self.device_sprite(world, d, [LOOK_ALIVE, 0.0], DEVICE_DEPTH));
         }
         // Stable, so equal depths keep the world's order.
         sprites.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        if let Some((d, fits)) = ghost {
+        if let Some((d, fits)) = ghost.filter(|_| sprites.len() < MAX_SPRITES) {
             let look = [LOOK_GHOST, if fits { 0.0 } else { 1.0 }];
             sprites.push(self.device_sprite(world, &d, look, 0.0));
         }

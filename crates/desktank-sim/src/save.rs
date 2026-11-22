@@ -426,6 +426,23 @@ mod tests {
         let back = decode(&again, MaterialTable::builtin().unwrap()).unwrap();
         assert_eq!(back.state_hash(), loaded.state_hash());
         assert_eq!(back.devices().count(), 2);
+        // A device listed where its cells aren't, or on top of another, is
+        // rejected.
+        let table = || MaterialTable::builtin().unwrap();
+        let mut moved = loaded.to_v11();
+        moved.devices[0].x += 1;
+        assert!(matches!(
+            World::from_v11(moved, table()),
+            Err(SaveError::Invalid(_))
+        ));
+        let mut twice = loaded.to_v11();
+        let mut copy = twice.devices[0].clone();
+        copy.id = 9;
+        twice.devices.push(copy);
+        assert!(matches!(
+            World::from_v11(twice, table()),
+            Err(SaveError::Invalid(_))
+        ));
     }
 
     #[test]

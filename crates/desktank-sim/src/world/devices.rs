@@ -2,9 +2,11 @@
 //! whole, saving them and turning legacy filter outlet cells into internal
 //! filters.
 //!
-//! Devices cost nothing per tick: the jet their nozzles drive is rebuilt
-//! only when one is added or removed (`life.rs`), and nothing else runs
-//! until filtering lands (DV3).
+//! Devices add no per-tick work of their own: the jet their nozzles drive
+//! is rebuilt only when one is added or removed (`life.rs`), and nothing
+//! else runs until filtering lands (DV3). The jet's current pass is the
+//! outlet's as before: it scans its blocks each tick for floating and
+//! liquid cells to carry.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -288,6 +290,21 @@ impl World {
                 || table.insert(s.id, d).is_some()
             {
                 return Err(SaveError::Invalid(format!("device {} out of place", s.id)));
+            }
+        }
+        // Each footprint cell must hold its device (which also rules out
+        // overlapping footprints: a cell holds one id).
+        for d in table.values() {
+            let art = self.devices.kinds.get(d.kind);
+            let ok = d.cells(art).all(|(x, y)| {
+                let c = self.cells[y * self.width + x];
+                Some(c.material) == self.devices.material && c.state == d.id.0
+            });
+            if !ok {
+                return Err(SaveError::Invalid(format!(
+                    "device {}'s footprint isn't its cells",
+                    d.id.0
+                )));
             }
         }
         self.devices.table = table;
