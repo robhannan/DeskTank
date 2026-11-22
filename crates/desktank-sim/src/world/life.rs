@@ -1188,8 +1188,7 @@ impl World {
 
     #[allow(clippy::many_single_char_names, clippy::too_many_lines)] // field maths
     fn recompute_current_inner(&mut self, wake: bool) {
-        let jets = self.device_jets();
-        let intakes = self.device_intakes();
+        let device_flows = self.device_flows();
         self.devices.rebuilds += 1;
         let life = &mut self.life;
         life.current.fill([0.0, 0.0]);
@@ -1199,14 +1198,30 @@ impl World {
         let (fw, fh) = (life.light.width(), life.light.height());
         let blocked = &life.blocked;
 
-        // Directed outlets: device nozzles first, then any legacy outlet cells.
+        // Directed outlets and paired per-device intakes, then any legacy
+        // outlet cells.
         let mut jet_sources: Vec<(usize, usize, [f32; 2])> = Vec::new();
-        let mut open_nozzles: Vec<Option<(usize, usize)>> = Vec::with_capacity(jets.len());
-        for ((x, y), dir) in jets {
-            let open = find_open(blocked, fw, fh, x / FIELD_SCALE, y / FIELD_SCALE, dir);
-            open_nozzles.push(open);
-            if let Some((ox, oy)) = open {
+        let mut intake_sources: Vec<(usize, usize, [f32; 2])> = Vec::new();
+        let mut paired_flows = Vec::new();
+        for (((nx, ny), dir), intakes) in device_flows {
+            let open_nozzle = find_open(blocked, fw, fh, nx / FIELD_SCALE, ny / FIELD_SCALE, dir);
+            if let Some((ox, oy)) = open_nozzle {
                 jet_sources.push((ox, oy, dir));
+            }
+            let inward = [-dir[0], -dir[1]];
+            let mut open_intakes = Vec::with_capacity(intakes.len());
+            for (ix, iy) in intakes {
+                if let Some((ox, oy)) =
+                    find_open(blocked, fw, fh, ix / FIELD_SCALE, iy / FIELD_SCALE, dir)
+                {
+                    intake_sources.push((ox, oy, inward));
+                    open_intakes.push((ox, oy));
+                }
+            }
+            if let Some(nozzle_cell) = open_nozzle
+                && !open_intakes.is_empty()
+            {
+                paired_flows.push((nozzle_cell, open_intakes));
             }
         }
         let mut legacy = BTreeSet::new();
@@ -1227,7 +1242,7 @@ impl World {
             }
         }
 
-        if jet_sources.is_empty() && intakes.is_empty() {
+        if jet_sources.is_empty() && intake_sources.is_empty() {
             if wake {
                 life.nutrient.wake();
                 life.co2.wake();
@@ -1278,19 +1293,7 @@ impl World {
             let ireach = (cfg.intake_reach as usize).div_ceil(FIELD_SCALE).max(1);
             #[allow(clippy::cast_precision_loss)] // small counts
             let r_max = ireach as f32;
-            let mut open_intakes = Vec::with_capacity(intakes.len());
-            for ((ix, iy), [in_x, in_y]) in intakes {
-                let Some((fx, fy)) = find_open(
-                    blocked,
-                    fw,
-                    fh,
-                    ix / FIELD_SCALE,
-                    iy / FIELD_SCALE,
-                    [-in_x, -in_y],
-                ) else {
-                    continue;
-                };
-                open_intakes.push((fx, fy));
+            for &(fx, fy, [in_x, in_y]) in &intake_sources {
                 let y0 = fy.saturating_sub(ireach);
                 let y1 = (fy + ireach).min(fh - 1);
                 let x0 = fx.saturating_sub(ireach);
@@ -1303,7 +1306,7 @@ impl World {
                         }
                         #[allow(clippy::cast_precision_loss)] // field coords ≤ 1024
                         let (rx, ry) = (fx as f32 - bx as f32, fy as f32 - by as f32);
-                        let dist = rx.hypot(ry);
+                        let dist = (rx * rx + ry * ry).sqrt();
                         if dist == 0.0 {
                             initial[b][0] += in_x * cfg.intake_speed * 0.5;
                             initial[b][1] += in_y * cfg.intake_speed * 0.5;
@@ -1315,14 +1318,18 @@ impl World {
                     }
                 }
             }
-            // Pair nozzle sources (+q) with intake sinks (-q) so net divergence
-            // across open water is zero and circulation closes cleanly.
-            let paired = open_nozzles.iter().flatten().zip(&open_intakes);
-            for (&(nx, ny), &(ix, iy)) in paired {
+            // Pair each device's nozzle (+q) with its own open intakes (-q / n)
+            // and zero out net divergence per connected open-water chamber.
+            for ((nx, ny), open_intakes) in paired_flows {
                 let q = cfg.intake_speed;
+                #[allow(clippy::cast_precision_loss)] // small intake count
+                let share = q / open_intakes.len() as f32;
                 target_div[ny * fw + nx] += q;
-                target_div[iy * fw + ix] -= q;
+                for (ix, iy) in open_intakes {
+                    target_div[iy * fw + ix] -= share;
+                }
             }
+            balance_divergence(blocked, fw, fh, &mut target_div);
         }
 
         // Transfer seeded velocities onto open-to-open MAC faces (all tank wall
@@ -1339,7 +1346,7 @@ impl World {
                 }
                 let vx = f32::midpoint(u[y * (fw + 1) + x], u[y * (fw + 1) + x + 1]);
                 let vy = f32::midpoint(v[y * fw + x], v[(y + 1) * fw + x]);
-                let mag = vx.hypot(vy);
+                let mag = (vx * vx + vy * vy).sqrt();
                 let (vx, vy) = if mag > cfg.speed {
                     let s = cfg.speed / mag;
                     (vx * s, vy * s)
@@ -1422,6 +1429,9 @@ impl World {
         if self.life.total_movers == 0 {
             return;
         }
+        // Use a dedicated per-tick odd stamp so cells pushed across an 8x8
+        // block boundary downstream are never stepped twice in one tick.
+        self.stamp = self.stamp.wrapping_add(1);
         let fw = self.life.light.width();
         let blocks = mem::take(&mut self.life.current_blocks);
         for &b in &blocks {
@@ -1456,6 +1466,9 @@ impl World {
                 for kx in 0..x1 - x0 {
                     let x = if dir_x > 0 { x1 - 1 - kx } else { x0 + kx };
                     let i = y * self.width + x;
+                    if self.moved[i] == self.stamp {
+                        continue;
+                    }
                     let m = self.cells[i].material;
                     if self.life.flags[usize::from(m.0)] & CARRYABLE == 0 {
                         continue;
@@ -1599,8 +1612,9 @@ impl World {
     }
 }
 
-/// Finds an open (non-blocked) field cell at `(fx, fy)` or up to two steps
-/// along `dir`.
+/// Finds an open (non-blocked) field cell at `(fx, fy)` or one step along
+/// `dir` (stepping out of the device's own block without jumping over an
+/// external obstacle).
 fn find_open(
     blocked: &[bool],
     fw: usize,
@@ -1611,7 +1625,7 @@ fn find_open(
 ) -> Option<(usize, usize)> {
     #[allow(clippy::cast_possible_truncation)] // unit vector rounded to -1..=1
     let (sx, sy) = (dx.round() as isize, dy.round() as isize);
-    for step in 0..=2isize {
+    for step in 0..=1isize {
         let Some(x) = fx.checked_add_signed(sx * step) else {
             break;
         };
@@ -1626,6 +1640,54 @@ fn find_open(
         }
     }
     None
+}
+
+/// Ensures every connected open-water chamber has zero net `target_div`, so
+/// the Neumann pressure projection converges cleanly even if rocks separate a
+/// filter's nozzle from its intake.
+fn balance_divergence(blocked: &[bool], fw: usize, fh: usize, target_div: &mut [f32]) {
+    if target_div.iter().all(|&d| d == 0.0) {
+        return;
+    }
+    let mut visited = vec![false; fw * fh];
+    let mut queue = Vec::new();
+    for start in 0..fw * fh {
+        if blocked[start] || visited[start] {
+            continue;
+        }
+        visited[start] = true;
+        queue.clear();
+        queue.push(start);
+        let mut head = 0;
+        let mut sum = 0.0_f32;
+        while head < queue.len() {
+            let b = queue[head];
+            head += 1;
+            sum += target_div[b];
+            let (x, y) = (b % fw, b / fw);
+            for n in [
+                (x > 0).then(|| b - 1),
+                (x + 1 < fw).then(|| b + 1),
+                (y > 0).then(|| b - fw),
+                (y + 1 < fh).then(|| b + fw),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !blocked[n] && !visited[n] {
+                    visited[n] = true;
+                    queue.push(n);
+                }
+            }
+        }
+        if sum.abs() > 1e-6 {
+            #[allow(clippy::cast_precision_loss)] // field cells ≤ 10^6
+            let mean = sum / queue.len() as f32;
+            for &b in &queue {
+                target_div[b] -= mean;
+            }
+        }
+    }
 }
 
 /// Whether the straight segment of field cells from `(x0, y0)` to `(x1, y1)`
@@ -1746,11 +1808,8 @@ fn project_mac_flow(
         }
     };
 
-    for pass in 0..3 {
+    for _ in 0..2 {
         project(u, v, 14);
-        if pass == 2 {
-            break;
-        }
         // Mild viscous diffusion across open-to-open faces only.
         u_tmp.copy_from_slice(u);
         for y in 0..fh {
@@ -1803,7 +1862,7 @@ fn project_mac_flow(
             }
         }
     }
-    project(u, v, 16);
+    project(u, v, 20);
 }
 
 /// The water-quality score (SPEC §2.3) from a mean nutrient level over

@@ -169,7 +169,7 @@ impl DeviceKinds {
                 ));
             }
             let [dx, dy] = def.nozzle_dir;
-            let len = dx.hypot(dy);
+            let len = (dx * dx + dy * dy).sqrt();
             if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
                 return Err(bad(
                     &def.name,

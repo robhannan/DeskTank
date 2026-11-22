@@ -258,7 +258,8 @@ impl World {
             }
         }
 
-        let drifting = target.0 != 0 && self.raft_free(&members, id, target.0.signum(), 0);
+        let drifting = (target.0 != 0 && self.raft_free(&members, id, target.0.signum(), 0))
+            || (target.1 != 0 && self.raft_free(&members, id, 0, target.1.signum()));
         let slow = !drifting && raft.vel.0.abs() <= REST_SPEED && raft.vel.1.abs() <= REST_SPEED;
         raft.still = if !moved && slow {
             raft.still.saturating_add(1)

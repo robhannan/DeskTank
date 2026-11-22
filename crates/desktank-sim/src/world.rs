@@ -600,9 +600,9 @@ impl World {
     pub fn tick(&mut self) {
         self.tick += 1;
         self.plants.pearled_this_tick = false;
-        #[allow(clippy::cast_possible_truncation)] // wraps after 2^32 ticks (6.8 years)
-        let stamp = self.tick as u32;
-        self.stamp = stamp;
+        #[allow(clippy::cast_possible_truncation)] // wraps after 2^31 ticks (~3.4 years)
+        let stamp = (self.tick as u32).wrapping_mul(2);
+        self.stamp = if stamp == 0 { 2 } else { stamp };
         for (i, c) in self.chunks.iter_mut().enumerate() {
             c.work = mem::take(&mut c.work_next);
             if !c.work.is_empty() {

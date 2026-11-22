@@ -320,7 +320,7 @@ impl Renderer {
                 byte(n[i] / FIELD_SHOW_MAX),
                 byte(c[i] / FIELD_SHOW_MAX),
                 byte(l[i]),
-                byte(vx.hypot(vy) / speed),
+                byte((vx * vx + vy * vy).sqrt() / speed),
             ]
         }));
         gpu.queue.write_texture(
