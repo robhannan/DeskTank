@@ -1140,7 +1140,8 @@ impl ApplicationHandler for App {
                         s.open_name_field();
                     }
                     // R rinses the inspected filter (Shift+R hard rinse),
-                    // I toggles its intake guard (D27, DV3).
+                    // M replaces its media, and I toggles its intake guard
+                    // (D27, DV3).
                     Key::Character(c)
                         if c.eq_ignore_ascii_case("r") && !event.repeat && !s.command() =>
                     {
@@ -1150,6 +1151,11 @@ impl ApplicationHandler for App {
                             RinseKind::Gentle
                         };
                         s.rinse_inspected_device(kind);
+                    }
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("m") && !event.repeat && !s.command() =>
+                    {
+                        s.rinse_inspected_device(RinseKind::Replace);
                     }
                     Key::Character(c)
                         if c.eq_ignore_ascii_case("i") && !event.repeat && !s.command() =>
@@ -1304,9 +1310,9 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
         "guard off"
     };
     let hint = if status.fry_safe {
-        "R rinse · Shift+R hard rinse"
+        "R rinse · Shift+R hard rinse · M replace media"
     } else {
-        "R rinse · Shift+R hard rinse · I guard"
+        "R rinse · Shift+R hard rinse · M replace media · I guard"
     };
     Some(format!(
         "{label} #{} · on the {glass} glass · flow {:.1} cells/s · load {:.0}% · maturity {:.0}% · {guard} · at ({x}, {y}) · {hint}",

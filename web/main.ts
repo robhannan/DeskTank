@@ -186,6 +186,7 @@ interface Inspected {
 let inspected: Inspected | null = null;
 // The device inspect last showed (D27, DV3): its id for Rinse / guard actions.
 let inspectedDeviceId: number | null = null;
+let inspectedDeviceCell: [string, string] | null = null;
 let wheelRest = 0;
 let stripRest = 0; // the same over the palette, which it steps through
 let db: IDBDatabase | null = null; // IndexedDB, or null where there is none
@@ -1161,10 +1162,13 @@ function fade() {
 function closeDeviceActions() {
   deviceActions.hidden = true;
   inspectedDeviceId = null;
+  inspectedDeviceCell = null;
 }
 
-function showDeviceLine(rest: string[]) {
-  const [name, id, glass, flow, load, maturity, guard, frySafe, x, y] = rest;
+function showDeviceLine(rest: string[], preserveCell = false) {
+  const [name, id, glass, flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
+  const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
+  inspectedDeviceCell = [x, y];
   const guardText = frySafe === "yes" ? "fry-safe" : `guard ${guard}`;
   const text = `${label(name)} #${id} · on the ${glass} glass · flow ${flow} cells/s · load ${load}% · maturity ${maturity}% · ${guardText} · cell ${x}, ${y}`;
   inspected = null;
@@ -1185,7 +1189,7 @@ function runDeviceRinse(mode: "gentle" | "hard" | "replace") {
   try {
     const line = tank.rinseDevice(inspectedDeviceId, mode);
     const [kind, ...rest] = line.split(" ");
-    if (kind === "device") showDeviceLine(rest);
+    if (kind === "device") showDeviceLine(rest, true);
     kick();
   } catch (err) {
     closeDeviceActions();
@@ -1198,7 +1202,7 @@ function runDeviceGuardToggle() {
   try {
     const line = tank.toggleDeviceGuard(inspectedDeviceId);
     const [kind, ...rest] = line.split(" ");
-    if (kind === "device") showDeviceLine(rest);
+    if (kind === "device") showDeviceLine(rest, true);
     kick();
   } catch (err) {
     closeDeviceActions();

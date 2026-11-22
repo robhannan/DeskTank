@@ -1465,6 +1465,9 @@ impl World {
                 return true;
             }
             let body = self.creature_body(c);
+            if body.is_empty() {
+                return true;
+            }
             if let Some(&(dev_id, _, _)) = intakes.iter().find(|&&(_, ix, iy)| {
                 ix + 1 >= body.x0 && ix <= body.x1 && iy + 1 >= body.y0 && iy <= body.y1
             }) {
