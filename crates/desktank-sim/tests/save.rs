@@ -666,6 +666,13 @@ fn a_version_10_fixture_loads() {
     assert_eq!(save::check(&bytes), Ok(10));
     let mut w = save::decode(&bytes, table()).unwrap();
     assert_eq!(w.state_hash(), 0x4fcd_4c23_9f48_9ca7);
+    // Pre-v11 driftwood migrates to dry.
+    let wood = id(&w, "driftwood");
+    let v10_wood: Vec<_> = w.cells().iter().filter(|c| c.material == wood).collect();
+    assert_ne!(v10_wood.len(), 0);
+    for c in v10_wood {
+        assert_eq!(desktank_sim::driftwood_wetness(c.variant), 0);
+    }
     // The poured stones keep their round outlines.
     let partial = |w: &World| -> Vec<(usize, u16)> {
         (0..w.width() * w.height())

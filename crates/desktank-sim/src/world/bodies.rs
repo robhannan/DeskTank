@@ -34,7 +34,7 @@ use crate::material::{
     driftwood_wetness,
 };
 
-use shape::{Shape, TURN, to_i64};
+use shape::{Shape, TURN};
 
 use super::World;
 use super::persist::{rect_from_v1, rect_v1};
@@ -181,15 +181,19 @@ impl World {
         }
         let span = DRIFTWOOD_WET_MILLI - base;
         let max_w = i64::from(MAX_DRIFTWOOD_WETNESS);
-        let sum_w: i64 = b
-            .cells
-            .iter()
-            .filter(|&&i| self.is_member(i, id, b.material))
-            .map(|&i| i64::from(driftwood_wetness(self.cells[i].variant)))
-            .sum();
-        let count = to_i64(b.cells.len()).max(1);
-        // Scale to `n` (equal to `count` after `tidy`) and round to nearest milli.
-        let mass = (n * base + (sum_w * span * n + (max_w * count) / 2) / (max_w * count)).max(n);
+        let (mut sum_w, mut valid_count) = (0_i64, 0_i64);
+        for &i in &b.cells {
+            if self.is_member(i, id, b.material) {
+                sum_w += i64::from(driftwood_wetness(self.cells[i].variant));
+                valid_count += 1;
+            }
+        }
+        if valid_count == 0 {
+            return (n * base, base);
+        }
+        // Scale to `n` (equal to `valid_count` after `tidy`) and round to nearest milli.
+        let denom = max_w * valid_count;
+        let mass = (n * base + (sum_w * span * n + denom / 2) / denom).max(n);
         let rho = ((mass + n / 2) / n).max(1);
         (mass, rho)
     }
@@ -387,15 +391,19 @@ impl World {
                 }
             }
         }
+        let mut last_woken = 0u16;
         for (i, next, id) in updates {
             let glued = self.cells[i].variant & GLUED_VARIANT_BIT != 0;
             self.cells[i].variant = driftwood_variant(next, glued);
             self.mark_visual(i % width, i / width);
-            if let Some(b) = self.bodies.get_mut(&id)
-                && !b.anchored
-            {
-                b.awake = true;
-                b.still = 0;
+            if id != last_woken {
+                last_woken = id;
+                if let Some(b) = self.bodies.get_mut(&id)
+                    && !b.anchored
+                {
+                    b.awake = true;
+                    b.still = 0;
+                }
             }
         }
     }
