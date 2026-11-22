@@ -72,11 +72,14 @@ pub struct Renderer {
     hud: wgpu::Texture,
     /// Nutrient, CO₂, light and flow speed per field cell (RGBA), for the debug overlay.
     fields: wgpu::Texture,
-    /// 2D flow vector `(vx, vy)` per field cell (`Rg8Unorm`, 128 = 0), for the flow overlay.
+    /// 2D flow vector `(vx, vy)` per field cell (`Rg8Unorm`, 128 = 0), for the
+    /// flow overlay and current-driven surface ripples.
     flow: wgpu::Texture,
     fields_size: (u32, u32),
     /// Field version last uploaded.
     fields_version: Option<u64>,
+    /// Current-rebuild counter last uploaded to `flow`.
+    flow_version: Option<u64>,
     /// Health tint per plant id (T6b), and its CPU copy.
     plants: wgpu::Texture,
     plant_tints: PlantTints,
@@ -180,6 +183,7 @@ impl Renderer {
             flow,
             fields_size,
             fields_version: None,
+            flow_version: None,
             plants,
             plant_tints,
             plant_parts,
@@ -297,52 +301,64 @@ impl Renderer {
     }
 
     /// Uploads the fields for the overlay if they changed since the last
-    /// upload.
+    /// upload, plus the 2D flow texture if the current was rebuilt.
     pub fn upload_fields(&mut self, gpu: &Gpu, world: &World) {
-        if self.fields_version == Some(world.fields_version()) {
+        if self.fields_version != Some(world.fields_version()) {
+            self.fields_version = Some(world.fields_version());
+            let [n, c, l] = FieldKind::ALL.map(|k| world.field(k).values());
+            let byte = |v: f32| {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped
+                let b = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                b
+            };
+            // The cell-upload scratch buffer, reused.
+            let texels = &mut self.scratch;
+            texels.clear();
+            let speed = world.ecology().current.speed;
+            let current = world.current();
+            texels.extend((0..n.len()).flat_map(|i| {
+                let [vx, vy] = current[i];
+                [
+                    byte(n[i] / FIELD_SHOW_MAX),
+                    byte(c[i] / FIELD_SHOW_MAX),
+                    byte(l[i]),
+                    byte((vx * vx + vy * vy).sqrt() / speed),
+                ]
+            }));
+            gpu.queue.write_texture(
+                self.fields.as_image_copy(),
+                texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(self.fields_size.0 * 4),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: self.fields_size.0,
+                    height: self.fields_size.1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.upload_flow(gpu, world);
+    }
+
+    /// Uploads the 2D current texture if the current field was rebuilt since
+    /// the last upload (used by the flow overlay and surface-current ripples).
+    pub fn upload_flow(&mut self, gpu: &Gpu, world: &World) {
+        if self.flow_version == Some(world.device_rebuilds()) {
             return;
         }
-        self.fields_version = Some(world.fields_version());
-        let [n, c, l] = FieldKind::ALL.map(|k| world.field(k).values());
-        let byte = |v: f32| {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped
-            let b = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-            b
-        };
-        // The cell-upload scratch buffer, reused.
-        let texels = &mut self.scratch;
-        texels.clear();
+        self.flow_version = Some(world.device_rebuilds());
         let speed = world.ecology().current.speed;
         let current = world.current();
-        texels.extend((0..n.len()).flat_map(|i| {
-            let [vx, vy] = current[i];
-            [
-                byte(n[i] / FIELD_SHOW_MAX),
-                byte(c[i] / FIELD_SHOW_MAX),
-                byte(l[i]),
-                byte((vx * vx + vy * vy).sqrt() / speed),
-            ]
-        }));
-        gpu.queue.write_texture(
-            self.fields.as_image_copy(),
-            texels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(self.fields_size.0 * 4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: self.fields_size.0,
-                height: self.fields_size.1,
-                depth_or_array_layers: 1,
-            },
-        );
         // 2D flow direction: signed component mapped to 1..=255 with 128 = 0.
         let signed_byte = |v: f32| {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to 1..=255
             let b = (v.clamp(-1.0, 1.0) * 127.0 + 128.0).round() as u8;
             b
         };
+        let texels = &mut self.scratch;
         texels.clear();
         texels.extend(
             current
@@ -398,24 +414,37 @@ impl Renderer {
         phase: f32,
         sway_on: bool,
         ripples: &[[f32; 4]],
+        surface_ripple_threshold: f32,
         palette: Option<PaletteLayout>,
         cursor: Option<BrushPreview>,
         field_mode: f32,
         lens: [f32; 4],
     ) -> Vec<u8> {
-        let hud = palette.map_or([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, field_mode, 0.0], |p| {
-            let (w, h) = hud::image_size(p.tabs, p.subs, p.items);
+        let hud = palette.map_or(
             [
-                p.origin.0 as f32,
-                p.origin.1 as f32,
-                p.scale as f32,
-                1.0,
-                w as f32,
-                h as f32,
-                field_mode,
                 0.0,
-            ]
-        });
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                field_mode,
+                surface_ripple_threshold,
+            ],
+            |p| {
+                let (w, h) = hud::image_size(p.tabs, p.subs, p.items);
+                [
+                    p.origin.0 as f32,
+                    p.origin.1 as f32,
+                    p.scale as f32,
+                    1.0,
+                    w as f32,
+                    h as f32,
+                    field_mode,
+                    surface_ripple_threshold,
+                ]
+            },
+        );
         let cursor = cursor.map_or([0.0; 4], |c| {
             [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
         });
@@ -468,6 +497,7 @@ impl Renderer {
         phase: f32,
         sway_on: bool,
         ripples: &[[f32; 4]],
+        surface_ripple_threshold: f32,
         overlay: (
             Option<PaletteLayout>,
             Option<BrushPreview>,
@@ -495,6 +525,7 @@ impl Renderer {
             phase,
             sway_on,
             ripples,
+            surface_ripple_threshold,
             palette,
             cursor,
             field_mode,
@@ -523,6 +554,7 @@ impl Renderer {
                 phase,
                 sway_on,
                 ripples,
+                surface_ripple_threshold,
                 palette,
                 None,
                 field_mode,

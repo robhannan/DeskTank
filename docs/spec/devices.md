@@ -82,7 +82,12 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   rocks and circulate back towards intakes. Dissolved fields (nutrients,
   CO₂) advect in 2D; floaters, non-water dense liquids, light loose
   powders (density < 1.5), rising bubbles, marimo and creatures follow
-  the current's direction. The Flow overlay renders speed tint and
+  the current's direction. Where the 2D current at the water surface
+  exceeds `surface_ripple_speed` (`assets/fields.toml`, #165), the world
+  records per-column surface agitation (rebuilt only with the current,
+  at zero per-tick chunk-wake or idle-frame cost) and the renderer
+  ripples the water line in the flow direction, blending seamlessly with
+  HOB spillway ripples (DV5). The Flow overlay renders speed tint and
   per-block directional arrows.
 - **Filtration** (DV3). Intakes capture suspended particles (food,
   waste, detritus, algae in the water) into the device's **media load**.

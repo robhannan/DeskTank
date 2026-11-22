@@ -104,6 +104,8 @@ pub struct Tank {
     field_overlay: Option<crate::FieldOverlay>,
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
+    /// Current-rebuild counter last drawn (for surface-current ripples).
+    flow_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
     time_of_day: u16,
     /// Creatures version last drawn (`None` before the first frame).
@@ -134,6 +136,7 @@ impl Tank {
             magnifier: None,
             field_overlay: None,
             fields_drawn: 0,
+            flow_drawn: 0,
             time_of_day: daylight::NOON,
             creatures_drawn: None,
             plants_drawn: None,
@@ -371,6 +374,9 @@ impl Tank {
         if self.field_overlay.is_some() && self.world.fields_version() != self.fields_drawn {
             self.needs_frame = true;
         }
+        if self.world.device_rebuilds() != self.flow_drawn {
+            self.needs_frame = true;
+        }
     }
 
     /// Stops world time, e.g. while the surface is hidden. The next
@@ -486,7 +492,14 @@ impl Tank {
         let palette = self.palette_layout(size);
         let sway_on = self.sway_active();
         let ripples = self.world.surface_ripples();
-        let phase = if sway_on || !ripples.is_empty() {
+        let has_current_ripples = self.world.has_surface_current_ripples();
+        let surface_ripple_threshold = if has_current_ripples {
+            let cur = self.world.ecology().current;
+            (cur.surface_ripple_speed / cur.speed).clamp(f32::EPSILON, 1.0)
+        } else {
+            0.0
+        };
+        let phase = if sway_on || !ripples.is_empty() || has_current_ripples {
             self.sway_phase()
         } else {
             0.0
@@ -502,7 +515,10 @@ impl Tank {
         if self.field_overlay.is_some() {
             renderer.upload_fields(gpu, &self.world);
             self.fields_drawn = self.world.fields_version();
+        } else if has_current_ripples {
+            renderer.upload_flow(gpu, &self.world);
         }
+        self.flow_drawn = self.world.device_rebuilds();
         if self.palette_dirty {
             if let Some(p) = &self.palette {
                 let (image, image_size) = hud::build(
@@ -532,6 +548,7 @@ impl Tank {
             phase,
             sway_on,
             &ripples,
+            surface_ripple_threshold,
             (palette, self.cursor, self.magnifier, self.field_overlay),
             self.timer.as_ref(),
         );
@@ -555,6 +572,7 @@ impl Tank {
         if self.field_overlay.is_some() {
             self.fields_drawn = self.world.fields_version();
         }
+        self.flow_drawn = self.world.device_rebuilds();
         self.needs_frame = false;
     }
 }
@@ -840,6 +858,39 @@ mod tests {
         assert_eq!(
             frames, 0,
             "idle tank with HOB filter must draw 0 extra frames, drew {frames}"
+        );
+    }
+
+    #[test]
+    fn settled_surface_current_tank_draws_no_extra_frames_when_idle() {
+        let mut world = World::new(
+            WorldConfig {
+                width: 128,
+                height: 64,
+                seed: 13,
+                water_level: 0.85,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let surface = i64::try_from(world.surface_row()).unwrap();
+        world
+            .add_device(desktank_sim::DeviceKind::InternalFilter, 0, surface, false)
+            .unwrap()
+            .expect("high internal filter fits");
+        for _ in 0..120 {
+            world.tick();
+        }
+        assert!(world.has_surface_current_ripples());
+        assert_eq!(world.awake_chunks(), 0, "high filter tank settled");
+        let mut tank = Tank::new(world, TankConfig::default());
+        let req = tank.tick(Duration::ZERO);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        let frames = count_frames(&mut tank, Duration::ZERO, 10);
+        assert_eq!(
+            frames, 0,
+            "idle tank with strong surface current must draw 0 extra frames, drew {frames}"
         );
     }
 }

@@ -369,16 +369,17 @@ impl World {
         out
     }
 
-    /// Whether any placed device drives water-surface ripples (O(1) over
-    /// `<= MAX_DEVICES`).
+    /// Whether any placed device or strong surface current drives
+    /// water-surface ripples (O(1) over `<= MAX_DEVICES`).
     #[must_use]
     pub fn has_surface_ripples(&self) -> bool {
-        !self.devices.is_empty()
-            && self.surface_row < self.height
-            && self
-                .devices
-                .values()
-                .any(|d| self.devices.kinds.get(d.kind).spillway.is_some())
+        self.has_surface_current_ripples()
+            || (!self.devices.is_empty()
+                && self.surface_row < self.height
+                && self
+                    .devices
+                    .values()
+                    .any(|d| self.devices.kinds.get(d.kind).spillway.is_some()))
     }
 
     /// Rinses or replaces device `id`'s filter media (D27, DV3). Returns

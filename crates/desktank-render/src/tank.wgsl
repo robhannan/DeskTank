@@ -44,8 +44,9 @@ struct View {
     // Palette: top-left in target pixels, target pixels per palette pixel,
     // and 1 if shown.
     hud: vec4<f32>,
-    // Palette image size in palette pixels (xy), and the field overlay (z):
-    // 0 none, 1 nutrient, 2 CO2, 3 light, 4 flow.
+    // Palette image size in palette pixels (xy), the field overlay (z: 0 none,
+    // 1 nutrient, 2 CO2, 3 light, 4 flow), and the normalized surface-current
+    // ripple speed threshold (w: > 0 when strong surface current is active).
     hud_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
@@ -570,18 +571,21 @@ fn air_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
     return clamp(base * lift * grain, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// HOB waterfall curtain and water-surface ripples (D27, DV5). Runs only when
-// at least one HOB is placed (`view.ripples[0].w > 0`) and only on air/water
-// cells near the surface or waterfall column; zero cost when no HOB is placed
-// or when the tank is idle (no extra frames are scheduled).
-fn hob_surface_ripple(
+// Water-surface ripples from HOB waterfall spillways (D27, DV5) and strong 2D
+// current at the surface (#165). Runs only when at least one HOB is placed
+// (`view.ripples[0].w > 0`) or strong surface current exceeds threshold
+// (`view.hud_size.w > 0`), and only on air/water cells near the surface or a
+// waterfall column; zero cost when calm or idle.
+fn surface_ripple(
     rgb_in: vec3<f32>,
     at: vec2<i32>,
     quarter: vec2<i32>,
     fine: bool,
     in_air: bool,
 ) -> vec3<f32> {
-    if view.ripples[0].w <= 0.0 {
+    let has_hob = view.ripples[0].w > 0.0;
+    let has_cur = view.hud_size.w > 0.0;
+    if !has_hob && !has_cur {
         return rgb_in;
     }
     let sub = quarter / 2;
@@ -591,10 +595,10 @@ fn hob_surface_ripple(
     let phase = view.target_size.z;
     let p = select(at * 2 + sub, at * 4 + quarter, fine);
 
-    // Quick vertical reject: only rows between the top of the tank and a few
-    // rows below the water surface (or waterfall plunge) can show ripples.
+    // Quick vertical reject: only rows near the water surface (or a HOB
+    // waterfall plunge) can show ripples.
     let near_surface = abs(pos.y - view.surface_row) <= 2.6;
-    if !near_surface && !in_air && pos.y > view.surface_row + 10.0 {
+    if !near_surface && (!has_hob || (!in_air && pos.y > view.surface_row + 10.0)) {
         return rgb_in;
     }
 
@@ -667,6 +671,49 @@ fn hob_surface_ripple(
         }
     }
 
+    // 4. Current-driven surface ripples where the 2D flow at the surface
+    // exceeds the activation threshold (`view.hud_size.w`), blended seamlessly
+    // with any HOB spillway ripples.
+    if has_cur && near_surface && view.surface_row > 0.0 {
+        let sy = i32(floor(view.surface_row / 8.0));
+        let fx = pos.x / 8.0 - 0.5;
+        let fx0 = i32(floor(fx));
+        let ft = fx - floor(fx);
+        let fv = mix(flow_block(vec2<i32>(fx0, sy)), flow_block(vec2<i32>(fx0 + 1, sy)), ft);
+        let speed = length(fv);
+        let thresh = view.hud_size.w;
+        if speed > thresh {
+            let ag = clamp((speed - thresh) / max(1.0 - thresh, 0.001), 0.0, 1.0);
+            let c_env = smoothstep(0.0, 0.18, ag) * (0.30 + 0.70 * ag);
+            let dir_x = clamp(fv.x / speed, -1.0, 1.0);
+            let vert = abs(fv.y) / speed;
+            let dir_t = dir_x * 0.5 + 0.5;
+            let cw1 = mix(
+                sin(pos.x * 0.95 + phase * 4.2),
+                sin(pos.x * 0.95 - phase * 4.2),
+                dir_t,
+            );
+            let cw2 = mix(
+                sin(pos.x * 1.9 + phase * 6.6 + 1.1),
+                sin(pos.x * 1.9 - phase * 6.6 + 1.1),
+                dir_t,
+            ) * 0.45;
+            let c_chop = sin(pos.x * 2.1 + phase * 5.8) * 0.55 + cos(pos.x * 3.3 - phase * 7.4) * 0.35;
+            let c_wave = mix(cw1 + cw2, c_chop, vert * 0.65) * c_env * 0.85;
+            let c_impact = c_env * (0.18 + 0.52 * vert);
+            if !has_ripple {
+                best_wave = c_wave;
+                best_env = c_env;
+                best_impact = c_impact;
+                has_ripple = true;
+            } else {
+                best_wave = clamp(best_wave + c_wave * (1.0 - best_env * 0.65), -1.4, 1.4);
+                best_env = max(best_env, c_env);
+                best_impact = max(best_impact, c_impact);
+            }
+        }
+    }
+
     if !has_ripple {
         return rgb;
     }
@@ -678,8 +725,11 @@ fn hob_surface_ripple(
     let crest_tint = vec3<f32>(0.74, 0.92, 0.99);
 
     if in_air {
-        // Rising water wave crest protruding above the flat water line.
-        if pos.y >= surf_y && pos.y < view.surface_row {
+        // Rising water wave crest protruding above the flat water line (only
+        // over open water so crests do not float above dry rocks or walls).
+        if pos.y >= surf_y && pos.y < view.surface_row
+            && style_at(vec2<i32>(at.x, i32(view.surface_row))) == STYLE_WATER
+        {
             let wcol = water_bg(at, quarter, fine);
             let dy = pos.y - surf_y;
             let crest_k = clamp(0.45 + 0.45 * best_impact - dy * 0.4, 0.25, 0.92);
@@ -869,7 +919,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
         var rgb = c.rgb * (1.0 - view.depth_dim * depth * tinted);
         if s == STYLE_WATER || s == STYLE_AIR {
-            rgb = hob_surface_ripple(rgb, at, vec2<i32>(1, 1), false, s == STYLE_AIR);
+            rgb = surface_ripple(rgb, at, vec2<i32>(1, 1), false, s == STYLE_AIR);
         }
         return rgb;
     }
@@ -930,14 +980,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
             }
         }
         if style == STYLE_WATER {
-            rgb = hob_surface_ripple(rgb, at, quarter, fine, false);
+            rgb = surface_ripple(rgb, at, quarter, fine, false);
         }
         return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     if style == STYLE_AIR {
         let rgb = air_bg(at, quarter, fine);
-        return hob_surface_ripple(rgb, at, quarter, fine, true);
+        return surface_ripple(rgb, at, quarter, fine, true);
     }
 
     if style == STYLE_SAND {
