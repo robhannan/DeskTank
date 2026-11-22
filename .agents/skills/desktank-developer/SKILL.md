@@ -17,7 +17,8 @@ your final report, so keep the work self-contained and the report short.
    `docs/notes/`, and the code you will touch. Reference `Closes #<n>`
    (or `Part of #<n>`) in your PR description rather than editing a
    central changelog.
-2. `git fetch origin` and branch from the latest `origin/main`:
+2. `git fetch origin` and branch from the latest `origin/main` (or from the
+   lower PR's branch when stacking onto an open PR):
    `git checkout -b feat/<short-slug> origin/main`. Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
 3. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
@@ -103,7 +104,9 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   selector). Pick the dominant category. If a change fixes wrong
   behaviour, use 🐛 even when the fix is a speed-up; use 🏎️ only for
   speed with no behaviour change.
-- Push the branch and open a PR against `main`. Fill in the sections of
+- Push the branch and open a PR against `main` (or against the lower PR's
+  branch when stacking — prefer stacking when multiple PRs are in flight or
+  related). Fill in the sections of
   `.github/pull_request_template.md` (summary, screenshot or GIF, resource
   use, testing) and delete its HTML comments. Keep the body to about 300
   words and say plainly what you could not verify. End with a “🤖 Generated with” credit naming the agent used.
@@ -118,7 +121,7 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    `role: "review"` and a lower-cost model from `orchestrator_capabilities`
    (e.g. `gemini-3.8-flash` or `claude-haiku-5-5`); outside T3 Code, spawn
    the named `desktank-reviewer` subagent. Give it the diff command
-   (`git diff origin/main...HEAD`), context and focus areas
+   (`git diff <base>...HEAD`, e.g. `origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
    include the reviewer model selected for this run in the brief. Have the reviewer
    post ONE PR comment beginning with this two-line GitHub alert.
