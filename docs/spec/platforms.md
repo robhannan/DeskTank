@@ -1,14 +1,16 @@
 # Display Modes per Platform
 
+Desktop packaging, permission probes and Windows API evidence are recorded in the [P1 findings](../notes/packaging-and-identity.md).
+
 ### 3.1 Summary of feasibility
 
 | | macOS | Windows | Linux (X11) | Linux (Wayland) |
 |---|---|---|---|---|
 | Wallpaper | ✅ desktop-level window | ✅ WorkerW child window 🔍 | ✅ `_NET_WM_WINDOW_TYPE_DESKTOP` | ✅ layer-shell `background` on wlroots/KDE; ⚠️ GNOME experimental/none 🔍 |
-| Overlay | ✅ | ✅ (compositing path 🔍) | ✅ needs a running compositor | ✅ layer-shell `overlay` (same GNOME caveat) |
+| Overlay | ✅ | ✅ (O1-Win integration test) | ✅ needs a running compositor | ✅ layer-shell `overlay` (same GNOME caveat) |
 | Screensaver | ✅ `.saver` bundle ⚠️ host bugs 🔍 | ✅ `.scr` | ✅ built-in idle mode; ⚠️ XScreenSaver hack only where XScreenSaver is the saver | ✅ built-in idle mode |
-| Lock screen | ⚠️ saver shown while locked | ⚠️ static snapshot image only 🔍 | ⚠️ via saver | ⚠️ `ext-session-lock-v1` (stretch) |
-| Interact (modifier key) | ✅ modifier polling 🔍 | ✅ | ✅ | ⚠️ tray toggle or compositor key binding to the CLI |
+| Lock screen | ⚠️ saver shown while locked | ⚠️ static snapshot image only | ⚠️ via saver | ⚠️ `ext-session-lock-v1` (stretch) |
+| Interact (modifier key) | ✅ modifier polling | ✅ | ✅ | ⚠️ tray toggle or compositor key binding to the CLI |
 
 Android (§3.6, D23): screensaver ✅ as a Dream (⚠️ Google TV has no
 screensaver picker: the Dream is chosen over ADB); wallpaper ✅ as a live
@@ -63,12 +65,10 @@ configurable, because some people want to show their tank off.
   `WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED | WS_EX_TRANSPARENT |
   WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`.
   - Per-pixel alpha comes from a DirectComposition swap chain with
-    premultiplied alpha. 🔍 It's unconfirmed whether wgpu's DX12
-    backend exposes a composition swap chain with premultiplied alpha
-    for an HWND.
-  - Click-through relies on `WS_EX_LAYERED | WS_EX_TRANSPARENT`. 🔍 It's
-    unverified whether this combination stays click-through with
-    `WS_EX_NOREDIRECTIONBITMAP` and DirectComposition (P1, O1-Win).
+    premultiplied alpha. Select wgpu DX12’s `DxgiFromVisual` swap chain.
+  - Click-through relies on `WS_EX_LAYERED | WS_EX_TRANSPARENT`. The P1
+    reference overlay combines these with DirectComposition and
+    `WS_EX_NOREDIRECTIONBITMAP`. O1-Win tests delivery to the app underneath.
   - Fallback path: render offscreen, read back, and present with
     `UpdateLayeredWindow` at a lower frame rate.
   - The O1-Win spike picks one path (O1-Win, §9).
@@ -86,9 +86,7 @@ configurable, because some people want to show their tank off.
   on. Leaving interact mode makes it click-through again.
   - **macOS**: toggle `ignoresMouseEvents`. The chord is detected by
     polling `CGEventSourceFlagsState` at 10 Hz, only while a tank is
-    visible. It reads modifier flags only, never other keys. 🔍 We need
-    to confirm this needs neither Accessibility nor Input Monitoring
-    permission (P1). In toggle mode, Esc arrives as a normal key event,
+    visible. It reads modifier flags only, never other keys. The P1 probe detected Shift without Accessibility or Input Monitoring permission. In toggle mode, Esc arrives as a normal key event,
     because the window is focused.
   - **Windows**: toggle `WS_EX_TRANSPARENT`; poll the modifier with
     `GetAsyncKeyState`.
@@ -103,12 +101,11 @@ configurable, because some people want to show their tank off.
   - It handles `/s` (run), `/p <HWND>` (preview in the settings dialog)
     and `/c` (configure, which opens the config). It exits on input.
   - It is one process: with `/s` it creates one window per monitor.
-  - Install options (🔍 to confirm in P1):
+  - Install options:
     - per-machine copy into `System32` (needs elevation, done by the
       installer), so it appears in the Screen Saver list;
-    - per-user, by pointing `HKCU\Control Panel\Desktop\SCRNSAVE.EXE` at
-      the user-local copy (no elevation, but it is not listed in the
-      dialog).
+    - per-user, by passing the user-local path to `desk.cpl,InstallScreenSaver`, which points `HKCU\Control Panel\Desktop\SCRNSAVE.EXE` at
+      the user-local copy (no elevation, without relying on picker discovery).
 
     `desktank saver install` does the per-user variant.
 - **macOS `.saver`**: a bundle whose principal class is a
@@ -117,8 +114,7 @@ configurable, because some people want to show their tank off.
     `stopAnimation` come from `legacyScreenSaver`'s run loop, not ours,
     so the core must be steppable from a foreign loop (§4.2). wgpu
     renders into the view's `CAMetalLayer`.
-  - 🔍 We need to check whether a Rust `cdylib` (`MH_DYLIB`) loads as a
-    bundle executable or must be linked with `-bundle`.
+  - Package a Rust `cdylib` as the bundle executable. The P1 loader probe resolved the principal class from an `MH_DYLIB`.
   - 🔍 `legacyScreenSaver` on Sonoma, Sequoia and Tahoe reportedly never
     deallocates saver views, so it grows across activations
     ([cocoa-dev, Sep 2024](https://lists.apple.com/archives/cocoa-dev/2024/Sep/msg00001.html);
@@ -154,8 +150,7 @@ configurable, because some people want to show their tank off.
   - **Windows** allows only a static image or slideshow. We render a tank
     snapshot periodically and set it with
     `Windows.System.UserProfile.LockScreen.SetImageFileAsync`.
-    - 🔍 It isn't confirmed whether this works for an unpackaged app or
-      needs MSIX package identity (resolved in P1).
+    - The unpackaged desktop process can call this API. Ship the MSI.
     - It only shows when the user's lock-screen background is set to
       "Picture". We detect and report that case rather than changing the
       user's setting.
