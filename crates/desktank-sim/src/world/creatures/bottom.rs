@@ -42,8 +42,8 @@
 use super::{Creature, Kind, ONE, TICKS_PER_SECOND, World, Zone, extent};
 use crate::grid::Rect;
 use crate::material::MovementClass;
+use crate::palette::PalettePath;
 use crate::rng::splitmix64;
-use crate::tools::PaletteGroup;
 
 /// Ticks a swim lasts (4 s): rising for the first half, gliding down for
 /// the second.
@@ -452,8 +452,8 @@ impl World {
 
 /// Whether material `m` is loose substrate: a powder from the substrate
 /// palette.
-pub(super) fn is_loose(class: MovementClass, palette: Option<PaletteGroup>) -> bool {
-    class == MovementClass::Powder && palette == Some(PaletteGroup::Substrate)
+pub(super) fn is_loose(class: MovementClass, palette: Option<PalettePath>) -> bool {
+    class == MovementClass::Powder && palette == Some(PalettePath::SUBSTRATE)
 }
 
 /// Ticks a burrower takes to dig its whole height in, or out.

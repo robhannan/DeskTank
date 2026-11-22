@@ -12,6 +12,7 @@ pub mod field;
 mod grid;
 mod hash;
 pub mod material;
+pub mod palette;
 mod placeable;
 pub mod plants;
 mod rng;
@@ -29,6 +30,7 @@ pub use grid::{Cell, Rect};
 pub use material::{
     GLUED_VARIANT_BIT, Material, MaterialError, MaterialId, MaterialTable, MovementClass,
 };
+pub use palette::{Holds, PalettePath, PalettePathError};
 pub use placeable::Placeable;
 pub use plants::{
     Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,

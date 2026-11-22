@@ -4,6 +4,7 @@
 # water (not with the neons) and takes flakes and bloodworms.
 id = 10
 name = "harlequin_rasbora"
+palette = "fish/schooling"
 zone = "mid"
 depth = [0.3, 0.7]
 min_depth = 24

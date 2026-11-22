@@ -1,5 +1,6 @@
 id = 21
 name = "kuhli_loach"
+palette = "fish/cleanup"
 zone = "bottom"
 depth = [0.72, 1.0]
 min_depth = 12

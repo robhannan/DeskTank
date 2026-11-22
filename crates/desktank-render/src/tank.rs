@@ -281,6 +281,7 @@ impl Tank {
             target,
             &self.layout(target),
             p.tabs.len(),
+            p.subs.len(),
             p.items.len(),
         ))
     }

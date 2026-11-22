@@ -1,5 +1,5 @@
 //! Live food (SPEC §2.4 *Live food*): a pinch of live bloodworms from the
-//! Food palette group sinks to the bed and wriggles along it; every stocked
+//! palette's Food › Live sinks to the bed and wriggles along it; every stocked
 //! species that eats frozen bloodworms hunts the live ones down and eats
 //! them, in easy mode too, while species that don't leave them alone; an
 //! uneaten worm dies into a cell of frozen bloodworm, which rots; live food
@@ -7,7 +7,7 @@
 //! stocked or spawned, and is deterministic across a save mid-chase.
 #![allow(clippy::cast_possible_wrap, clippy::cast_precision_loss)]
 
-use desktank_sim::tools::{Button, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
+use desktank_sim::tools::{Button, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
     Brush, CreatureId, LIFE_DAY_TICKS, MAX_LIVE_FOOD, MaterialTable, PINCH, Rect, SpeciesId,
     TICKS_PER_SECOND, World, WorldConfig, WorldError, cheats, scene,
@@ -60,7 +60,7 @@ fn count(w: &World, name: &str) -> usize {
         .count()
 }
 
-/// Selects the live bloodworm slot in the Food group and clicks at `cell`.
+/// Selects the live bloodworm slot (Food › Live) and clicks at `cell`.
 fn pinch(w: &mut World, cell: (i64, i64)) -> Outcome {
     let worm = species(w, "live_bloodworm");
     let item = PaletteItem::Tool(Tool::AddCreature(worm));
@@ -72,15 +72,12 @@ fn pinch(w: &mut World, cell: (i64, i64)) -> Outcome {
 }
 
 #[test]
-fn live_food_is_offered_in_the_food_group_only() {
+fn live_food_is_offered_in_food_live_only() {
     let w = world(160, 60, 1);
     let worm = PaletteItem::Tool(Tool::AddCreature(species(&w, "live_bloodworm")));
-    for (group, items) in Tools::palette_groups(&w) {
-        assert_eq!(
-            items.contains(&worm),
-            group == PaletteGroup::Food,
-            "{group:?}"
-        );
+    for sub in Tools::palette_tree(&w).into_iter().flat_map(|t| t.subs) {
+        let name = sub.path.name();
+        assert_eq!(sub.items.contains(&worm), name == "food/live", "{name}");
     }
 }
 
