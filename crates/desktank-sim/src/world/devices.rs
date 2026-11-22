@@ -112,6 +112,10 @@ impl World {
     ///   `flip`), dropped straight down onto substrate, hardscape or the tank
     ///   floor wholly under the water line (lifting up within its own height if
     ///   the pointer is on or inside the bed).
+    /// - [`Mount::Rim`]: horizontally centred on `x` and hung on the top rim
+    ///   (`y = 0`), partly above the water line (`flip` mirrors left/right),
+    ///   requiring every footprint cell to be fluid (air or water) and every
+    ///   intake cell to reach under the water line.
     ///
     /// The returned device's id is 0.
     #[must_use]
@@ -141,6 +145,11 @@ impl World {
                 let x0 = usize::try_from((x - w_i / 2).clamp(0, max_x)).unwrap_or(0);
                 (x0, false)
             }
+            Mount::Rim => {
+                let max_x = i64::try_from(self.width.saturating_sub(w)).unwrap_or(0);
+                let x0 = usize::try_from((x - w_i / 2).clamp(0, max_x)).unwrap_or(0);
+                (x0, flip)
+            }
         };
         let at = |y0: i64| Device {
             id: DeviceId(0),
@@ -152,6 +161,14 @@ impl World {
             maturity: 0.0,
             intake_guard: false,
         };
+        if art.mount == Mount::Rim {
+            let dev = at(0);
+            let ok = w <= self.width
+                && h <= self.height
+                && self.device_fits(&dev)
+                && dev.intakes(art).all(|(_, iy)| iy >= self.surface_row);
+            return (dev, ok);
+        }
         if w <= self.width && bottom >= top {
             match art.mount {
                 Mount::SideGlass => {
@@ -183,6 +200,7 @@ impl World {
                         return (at(y0), true);
                     }
                 }
+                Mount::Rim => unreachable!("handled above"),
             }
         }
         (at(want), false)
@@ -284,7 +302,7 @@ impl World {
     pub fn device_status(&self, id: DeviceId) -> Option<DeviceStatus> {
         let d = self.device(id)?;
         let art = self.devices.kinds.get(d.kind);
-        let (nx, ny) = d.nozzle(art);
+        let (nx, ny) = self.effective_nozzle(d, art);
         let [dx, dy] = d.nozzle_dir(art);
         let [vx, vy] = self.nozzle_flow(nx, ny, [dx, dy]);
         Some(DeviceStatus {
@@ -296,6 +314,71 @@ impl World {
             intake_guard: d.intake_guard,
             fry_safe: art.fry_safe,
         })
+    }
+
+    /// World cell where device `d`'s nozzle jet enters the water: for rim
+    /// mounts whose spillway hangs above the water line, projects down to
+    /// `surface_row` where the waterfall hits the surface.
+    fn effective_nozzle(&self, d: &Device, art: &crate::device::DeviceArt) -> (usize, usize) {
+        let (nx, ny) = d.nozzle(art);
+        if art.mount == Mount::Rim {
+            (
+                nx,
+                ny.max(self.surface_row).min(self.height.saturating_sub(1)),
+            )
+        } else {
+            (nx, ny)
+        }
+    }
+
+    /// Depth band of device cell `i` if it belongs to a submerged device
+    /// section restricted to a single depth band (e.g. a HOB filter's
+    /// back-band intake tube below the water line). Returns `None` for
+    /// non-device cells, above-water cells (preserving air as a barrier in
+    /// every band), and device sections that are solid in every depth band.
+    #[inline]
+    pub(super) fn device_cell_band(&self, i: usize) -> Option<u8> {
+        let c = self.cells[i];
+        if Some(c.material) != self.devices.material {
+            return None;
+        }
+        let d = self.devices.table.get(&c.state)?;
+        let from_row = d.back_band_row(self.devices.kinds.get(d.kind))?;
+        let y = i / self.width;
+        (y >= from_row && y >= self.surface_row).then_some(super::creatures::DEPTH_BANDS - 1)
+    }
+
+    /// Active surface-ripple zones `[x0, x1_exclusive, spillway_y, strength]`
+    /// in grid cells for rim-mounted waterfall filters (D27, DV5). `strength`
+    /// is the device's flow factor (`CLOG_FLOW_FLOOR..=1.0`), so clogging
+    /// softens the waterfall and surface agitation.
+    #[must_use]
+    pub fn surface_ripples(&self) -> Vec<[f32; 4]> {
+        if self.devices.is_empty() || self.surface_row >= self.height {
+            return Vec::new();
+        }
+        let floor = self.life.eco.filtration.clog_floor;
+        let mut out = Vec::new();
+        for d in self.devices.values() {
+            let art = self.devices.kinds.get(d.kind);
+            if let Some((x0, x1, sy)) = d.spillway_world(art) {
+                #[allow(clippy::cast_precision_loss)] // grid coords ≤ 8192
+                out.push([x0 as f32, x1 as f32, sy as f32, d.flow_factor_with(floor)]);
+            }
+        }
+        out
+    }
+
+    /// Whether any placed device drives water-surface ripples (O(1) over
+    /// `<= MAX_DEVICES`).
+    #[must_use]
+    pub fn has_surface_ripples(&self) -> bool {
+        !self.devices.is_empty()
+            && self.surface_row < self.height
+            && self
+                .devices
+                .values()
+                .any(|d| self.devices.kinds.get(d.kind).spillway.is_some())
     }
 
     /// Rinses or replaces device `id`'s filter media (D27, DV3). Returns
@@ -503,7 +586,7 @@ impl World {
             .map(|d| {
                 let art = self.devices.kinds.get(d.kind);
                 (
-                    (d.nozzle(art), d.nozzle_dir(art)),
+                    (self.effective_nozzle(d, art), d.nozzle_dir(art)),
                     d.intakes(art)
                         .map(|(ix, iy)| ((ix, iy), d.intake_outward(art, ix, iy)))
                         .collect(),

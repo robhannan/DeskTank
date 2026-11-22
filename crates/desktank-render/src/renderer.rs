@@ -18,8 +18,8 @@ use crate::{Gpu, timer::GpuTimer};
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes.
-const VIEW_BYTES: u64 = 176;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (176 base + 16 ripple vec4s).
+const VIEW_BYTES: u64 = 176 + (desktank_sim::MAX_DEVICES as u64) * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -114,7 +114,7 @@ impl Renderer {
             runner,
             float,
             rhizome,
-            0.0,
+            material("air"),
         ];
         let hud = create_hud(d);
         let (fields, flow, fields_size) = create_fields(d, world);
@@ -395,7 +395,9 @@ impl Renderer {
         scale: u32,
         surface_row: usize,
         daylight: [f32; 3],
-        sway: Option<f32>,
+        phase: f32,
+        sway_on: bool,
+        ripples: &[[f32; 4]],
         palette: Option<PaletteLayout>,
         cursor: Option<BrushPreview>,
         field_mode: f32,
@@ -420,9 +422,13 @@ impl Renderer {
         let target_info = [
             size.0 as f32,
             size.1 as f32,
-            sway.unwrap_or(0.0),
-            if sway.is_some() { 1.0 } else { 0.0 },
+            phase,
+            if sway_on { 1.0 } else { 0.0 },
         ];
+        let mut ripple_slots = [[0.0_f32; 4]; desktank_sim::MAX_DEVICES];
+        for (slot, &r) in ripple_slots.iter_mut().zip(ripples.iter()) {
+            *slot = r;
+        }
         [
             self.grid.0 as f32,
             self.grid.1 as f32,
@@ -442,6 +448,7 @@ impl Renderer {
         .chain(target_info)
         .chain(self.plant_parts)
         .chain(lens)
+        .chain(ripple_slots.into_iter().flatten())
         .flat_map(f32::to_le_bytes)
         .collect()
     }
@@ -458,7 +465,9 @@ impl Renderer {
         size: (u32, u32),
         surface_row: usize,
         daylight: [f32; 3],
-        sway: Option<f32>,
+        phase: f32,
+        sway_on: bool,
+        ripples: &[[f32; 4]],
         overlay: (
             Option<PaletteLayout>,
             Option<BrushPreview>,
@@ -483,7 +492,9 @@ impl Renderer {
             layout.scale,
             surface_row,
             daylight,
-            sway,
+            phase,
+            sway_on,
+            ripples,
             palette,
             cursor,
             field_mode,
@@ -509,7 +520,9 @@ impl Renderer {
                 ml.scale,
                 surface_row,
                 daylight,
-                sway,
+                phase,
+                sway_on,
+                ripples,
                 palette,
                 None,
                 field_mode,

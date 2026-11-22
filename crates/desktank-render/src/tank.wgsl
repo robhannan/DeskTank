@@ -58,12 +58,15 @@ struct View {
     // Material ids of the plant parts root (x), stem (y) and leaf (z), and
     // of water (w); -1 if missing.
     plant_parts: vec4<f32>,
-    // Material ids of the runner (x) and floating leaf (y) parts; -1 if
-    // missing.
+    // Material ids of the runner (x), floating leaf (y), rhizome (z) and
+    // air (w); -1 if missing.
     plant_parts2: vec4<f32>,
     // Circular magnifier lens in target pixels: centre (xy), inner radius (z),
     // and bezel/handle pixel-art block size (w); z = 0 outside the lens pass.
     lens: vec4<f32>,
+    // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
+    // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
+    ripples: array<vec4<f32>, 16>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -110,6 +113,7 @@ const STYLE_DRIFTWOOD: i32 = 8;
 const STYLE_BUBBLE: i32 = 9;
 const STYLE_ALGAE: i32 = 10;
 const STYLE_DETRITUS: i32 = 11;
+const STYLE_DEVICE: i32 = 12;
 
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
@@ -243,7 +247,7 @@ fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: ve
             s_part = part_of(s_texel);
             s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
         }
-        if s_sways && (self_sways || style_of(texel) == STYLE_WATER) {
+        if s_sways && (self_sways || effective_style(at, style_of(texel)) == STYLE_WATER) {
             src = GridSource(s_at, s_texel, s_part, quarter_of(s_grid, s_cell), !self_sways, false);
         } else if self_sways {
             src.part = -1;
@@ -486,12 +490,21 @@ fn style_of(t: vec4<f32>) -> i32 {
     return i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
 }
 
+// Resolves STYLE_DEVICE to STYLE_AIR above the water line and STYLE_WATER at
+// or below it (D27, DV5).
+fn effective_style(at: vec2<i32>, s: i32) -> i32 {
+    if s == STYLE_DEVICE {
+        return select(STYLE_WATER, STYLE_AIR, f32(at.y) < view.surface_row);
+    }
+    return s;
+}
+
 // Ground style of the cell at `at`, or STYLE_DEFAULT outside the grid.
 fn style_at(at: vec2<i32>) -> i32 {
     if !inside(at) {
         return STYLE_DEFAULT;
     }
-    return style_of(textureLoad(cells, at, 0));
+    return effective_style(at, style_of(textureLoad(cells, at, 0)));
 }
 
 // Whether `at` holds the same material id as `mat`.
@@ -499,9 +512,10 @@ fn same_mat(at: vec2<i32>, mat: i32) -> bool {
     return inside(at) && i32(round(textureLoad(cells, at, 0).r * 255.0)) == mat;
 }
 
-// Whether `at` is an open fluid (water, air, liquid fertiliser or bubble), so
-// light reaches an adjacent substrate or hardscape face. Skips the palette read
-// when the neighbour holds the caller's own non-fluid material `self_mat`.
+// Whether `at` is an open fluid (water, air, liquid fertiliser, bubble or
+// device backdrop), so light reaches an adjacent substrate or hardscape face.
+// Skips the palette read when the neighbour holds the caller's own non-fluid
+// material `self_mat`.
 fn is_open_fluid(at: vec2<i32>, self_mat: i32) -> bool {
     if !inside(at) {
         return false;
@@ -511,7 +525,7 @@ fn is_open_fluid(at: vec2<i32>, self_mat: i32) -> bool {
         return false;
     }
     let s = style_of(nt);
-    return s == STYLE_WATER || s == STYLE_AIR || s == STYLE_FERTILISER || s == STYLE_BUBBLE;
+    return s == STYLE_WATER || s == STYLE_AIR || s == STYLE_FERTILISER || s == STYLE_BUBBLE || s == STYLE_DEVICE;
 }
 
 // Per-texel hash mixed with a cell's variant byte so moving powders carry
@@ -539,6 +553,156 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
     let h = hash(vec2<i32>(p.x / 2, p.y));
     let shimmer = 1.0 + (f32(h & 7u) - 3.5) * 0.006;
     return base * depth_factor(f32(at.y) + sub_y) * shimmer;
+}
+
+// Sub-cell background air colour at `(at, quarter)` (used by air cells,
+// above-water device cells and HOB surface wave troughs).
+fn air_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
+    let mat = max(i32(round(view.plant_parts2.w)), 0);
+    let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
+    let sub = quarter / 2;
+    let p = select(at * 2 + sub, at * 4 + quarter, fine);
+    let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
+    let t_sky = clamp((f32(at.y) + sub_y) / max(view.surface_row, 1.0), 0.0, 1.0);
+    let lift = mix(1.03, 0.97, t_sky);
+    let h = hash(p);
+    let grain = 1.0 + (f32(h & 7u) - 3.5) * 0.004;
+    return clamp(base * lift * grain, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// HOB waterfall curtain and water-surface ripples (D27, DV5). Runs only when
+// at least one HOB is placed (`view.ripples[0].w > 0`) and only on air/water
+// cells near the surface or waterfall column; zero cost when no HOB is placed
+// or when the tank is idle (no extra frames are scheduled).
+fn hob_surface_ripple(
+    rgb_in: vec3<f32>,
+    at: vec2<i32>,
+    quarter: vec2<i32>,
+    fine: bool,
+    in_air: bool,
+) -> vec3<f32> {
+    if view.ripples[0].w <= 0.0 {
+        return rgb_in;
+    }
+    let sub = quarter / 2;
+    let sub_x = select((f32(sub.x) + 0.5) * 0.5, (f32(quarter.x) + 0.5) * 0.25, fine);
+    let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
+    let pos = vec2<f32>(f32(at.x) + sub_x, f32(at.y) + sub_y);
+    let phase = view.target_size.z;
+    let p = select(at * 2 + sub, at * 4 + quarter, fine);
+
+    // Quick vertical reject: only rows between the top of the tank and a few
+    // rows below the water surface (or waterfall plunge) can show ripples.
+    let near_surface = abs(pos.y - view.surface_row) <= 2.6;
+    if !near_surface && !in_air && pos.y > view.surface_row + 10.0 {
+        return rgb_in;
+    }
+
+    var rgb = rgb_in;
+    var best_wave = 0.0;
+    var best_env = 0.0;
+    var best_impact = 0.0;
+    var has_ripple = false;
+
+    for (var ri = 0u; ri < 16u; ri = ri + 1u) {
+        let r = view.ripples[ri];
+        if r.w <= 0.0 {
+            break;
+        }
+        let x0 = r.x;
+        let x1 = r.y;
+        let spill_y = r.z;
+        let strength = r.w;
+        let dist_x = max(max(x0 - pos.x, pos.x - x1), 0.0);
+
+        // 1. Falling frothy waterfall curtain in air between the spillway lip
+        // and the water surface when the water sits below the lip.
+        if in_air && view.surface_row > spill_y + 0.75 && pos.y >= spill_y + 0.75 && pos.y < view.surface_row {
+            let inset = (1.0 - strength) * 1.4;
+            if pos.x >= x0 + inset && pos.x <= x1 - inset {
+                let edge_d = min(pos.x - (x0 + inset), (x1 - inset) - pos.x);
+                let scroll = i32(floor(phase * 14.0));
+                let sy = p.y - scroll;
+                let stream_h = hash(vec2<i32>(p.x, sy / 3));
+                let foam_h = hash(vec2<i32>(p.x, sy));
+                let is_edge = edge_d < 0.55;
+                let is_white = !is_edge && ((stream_h & 7u) < 3u || (foam_h & 15u) < 2u);
+                let curtain = select(
+                    select(vec3<f32>(0.64, 0.87, 0.96), vec3<f32>(0.91, 0.98, 1.0), is_white),
+                    vec3<f32>(0.42, 0.73, 0.88),
+                    is_edge,
+                );
+                let alpha = select(0.86, 0.68, is_edge) * (0.65 + 0.35 * strength);
+                rgb = mix(rgb, curtain, alpha);
+            }
+        }
+
+        // 2. Subsurface aerated waterfall plume directly beneath the spillway
+        // lip when the water line is at or above the lip (e.g. high water level).
+        if !in_air && dist_x < 1.2 && pos.y >= spill_y + 0.8 && pos.y <= max(view.surface_row, spill_y + 1.0) + 2.2 {
+            let depth_below = pos.y - max(view.surface_row, spill_y + 0.8);
+            if depth_below >= 0.0 && depth_below < 2.2 {
+                let fade = (1.0 - depth_below / 2.2) * (1.0 - dist_x / 1.2) * strength;
+                let scroll = i32(floor(phase * 12.0));
+                let fh = hash(vec2<i32>(p.x, p.y - scroll));
+                let froth = select(0.28, 0.68, (fh & 3u) == 0u) * fade;
+                rgb = mix(rgb, vec3<f32>(0.88, 0.97, 1.0), clamp(froth, 0.0, 0.85));
+            }
+        }
+
+        // 3. Undulating water-surface ripples radiating out from the spillway.
+        if near_surface && dist_x < 24.0 {
+            let env = pow(1.0 - dist_x / 24.0, 1.45) * strength;
+            let w1 = sin(dist_x * 1.45 - phase * 5.2);
+            let w2 = sin(dist_x * 2.85 - phase * 7.8 + 1.2) * 0.42;
+            let chop = sin(pos.x * 2.3 + phase * 6.4) * 0.55 + cos(pos.x * 3.6 - phase * 8.1) * 0.35;
+            let impact = clamp(1.0 - dist_x * 0.45, 0.0, 1.0);
+            let wave = mix(w1 + w2, chop, impact) * env;
+            if !has_ripple || env > best_env {
+                best_wave = wave;
+                best_env = env;
+                best_impact = impact * strength;
+                has_ripple = true;
+            }
+        }
+    }
+
+    if !has_ripple {
+        return rgb;
+    }
+
+    // Displaced surface row: positive `best_wave` lifts crests into `surface_row - 1`,
+    // negative dips troughs slightly into `surface_row`.
+    let surf_y = view.surface_row - best_wave * 0.58;
+    let foam_tint = vec3<f32>(0.92, 0.98, 1.0);
+    let crest_tint = vec3<f32>(0.74, 0.92, 0.99);
+
+    if in_air {
+        // Rising water wave crest protruding above the flat water line.
+        if pos.y >= surf_y && pos.y < view.surface_row {
+            let wcol = water_bg(at, quarter, fine);
+            let dy = pos.y - surf_y;
+            let crest_k = clamp(0.45 + 0.45 * best_impact - dy * 0.4, 0.25, 0.92);
+            let tint = mix(crest_tint, foam_tint, clamp(best_impact * 1.1, 0.0, 1.0));
+            return clamp(mix(wcol, tint, crest_k), vec3<f32>(0.0), vec3<f32>(1.0));
+        }
+        return rgb;
+    }
+
+    // Below-surface water cell: trough exposes sky at the very top, while the
+    // displaced wave skin gets bright crest & splash-foam highlights.
+    if pos.y < surf_y && pos.y >= view.surface_row && best_env > 0.12 {
+        return air_bg(at, quarter, fine);
+    }
+    let dy = pos.y - surf_y;
+    if dy >= 0.0 && dy < 1.35 {
+        let fh = hash(vec2<i32>(p.x / 2 + i32(floor(phase * 6.0)), p.y));
+        let sparkle = select(0.0, 0.18, (fh & 3u) == 0u);
+        let band_k = clamp((1.0 - dy / 1.35) * (0.38 * best_env + 0.48 * best_impact + sparkle), 0.0, 0.9);
+        let tint = mix(crest_tint, foam_tint, clamp(best_impact * 1.2 + sparkle, 0.0, 1.0));
+        rgb = mix(rgb, tint, band_k);
+    }
+    return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 // Sub-cell rows trimmed off the top of an exposed loose-material cell (sand,
@@ -690,14 +854,24 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
 // sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
 // textures and refined bubbles/algae/detritus (before the daylight tint).
 fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
-    let mat = i32(round(t.r * 255.0));
+    var mat = i32(round(t.r * 255.0));
     let v = u32(round(t.g * 255.0));
+    let raw_style = i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
+    if raw_style == STYLE_DEVICE {
+        // Draw device footprint cells as air above the water line and water at
+        // or below it; the device sprite draws on top (D27, DV5).
+        mat = max(i32(round(select(view.plant_parts.w, view.plant_parts2.w, f32(at.y) < view.surface_row))), 0);
+    }
     if view.scale < 2.0 {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
         let s = i32(round(c.a * 255.0));
         let tinted = select(0.0, 1.0, s == STYLE_WATER || s == STYLE_FERTILISER);
         let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
-        return c.rgb * (1.0 - view.depth_dim * depth * tinted);
+        var rgb = c.rgb * (1.0 - view.depth_dim * depth * tinted);
+        if s == STYLE_WATER || s == STYLE_AIR {
+            rgb = hob_surface_ripple(rgb, at, vec2<i32>(1, 1), false, s == STYLE_AIR);
+        }
+        return rgb;
     }
 
     let fine = FINE_PLANTS && fine_scale();
@@ -730,8 +904,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
         // the water surface can touch air above, so skip the neighbour read
         // everywhere else in the water column.
         if at.y > 0 && abs(f32(at.y) - view.surface_row) <= 8.0 && (!fine || quarter.y < 3) {
-            let above = textureLoad(cells, at + vec2<i32>(0, -1), 0);
-            if i32(round(above.r * 255.0)) != mat && style_of(above) == STYLE_AIR {
+            let above_at = at + vec2<i32>(0, -1);
+            let above = textureLoad(cells, above_at, 0);
+            if i32(round(above.r * 255.0)) != mat && effective_style(above_at, style_of(above)) == STYLE_AIR {
                 let ripple = hash(vec2<i32>(p.x / 2, at.y)) & 3u;
                 let surface_tint = vec3<f32>(0.72, 0.90, 0.98);
                 if fine {
@@ -754,17 +929,15 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
                 }
             }
         }
+        if style == STYLE_WATER {
+            rgb = hob_surface_ripple(rgb, at, quarter, fine, false);
+        }
         return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     if style == STYLE_AIR {
-        let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
-        let t_sky = clamp((f32(at.y) + sub_y) / max(view.surface_row, 1.0), 0.0, 1.0);
-        // Gentle top-to-surface air lift + super subtle sub-cell grain.
-        let lift = mix(1.03, 0.97, t_sky);
-        let h = hash(p);
-        let grain = 1.0 + (f32(h & 7u) - 3.5) * 0.004;
-        return clamp(base * lift * grain, vec3<f32>(0.0), vec3<f32>(1.0));
+        let rgb = air_bg(at, quarter, fine);
+        return hob_surface_ripple(rgb, at, quarter, fine, true);
     }
 
     if style == STYLE_SAND {

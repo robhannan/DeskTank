@@ -791,3 +791,140 @@ fn waterlogged_driftwood_renders_darker_than_dry_in_single_and_split_grid() {
         }
     }
 }
+
+/// DV5 (HOB filter): above-water device footprint cells draw as air (not
+/// water), the waterfall ripples the water surface near the outlet while
+/// leaving the far surface calm, and fish in front depth bands render in
+/// front of the back-band intake tube (both single-pass and split-grid).
+#[test]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::too_many_lines
+)]
+fn hob_filter_draws_air_above_surface_ripples_outlet_and_sorts_fish_in_front_of_tube() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (gw, gh) = (128usize, 64usize);
+    let (tw, th) = (512u32, 256u32); // scale 4 (fine)
+
+    let make_world = |with_hob: bool| {
+        let mut world = World::new(
+            WorldConfig {
+                width: gw,
+                height: gh,
+                seed: 7,
+                water_level: 0.82, // surface_row = 12 (> HOB hood height 10)
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        if with_hob {
+            world
+                .add_device(desktank_sim::DeviceKind::HobFilter, 40, 0, false)
+                .unwrap()
+                .expect("HOB fits");
+        }
+        for _ in 0..8 {
+            world.tick();
+        }
+        world
+    };
+
+    let px_at = |frame: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * tw + x) * 4) as usize;
+        [frame[i], frame[i + 1], frame[i + 2], frame[i + 3]]
+    };
+
+    let mut single_with_fish = None;
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let mut calm_tank = Tank::new(make_world(false), TankConfig::default());
+        let calm = render_sized(gpu, &mut calm_tank, format, (tw, th));
+
+        let mut hob_world = make_world(true);
+        let dev = *hob_world.devices().next().unwrap();
+        let art = hob_world
+            .device_kinds()
+            .get(desktank_sim::DeviceKind::HobFilter)
+            .clone();
+        let surface = hob_world.surface_row();
+        assert!(surface > art.nozzle.1);
+
+        let mut hob_tank = Tank::new(hob_world.clone(), TankConfig::default());
+        let with_hob = render_sized(gpu, &mut hob_tank, format, (tw, th));
+
+        // 1. Rounded top-left corner cell of the HOB footprint (dev.x, 0) is above
+        //    surface_row and its open corner pixel must match air, not dark water.
+        let corner_px = px_at(&with_hob, (dev.x as u32) * 4, 0);
+        let air_px = px_at(&calm, (dev.x as u32) * 4, 0);
+        assert_eq!(
+            corner_px, air_px,
+            "split={split_grid}: transparent corner of above-water HOB cell must show air, not water"
+        );
+
+        // 2. Water surface directly below/beside the HOB spillway visibly differs
+        //    from the calm surface (waterfall curtain & ripples), while the far
+        //    surface stays identical to calm.
+        let (sx0, sx1, _) = dev.spillway_world(&art).unwrap();
+        let ripple_diffs: usize = (sx0.saturating_sub(10)..(sx1 + 10).min(gw))
+            .flat_map(|cx| {
+                let y0 = ((surface - 1) as u32) * 4;
+                let y1 = ((surface + 1) as u32) * 4;
+                (y0..y1).map(move |py| (cx as u32 * 4 + 2, py))
+            })
+            .filter(|&(x, y)| px_at(&with_hob, x, y) != px_at(&calm, x, y))
+            .count();
+        assert!(
+            ripple_diffs > 20,
+            "split={split_grid}: expected visible surface ripples near HOB outlet, got {ripple_diffs} differing pixels"
+        );
+
+        let far_x = ((gw - 8) as u32) * 4 + 2;
+        for py in ((surface - 1) as u32) * 4..((surface + 1) as u32) * 4 {
+            assert_eq!(
+                px_at(&with_hob, far_x, py),
+                px_at(&calm, far_x, py),
+                "split={split_grid}: far surface at ({far_x}, {py}) should stay calm"
+            );
+        }
+
+        // 3. A fish swimming in a front band over the back-band intake tube renders
+        //    in front of the dark tube.
+        let tetra = hob_world.species().id("neon_tetra").unwrap();
+        let tube_col = (dev.x + 17) as u32;
+        let tube_row = (dev.y + art.back_band_from.unwrap() + 10) as u32;
+        let mut front_fish = None;
+        for k in 0..32 {
+            let id = hob_world.add_creature(tetra, 80 + k, 40).unwrap();
+            if hob_world.creature(id).unwrap().band() <= 3 {
+                front_fish = Some(id);
+                break;
+            }
+        }
+        let fish = front_fish.expect("spawned a front-band tetra");
+        assert!(hob_world.move_creature(fish, i64::from(tube_col), i64::from(tube_row)));
+        let mut fish_tank = Tank::new(hob_world, TankConfig::default());
+        let with_fish = render_sized(gpu, &mut fish_tank, format, (tw, th));
+        let fish_diffs: usize = ((tube_row - 2) * 4..(tube_row + 2) * 4)
+            .flat_map(|py| ((tube_col - 2) * 4..(tube_col + 2) * 4).map(move |px| (px, py)))
+            .filter(|&(px, py)| px_at(&with_fish, px, py) != px_at(&with_hob, px, py))
+            .count();
+        assert!(
+            fish_diffs > 20,
+            "split={split_grid}: front-band fish must draw in front of back-band HOB tube, got {fish_diffs} differing pixels"
+        );
+        if !split_grid {
+            single_with_fish = Some(with_fish);
+        } else if let Some(ref single) = single_with_fish {
+            assert_eq!(
+                with_fish, *single,
+                "split-grid HOB + fish output must match single-pass"
+            );
+        }
+    }
+}

@@ -26,11 +26,13 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   dithered light and shade bands, texel-level detail), with coarse frames
   at two texels per cell and fine frames at four. It is drawn facing
   right (mounted on the left glass) and mirrored on the right. The
-  renderer draws footprint cells as the water behind them and the sprite
-  on top, in the creature sprite pass: depth-sorted with creatures at
-  `DEVICE_DEPTH` (just behind the front band), with plant occlusion as
-  for creature sprites. Devices pack into the creature atlas, which stays
-  within WebGL2's 2048-texel limit.
+  renderer draws footprint cells as air above the water line and water
+  at or below it, and the sprite on top, in the creature sprite pass:
+  depth-sorted with creatures at `DEVICE_DEPTH` (just behind the front
+  band), or split into `DEVICE_DEPTH` (body) and the back depth band
+  (`DEPTH_BANDS - 1`) for a HOB's intake tube (DV5), with plant occlusion
+  as for creature sprites. Devices pack into the creature atlas, which
+  stays within WebGL2's 2048-texel limit.
 - **Mounts.** Where a kind may go:
   - *side glass:* against the nearer side glass at any height wholly
     under the water line (internal filter);
@@ -100,11 +102,14 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   depth band, so fish pass in front of it. Internal, sponge and
   under-gravel bodies and tubes are solid in every band.
 - **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the filters
-  and the bubbler as each lands (DV1: internal filter; DV4: sponge filter,
-  beside the legacy bubbler). Side-glass facing is chosen automatically from
+  and the bubbler as each lands (DV1: internal filter; DV4: sponge filter;
+  DV5: HOB filter, beside the legacy bubbler). Side-glass facing is chosen automatically from
   the nearer wall (with a **flip** key `X` or button to mirror onto the
   other glass); bed-mounted devices drop straight down onto substrate,
-  hardscape or the floor (symmetric, ignoring flip). The placement preview
+  hardscape or the floor (symmetric, ignoring flip); rim-mounted devices
+  (HOB, DV5) hang on the top rim partly above the water line, mirror
+  left/right with flip, and ripple the water surface beneath their
+  spillway in the renderer (at zero idle cost). The placement preview
   is a see-through **ghost** of the footprint at the pointer (tinted red
   where it doesn't fit). The inspect card (the one creatures use) shows a
   device's status: mount position, flow, media load, maturity, Rinse
