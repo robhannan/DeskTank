@@ -66,7 +66,7 @@ pub enum Mount {
 }
 
 /// One kind's art and placement rules.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DeviceArt {
     /// The kind.
     pub kind: DeviceKind,
@@ -83,6 +83,11 @@ pub struct DeviceArt {
     pub cells: usize,
     /// The nozzle tip in cells from the top-left, facing right.
     pub nozzle: (usize, usize),
+    /// Unit direction the nozzle jets, facing right (`+x` right, `+y` down).
+    pub nozzle_dir: [f32; 2],
+    /// Intake cells from the top-left, facing right: water and loose
+    /// particles are drawn towards them.
+    pub intakes: Vec<(usize, usize)>,
     /// The art, facing right (mounted on the left glass).
     pub sprite: Sprite,
 }
@@ -107,11 +112,19 @@ struct ArtDef {
     label: String,
     mount: Mount,
     nozzle: [usize; 2],
+    #[serde(default = "default_nozzle_dir")]
+    nozzle_dir: [f32; 2],
+    #[serde(default)]
+    intakes: Vec<[usize; 2]>,
     sprite: SpriteDef,
 }
 
+fn default_nozzle_dir() -> [f32; 2] {
+    [1.0, 0.0]
+}
+
 /// The device kinds, by [`DeviceKind`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DeviceKinds {
     arts: Vec<DeviceArt>,
 }
@@ -155,6 +168,25 @@ impl DeviceKinds {
                     "the nozzle must be a footprint cell".to_owned(),
                 ));
             }
+            let [dx, dy] = def.nozzle_dir;
+            let len = dx.hypot(dy);
+            if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
+                return Err(bad(
+                    &def.name,
+                    "nozzle_dir must be a finite non-zero vector".to_owned(),
+                ));
+            }
+            let nozzle_dir = [dx / len, dy / len];
+            let mut intakes = Vec::with_capacity(def.intakes.len());
+            for [ix, iy] in def.intakes {
+                if ix >= size.0 || iy >= size.1 || !footprint[iy * size.0 + ix] {
+                    return Err(bad(
+                        &def.name,
+                        "every intake must be a footprint cell".to_owned(),
+                    ));
+                }
+                intakes.push((ix, iy));
+            }
             arts.push(DeviceArt {
                 kind,
                 label: def.label,
@@ -163,6 +195,8 @@ impl DeviceKinds {
                 cells: footprint.iter().filter(|&&f| f).count(),
                 footprint,
                 nozzle,
+                nozzle_dir,
+                intakes,
                 sprite: art,
             });
         }
@@ -236,6 +270,25 @@ impl Device {
             nx
         };
         (self.x + nx, self.y + ny)
+    }
+
+    /// Unit direction the nozzle jets in the world (`+x` right, `+y` down).
+    #[must_use]
+    pub fn nozzle_dir(&self, art: &DeviceArt) -> [f32; 2] {
+        let [dx, dy] = art.nozzle_dir;
+        [if self.facing_left { -dx } else { dx }, dy]
+    }
+
+    /// Intake cells in the world.
+    pub fn intakes<'a>(&'a self, art: &'a DeviceArt) -> impl Iterator<Item = (usize, usize)> + 'a {
+        art.intakes.iter().map(move |&(ix, iy)| {
+            let ix = if self.facing_left {
+                art.size.0 - 1 - ix
+            } else {
+                ix
+            };
+            (self.x + ix, self.y + iy)
+        })
     }
 }
 

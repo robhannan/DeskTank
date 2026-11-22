@@ -49,8 +49,14 @@ const FOOD: u8 = 4;
 const WATERY: u8 = 8;
 /// A pollutant for the water-quality score.
 const POLLUTANT: u8 = 16;
+/// A cell the 2D current can carry (floaters, non-water dense liquids and
+/// light loose powders).
+const CARRYABLE: u8 = 32;
 /// Liquids at least this dense count as water for light and current.
 const WATERY_DENSITY: f32 = 0.5;
+/// Powders lighter than this are loose enough to be carried by the current;
+/// heavier powders (sand, gravel, aquasoil, root tabs) stay put on the bed.
+const LOOSE_POWDER_MAX_DENSITY: f32 = 1.5;
 
 /// What the random-tick scheduler did in the last tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -177,8 +183,19 @@ pub(super) struct Life {
     census: Vec<(u16, u16)>,
     /// Field cells whose census needs recounting.
     census_dirty: Vec<bool>,
-    /// Sideways current per field cell, cells per second (+ = rightwards).
-    current: Vec<f32>,
+    /// Per field cell: count of carryable cells (0..=64), so `run_current`
+    /// skips blocks with nothing to carry.
+    movers: Vec<u8>,
+    /// Field cells whose mover count needs recounting.
+    movers_dirty: Vec<bool>,
+    any_movers_dirty: bool,
+    /// Total carryable cells across the tank.
+    total_movers: usize,
+    /// Blocks `run_current` actually scanned (for settled-cost tests).
+    current_scans: u64,
+    /// 2D current per field cell, `[vx, vy]` in cells per second (`+x` right,
+    /// `+y` down).
+    current: Vec<[f32; 2]>,
     /// Field cells with a current strong enough to move cells.
     current_blocks: Vec<usize>,
     devices_dirty: bool,
@@ -202,6 +219,7 @@ impl Life {
         plants: &[MaterialId],
     ) -> Self {
         let (width, height) = size;
+        let water = materials.id("water");
         let mut flags = vec![0u8; 256];
         // Unknown IDs behave as solid (see `World`), so they block light.
         let mut opacity_of = vec![u8::MAX; 256];
@@ -218,6 +236,14 @@ impl Life {
             }
             if m.class == MovementClass::Liquid && m.density >= WATERY_DENSITY {
                 *f |= WATERY;
+                if Some(m.id) != water {
+                    *f |= CARRYABLE;
+                }
+            }
+            if m.class == MovementClass::Floating
+                || (m.class == MovementClass::Powder && m.density < LOOSE_POWDER_MAX_DENSITY)
+            {
+                *f |= CARRYABLE;
             }
             if foods.contains(&m.id) {
                 *f |= FOOD;
@@ -249,11 +275,16 @@ impl Life {
             any_opacity_dirty: true,
             census: vec![(0, 0); blocks],
             census_dirty: vec![true; blocks],
-            current: vec![0.0; blocks],
+            movers: vec![0; blocks],
+            movers_dirty: vec![true; blocks],
+            any_movers_dirty: true,
+            total_movers: 0,
+            current_scans: 0,
+            current: vec![[0.0, 0.0]; blocks],
             current_blocks: Vec::new(),
             devices_dirty: false,
             version: 0,
-            water: materials.id("water"),
+            water,
             air: materials.id("air"),
         }
     }
@@ -343,23 +374,29 @@ impl World {
         self.life.version
     }
 
-    /// The filter outlets' sideways current per field cell, in cells per
-    /// second (positive is rightwards), row-major like a [`Field`].
+    /// The 2D current per field cell, `[vx, vy]` in cells per second (`+x`
+    /// rightwards, `+y` downwards), row-major like a [`Field`].
     #[must_use]
-    pub fn current(&self) -> &[f32] {
+    pub fn current(&self) -> &[[f32; 2]] {
         &self.life.current
     }
 
-    /// The current over cell `(x, y)`, in cells per second.
+    /// The 2D current over cell `(x, y)`, `[vx, vy]` in cells per second.
     #[must_use]
-    pub fn current_at(&self, x: usize, y: usize) -> f32 {
+    pub fn current_at(&self, x: usize, y: usize) -> [f32; 2] {
         let fw = self.life.light.width();
         let (fx, fy) = (x / FIELD_SCALE, y / FIELD_SCALE);
         if fx < fw && fy < self.life.light.height() {
             self.life.current[fy * fw + fx]
         } else {
-            0.0
+            [0.0, 0.0]
         }
+    }
+
+    /// Field blocks `run_current` has scanned (for settled-cost tests).
+    #[must_use]
+    pub fn current_block_scans(&self) -> u64 {
+        self.life.current_scans
     }
 
     /// Living cells visited per tick (SPEC §2.1; default
@@ -471,6 +508,7 @@ impl World {
             self.refresh_registries(ci, r);
         }
         self.update_light();
+        self.refresh_movers();
         self.recompute_current();
     }
 
@@ -563,6 +601,11 @@ impl World {
         // ones give back the light they have, the dirty ones catch up.
         life.opacity_dirty.fill(true);
         life.any_opacity_dirty = true;
+        life.movers.fill(0);
+        life.movers_dirty.fill(true);
+        life.any_movers_dirty = true;
+        life.total_movers = 0;
+        life.current_scans = 0;
         life.version += 1;
         Ok(())
     }
@@ -618,11 +661,14 @@ impl World {
         let fw = life.light.width();
         for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
             for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {
-                life.opacity_dirty[fy * fw + fx] = true;
-                life.census_dirty[fy * fw + fx] = true;
+                let b = fy * fw + fx;
+                life.opacity_dirty[b] = true;
+                life.census_dirty[b] = true;
+                life.movers_dirty[b] = true;
             }
         }
         life.any_opacity_dirty = true;
+        life.any_movers_dirty = true;
     }
 
     /// The water-quality score as [`World::ecosystem`] computes it, from
@@ -994,59 +1040,109 @@ impl World {
         self.life.devices_dirty = true;
     }
 
-    /// Rebuilds the current from the device nozzles and any legacy filter
-    /// outlet cells: each source's field cell starts a jet pointing away from the nearer side wall, fading
-    /// over `reach` cells and widening as it goes.
+    /// Rebuilds the 2D current field from device nozzles (directed jets),
+    /// device intakes (radial sinks) and any legacy filter outlet cells.
+    #[allow(clippy::many_single_char_names)] // field maths
     fn recompute_current(&mut self) {
         let jets = self.device_jets();
+        let intakes = self.device_intakes();
         self.devices.rebuilds += 1;
         let life = &mut self.life;
-        life.current.fill(0.0);
+        life.current.fill([0.0, 0.0]);
         life.current_blocks.clear();
         let outlet = life.eco.current.material;
         let cfg = life.eco.current;
         let (fw, fh) = (life.light.width(), life.light.height());
-        let mut sources = BTreeSet::new();
-        // Device nozzles (D27), then any legacy outlet cells.
-        for ((x, y), right) in jets {
-            sources.insert((y / FIELD_SCALE, x / FIELD_SCALE, right));
-        }
+
+        // Directed outlets: device nozzles first, then any legacy outlet cells
+        // (deduplicated per field cell and direction).
+        let mut jet_sources: Vec<(usize, usize, [f32; 2])> = jets
+            .into_iter()
+            .map(|((x, y), dir)| (x / FIELD_SCALE, y / FIELD_SCALE, dir))
+            .collect();
+        let mut legacy = BTreeSet::new();
         for list in &life.devices.lists {
             for &i in list {
                 let i = i as usize;
                 if Some(self.cells[i].material) == outlet {
                     let x = i % self.width;
                     let right = 2 * x + 1 < self.width;
-                    sources.insert((i / self.width / FIELD_SCALE, x / FIELD_SCALE, right));
+                    legacy.insert((i / self.width / FIELD_SCALE, x / FIELD_SCALE, right));
                 }
             }
         }
+        for (fy, fx, right) in legacy {
+            jet_sources.push((fx, fy, [if right { 1.0 } else { -1.0 }, 0.0]));
+        }
+
         let reach = (cfg.reach as usize).div_ceil(FIELD_SCALE).max(1);
-        let spread = cfg.spread as usize;
-        for (fy, fx, right) in sources {
-            for k in 0..reach {
-                let Some(bx) = (if right {
-                    fx.checked_add(k)
-                } else {
-                    fx.checked_sub(k)
-                }) else {
-                    break;
-                };
-                if bx >= fw {
-                    break;
-                }
-                #[allow(clippy::cast_precision_loss)] // small counts
-                let speed = cfg.speed * (1.0 - k as f32 / reach as f32);
-                let half = k / spread;
-                for by in fy.saturating_sub(half)..=(fy + half).min(fh - 1) {
+        #[allow(clippy::cast_precision_loss)] // small counts
+        let (reach_f, spread_f) = (reach as f32, cfg.spread as f32);
+        for (fx, fy, [dx, dy]) in jet_sources {
+            let y0 = fy.saturating_sub(reach);
+            let y1 = (fy + reach).min(fh - 1);
+            let x0 = fx.saturating_sub(reach);
+            let x1 = (fx + reach).min(fw - 1);
+            for by in y0..=y1 {
+                for bx in x0..=x1 {
+                    #[allow(clippy::cast_precision_loss)] // field coords ≤ 1024
+                    let (rx, ry) = (bx as f32 - fx as f32, by as f32 - fy as f32);
+                    let along = rx * dx + ry * dy;
+                    if along < 0.0 || along >= reach_f {
+                        continue;
+                    }
+                    let across = (rx * -dy + ry * dx).abs();
+                    let half = 1.0 + along / spread_f;
+                    let transverse = (1.0 - across / (half + 0.5)).max(0.0);
+                    if transverse <= 0.0 {
+                        continue;
+                    }
+                    let speed = cfg.speed * (1.0 - along / reach_f) * transverse;
                     let v = &mut life.current[by * fw + bx];
-                    *v += if right { speed } else { -speed };
+                    v[0] += dx * speed;
+                    v[1] += dy * speed;
                 }
             }
         }
+
+        // Intake sinks: draw water radially towards each intake cell.
+        if cfg.intake_speed > 0.0 && cfg.intake_reach > 0 {
+            let ireach = (cfg.intake_reach as usize).div_ceil(FIELD_SCALE).max(1);
+            #[allow(clippy::cast_precision_loss)] // small counts
+            let r_max = ireach as f32;
+            for ((ix, iy), [in_x, in_y]) in intakes {
+                let (fx, fy) = (ix / FIELD_SCALE, iy / FIELD_SCALE);
+                let y0 = fy.saturating_sub(ireach);
+                let y1 = (fy + ireach).min(fh - 1);
+                let x0 = fx.saturating_sub(ireach);
+                let x1 = (fx + ireach).min(fw - 1);
+                for by in y0..=y1 {
+                    for bx in x0..=x1 {
+                        #[allow(clippy::cast_precision_loss)] // field coords ≤ 1024
+                        let (rx, ry) = (fx as f32 - bx as f32, fy as f32 - by as f32);
+                        let dist = rx.hypot(ry);
+                        let v = &mut life.current[by * fw + bx];
+                        if dist == 0.0 {
+                            v[0] += in_x * cfg.intake_speed * 0.5;
+                            v[1] += in_y * cfg.intake_speed * 0.5;
+                        } else if dist < r_max {
+                            let speed = cfg.intake_speed * (1.0 - dist / r_max);
+                            v[0] += (rx / dist) * speed;
+                            v[1] += (ry / dist) * speed;
+                        }
+                    }
+                }
+            }
+        }
+
         for (b, v) in life.current.iter_mut().enumerate() {
-            *v = v.clamp(-cfg.speed, cfg.speed);
-            if v.abs() >= MIN_CURRENT {
+            let mag = v[0].hypot(v[1]);
+            if mag > cfg.speed {
+                let scale = cfg.speed / mag;
+                v[0] *= scale;
+                v[1] *= scale;
+            }
+            if mag >= MIN_CURRENT {
                 life.current_blocks.push(b);
             }
         }
@@ -1058,78 +1154,147 @@ impl World {
         self.wake_rafts();
     }
 
-    /// The sideways current at cell `(x, y)`, in cells per second (+ =
-    /// rightwards; 0 outside the grid or with no current).
-    pub(super) fn current_at_cell(&self, x: usize, y: usize) -> f32 {
+    /// The 2D current at cell `(x, y)`, `[vx, vy]` in cells per second (`+x`
+    /// rightwards, `+y` downwards; `[0, 0]` outside the grid or with no current).
+    pub(super) fn current_at_cell(&self, x: usize, y: usize) -> [f32; 2] {
         let life = &self.life;
         if life.current_blocks.is_empty() {
-            return 0.0;
+            return [0.0, 0.0];
         }
         let fw = life.light.width();
         let (fx, fy) = (x / FIELD_SCALE, y / FIELD_SCALE);
         if fx < fw && fy < life.light.height() {
             life.current[fy * fw + fx]
         } else {
-            0.0
+            [0.0, 0.0]
         }
     }
 
-    /// Moves floating and liquid cells along the current: each one swaps
-    /// with the liquid next to it downstream with probability speed / 20
-    /// per tick. The water itself is the medium: it never starts a swap (it
-    /// would look the same moved), it only fills in behind what the current
-    /// carries, so a jet through clear water changes no cells and wakes no
-    /// chunks. Dense liquids (liquid fertiliser) only trade places with
-    /// dense liquids, never air, so they stay in the water; a floater rides
-    /// along the air at the surface, or through water while submerged, so
-    /// it never lifts water into the air. The sweep runs upstream, so a carried cell moves at
-    /// most once per tick and a blob moves together.
-    #[allow(clippy::many_single_char_names)] // cell maths
-    fn run_current(&mut self) {
-        if self.life.current_blocks.is_empty() {
-            return;
-        }
-        let water = self.life.water;
-        let fw = self.life.light.width();
-        let blocks = mem::take(&mut self.life.current_blocks);
-        for &b in &blocks {
-            let v = self.life.current[b];
-            let p = f64::from(v.abs()) / f64::from(super::TICKS_PER_SECOND);
-            let dir: isize = if v > 0.0 { 1 } else { -1 };
+    /// Recounts carryable cells in field blocks that changed since the last
+    /// refresh, keeping `movers` and `total_movers` exact.
+    fn refresh_movers(&mut self) {
+        let life = &mut self.life;
+        life.any_movers_dirty = false;
+        let fw = life.light.width();
+        for (b, dirty) in life.movers_dirty.iter_mut().enumerate() {
+            if !mem::take(dirty) {
+                continue;
+            }
             let (x0, y0) = ((b % fw) * FIELD_SCALE, (b / fw) * FIELD_SCALE);
             let (x1, y1) = (
                 (x0 + FIELD_SCALE).min(self.width),
                 (y0 + FIELD_SCALE).min(self.height),
             );
+            let mut count = 0u8;
             for y in y0..y1 {
-                for k in 0..x1 - x0 {
-                    let x = if dir > 0 { x1 - 1 - k } else { x0 + k };
+                for c in &self.cells[y * self.width + x0..y * self.width + x1] {
+                    count += u8::from(life.flags[usize::from(c.material.0)] & CARRYABLE != 0);
+                }
+            }
+            let prev = usize::from(life.movers[b]);
+            life.movers[b] = count;
+            life.total_movers = life.total_movers + usize::from(count) - prev;
+        }
+    }
+
+    /// Moves carryable cells (floaters, non-water dense liquids and light
+    /// loose powders) along the 2D current: each axis steps with probability
+    /// `|v| / 20` per tick. Water itself is the medium and never starts a swap,
+    /// and blocks with no carryable cells are skipped altogether, so a settled
+    /// tank pays nothing. Sweeps run upstream on both axes so a carried cell
+    /// moves at most once per tick and a blob moves together.
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn run_current(&mut self) {
+        if self.life.current_blocks.is_empty() {
+            return;
+        }
+        if self.life.any_movers_dirty {
+            self.refresh_movers();
+        }
+        if self.life.total_movers == 0 {
+            return;
+        }
+        let fw = self.life.light.width();
+        let blocks = mem::take(&mut self.life.current_blocks);
+        for &b in &blocks {
+            if self.life.movers[b] == 0 {
+                continue;
+            }
+            self.life.current_scans += 1;
+            let [vx, vy] = self.life.current[b];
+            let px = f64::from(vx.abs()) / f64::from(super::TICKS_PER_SECOND);
+            let py = f64::from(vy.abs()) / f64::from(super::TICKS_PER_SECOND);
+            let dir_x: isize = if vx > 0.0 {
+                1
+            } else if vx < 0.0 {
+                -1
+            } else {
+                0
+            };
+            let dir_y: isize = if vy > 0.0 {
+                1
+            } else if vy < 0.0 {
+                -1
+            } else {
+                0
+            };
+            let (x0, y0) = ((b % fw) * FIELD_SCALE, (b / fw) * FIELD_SCALE);
+            let (x1, y1) = (
+                (x0 + FIELD_SCALE).min(self.width),
+                (y0 + FIELD_SCALE).min(self.height),
+            );
+            for ky in 0..y1 - y0 {
+                let y = if dir_y > 0 { y1 - 1 - ky } else { y0 + ky };
+                for kx in 0..x1 - x0 {
+                    let x = if dir_x > 0 { x1 - 1 - kx } else { x0 + kx };
                     let i = y * self.width + x;
                     let m = self.cells[i].material;
-                    let floating = self.props[usize::from(m.0)].class == MovementClass::Floating;
-                    let watery = self.life.flags[usize::from(m.0)] & WATERY != 0;
-                    if !(floating || watery && Some(m) != water) {
+                    if self.life.flags[usize::from(m.0)] & CARRYABLE == 0 {
                         continue;
                     }
-                    let Some(j) = self.at(x, y, dir, 0) else {
-                        continue;
+                    let floating = self.props[usize::from(m.0)].class == MovementClass::Floating;
+                    let submerged = floating
+                        && self.at(x, y, 0, -1).is_some_and(|a| {
+                            self.life.flags[usize::from(self.cells[a].material.0)] & WATERY != 0
+                        });
+                    let dx = if dir_x != 0 && self.life.chance(px) {
+                        dir_x
+                    } else {
+                        0
                     };
-                    let t = self.cells[j].material;
-                    let t_watery = self.life.flags[usize::from(t.0)] & WATERY != 0;
-                    // A floater keeps to its layer: along the air at the
-                    // surface, through water when submerged.
-                    let submerged = self.at(x, y, 0, -1).is_some_and(|a| {
-                        self.life.flags[usize::from(self.cells[a].material.0)] & WATERY != 0
-                    });
-                    let ok = t != m
-                        && self.props[usize::from(t.0)].class == MovementClass::Liquid
-                        && if floating {
-                            t_watery == submerged
-                        } else {
-                            t_watery
+                    let dy = if dir_y != 0 && (!floating || submerged) && self.life.chance(py) {
+                        dir_y
+                    } else {
+                        0
+                    };
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let tries = if dx != 0 && dy != 0 {
+                        [(dx, dy), (dx, 0), (0, dy)]
+                    } else {
+                        [(dx, dy), (0, 0), (0, 0)]
+                    };
+                    for (sx, sy) in tries {
+                        if sx == 0 && sy == 0 {
+                            continue;
+                        }
+                        let Some(j) = self.at(x, y, sx, sy) else {
+                            continue;
                         };
-                    if ok && self.life.chance(p) {
-                        self.swap(i, j);
+                        let t = self.cells[j].material;
+                        let t_watery = self.life.flags[usize::from(t.0)] & WATERY != 0;
+                        let ok = t != m
+                            && self.props[usize::from(t.0)].class == MovementClass::Liquid
+                            && if floating {
+                                t_watery == submerged
+                            } else {
+                                t_watery
+                            };
+                        if ok {
+                            self.swap(i, j);
+                            break;
+                        }
                     }
                 }
             }
@@ -1159,7 +1324,7 @@ impl World {
             self.update_light();
         }
         let life = &mut self.life;
-        let current: &[f32] = if life.current_blocks.is_empty() {
+        let current: &[[f32; 2]] = if life.current_blocks.is_empty() {
             &[]
         } else {
             &life.current
@@ -1407,16 +1572,24 @@ mod tests {
         for _ in 0..400 {
             w.tick();
         }
-        let (rebuilds, changed, hash) = (w.device_rebuilds(), w.last_change_tick(), w.state_hash());
-        assert!(
-            w.current_at(20, 22).abs() > 1.0,
-            "the nozzle drives the jet"
+        let (rebuilds, changed, scans, hash) = (
+            w.device_rebuilds(),
+            w.last_change_tick(),
+            w.current_block_scans(),
+            w.state_hash(),
         );
+        let [vx, vy] = w.current_at(20, 22);
+        assert!(vx.hypot(vy) > 1.0, "the nozzle drives the jet");
         for _ in 0..200 {
             w.tick();
         }
         assert_eq!(w.device_rebuilds(), rebuilds);
         assert_eq!(w.last_change_tick(), changed);
+        assert_eq!(
+            w.current_block_scans(),
+            scans,
+            "settled tank scans zero current blocks"
+        );
         assert_eq!(w.awake_chunks(), 0);
         assert_ne!(w.state_hash(), hash, "the tick still advances");
     }

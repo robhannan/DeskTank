@@ -222,18 +222,37 @@ impl World {
     pub fn device_status(&self, id: DeviceId) -> Option<DeviceStatus> {
         let d = self.device(id)?;
         let (nx, ny) = d.nozzle(self.devices.kinds.get(d.kind));
+        let [vx, vy] = self.current_at_cell(nx, ny);
         Some(DeviceStatus {
             kind: d.kind,
-            flow: self.current_at_cell(nx, ny).abs(),
+            flow: vx.hypot(vy),
             facing_left: d.facing_left,
         })
     }
 
-    /// Nozzle tips and their jet direction (rightwards), for the current.
-    pub(super) fn device_jets(&self) -> Vec<((usize, usize), bool)> {
+    /// Nozzle tips and their unit jet directions (`+x` right, `+y` down),
+    /// for the 2D current field.
+    pub(super) fn device_jets(&self) -> Vec<((usize, usize), [f32; 2])> {
         self.devices
             .values()
-            .map(|d| (d.nozzle(self.devices.kinds.get(d.kind)), !d.facing_left))
+            .map(|d| {
+                let art = self.devices.kinds.get(d.kind);
+                (d.nozzle(art), d.nozzle_dir(art))
+            })
+            .collect()
+    }
+
+    /// Intake cells and their inward pull directions (into the device),
+    /// for the 2D current field.
+    pub(super) fn device_intakes(&self) -> Vec<((usize, usize), [f32; 2])> {
+        self.devices
+            .values()
+            .flat_map(|d| {
+                let art = self.devices.kinds.get(d.kind);
+                let [dx, dy] = d.nozzle_dir(art);
+                let inward = [-dx, -dy];
+                d.intakes(art).map(move |pos| (pos, inward))
+            })
             .collect()
     }
 

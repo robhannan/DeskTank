@@ -74,8 +74,8 @@ struct Forces {
     weight: i64,
     /// Mean density of the fluid around it (milli; 0 where unknown).
     mean: i64,
-    /// The current's mean speed over its cells, 1/256 cell per tick.
-    target: i64,
+    /// The 2D current's mean speed over its cells, 1/256 cell per tick.
+    target: (i64, i64),
     /// Water's density (milli).
     water: i64,
 }
@@ -162,7 +162,7 @@ impl World {
 
     /// One tick of motion for floater `id` (see the module docs). Returns
     /// whether it stays awake.
-    #[allow(clippy::many_single_char_names)] // cell maths
+    #[allow(clippy::many_single_char_names, clippy::too_many_lines)] // cell maths
     fn step_raft(&mut self, id: u16) -> bool {
         let Some(p) = self.plants.table.get(&id) else {
             return false;
@@ -188,27 +188,34 @@ impl World {
         } = self.raft_forces(&members, raft.off.1, ball);
         let mut raft = raft;
 
-        // Forces: weight and buoyancy down, the current across, each
-        // dropped while the raft rests against something that way.
+        // Forces: weight, buoyancy and the 2D current, each dropped while
+        // the raft rests against something that way.
+        let grip = if ball { BALL_GRIP } else { GRIP };
+        // A ball on the bottom only rolls along at a share of it.
+        let target = if ball {
+            (target.0 * BALL_DRIFT / 256, target.1 * BALL_DRIFT / 256)
+        } else {
+            target
+        };
         let g = GRAVITY * weight / mass.max(1);
-        if g != 0 && raft.vel.1 == 0 && !self.raft_free(&members, id, 0, g.signum()) {
-            raft.off.1 = if g > 0 {
+        let dvy_cur = if target.1 != 0 {
+            let pull_y = target.1 - raft.vel.1;
+            pull_y - damp(pull_y, grip * mean, water * 256)
+        } else {
+            0
+        };
+        let fy = g + dvy_cur;
+        if fy != 0 && raft.vel.1 == 0 && !self.raft_free(&members, id, 0, fy.signum()) {
+            raft.off.1 = if fy > 0 {
                 raft.off.1.min(0)
             } else {
                 raft.off.1.max(0)
             };
         } else {
-            raft.vel.1 += g;
+            raft.vel.1 += fy;
         }
         raft.vel.1 = damp(raft.vel.1, DAMP * mean, water * 256);
-        // A ball on the bottom only rolls along at a share of it.
-        let target = if ball {
-            target * BALL_DRIFT / 256
-        } else {
-            target
-        };
-        let pull = target - raft.vel.0;
-        let grip = if ball { BALL_GRIP } else { GRIP };
+        let pull = target.0 - raft.vel.0;
         let dvx = pull - damp(pull, grip * mean, water * 256);
         if dvx != 0 && raft.vel.0 == 0 && !self.raft_free(&members, id, dvx.signum(), 0) {
             raft.off.0 = if dvx > 0 {
@@ -251,7 +258,8 @@ impl World {
             }
         }
 
-        let slow = raft.vel.0.abs() <= REST_SPEED && raft.vel.1.abs() <= REST_SPEED;
+        let drifting = target.0 != 0 && self.raft_free(&members, id, target.0.signum(), 0);
+        let slow = !drifting && raft.vel.0.abs() <= REST_SPEED && raft.vel.1.abs() <= REST_SPEED;
         raft.still = if !moved && slow {
             raft.still.saturating_add(1)
         } else {
@@ -283,7 +291,7 @@ impl World {
         // Mass and net weight (milli · cells), and the fluid around the
         // cells whose rows found one.
         let (mut mass, mut weight, mut fluid, mut known) = (0i64, 0i64, 0i64, 0i64);
-        let mut current = 0.0f32;
+        let (mut cur_x, mut cur_y) = (0.0f32, 0.0f32);
         let mut start = 0;
         while start < members.len() {
             let y = members[start] / width;
@@ -304,7 +312,9 @@ impl World {
                     rest += milli;
                     n_rest += 1;
                 }
-                current += self.current_at_cell(i % width, y);
+                let [vx, vy] = self.current_at_cell(i % width, y);
+                cur_x += vx;
+                cur_y += vy;
             }
             mass += leaves + rest;
             let yi = i64::try_from(y).unwrap_or(i64::MAX);
@@ -335,10 +345,13 @@ impl World {
         }
         let mean = if known > 0 { fluid / known } else { 0 };
         #[allow(clippy::cast_precision_loss)] // members < MAX_SIDE²
-        let current = current / members.len() as f32;
+        let n = members.len() as f32;
         // Cells per second to 1/256 cell per tick.
         #[allow(clippy::cast_possible_truncation)] // a few cells per tick
-        let target = (current * PER_SECOND).round() as i64;
+        let target = (
+            (cur_x / n * PER_SECOND).round() as i64,
+            (cur_y / n * PER_SECOND).round() as i64,
+        );
         Forces {
             mass,
             weight,

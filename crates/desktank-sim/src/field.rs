@@ -197,13 +197,13 @@ impl Field {
         self.values[i] = v;
     }
 
-    /// One update: diffusion with constant `diffusion` (cells²/s), sideways
-    /// advection by `current` (cells/s per field cell, positive rightwards;
-    /// empty for none), then exponential `decay` (per second), over
-    /// [`FIELD_DT`]. Does nothing while the field is at rest. Returns
+    /// One update: diffusion with constant `diffusion` (cells²/s), 2D
+    /// advection by `current` (`[vx, vy]` cells/s per field cell, `+x` right,
+    /// `+y` down; empty for none), then exponential `decay` (per second),
+    /// over [`FIELD_DT`]. Does nothing while the field is at rest. Returns
     /// whether it stepped.
     #[allow(clippy::many_single_char_names)] // stencil maths
-    pub(crate) fn step(&mut self, diffusion: f32, decay: f32, current: &[f32]) -> bool {
+    pub(crate) fn step(&mut self, diffusion: f32, decay: f32, current: &[[f32; 2]]) -> bool {
         if !self.active {
             return false;
         }
@@ -236,7 +236,7 @@ impl Field {
                 }
                 let mut v = c + alpha * flow;
                 if !current.is_empty() {
-                    v += advection(u, current, i, x, w);
+                    v += advection(u, current, i, x, y, w, h);
                 }
                 let v = (v * keep).max(0.0);
                 max_delta = max_delta.max((v - c).abs());
@@ -248,23 +248,36 @@ impl Field {
     }
 }
 
-/// Net upwind inflow into field cell `i` (column `x`) from sideways current,
+/// Net upwind inflow into field cell `i` at `(x, y)` from the 2D current,
 /// over one step. Conservative: what leaves a cell enters its neighbour.
 #[allow(clippy::many_single_char_names)] // stencil maths
-fn advection(u: &[f32], current: &[f32], i: usize, x: usize, w: usize) -> f32 {
+fn advection(
+    u: &[f32],
+    current: &[[f32; 2]],
+    i: usize,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+) -> f32 {
     #[allow(clippy::cast_precision_loss)] // FIELD_SCALE is small
     let k = FIELD_DT / FIELD_SCALE as f32;
-    // Flux across the left face (positive = rightwards), then the right face.
-    let face = |left: usize, right: usize| {
-        let v = f32::midpoint(current[left], current[right]) * k;
-        if v > 0.0 { v * u[left] } else { v * u[right] }
+    let face = |a: usize, b: usize, axis: usize| {
+        let v = f32::midpoint(current[a][axis], current[b][axis]) * k;
+        if v > 0.0 { v * u[a] } else { v * u[b] }
     };
     let mut d = 0.0;
     if x > 0 {
-        d += face(i - 1, i);
+        d += face(i - 1, i, 0);
     }
     if x + 1 < w {
-        d -= face(i, i + 1);
+        d -= face(i, i + 1, 0);
+    }
+    if y > 0 {
+        d += face(i - w, i, 1);
+    }
+    if y + 1 < h {
+        d -= face(i, i + w, 1);
     }
     d
 }
@@ -330,19 +343,26 @@ mod tests {
 
     #[test]
     fn current_carries_and_decay_drains() {
-        let mut f = Field::new(320, 8);
-        f.add_at_cell(40, 0, 1.0);
-        let current = vec![10.0; f.width() * f.height()];
+        let mut f = Field::new(320, 160);
+        f.add_at_cell(40, 24, 1.0);
+        let current = vec![[10.0, 6.0]; f.width() * f.height()];
         for _ in 0..50 {
             f.step(0.0, 0.0, &current);
         }
-        // 10 cells/s for 10 s: the centroid moves 100 cells right, from the
-        // centre of field cell 5 (44) to 144.
-        let cx: f64 = (0..f.width())
-            .map(|x| f64::from(f.get(x, 0)) * (x as f64 + 0.5) * FIELD_SCALE as f64)
-            .sum::<f64>()
-            / f.total();
-        assert!((cx - 144.0).abs() < 2.0, "centroid {cx}");
+        // (10, 6) cells/s for 10 s: the centroid moves (100, 60) cells, from
+        // the centre of field cell (5, 3) = (44, 28) to (144, 88).
+        let (mut cx, mut cy) = (0.0, 0.0);
+        for y in 0..f.height() {
+            for x in 0..f.width() {
+                let v = f64::from(f.get(x, y));
+                cx += v * (x as f64 + 0.5) * FIELD_SCALE as f64;
+                cy += v * (y as f64 + 0.5) * FIELD_SCALE as f64;
+            }
+        }
+        cx /= f.total();
+        cy /= f.total();
+        assert!((cx - 144.0).abs() < 2.0, "centroid x {cx}");
+        assert!((cy - 88.0).abs() < 2.0, "centroid y {cy}");
         assert!((f.total() - 1.0).abs() < 1e-4);
         let mut g = Field::new(8, 8);
         g.add_at_cell(0, 0, 1.0);

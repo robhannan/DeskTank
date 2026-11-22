@@ -194,7 +194,8 @@ test("a native save imports, letterboxed, and exports what native writes", async
   await page.getByRole("button", { name: "Pause" }).click();
   const native = await readFile(NATIVE_RESAVED);
   await page.locator("#import-file").setInputFiles(NATIVE_SAVE);
-  await expect(page.locator("#notice")).toContainText("Imported v1.dtank: 200×120 cells");
+  // Importing reopens the WebGL2 pipelines for the new tank (as `open` does).
+  await expect(page.locator("#notice")).toContainText("Imported v1.dtank: 200×120 cells", { timeout: 15_000 });
   expect(await page.evaluate(() => [window.desktank.tank.width(), window.desktank.tank.height()])).toEqual([200, 120]);
   expect(await ticks(page)).toBe(1200);
   expect(await stateHash(page)).toBe(NATIVE_HASH);

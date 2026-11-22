@@ -70,8 +70,10 @@ pub struct Renderer {
     bases_version: Option<u64>,
     /// The palette strip image (top-left corner of a fixed-size texture).
     hud: wgpu::Texture,
-    /// Nutrient, CO₂ and light per field cell (RGB), for the debug overlay.
+    /// Nutrient, CO₂, light and flow speed per field cell (RGBA), for the debug overlay.
     fields: wgpu::Texture,
+    /// 2D flow vector `(vx, vy)` per field cell (`Rg8Unorm`, 128 = 0), for the flow overlay.
+    flow: wgpu::Texture,
     fields_size: (u32, u32),
     /// Field version last uploaded.
     fields_version: Option<u64>,
@@ -115,7 +117,7 @@ impl Renderer {
             0.0,
         ];
         let hud = create_hud(d);
-        let (fields, fields_size) = create_fields(d, world);
+        let (fields, flow, fields_size) = create_fields(d, world);
         let atlas = Atlas::build(world.species(), world.device_kinds());
         let atlas_texture = create_atlas(gpu, &atlas);
         let instances = d.create_buffer(&wgpu::BufferDescriptor {
@@ -146,6 +148,7 @@ impl Renderer {
             &plants,
             &species,
             &bands,
+            &flow,
         ];
         let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
         let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
@@ -174,6 +177,7 @@ impl Renderer {
             bases_version: None,
             hud,
             fields,
+            flow,
             fields_size,
             fields_version: None,
             plants,
@@ -309,12 +313,14 @@ impl Renderer {
         let texels = &mut self.scratch;
         texels.clear();
         let speed = world.ecology().current.speed;
+        let current = world.current();
         texels.extend((0..n.len()).flat_map(|i| {
+            let [vx, vy] = current[i];
             [
                 byte(n[i] / FIELD_SHOW_MAX),
                 byte(c[i] / FIELD_SHOW_MAX),
                 byte(l[i]),
-                byte(world.current()[i].abs() / speed),
+                byte(vx.hypot(vy) / speed),
             ]
         }));
         gpu.queue.write_texture(
@@ -323,6 +329,32 @@ impl Renderer {
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(self.fields_size.0 * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: self.fields_size.0,
+                height: self.fields_size.1,
+                depth_or_array_layers: 1,
+            },
+        );
+        // 2D flow direction: signed component mapped to 1..=255 with 128 = 0.
+        let signed_byte = |v: f32| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to 1..=255
+            let b = (v.clamp(-1.0, 1.0) * 127.0 + 128.0).round() as u8;
+            b
+        };
+        texels.clear();
+        texels.extend(
+            current
+                .iter()
+                .flat_map(|&[vx, vy]| [signed_byte(vx / speed), signed_byte(vy / speed)]),
+        );
+        gpu.queue.write_texture(
+            self.flow.as_image_copy(),
+            texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.fields_size.0 * 2),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
@@ -707,17 +739,19 @@ fn create_species(gpu: &Gpu, world: &World) -> wgpu::Texture {
     texture
 }
 
-/// The field-overlay texture: one RGBA texel per field cell.
-fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32)) {
+/// The field-overlay textures: RGBA per field cell (`fields`) and `Rg8Unorm`
+/// per field cell (`flow`, 2D current vector).
+fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, wgpu::Texture, (u32, u32)) {
     let field = world.field(FieldKind::Nutrient);
     let size = (side(field.width()), side(field.height()));
+    let extent = wgpu::Extent3d {
+        width: size.0,
+        height: size.1,
+        depth_or_array_layers: 1,
+    };
     let texture = d.create_texture(&wgpu::TextureDescriptor {
         label: Some("fields"),
-        size: wgpu::Extent3d {
-            width: size.0,
-            height: size.1,
-            depth_or_array_layers: 1,
-        },
+        size: extent,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -725,12 +759,22 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, (u32, u32))
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    (texture, size)
+    let flow = d.create_texture(&wgpu::TextureDescriptor {
+        label: Some("flow"),
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rg8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    (texture, flow, size)
 }
 
 /// The one bind group layout both pipelines share: the view uniform and
-/// eight textures (cells, palette, HUD, fields, sprite atlas, plant tints,
-/// plant species, plant bands).
+/// nine textures (cells, palette, HUD, fields, sprite atlas, plant tints,
+/// plant species, plant bands, 2D flow).
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
     let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
         binding,
@@ -764,16 +808,17 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
             texture_entry(6),
             texture_entry(7),
             texture_entry(8),
+            texture_entry(9),
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–8.
+/// The bind group: `view` at binding 0, then `textures` at 1–9.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 8],
+    textures: [&wgpu::Texture; 9],
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {

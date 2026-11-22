@@ -5,10 +5,12 @@ name = "internal_filter"
 label = "Internal filter"
 # Where it may go: on the side glass, at any height under the water line.
 mount = "side_glass"
-# The nozzle tip, in cells from the art's top-left (facing right): the jet
-# starts here and points away from the glass (`assets/fields.toml`,
-# [current]).
+# The nozzle tip, in cells from the art's top-left (facing right), and the
+# direction it jets (`assets/fields.toml`, [current]).
 nozzle = [13, 8]
+nozzle_dir = [1.0, 0.0]
+# Intake slot cells (facing right) that draw water and loose particles in.
+intakes = [[10, 24]]
 
 [sprite]
 # Mounted on the left glass, jetting right (mirrored on the right glass);

@@ -249,6 +249,18 @@ struct CurrentDef {
     speed: f32,
     reach: u32,
     spread: u32,
+    #[serde(default = "default_intake_speed")]
+    intake_speed: f32,
+    #[serde(default = "default_intake_reach")]
+    intake_reach: u32,
+}
+
+fn default_intake_speed() -> f32 {
+    4.0
+}
+
+fn default_intake_reach() -> u32 {
+    32
 }
 
 #[derive(Debug, Deserialize)]
@@ -508,17 +520,21 @@ pub struct LightConfig {
     pub opaque: f32,
 }
 
-/// The filter outlet's jet.
+/// The filter's 2D current field (directed outlets and intake sinks).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CurrentConfig {
-    /// The outlet material, if the table has it.
+    /// The legacy outlet material, if the table has it.
     pub material: Option<MaterialId>,
-    /// Cells per second at the nozzle.
+    /// Cells per second at a nozzle (also the cap on combined flow speed).
     pub speed: f32,
-    /// Cells over which the jet fades to nothing.
+    /// Cells over which a jet fades to nothing.
     pub reach: u32,
     /// Field cells per extra field row of width on each side.
     pub spread: u32,
+    /// Cells per second drawn towards an intake at its edge.
+    pub intake_speed: f32,
+    /// Cells over which an intake's pull fades to nothing.
+    pub intake_reach: u32,
 }
 
 /// The bubbler.
@@ -1069,8 +1085,9 @@ fn diffusing(name: &'static str, d: DiffusingDef) -> Result<Diffusing, EcologyEr
 }
 
 /// Whether one field step keeps every cell's own weight non-negative: what
-/// diffusion (`4·D·dt/h²`) and upwind advection (up to `2·v·dt/h`) take out
-/// of a cell must not exceed what it holds.
+/// diffusion (`4·D·dt/h²`) and 2D upwind advection (at most `v·dt/h` per
+/// axis, so `2·v·dt/h` across all four faces) take out of a cell must not
+/// exceed what it holds.
 fn stable(diffusion: f32, speed: f32) -> bool {
     #[allow(clippy::cast_precision_loss)] // FIELD_SCALE is small
     let h = FIELD_SCALE as f32;
@@ -1116,11 +1133,19 @@ fn current(
     if d.reach == 0 || d.spread == 0 {
         return Err(invalid(&what, "reach and spread must be > 0"));
     }
+    if !(d.intake_speed.is_finite() && d.intake_speed >= 0.0 && d.intake_speed <= d.speed) {
+        return Err(invalid(
+            &what,
+            "intake_speed must be within [0, speed] cells/s",
+        ));
+    }
     Ok(CurrentConfig {
         material: lookup(&d.material, materials, strict)?,
         speed: d.speed,
         reach: d.reach,
         spread: d.spread,
+        intake_speed: d.intake_speed,
+        intake_reach: d.intake_reach,
     })
 }
 

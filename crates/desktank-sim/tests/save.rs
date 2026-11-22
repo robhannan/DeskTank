@@ -493,57 +493,17 @@ fn a_version_6_fixture_loads() {
     assert_eq!(names(&w), names(&again));
 }
 
-/// A tank of floaters (T6c part 2) drifting in a filter's current, with
-/// duckweed budding and frogbit hanging roots, run for 40 s.
-fn floating() -> World {
-    let mut w = World::new(
-        WorldConfig {
-            width: 160,
-            height: 64,
-            seed: 7,
-            water_level: 0.9,
-        },
-        table(),
-    )
-    .unwrap();
-    let soil = id(&w, "aquasoil");
-    w.fill_rect(rect(0, 56, 160, 64), soil, Brush::Replace)
-        .unwrap();
-    let row = w.surface_row() as i64;
-    legacy_outlet(&mut w, 2, row + 2);
-    for (k, name) in ["duckweed", "frogbit", "duckweed", "frogbit"]
-        .into_iter()
-        .enumerate()
-    {
-        let s = w.plant_species().id(name).unwrap();
-        w.paint_plant(
-            20 + 30 * k as i64,
-            row + 4,
-            0,
-            s,
-            desktank_sim::Propagule::Buds,
-        )
-        .unwrap();
-    }
-    for _ in 0..800 {
-        w.tick();
-    }
-    w
-}
-
 #[test]
 fn a_version_7_fixture_loads() {
     let bytes = std::fs::read(fixture(7)).unwrap();
     assert_eq!(save::check(&bytes), Ok(7));
     let mut w = save::decode(&bytes, table()).unwrap();
-    // Its outlet loads as an internal filter (D27), as a fresh tank's does
-    // when adopted.
-    let mut fresh = floating();
-    fresh.adopt_legacy_outlets();
+    // Its outlet loads as an internal filter (D27), and the decoded state
+    // stays pinned across platforms.
     assert_eq!(w.devices().count(), 1);
-    assert_eq!(w.state_hash(), fresh.state_hash());
-    // Pinned, so every platform decodes the same state.
     assert_eq!(w.state_hash(), 0x0b81_c8aa_0d50_8ce3);
+    let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(w.state_hash(), fresh.state_hash());
     let floaters = |w: &World| {
         w.plants()
             .filter(|p| {
@@ -790,7 +750,7 @@ fn a_version_12_fixture_loads() {
                 && w.device_at(x, y) == Some(d.id))
     );
     let (nx, ny) = d.nozzle(art);
-    assert!(w.current_at(nx - 20, ny) < -1.0);
+    assert!(w.current_at(nx - 20, ny)[0] < -1.0);
     for _ in 0..200 {
         w.tick();
         fresh.tick();

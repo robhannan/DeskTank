@@ -766,17 +766,32 @@ impl World {
                     self.mark_changed(x, y);
                     return;
                 }
-                // A filter jet deflects a rising bubble: with probability
-                // speed / 20 per tick it steps up and downstream instead.
-                let current = self.current_at_cell(x, y);
-                if current != 0.0 {
-                    let dx = if current > 0.0 { 1 } else { -1 };
-                    if let Some(j) = self.enterable(x, y, dx, -1, p.density, false)
+                // A 2D current deflects a rising bubble: horizontally with
+                // probability |vx| / 20, and a downward current can hold its
+                // rise for a tick with probability vy / 20.
+                let [vx, vy] = self.current_at_cell(x, y);
+                if vx != 0.0 || vy != 0.0 {
+                    let dx = if vx != 0.0
                         && self
                             .life
-                            .chance(f64::from(current.abs()) / f64::from(TICKS_PER_SECOND))
+                            .chance(f64::from(vx.abs()) / f64::from(TICKS_PER_SECOND))
+                    {
+                        if vx > 0.0 { 1 } else { -1 }
+                    } else {
+                        0
+                    };
+                    let hold = vy > 0.0
+                        && self
+                            .life
+                            .chance(f64::from(vy) / f64::from(TICKS_PER_SECOND));
+                    let dy = if hold { 0 } else { -1 };
+                    if (dx != 0 || dy != -1)
+                        && let Some(j) = self.enterable(x, y, dx, dy, p.density, false)
                     {
                         self.swap(i, j);
+                        return;
+                    }
+                    if hold && dx == 0 {
                         return;
                     }
                 }

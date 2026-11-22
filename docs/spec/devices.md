@@ -69,10 +69,14 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
     gravel, and a vertical uplift tube in a back corner rising to the
     surface, bending over into a horizontal spray bar held by suction
     cups.
-- **Flow.** Until DV2 the current is the static, horizontal-only field
-  at 1/8 resolution ([world](world.md) §2.1 *Devices*): each internal filter's nozzle tip is
-  a jet source pointing away from its glass. DV2 makes it a 2D vector
-  field with directed outlets and intake sinks.
+- **Flow** (DV2). The current is a static 2D vector field (`[vx, vy]` in
+  cells per second) at 1/8 resolution ([world](world.md) §2.1 *Devices*),
+  rebuilt only when a device is added or removed: each device's nozzle
+  drives a directed jet (`nozzle_dir`), and each intake (`intakes`) draws
+  water radially inwards. Dissolved fields (nutrients, CO₂) advect in 2D;
+  floaters, non-water dense liquids, light loose powders (density < 1.5),
+  rising bubbles, marimo and creatures follow the current's direction.
+  The Flow overlay renders speed tint and per-block directional arrows.
 - **Filtration** (DV3). Intakes capture suspended particles (food,
   waste, detritus, algae in the water) into the device's **media load**.
   Load clogs the filter and flow drops as it clogs, but **never below
@@ -110,8 +114,8 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
 - **Resources** ([architecture](architecture.md) §6). An idle device adds no per-tick work of its own:
   the current is rebuilt only when a device is added or removed, intake
   work (DV3) touches only intake cells, and a device's state changes only
-  when it works. The jet's current pass is the old outlet's: it scans the
-  jet's blocks each tick for cells to carry (a settled tank still changes
-  no cells and wakes no chunks); DV2 should skip blocks with nothing to
-  carry. Sprites stay within the WebGL2 limits (one atlas, the creature
+  when it works. The current pass (`run_current`) tracks carryable cells
+  per 8×8 field block (recounted only where cells changed) and skips
+  blocks with nothing to carry, so a settled tank scans zero blocks per
+  tick. Sprites stay within the WebGL2 limits (one atlas, the creature
   instance buffer).
