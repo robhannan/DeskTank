@@ -165,6 +165,9 @@
       rigid bodies' reference shapes: a 4×4 coverage mask per partial cell,
       stored sparsely (version 10; a version 9 tank's rigid cells migrate
       whole, drawn square as before);
+    - per-cell driftwood waterlogging stored in the upper seven bits of
+      `Cell::variant` (version 11; pre-v11 driftwood cells migrate to dry
+      while preserving glue);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

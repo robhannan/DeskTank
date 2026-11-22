@@ -6,10 +6,33 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11};
 use crate::species::SpeciesId;
 
 impl World {
+    /// The world as a version 11 snapshot.
+    pub(crate) fn to_v11(&self) -> v11::Save {
+        v11::Save {
+            base: self.to_v10(),
+        }
+    }
+
+    /// A world restored from a version 11 snapshot, on `materials`.
+    pub(crate) fn from_v11(s: v11::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        Self::from_v10(s.base, materials)
+    }
+
+    /// A world restored from a pre-v11 snapshot: resets driftwood cells'
+    /// random colour-noise bits to dry (preserving glue).
+    pub(crate) fn from_v10_migrated(
+        s: v10::Save,
+        materials: MaterialTable,
+    ) -> Result<Self, SaveError> {
+        let mut w = Self::from_v10(s, materials)?;
+        w.migrate_driftwood_v10();
+        Ok(w)
+    }
+
     /// The world as a version 10 snapshot.
     pub(crate) fn to_v10(&self) -> v10::Save {
         v10::Save {
