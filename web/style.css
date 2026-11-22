@@ -241,6 +241,7 @@ button, .swatch {
 
 button:active, .swatch:active { box-shadow: inset 2px 2px 0 #0b1724; }
 button:disabled { opacity: 0.45; cursor: default; }
+button[hidden] { display: none; }
 button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .swatch {

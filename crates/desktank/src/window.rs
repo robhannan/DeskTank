@@ -1099,9 +1099,14 @@ impl ApplicationHandler for App {
                         });
                         s.window.set_title(&title);
                     }
-                    // X mirrors the next device placed onto the other glass
-                    // (D27); the ghost shows where it goes.
-                    Key::Character(c) if c.eq_ignore_ascii_case("x") && !event.repeat => {
+                    // X mirrors the next flippable device placed onto the other
+                    // glass (D27); the ghost shows where it goes.
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("x")
+                            && !event.repeat
+                            && !s.command()
+                            && s.tools.can_flip(s.tank.world()) =>
+                    {
                         let side = if s.tools.flip() { "other" } else { "nearer" };
                         s.window
                             .set_title(&format!("DeskTank — devices go on the {side} glass"));
