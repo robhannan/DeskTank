@@ -31,6 +31,9 @@ reach = 160
 spread = 4
 intake_speed = 4.0
 intake_reach = 32
+# Minimum 2D current speed (cells/s) at the water surface that disrupts and
+# ripples the water line; slower currents keep the surface calm.
+surface_ripple_speed = 1.0
 
 # The bubbler releases `emits` from each top cell with water above, at
 # `rate` per second per cell.

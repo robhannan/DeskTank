@@ -215,6 +215,11 @@ pub(super) struct Life {
     current: Vec<[f32; 2]>,
     /// Field cells with a current strong enough to move cells.
     current_blocks: Vec<usize>,
+    /// Current-driven water-surface agitation in `[0.0, 1.0]` per field column
+    /// (`fw`), rebuilt alongside `current` whenever devices or obstacles change.
+    surface_agitation: Vec<f32>,
+    /// Whether any surface field column exceeds `surface_ripple_speed` (O(1)).
+    has_surface_agitation: bool,
     devices_dirty: bool,
     /// Bumped whenever a field changes, for renderers.
     pub(super) version: u64,
@@ -286,7 +291,8 @@ impl Life {
             }
         }
         let field = Field::new(width, height);
-        let blocks = field.width() * field.height();
+        let fw = field.width();
+        let blocks = fw * field.height();
         Self {
             eco,
             flags,
@@ -320,6 +326,8 @@ impl Life {
             current_scans: 0,
             current: vec![[0.0, 0.0]; blocks],
             current_blocks: Vec::new(),
+            surface_agitation: vec![0.0; fw],
+            has_surface_agitation: false,
             devices_dirty: false,
             version: 0,
             water,
@@ -435,6 +443,32 @@ impl World {
     #[must_use]
     pub fn current_block_scans(&self) -> u64 {
         self.life.current_scans
+    }
+
+    /// Current-driven water-surface agitation in `[0.0, 1.0]` per field column
+    /// (`width.div_ceil(8)`). Zero everywhere when the tank has no exposed
+    /// water surface or no surface block exceeds `surface_ripple_speed`.
+    #[must_use]
+    pub fn surface_agitation(&self) -> &[f32] {
+        &self.life.surface_agitation
+    }
+
+    /// Current-driven water-surface agitation in `[0.0, 1.0]` at grid column
+    /// `x` (`0.0` outside the grid or below `surface_ripple_speed`).
+    #[must_use]
+    pub fn surface_agitation_at(&self, x: usize) -> f32 {
+        self.life
+            .surface_agitation
+            .get(x / FIELD_SCALE)
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// Whether strong 2D current at the water surface is currently driving
+    /// surface ripples (O(1)).
+    #[must_use]
+    pub fn has_surface_current_ripples(&self) -> bool {
+        self.life.has_surface_agitation
     }
 
     /// Living cells visited per tick (SPEC §2.1; default
@@ -1261,6 +1295,8 @@ impl World {
         let life = &mut self.life;
         life.current.fill([0.0, 0.0]);
         life.current_blocks.clear();
+        life.surface_agitation.fill(0.0);
+        life.has_surface_agitation = false;
         let outlet = life.eco.current.material;
         let cfg = life.eco.current;
         let (fw, fh) = (life.light.width(), life.light.height());
@@ -1430,6 +1466,25 @@ impl World {
                 life.current[b] = [vx, vy];
                 if mag >= MIN_CURRENT {
                     life.current_blocks.push(b);
+                }
+            }
+        }
+        // Surface agitation from strong current at the water-air boundary
+        // (zero when the tank is brim-full or completely dry).
+        if self.surface_row > 0 && self.surface_row < self.height {
+            let sy = self.surface_row / FIELD_SCALE;
+            let thresh = cfg.surface_ripple_speed;
+            let denom = (cfg.speed - thresh).max(f32::EPSILON);
+            for x in 0..fw {
+                let b = sy * fw + x;
+                if blocked[b] {
+                    continue;
+                }
+                let [vx, vy] = life.current[b];
+                let mag = (vx * vx + vy * vy).sqrt();
+                if mag > thresh {
+                    life.surface_agitation[x] = ((mag - thresh) / denom).clamp(0.0, 1.0);
+                    life.has_surface_agitation = true;
                 }
             }
         }
