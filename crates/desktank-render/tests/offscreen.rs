@@ -432,27 +432,67 @@ fn flow_tint_shows_speed_in_either_direction() {
     let Some(gpu) = gpu() else { return };
     let format = wgpu::TextureFormat::Rgba8Unorm;
     for outlet_x in [5, 74] {
+        let (w, h) = (80u32, 64u32);
         let config = WorldConfig {
-            width: W as usize,
-            height: H as usize,
+            width: w as usize,
+            height: h as usize,
             seed: 4,
             water_level: 1.0,
         };
         let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
-        // A legacy 3x3 outlet (D27: old saves only), for a jet at row 20.
-        let outlet = world.materials().id("filter_outlet").unwrap();
-        world.paint(outlet_x, 20, 1, outlet, Brush::Pour).unwrap();
+        // Place an internal filter at the bottom so row 0 stays still water
+        // and its nozzle drives a horizontal jet at row 42 (field row 5).
+        assert!(
+            world
+                .add_device(
+                    desktank_sim::DeviceKind::InternalFilter,
+                    outlet_x,
+                    49,
+                    false
+                )
+                .unwrap()
+                .is_some()
+        );
         world.tick();
         let mut tank = Tank::new(world, TankConfig::default());
-        let plain = render(gpu, &mut tank, format);
+        let plain = render_sized(gpu, &mut tank, format, (w, h));
         tank.set_field_overlay(Some(desktank_render::FieldOverlay::Flow));
-        let tinted = render(gpu, &mut tank, format);
-        let x = if outlet_x == 5 { 20 } else { 59 };
-        let gain = |y| i16::from(px(&tinted, x, y)[0]) - i16::from(px(&plain, x, y)[0]);
-        assert!(gain(20) > gain(16) && gain(16) > 0);
-        assert_eq!(px(&plain, x, 0), px(&tinted, x, 0));
+        let tinted = render_sized(gpu, &mut tank, format, (w, h));
+        let at = |buf: &[u8], x: u32, y: u32| -> [u8; 3] {
+            let i = ((y * w + x) * 4) as usize;
+            [buf[i], buf[i + 1], buf[i + 2]]
+        };
+        let x = if outlet_x == 5 { 28 } else { 51 };
+        let gain = |y| i16::from(at(&tinted, x, y)[0]) - i16::from(at(&plain, x, y)[0]);
+        assert!(
+            gain(43) > gain(0) && gain(43) > 0,
+            "jet core is brighter than distant circulation"
+        );
+        // The directional arrow inside the 8x8 block (by=40..48) has its
+        // arrowhead on the downstream half of the block.
+        let (bx, by) = (x / 8 * 8, 40);
+        let half_gain = |x0: u32, x1: u32| -> i32 {
+            (by..by + 8)
+                .flat_map(|y| (x0..x1).map(move |cx| (cx, y)))
+                .map(|(cx, cy)| {
+                    i32::from(at(&tinted, cx, cy)[0]) - i32::from(at(&plain, cx, cy)[0])
+                })
+                .sum()
+        };
+        let (left_half, right_half) = (half_gain(bx, bx + 4), half_gain(bx + 4, bx + 8));
+        if outlet_x == 5 {
+            assert!(
+                right_half > left_half,
+                "right-pointing arrow should be brighter on the right half: {left_half} vs {right_half}"
+            );
+        } else {
+            assert!(
+                left_half > right_half,
+                "left-pointing arrow should be brighter on the left half: {left_half} vs {right_half}"
+            );
+        }
         tank.set_field_overlay(None);
-        assert_eq!(plain, render(gpu, &mut tank, format));
+        assert_eq!(plain, render_sized(gpu, &mut tank, format, (w, h)));
     }
 }
 

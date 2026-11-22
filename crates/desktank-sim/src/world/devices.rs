@@ -44,6 +44,10 @@ impl Devices {
         self.table.values()
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
+
     pub(super) fn kinds(&self) -> &DeviceKinds {
         &self.kinds
     }
@@ -221,19 +225,27 @@ impl World {
     #[must_use]
     pub fn device_status(&self, id: DeviceId) -> Option<DeviceStatus> {
         let d = self.device(id)?;
-        let (nx, ny) = d.nozzle(self.devices.kinds.get(d.kind));
+        let art = self.devices.kinds.get(d.kind);
+        let (nx, ny) = d.nozzle(art);
+        let [dx, dy] = d.nozzle_dir(art);
+        let [vx, vy] = self.nozzle_flow(nx, ny, [dx, dy]);
         Some(DeviceStatus {
             kind: d.kind,
-            flow: self.current_at_cell(nx, ny).abs(),
+            flow: (vx * vx + vy * vy).sqrt(),
             facing_left: d.facing_left,
         })
     }
 
-    /// Nozzle tips and their jet direction (rightwards), for the current.
-    pub(super) fn device_jets(&self) -> Vec<((usize, usize), bool)> {
+    /// Each device's nozzle (position and unit direction) paired with its own
+    /// intake cells and inward pull direction, for the 2D current field.
+    #[allow(clippy::type_complexity)] // internal tuple for recompute_current
+    pub(super) fn device_flows(&self) -> Vec<(((usize, usize), [f32; 2]), Vec<(usize, usize)>)> {
         self.devices
             .values()
-            .map(|d| (d.nozzle(self.devices.kinds.get(d.kind)), !d.facing_left))
+            .map(|d| {
+                let art = self.devices.kinds.get(d.kind);
+                ((d.nozzle(art), d.nozzle_dir(art)), d.intakes(art).collect())
+            })
             .collect()
     }
 
@@ -374,6 +386,10 @@ impl World {
                     self.write_cell(i % self.width, i / self.width, outlet, &mut None);
                 }
             }
+        }
+        if !self.devices.is_empty() {
+            self.refresh_all_blocked();
+            self.recompute_current_quiet();
         }
     }
 }

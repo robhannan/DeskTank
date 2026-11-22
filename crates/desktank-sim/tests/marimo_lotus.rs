@@ -115,11 +115,14 @@ fn check_table(w: &World) {
     assert_eq!(grid, table, "tick {}", w.tick_count());
 }
 
-/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
-/// they still drive the jet, which this exercises.
-fn legacy_outlet(w: &mut World, x: i64, y: i64) {
-    let m = w.materials().id("filter_outlet").unwrap();
-    w.paint(x, y, 1, m, Brush::Pour).unwrap();
+/// Places an internal filter on the side glass near `(x, y)`.
+fn place_filter(w: &mut World, x: i64, y: i64) {
+    assert!(
+        w.add_device(desktank_sim::DeviceKind::InternalFilter, x, y, false)
+            .unwrap()
+            .is_some(),
+        "internal filter should fit at ({x}, {y})"
+    );
 }
 
 #[test]
@@ -177,11 +180,13 @@ fn a_marimo_sinks_to_the_bed_and_grows_round() {
 fn a_current_nudges_a_marimo_along_the_bottom() {
     let make = |outlet: bool| {
         let mut w = tank(2, 0.9);
-        pour(&mut w, "marimo", 30, 60);
+        pour(&mut w, "marimo", 60, 60);
         run(&mut w, 3 * MINUTE);
         if outlet {
-            // Then a jet along the bed, rightwards from the left wall.
-            legacy_outlet(&mut w, 2, FLOOR as i64 - 3);
+            // An internal filter high on the right wall: its leftward jet
+            // deflects down the left wall and circulates back rightwards along
+            // the bed, nudging the marimo right.
+            place_filter(&mut w, WIDTH as i64 - 2, 24);
         }
         w
     };
@@ -195,8 +200,8 @@ fn a_current_nudges_a_marimo_along_the_bottom() {
     let p = of_species(&with, s)[0];
     let moved = p.base.0 as i64 - start.base.0 as i64;
     let still = of_species(&without, s)[0].base.0 as i64 - start.base.0 as i64;
-    // The jet runs at about 8 cells a second; the ball rolls at a quarter
-    // of that at most.
+    // The jet's lower edge reaches the bed at a couple of cells a second;
+    // the ball rolls at a quarter of that at most.
     assert!(
         (4..=70).contains(&moved),
         "nudged {moved} cells in 30 s of current"
@@ -210,8 +215,8 @@ fn a_current_nudges_a_marimo_along_the_bottom() {
 #[test]
 fn a_saved_rolling_marimo_continues_exactly() {
     let mut w = tank(6, 0.9);
-    legacy_outlet(&mut w, 2, FLOOR as i64 - 3);
-    for x in [20, 50, 90] {
+    place_filter(&mut w, 2, FLOOR as i64 - 15);
+    for x in [25, 60, 90] {
         pour(&mut w, "marimo", x, 40);
     }
     run(&mut w, MINUTE);

@@ -152,6 +152,7 @@ impl World {
         } else {
             super::steer(k, c, tx, ty, k.top, false);
         }
+        self.apply_current(c, false);
         if self.try_move(k, c) != super::Move::Moved {
             (c.vx, c.vy) = (0, 0);
         }
