@@ -1,4 +1,4 @@
-# Internal power filter (SPEC §2.8, D27, DV1): a tall box suction-cupped to
+# Internal power filter (docs/spec/devices.md, D27, DV1): a tall box suction-cupped to
 # the side glass at any height, with intake slots on its lower body and a
 # nozzle near the top that jets sideways into the tank.
 name = "internal_filter"

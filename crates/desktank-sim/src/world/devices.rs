@@ -1,4 +1,4 @@
-//! The device table (SPEC §2.8, D27): placing prefab devices, removing them
+//! The device table (`docs/spec/devices.md`, D27): placing prefab devices, removing them
 //! whole, saving them and turning legacy filter outlet cells into internal
 //! filters.
 //!

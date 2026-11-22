@@ -1,4 +1,4 @@
-//! Placeables (SPEC §2.5, T5): devices the palette places, one per click.
+//! Placeables (`docs/spec/interaction-and-saves.md` §2.5, T5): devices the palette places, one per click.
 //!
 //! - The **bubbler** (an air stone) drops from where it is placed to the
 //!   first thing below it and releases air bubbles from its top. It is

@@ -300,13 +300,6 @@ impl Tools {
         Some(world.device_placement(kind, x, y, self.flip))
     }
 
-    /// The palette for `world`, grouped: the non-empty groups in
-    /// [`PaletteGroup::ALL`] order with their items. Tools are scoop, net,
-    /// inspect, glue and magnify; each material group lists the materials naming it,
-    /// by ID (the plants group starts with the plants slot); then the
-    /// placeables whose material `world` has, and its stocked species by
-    /// ID ([`crate::Species::stocked`]). Live food species follow the food
-    /// materials in the Food group, where a click adds a pinch.
     /// The palette for `world` as a tree: the top categories in
     /// [`PalettePath::all`] order, each with its non-empty sub-categories
     /// (top categories with none are left out). Tools are scoop, net,

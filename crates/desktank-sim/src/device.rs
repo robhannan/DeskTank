@@ -1,4 +1,4 @@
-//! Prefab devices (SPEC §2.8, D27): the device kinds, loaded from
+//! Prefab devices (`docs/spec/devices.md`, D27): the device kinds, loaded from
 //! `assets/devices/`, and the device instances the world keeps.
 //!
 //! A device is an instance in the world's device table (id → kind, anchor,

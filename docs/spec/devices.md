@@ -89,7 +89,8 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   depth band, so fish pass in front of it. Internal, sponge and
   under-gravel bodies and tubes are solid in every band.
 - **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the filters
-  and the bubbler. Facing is chosen automatically from the nearer wall;
+  and the bubbler as each lands (DV1: the internal filter, beside the
+  legacy bubbler). Facing is chosen automatically from the nearer wall;
   the placement preview is a see-through **ghost** of the footprint at
   the pointer (tinted red where it doesn't fit), and a **flip** key (X)
   or button mounts it on the other glass instead. The inspect card (the
