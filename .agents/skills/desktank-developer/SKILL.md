@@ -12,10 +12,11 @@ your final report, so keep the work self-contained and the report short.
 
 ## Before you start
 
-1. Read `AGENTS.md`, `docs/PROGRESS.md` (status, learnings, platform
-   gotchas, next increments), the matching work package in `docs/SPEC.md`
-   (goal, acceptance criteria) and the code you will touch. Tick the
-   package off in SPEC.md in your PR when it is complete.
+1. Read `AGENTS.md`, the relevant GitHub Issue (work package, goal,
+   acceptance criteria), the matching files in `docs/spec/` and
+   `docs/notes/`, and the code you will touch. Reference `Closes #<n>`
+   (or `Part of #<n>`) in your PR description rather than editing a
+   central changelog.
 2. `git fetch origin` and branch from the latest `origin/main`:
    `git checkout -b feat/<short-slug> origin/main`. Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
@@ -53,8 +54,9 @@ your final report, so keep the work self-contained and the report short.
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`.
-- Update `docs/PROGRESS.md` (Done list, Learnings, Next increments) and the
-  README if usage changed, in the same PR.
+- Update the relevant file in `docs/spec/` (or add a new numbered ADR in
+  `docs/decisions/`), `docs/notes/` (only for durable technical gotchas),
+  and `README.md` if usage changed, in the same PR.
 
 ## Show it working
 
@@ -149,8 +151,9 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    - hardening of code this PR didn't touch;
    - nice-to-haves.
 
-   Add each follow-up as a bullet under "Next increments" in
-   `docs/PROGRESS.md`, and don't implement it. Fixes should be small. If a
+   File each follow-up as a GitHub Issue (or add it to the matching
+   `follow-up` issue) and don't implement it in this PR. Fixes should be
+   small. If a
    valid in-scope fix would grow the diff by more than roughly a third, or
    needs a new dependency or a design decision, escalate it in your report
    instead.
