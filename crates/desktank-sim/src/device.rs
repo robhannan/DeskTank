@@ -311,25 +311,30 @@ impl DeviceKinds {
             }
             None => None,
         };
-        let [dx, dy] = def.nozzle_dir;
-        let len = (dx * dx + dy * dy).sqrt();
-        if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
+        let nozzle_dir = if nozzle.is_some() {
+            let [dx, dy] = def.nozzle_dir;
+            let len = (dx * dx + dy * dy).sqrt();
+            if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
+                return Err(bad(
+                    &def.name,
+                    "nozzle_dir must be a finite non-zero vector".to_owned(),
+                ));
+            }
+            [dx / len, dy / len]
+        } else {
+            [0.0, 0.0]
+        };
+        if nozzle.is_some() {
+            if !(def.flow_scale.is_finite() && def.flow_scale > 0.0) {
+                return Err(bad(
+                    &def.name,
+                    "flow_scale must be finite and positive when a nozzle is set".to_owned(),
+                ));
+            }
+        } else if !(def.flow_scale.is_finite() && def.flow_scale >= 0.0) {
             return Err(bad(
                 &def.name,
-                "nozzle_dir must be a finite non-zero vector".to_owned(),
-            ));
-        }
-        let nozzle_dir = [dx / len, dy / len];
-        let flow_ok = def.flow_scale.is_finite()
-            && if nozzle.is_some() {
-                def.flow_scale > 0.0
-            } else {
-                def.flow_scale >= 0.0
-            };
-        if !flow_ok {
-            return Err(bad(
-                &def.name,
-                "flow_scale must be finite and positive when a nozzle is set".to_owned(),
+                "flow_scale must be finite and non-negative when no nozzle is set".to_owned(),
             ));
         }
         if !(def.bubble_rate.is_finite() && def.bubble_rate >= 0.0) {

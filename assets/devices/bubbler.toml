@@ -18,9 +18,10 @@ fry_safe = true
 [sprite]
 # Bed-mounted front view; two texels per cell side: 14x6 cells (28x12).
 # Traced from the owner's reference photo: a round flat white-rimmed base
-# sitting on the bed (cols 0..12, centre x = 12), a porous grey mineral
-# air-stone diffuser dome rising in the centre (cols 2..10), and a small white
-# side airline inlet boss on the right (cols 12..14). House shading (D19):
+# sitting on the bed (cell cols 0..12, centre texel x = 12 / cell x = 6), a
+# porous grey mineral air-stone diffuser dome rising in the centre (cell cols
+# 2..10), and a small white side airline inlet boss on the right (cell cols
+# 12..14). House shading (D19):
 # cool slate-grey outline (never pure black), mottled porous stone dithering
 # on the dome, and cool underwater shading on the white rim.
 colours = { o = "#4d5764", k = "#464f58", d = "#636d76", g = "#828d96", p = "#a4afb8", u = "#738291", s = "#96a6b5", c = "#bccad6", l = "#dae4ed", w = "#f0f6fa", a = "#9ec6db" }

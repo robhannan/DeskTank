@@ -889,6 +889,10 @@ impl World {
                 Ok(Some(_))
             ) {
                 adopted = true;
+            } else {
+                for &i in &group {
+                    self.write_cell(i % self.width, i / self.width, bubbler, &mut None);
+                }
             }
         }
         if adopted {
