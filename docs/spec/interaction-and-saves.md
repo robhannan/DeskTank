@@ -23,7 +23,9 @@
     sub-category's items:
     - **Tools**: scoop, net, inspect, glue, magnify;
     - **Build**: Substrate (sand, gravel, aquasoil), Hardscape (rock,
-      driftwood), Devices (bubbler, filter outlet);
+      driftwood), Devices (bubbler, internal filter: a see-through
+      placement ghost at the pointer and a flip key (X) or button for the
+      other glass; see [devices](devices.md));
     - **Water**: water, air bubbles, CO₂ bubbles;
     - **Food**: Fish food (flakes, pellets, frozen bloodworms, algae
       wafers), Live (live bloodworms);
@@ -168,6 +170,9 @@
     - per-cell driftwood waterlogging stored in the upper seven bits of
       `Cell::variant` (version 11; pre-v11 driftwood cells migrate to dry
       while preserving glue);
+    - the device table (version 12, D27; loading version 11 or older
+      turns legacy filter outlet cells into internal filters, see
+      [devices](devices.md) *Migration*);
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use desktank_sim::{
-    BAND_REACH, Brush, CreatureId, FieldKind, MaterialId, MaterialTable, Placeable, PlantInfo,
-    PlantSpeciesId, Propagule, Rect, World, WorldConfig, save,
+    BAND_REACH, Brush, CreatureId, FieldKind, MaterialId, MaterialTable, PlantInfo, PlantSpeciesId,
+    Propagule, Rect, World, WorldConfig, save,
 };
 
 /// Ticks in a simulated minute.
@@ -119,6 +119,13 @@ fn top_water_row(w: &World) -> usize {
     w.surface_row()
 }
 
+/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
+/// they still drive the jet, which this exercises.
+fn legacy_outlet(w: &mut World, x: i64, y: i64) {
+    let m = w.materials().id("filter_outlet").unwrap();
+    w.paint(x, y, 1, m, Brush::Pour).unwrap();
+}
+
 #[test]
 fn a_plantlet_rises_and_rests_with_its_leaves_in_the_top_water_row() {
     for name in ["duckweed", "frogbit"] {
@@ -164,7 +171,7 @@ fn floaters_drift_with_the_current_and_stop_at_the_glass() {
         if outlet {
             // A jet along the surface, rightwards from the left wall.
             let row = w.surface_row() as i64 + 2;
-            w.place(Placeable::FilterOutlet, 2, row).unwrap();
+            legacy_outlet(&mut w, 2, row);
         }
         bud(&mut w, "duckweed", 30, 3);
         run(&mut w, MINUTE / 4);
@@ -315,7 +322,7 @@ fn a_floater_stripped_of_its_leaves_dies() {
 fn a_saved_drifting_floater_continues_exactly() {
     let mut w = tank(6);
     let row = w.surface_row() as i64 + 2;
-    w.place(Placeable::FilterOutlet, 2, row).unwrap();
+    legacy_outlet(&mut w, 2, row);
     for x in [20, 40, 60] {
         bud(&mut w, "duckweed", x, 3);
         bud(&mut w, "frogbit", x + 8, 8);

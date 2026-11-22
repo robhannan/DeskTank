@@ -74,6 +74,13 @@ fn scatter(w: &mut World, m: MaterialId, n: usize, y0: usize) {
     }
 }
 
+/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
+/// they still drive the jet, which this exercises.
+fn legacy_outlet(w: &mut World, x: i64, y: i64) {
+    let m = w.materials().id("filter_outlet").unwrap();
+    w.paint(x, y, 1, m, Brush::Pour).unwrap();
+}
+
 #[test]
 fn liquid_fertiliser_dissolves_at_its_rate_and_releases_nutrients() {
     let rule = entries("reaction")
@@ -358,7 +365,7 @@ fn rising_bubbles_follow_the_signed_filter_current() {
             };
             let mut w = World::with_ecology(config, table, ecology).unwrap();
             if let Some(x) = outlet {
-                w.place(Placeable::FilterOutlet, x, 40).unwrap();
+                legacy_outlet(&mut w, x, 40);
             }
             let bubble = id(&w, material);
             for x in (44..84).step_by(3) {
@@ -402,7 +409,7 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
             let mut w = World::with_ecology(config, table.clone(), eco).unwrap();
             let x = if right { 6 } else { 313 };
             if outlet {
-                w.place(Placeable::FilterOutlet, x, 10).unwrap();
+                legacy_outlet(&mut w, x, 10);
             }
             let (flake, dye) = (id(&w, "flake_food"), id(&w, "dye"));
             let mid = if right { 60 } else { 260 };
@@ -525,7 +532,7 @@ fn living_tanks_are_deterministic() {
         ];
         let ids: Vec<_> = names.iter().map(|n| id(&w, n)).collect();
         w.place(Placeable::Bubbler, 100, 60).unwrap();
-        w.place(Placeable::FilterOutlet, 4, 70).unwrap();
+        w.place(Placeable::InternalFilter, 4, 70).unwrap();
         for t in 0..3000u64 {
             if t % 50 == 0 && t < 2000 {
                 let k = usize::try_from(t / 50).unwrap();

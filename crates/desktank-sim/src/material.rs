@@ -224,6 +224,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/detritus.toml"),
     include_str!("../../../assets/materials/bubbler.toml"),
     include_str!("../../../assets/materials/filter_outlet.toml"),
+    include_str!("../../../assets/materials/device.toml"),
     include_str!("../../../assets/materials/dead_plant.toml"),
     include_str!("../../../assets/materials/seed.toml"),
     include_str!("../../../assets/materials/cutting.toml"),

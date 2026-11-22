@@ -22,6 +22,7 @@ use bodies::Body;
 pub use bodies::{BodyId, BodyInfo, DRIFTWOOD_AIR_DROP, DRIFTWOOD_DRY_DIV, DRIFTWOOD_SOAK_EVERY};
 
 mod creatures;
+mod devices;
 mod hardscape;
 mod life;
 mod persist;
@@ -113,6 +114,9 @@ pub enum WorldError {
     /// The species ID isn't in the table.
     #[error("unknown species id {}", .0.0)]
     UnknownSpecies(SpeciesId),
+    /// The built-in device kinds are invalid.
+    #[error("devices: {0}")]
+    Device(String),
     /// The built-in plant species are invalid.
     #[error("plant species: {0}")]
     PlantSpecies(String),
@@ -230,6 +234,8 @@ pub struct World {
     plants: Plants,
     /// Partial sub-cell outlines of rigid cells by index ([`hardscape`]).
     masks: BTreeMap<usize, u16>,
+    /// Prefab devices (D27).
+    devices: devices::Devices,
     /// Material id of `driftwood`, if present in the material table.
     driftwood: Option<MaterialId>,
 }
@@ -305,6 +311,7 @@ impl World {
             Ecology::builtin_for(&materials).map_err(|e| WorldError::Ecology(e.to_string()))?;
         let (creatures, foods) = Creatures::builtin(&materials, water, air)?;
         let plants = Plants::new(&materials)?;
+        let devices = devices::Devices::new(&materials)?;
         let life = Life::new(
             &materials,
             ecology,
@@ -339,6 +346,7 @@ impl World {
             creatures,
             plants,
             masks: BTreeMap::new(),
+            devices,
             driftwood,
         };
         world.init_life();
@@ -433,7 +441,7 @@ impl World {
     }
 
     /// A stable 64-bit hash of the size, tick, every cell, the nutrient
-    /// and CO₂ fields, the creatures and the plant table.
+    /// and CO₂ fields, the creatures, the plant table and the devices.
     #[must_use]
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::new();
@@ -448,6 +456,7 @@ impl World {
         self.hash_creatures(&mut h);
         self.hash_plants(&mut h);
         self.hash_masks(&mut h);
+        self.hash_devices(&mut h);
         h.finish()
     }
 
@@ -711,6 +720,8 @@ impl World {
         }
         self.cells[i] = cell;
         self.mark_changed(x, y);
+        // A device's cell takes the whole device with it (D27).
+        self.device_cell_removed(old.material, old.state);
     }
 
     fn sweep_row(&mut self, cy: usize, y: usize, rightward: bool, pass: Pass) {

@@ -55,7 +55,8 @@ glued = true       # glue the rigid body this pour makes (rock), so it never mov
 tick = 0           # tick to place on (default 0)
 x = 20             # footprint centre, in cells from the top left
 y = 60
-device = "bubbler" # "bubbler" (drops onto what is below) or "filter_outlet"
+device = "bubbler" # "bubbler" (drops onto what is below) or "internal_filter" (on the
+                   # nearer side glass at this height, D27; "filter_outlet" names it too)
 
 [[water_change]]   # any number of these
 tick = 36000       # tick to change the water on (`World::water_change`)

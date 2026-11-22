@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use desktank_sim::{
-    Brush, FieldKind, MaterialId, MaterialTable, Placeable, PlantInfo, PlantSpeciesId, Rect, World,
+    Brush, FieldKind, MaterialId, MaterialTable, PlantInfo, PlantSpeciesId, Rect, World,
     WorldConfig, save,
 };
 
@@ -115,6 +115,13 @@ fn check_table(w: &World) {
     assert_eq!(grid, table, "tick {}", w.tick_count());
 }
 
+/// A legacy 3x3 filter outlet: only old saves have them now (D27), but
+/// they still drive the jet, which this exercises.
+fn legacy_outlet(w: &mut World, x: i64, y: i64) {
+    let m = w.materials().id("filter_outlet").unwrap();
+    w.paint(x, y, 1, m, Brush::Pour).unwrap();
+}
+
 #[test]
 fn a_marimo_sinks_to_the_bed_and_grows_round() {
     for seed in 0..3 {
@@ -174,8 +181,7 @@ fn a_current_nudges_a_marimo_along_the_bottom() {
         run(&mut w, 3 * MINUTE);
         if outlet {
             // Then a jet along the bed, rightwards from the left wall.
-            w.place(Placeable::FilterOutlet, 2, FLOOR as i64 - 3)
-                .unwrap();
+            legacy_outlet(&mut w, 2, FLOOR as i64 - 3);
         }
         w
     };
@@ -204,8 +210,7 @@ fn a_current_nudges_a_marimo_along_the_bottom() {
 #[test]
 fn a_saved_rolling_marimo_continues_exactly() {
     let mut w = tank(6, 0.9);
-    w.place(Placeable::FilterOutlet, 2, FLOOR as i64 - 3)
-        .unwrap();
+    legacy_outlet(&mut w, 2, FLOOR as i64 - 3);
     for x in [20, 50, 90] {
         pour(&mut w, "marimo", x, 40);
     }

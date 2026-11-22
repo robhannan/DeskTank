@@ -7,6 +7,7 @@
 
 pub mod cheats;
 pub mod daylight;
+pub mod device;
 pub mod ecology;
 pub mod field;
 mod grid;
@@ -24,6 +25,10 @@ pub mod species;
 pub mod tools;
 mod world;
 
+pub use device::{
+    Device, DeviceArt, DeviceError, DeviceId, DeviceKind, DeviceKinds, DeviceStatus, MAX_DEVICES,
+    Mount,
+};
 pub use ecology::{Ecology, EcologyError};
 pub use field::{Field, FieldKind};
 pub use grid::{Cell, Rect};

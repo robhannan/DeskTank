@@ -11,6 +11,7 @@
 - [Creatures](creatures.md) (§2.4)
 - [Interaction, time & persistence](interaction-and-saves.md) (§2.5–2.6)
 - [Plants](plants.md) (§2.7)
+- [Devices and prefabs](devices.md) (§2.8: filters, the bubbler, D27)
 - [Display modes per platform](platforms.md) (§3: desktop, web, Android)
 - [Architecture, budgets, testing, distribution & risks](architecture.md) (§4–8, §10)
 

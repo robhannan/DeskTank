@@ -73,7 +73,9 @@ use desktank_sim::cheats::{self, CheatKey, Konami};
 use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
-use desktank_sim::{CreatureId, FieldKind, MAX_NAME_CHARS, MaterialTable, World, WorldConfig};
+use desktank_sim::{
+    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, World, WorldConfig,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
@@ -563,6 +565,12 @@ impl Running {
                     .map_or("?", |m| m.name.as_str());
                 format!("{name} at ({x}, {y})")
             }
+            Inspection::Device { id, x, y } => {
+                let Some(line) = device_line(self.tank.world(), id, x, y) else {
+                    return;
+                };
+                line
+            }
             Inspection::Creature {
                 id,
                 species,
@@ -904,6 +912,8 @@ impl Running {
             radius,
         });
         self.tank.set_cursor(cursor);
+        let ghost = self.tools.ghost(self.tank.world());
+        self.tank.set_device_ghost(ghost);
         let magnifier = self
             .tools
             .magnifier()
@@ -1046,6 +1056,13 @@ impl ApplicationHandler for App {
                             format!("DeskTank — {} field", f.name())
                         });
                         s.window.set_title(&title);
+                    }
+                    // X mirrors the next device placed onto the other glass
+                    // (D27); the ghost shows where it goes.
+                    Key::Character(c) if c.eq_ignore_ascii_case("x") && !event.repeat => {
+                        let side = if s.tools.flip() { "other" } else { "nearer" };
+                        s.window
+                            .set_title(&format!("DeskTank — devices go on the {side} glass"));
                     }
                     Key::Character(c) if c.eq_ignore_ascii_case("w") => {
                         let siphoned = s.tank.world_mut().water_change();
@@ -1213,4 +1230,16 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     let n = i64::try_from(n).unwrap_or(1).max(1);
     let at = i64::try_from(at).unwrap_or(0);
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
+}
+
+/// The inspect line for device `id` under cell `(x, y)` (D27). DV1 shows
+/// the jet only; filtering comes in DV3.
+fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
+    let status = world.device_status(id)?;
+    let label = &world.device_kinds().get(status.kind).label;
+    let glass = if status.facing_left { "right" } else { "left" };
+    Some(format!(
+        "{label} #{} · on the {glass} glass · flow {:.1} cells/s · at ({x}, {y})",
+        id.0, status.flow
+    ))
 }

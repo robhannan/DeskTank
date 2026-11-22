@@ -2008,7 +2008,8 @@ struct SpriteOut {
     // Texel coordinate within the frame, interpolated across the quad
     // (outside 0..frame size in a glow halo).
     @location(0) local: vec2<f32>,
-    // 0 alive, 1 elder, 2 dead; how far a corpse has rotted (0..1).
+    // 0 alive, 1 elder, 2 dead, 3 a device's placement ghost; how far a
+    // corpse has rotted (0..1), or 1 for a ghost that doesn't fit.
     @location(1) @interpolate(flat) look: vec2<f32>,
     // Depth in bands from the front glass (D21).
     @location(2) @interpolate(flat) depth: f32,
@@ -2222,7 +2223,8 @@ fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
-    if sprite_skipped(v) {
+    // A see-through ghost is drawn once, by the leaves pass.
+    if sprite_skipped(v) || v.look.x > 2.5 {
         discard;
     }
     return sprite_colour(v, hidden_by_stem(v.pos.xy, v.depth));
@@ -2262,6 +2264,12 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
             discard;
         }
         return vec4<f32>(out(v.glow.rgb).rgb, a);
+    }
+    if v.look.x > 2.5 {
+        // A device's placement ghost (D27): see-through over everything,
+        // red where it doesn't fit.
+        let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
+        return vec4<f32>(out(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint).rgb, 0.55);
     }
     if hidden || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;

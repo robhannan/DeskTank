@@ -96,6 +96,8 @@ pub struct Tank {
     palette_dirty: bool,
     /// The brush outline, if shown.
     cursor: Option<BrushPreview>,
+    /// The device placement ghost and whether it fits (D27).
+    ghost: Option<(desktank_sim::Device, bool)>,
     /// The magnified lens around the pointer, if shown.
     magnifier: Option<Magnifier>,
     /// The field tinted over the tank (debug overlay), if any.
@@ -128,6 +130,7 @@ impl Tank {
             palette: None,
             palette_dirty: false,
             cursor: None,
+            ghost: None,
             magnifier: None,
             field_overlay: None,
             fields_drawn: 0,
@@ -253,6 +256,17 @@ impl Tank {
     pub fn set_cursor(&mut self, cursor: Option<BrushPreview>) {
         if self.cursor != cursor {
             self.cursor = cursor;
+            self.needs_frame = true;
+        }
+    }
+
+    /// Shows (or hides) the ghost of the device the place tool would put
+    /// down, and whether it fits there (D27; from
+    /// [`desktank_sim::tools::Tools::ghost`]). Setting the same ghost again
+    /// asks for no extra frame.
+    pub fn set_device_ghost(&mut self, ghost: Option<(desktank_sim::Device, bool)>) {
+        if self.ghost != ghost {
+            self.ghost = ghost;
             self.needs_frame = true;
         }
     }
@@ -475,7 +489,7 @@ impl Tank {
             return;
         };
         renderer.upload(gpu, &self.world, &mut self.dirty);
-        renderer.upload_sprites(gpu, &self.world);
+        renderer.upload_sprites(gpu, &self.world, self.ghost);
         self.creatures_drawn = Some(self.world.creatures_version());
         renderer.upload_plants(gpu, &self.world);
         self.plants_drawn = Some(self.world.plants_version());
@@ -490,6 +504,7 @@ impl Tank {
                     self.world.materials(),
                     self.world.species(),
                     self.world.plant_species(),
+                    self.world.device_kinds(),
                 );
                 renderer.upload_hud(gpu, &image, image_size);
             }
