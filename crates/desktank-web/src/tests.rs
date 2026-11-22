@@ -1045,6 +1045,7 @@ fn flip_device_only_applies_to_flippable_device_tools() {
         "tool inspect",
         "tool magnify",
         "device bubbler",
+        "device sponge_filter",
         "plant java_moss",
         "creature neon_tetra",
     ] {

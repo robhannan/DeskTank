@@ -805,8 +805,16 @@ test("flip device button only appears for flippable device tools and X ignores o
   await expect(flipBtn).toBeHidden();
   expect(await flipped()).toBe(false);
 
-  // Stays hidden for non-device tools and non-flippable devices (Bubbler).
-  for (const name of ["Scoop", "Inspect", "Magnify", "Java moss", "Neon tetra", "Bubbler"]) {
+  // Stays hidden for non-device tools and non-flippable devices (Bubbler, Sponge filter).
+  for (const name of [
+    "Scoop",
+    "Inspect",
+    "Magnify",
+    "Java moss",
+    "Neon tetra",
+    "Bubbler",
+    "Sponge filter",
+  ]) {
     await choose(page, name);
     await expect(flipBtn, `${name} should keep Flip device hidden`).toBeHidden();
     expect(await canFlip(), `${name} should not be flippable`).toBe(false);

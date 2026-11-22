@@ -101,6 +101,7 @@ impl Mount {
     pub const fn flippable(self) -> bool {
         match self {
             Self::SideGlass => true,
+            Self::Bed => false,
         }
     }
 }

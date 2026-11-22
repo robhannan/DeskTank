@@ -1434,6 +1434,8 @@ mod tests {
         assert!(!t.can_flip(&w), "magnify cannot flip");
         t.select(PaletteItem::Tool(Tool::Place(Placeable::Bubbler)));
         assert!(!t.can_flip(&w), "bubbler does not flip");
+        t.select(PaletteItem::Tool(Tool::Place(Placeable::SpongeFilter)));
+        assert!(!t.can_flip(&w), "bed-mounted sponge filter does not flip");
         t.select(PaletteItem::Tool(Tool::Place(Placeable::InternalFilter)));
         assert!(t.can_flip(&w), "side-glass internal filter flips");
         assert_eq!(t.preview(), None);
