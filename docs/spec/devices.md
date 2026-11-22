@@ -93,18 +93,23 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   maturity back. The real ammonia/nitrite/nitrate chemistry stays in E1 (#136),
   which takes over maturity as its bacteria colony.
 - **Fry and shrimp.** Intakes suck in fry and small shrimp unless the
-  filter's **intake guard** is on; the sponge filter is always fry-safe.
+  filter's **intake guard** is on; the sponge filter (DV4) is always
+  fry-safe, and hungry shrimp seek out and graze biofilm from its foam
+  body (gently trimming mechanical media load without erasing device cells).
 - **Depth and collision** (D21). A HOB's intake tube is in the back
   depth band, so fish pass in front of it. Internal, sponge and
   under-gravel bodies and tubes are solid in every band.
 - **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the filters
-  and the bubbler as each lands (DV1: the internal filter, beside the
-  legacy bubbler). Facing is chosen automatically from the nearer wall;
-  the placement preview is a see-through **ghost** of the footprint at
-  the pointer (tinted red where it doesn't fit), and a **flip** key (X)
-  or button mounts it on the other glass instead. The inspect card (the
-  one creatures use) shows a device's status: flow, media load, maturity,
-  Rinse (gentle, hard, replace), and the intake-guard toggle (DV3).
+  and the bubbler as each lands (DV1: internal filter; DV4: sponge filter,
+  beside the legacy bubbler). Side-glass facing is chosen automatically from
+  the nearer wall (with a **flip** key `X` or button to mirror onto the
+  other glass); bed-mounted devices drop straight down onto substrate,
+  hardscape or the floor (symmetric, ignoring flip). The placement preview
+  is a see-through **ghost** of the footprint at the pointer (tinted red
+  where it doesn't fit). The inspect card (the one creatures use) shows a
+  device's status: mount position, flow, media load, maturity, Rinse
+  (gentle, hard, replace), and the intake-guard toggle (hidden for
+  intrinsically fry-safe filters, which show `fry-safe`, DV3–DV4).
   Drag-to-move (keeping state) and flow/air dials come
   later. Non-interactive hosts (screensaver, lock screen) just run the
   devices.

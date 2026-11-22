@@ -148,13 +148,12 @@ impl Atlas {
             }
         }
         let mut devices = Vec::new();
+        let mut shelf = DeviceShelf::new(y);
         for art in device_kinds.iter() {
             let size = (art.sprite.width, art.sprite.height);
             let n = art.sprite.frames.len();
-            let origin = (0, y);
-            y += rows(n, size);
-            let fine = (0, y);
-            y += rows(n, (size.0 * 2, size.1 * 2));
+            let origin = shelf.alloc(n, size);
+            let fine = shelf.alloc(n, (size.0 * 2, size.1 * 2));
             devices.push(Entry {
                 origin,
                 fine,
@@ -170,7 +169,7 @@ impl Atlas {
                 None,
             ));
         }
-        let height = y.max(1);
+        let height = shelf.finish().max(1);
         let mut image = vec![0; ATLAS_WIDTH * height * 4];
         for (base, fine_frames, (w, h), origin, fine, glow) in placed {
             for (frames, origin, size) in
@@ -373,6 +372,54 @@ impl Atlas {
             glow: [0.0; 4],
             burrower: false,
         }
+    }
+}
+
+/// Packs narrow device strips side-by-side onto shared rows within
+/// [`ATLAS_WIDTH`] so adding devices stays well inside WebGL2's 2048-texel limit.
+struct DeviceShelf {
+    x: usize,
+    y: usize,
+    height: usize,
+}
+
+impl DeviceShelf {
+    fn new(y: usize) -> Self {
+        Self { x: 0, y, height: 0 }
+    }
+
+    /// Allocates a `frames`-frame strip of `w × h` texels. Single-row strips
+    /// (`frames * w <= ATLAS_WIDTH`) pack side-by-side so `frame_origin` never
+    /// wraps (`frame < frames <= ATLAS_WIDTH / w`); multi-row strips always
+    /// start at `x = 0` on a fresh row.
+    fn alloc(&mut self, frames: usize, (w, h): (usize, usize)) -> (usize, usize) {
+        let strip_w = w.saturating_mul(frames);
+        let strip_h = h * frames.div_ceil((ATLAS_WIDTH / w).max(1));
+        if strip_w <= ATLAS_WIDTH {
+            if self.x + strip_w > ATLAS_WIDTH {
+                self.y += self.height;
+                self.x = 0;
+                self.height = 0;
+            }
+            let origin = (self.x, self.y);
+            self.x += strip_w;
+            debug_assert!(self.x <= ATLAS_WIDTH);
+            self.height = self.height.max(strip_h);
+            origin
+        } else {
+            if self.height > 0 {
+                self.y += self.height;
+                self.x = 0;
+                self.height = 0;
+            }
+            let origin = (0, self.y);
+            self.y += strip_h;
+            origin
+        }
+    }
+
+    fn finish(self) -> usize {
+        self.y + self.height
     }
 }
 
@@ -873,5 +920,56 @@ mod tests {
             "the tetras are at several depths: {want:?}"
         );
         assert!(include_str!("tank.wgsl").contains("@location(7) depth: f32"));
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn devices_pack_within_webgl2_limits_at_their_instance_origins() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 120,
+                height: 80,
+                seed: 1,
+                water_level: 1.0,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let atlas = Atlas::build(w.species(), w.device_kinds());
+        assert!(
+            atlas.size.0 <= 2048 && atlas.size.1 <= 2048,
+            "atlas exceeds WebGL2 limit: {:?}",
+            atlas.size
+        );
+        w.add_device(DeviceKind::InternalFilter, 4, 40, false)
+            .unwrap()
+            .unwrap();
+        w.add_device(DeviceKind::SpongeFilter, 60, 40, false)
+            .unwrap()
+            .unwrap();
+        let mut out = Vec::new();
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 2);
+        for d in w.devices() {
+            let art = w.device_kinds().get(d.kind);
+            let (cw, ch) = art.size;
+            #[allow(clippy::cast_precision_loss)]
+            let centre = ((d.x * 2 + cw) as f32 / 2.0, (d.y * 2 + ch) as f32 / 2.0);
+            let inst = instance_at(&out, centre);
+            let (ox, oy) = (inst[4] as usize, inst[5] as usize);
+            let (fx, fy) = (inst[12] as usize, inst[13] as usize);
+            assert!(ox + art.sprite.width <= ATLAS_WIDTH);
+            assert!(fx + art.sprite.width * 2 <= ATLAS_WIDTH);
+            for (i, t) in art.sprite.frames[0].iter().enumerate() {
+                let (x, y) = (ox + i % art.sprite.width, oy + i / art.sprite.width);
+                let o = (y * ATLAS_WIDTH + x) * 4;
+                assert_eq!(&atlas.image[o..o + 4], t);
+            }
+            let fw = art.sprite.width * 2;
+            for (i, t) in art.sprite.fine_frames[0].iter().enumerate() {
+                let (x, y) = (fx + i % fw, fy + i / fw);
+                let o = (y * ATLAS_WIDTH + x) * 4;
+                assert_eq!(&atlas.image[o..o + 4], t);
+            }
+        }
     }
 }

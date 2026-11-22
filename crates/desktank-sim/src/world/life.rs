@@ -171,6 +171,8 @@ pub(super) struct Life {
     pub(super) rng: Pcg32,
     /// Scratch list of cell indices for one batch.
     batch: Vec<u32>,
+    /// Scratch list of prefab device bubble outlets for one tick (avoids per-tick allocs).
+    bubble_outlets: Vec<(usize, usize, f64)>,
     nutrient: Field,
     co2: Field,
     light: Field,
@@ -296,6 +298,7 @@ impl Life {
             stats: RandomTickStats::default(),
             rng: chunk_stream(seed, 0, LIFE_STREAM),
             batch: Vec::new(),
+            bubble_outlets: Vec::new(),
             nutrient: field.clone(),
             co2: field.clone(),
             light: field,
@@ -1092,49 +1095,85 @@ impl World {
         }
     }
 
-    /// Bubblers: each cell with water above releases a bubble at the
-    /// configured rate. A bubble turns into air when it pops at the surface,
-    /// so to keep the water level, each release turns the first air cell
-    /// above it back into water. In a tank full to the lid there is no air
-    /// to return until the first bubbles pop there, so those first releases
-    /// cost a cell of water each.
+    /// Bubblers and air-driven prefab devices (e.g. sponge filters, DV4):
+    /// each emitter cell with water above releases a bubble at its configured
+    /// rate (scaled by the device's flow factor for prefab filters). A bubble
+    /// turns into air when it pops at the surface, so to keep the water level,
+    /// each release turns the first air cell above it back into water. In a
+    /// tank full to the lid there is no air to return until the first bubbles
+    /// pop there, so those first releases cost a cell of water each.
     fn run_devices(&mut self) {
         let cfg = self.life.eco.bubbler;
-        let (Some(bubbler), Some(emits), Some(water)) = (cfg.material, cfg.emits, self.life.water)
-        else {
+        let (Some(emits), Some(water)) = (cfg.emits, self.life.water) else {
             return;
         };
-        if self.life.devices.total == 0 {
+        // Legacy bubbler cells.
+        if let Some(bubbler) = cfg.material
+            && self.life.devices.total > 0
+        {
+            let p = f64::from(cfg.rate) / f64::from(super::TICKS_PER_SECOND);
+            let mut batch = mem::take(&mut self.life.batch);
+            batch.clear();
+            for list in &self.life.devices.lists {
+                batch.extend_from_slice(list);
+            }
+            for &i in &batch {
+                let i = i as usize;
+                if self.cells[i].material != bubbler {
+                    continue;
+                }
+                let (x, y) = (i % self.width, i / self.width);
+                self.emit_bubble_above(x, y, p, emits, water);
+            }
+            self.life.batch = batch;
+        }
+        // Air-driven prefab devices (DV4 sponge filter, later DV7 prefab bubbler).
+        if !self.devices.is_empty() {
+            let floor = self.life.eco.filtration.clog_floor;
+            let mut outlets = mem::take(&mut self.life.bubble_outlets);
+            outlets.clear();
+            for d in self.devices.values() {
+                let art = self.devices.kinds().get(d.kind);
+                if art.bubble_rate <= 0.0 || art.bubble_outlets.is_empty() {
+                    continue;
+                }
+                let p = f64::from(art.bubble_rate * d.flow_factor_with(floor))
+                    / f64::from(super::TICKS_PER_SECOND);
+                for (bx, by) in d.bubble_outlets(art) {
+                    outlets.push((bx, by, p));
+                }
+            }
+            for &(x, y, p) in &outlets {
+                self.emit_bubble_above(x, y, p, emits, water);
+            }
+            self.life.bubble_outlets = outlets;
+        }
+    }
+
+    /// Attempts to emit one bubble into the water cell directly above `(x, y)`
+    /// with probability `p`, conserving the tank water level against air above.
+    fn emit_bubble_above(
+        &mut self,
+        x: usize,
+        y: usize,
+        p: f64,
+        emits: MaterialId,
+        water: MaterialId,
+    ) {
+        let Some(above) = self.at(x, y, 0, -1) else {
+            return;
+        };
+        if self.cells[above].material != water || !self.life.chance(p) {
             return;
         }
-        let p = f64::from(cfg.rate) / f64::from(super::TICKS_PER_SECOND);
-        let mut batch = mem::take(&mut self.life.batch);
-        batch.clear();
-        for list in &self.life.devices.lists {
-            batch.extend_from_slice(list);
+        self.write_cell(x, y - 1, emits, &mut None);
+        if let Some(air) = self.life.air
+            && let Some(top) = (0..y - 1)
+                .rev()
+                .find(|&ty| self.cells[ty * self.width + x].material == air)
+        {
+            self.write_cell(x, top, water, &mut None);
         }
-        for &i in &batch {
-            let i = i as usize;
-            if self.cells[i].material != bubbler {
-                continue;
-            }
-            let (x, y) = (i % self.width, i / self.width);
-            let Some(above) = self.at(x, y, 0, -1) else {
-                continue;
-            };
-            if self.cells[above].material != water || !self.life.chance(p) {
-                continue;
-            }
-            self.write_cell(x, y - 1, emits, &mut None);
-            if let Some(air) = self.life.air
-                && let Some(top) = (0..y - 1)
-                    .rev()
-                    .find(|&ty| self.cells[ty * self.width + x].material == air)
-            {
-                self.write_cell(x, top, water, &mut None);
-            }
-        }
-        self.life.batch = batch;
     }
 
     /// Marks the current for a rebuild after this tick's edits (a device
@@ -1237,20 +1276,26 @@ impl World {
             if let Some((ox, oy)) = open_nozzle {
                 jet_sources.push((ox, oy, dir, scale));
             }
-            let inward = [-dir[0], -dir[1]];
-            let mut open_intakes = Vec::with_capacity(intakes.len());
-            for (ix, iy) in intakes {
+            let mut open_intakes: Vec<((usize, usize), [f32; 2])> =
+                Vec::with_capacity(intakes.len());
+            for ((ix, iy), outward) in intakes {
                 if let Some((ox, oy)) =
-                    find_open(blocked, fw, fh, ix / FIELD_SCALE, iy / FIELD_SCALE, dir)
+                    find_open(blocked, fw, fh, ix / FIELD_SCALE, iy / FIELD_SCALE, outward)
                 {
-                    intake_sources.push((ox, oy, inward, scale));
-                    open_intakes.push((ox, oy));
+                    open_intakes.push(((ox, oy), [-outward[0], -outward[1]]));
                 }
             }
-            if let Some(nozzle_cell) = open_nozzle
-                && !open_intakes.is_empty()
-            {
-                paired_flows.push((nozzle_cell, open_intakes, scale));
+            if !open_intakes.is_empty() {
+                #[allow(clippy::cast_precision_loss)] // small intake count
+                let per_intake = scale / open_intakes.len() as f32;
+                let mut cells = Vec::with_capacity(open_intakes.len());
+                for ((ox, oy), inward) in open_intakes {
+                    intake_sources.push((ox, oy, inward, per_intake));
+                    cells.push((ox, oy));
+                }
+                if let Some(nozzle_cell) = open_nozzle {
+                    paired_flows.push((nozzle_cell, cells, scale));
+                }
             }
         }
         let mut legacy = BTreeSet::new();

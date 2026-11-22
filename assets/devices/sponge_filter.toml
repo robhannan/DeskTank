@@ -1,0 +1,212 @@
+# Sponge filter (docs/spec/devices.md §2.8, D27, DV4): a black vertically
+# fluted cylindrical foam sponge on a smooth dark circular weighted base,
+# topped with a glossy black collar and a frosted-clear cylindrical uplift
+# tube. Sits on the bed (drops like the bubbler), emits rising bubbles from
+# the tube mouth, drives gentle upward uplift flow, is intrinsically fry-safe,
+# and invites shrimp to graze its porous foam.
+name = "sponge_filter"
+label = "Sponge filter"
+# Where it may go: dropped straight down onto the substrate, hardscape or floor.
+mount = "bed"
+# The uplift tube mouth, in cells from the art's top-left, jetting straight up.
+nozzle = [7, 0]
+nozzle_dir = [0.0, -1.0]
+# Gentle air-driven uplift flow relative to the internal power filter.
+flow_scale = 0.45
+# Bubble outlet cells across the top mouth of the uplift tube, and clean emission
+# rate in bubbles per second per cell (scales with media flow factor).
+bubble_outlets = [[6, 0], [7, 0], [8, 0]]
+bubble_rate = 1.1
+# Intake cells along both flanks of the foam sponge body.
+intakes = [[0, 12], [0, 18], [14, 12], [14, 18]]
+# Always safe for fry and small shrimp without an intake guard.
+fry_safe = true
+# Rows of the foam sponge body that shrimp seek out and graze (inclusive).
+graze_rows = [8, 23]
+
+[sprite]
+# Symmetric front-on bed mount; two texels per cell side: 15x26 cells (30x52).
+# Traced from the owner's reference photo: a black vertically ribbed/fluted
+# cylindrical foam sponge on a slightly narrower smooth glossy circular base,
+# a glossy circular collar flange on top, and a tall frosted-clear acrylic
+# uplift tube rising from the centre. House shading (D19): dark local-colour
+# outlines (never pure black), porous reticulated foam dithering, glossy
+# bevel highlights on collar and base, and cool frosted highlights on the tube.
+colours = { o = "#12151a", k = "#0d1014", d = "#171b21", f = "#21262e", m = "#2f3540", p = "#444d5c", q = "#5c677a", b = "#161a20", g = "#2c3440", s = "#5a677c", h = "#98a8be", u = "#3e5873", e = "#577796", t = "#7898b6", l = "#b5cde3", w = "#eaf5ff" }
+frames = [
+    [
+        "............ullllu............",
+        "............uwtelu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uwlttu............",
+        "............uegggu............",
+        "..........oouebbbuoo..........",
+        "......oooooosgbbbgoooooo......",
+        "..o..odmoshhsgbbbbgsgofmo..o..",
+        "oopoodmfossssbbbbbgsgodmkoodoo",
+        "oppfkdmpmdoobbbbbboommpmdkkdko",
+        "ommdfffmmpfmffdkdpfffdfmkkkkdo",
+        "opfdkkqqqppmmkkkkfmmmmmdkkkkko",
+        "ofpdddppmpdffkkkkfmmfkfdkkkddo",
+        "offfddpmqpmfmdkkkmmmmfdkkkkkko",
+        "opffkkmmpffmfdkkkfffdfdfkkkkko",
+        "oqmdkkfmpfmfddkkkkmmfkdkkkkkfo",
+        "ofmdddmmmmmmdkkkkfpmmdmkkkkkko",
+        "offdkdmmmmmfdkkkkfpkdfmdkkddko",
+        "ofmfkkmpmpmmfkkkdfmpffmfkkdkko",
+        "odmkddpqpffmkkkkkfmmfddkkkkdko",
+        "ofpddffmpfpmdkkkkfmfmdfkkkkkko",
+        "oppdkfmqmfmmddkkkdmffdfkkkkkko",
+        "oqffdkppfmffdddkkdfdkdkkdkkdko",
+        "ommdkkmmmpffdkkdkdfmfffdkkkkko",
+        "ofddkkqmqpfdfkkkkfffdffdkkkkko",
+        "ofddkdmppdffdkkkkmmmfkmfkkkkko",
+        "omfdddmpdppdfdkkkffffdddkkkkko",
+        "ofmkkdmppfddfkkkkpdfffkfkkkkko",
+        "ommkdkmfdffmmkkkkfmfddfkkkkkko",
+        "offdkkmpmfmmfkkdkffffffkkkkkko",
+        "omddddfpmffdfkkkkffmffkkkkkkko",
+        "opdddkfmmfmfdkkkkffddfdkkkkkko",
+        "ofmdkdmfqfmmkkkkkfpmddkfkkkkko",
+        "odmkkkfqpmmfkdkkkffffdkdkkkkko",
+        "okmkdffpmmfdkkkdkmfkkfkkkkkkdo",
+        "oodoodpfpmmffkkkkpffmfkkkookoo",
+        "..o..opmffffdkkkkfpfkdfdo..o..",
+        ".....obfqmdddbbbbfdmkffbo.....",
+        ".....obshgggbbbbbbbbbggbo.....",
+        ".....obshggggbbbbbbbgggbo.....",
+        "......ooosgggbbbbbbbgooo......",
+        ".........oooooooooooo.........",
+    ],
+]
+# The same pose at four texels per cell side (60x104).
+fine_frames = [
+    [
+        "..........................llllllll..........................",
+        "........................uuttttteeeuu........................",
+        "........................uwwtttteellu........................",
+        "........................uwwwwwwwlllu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ullwllttteeu........................",
+        "........................ugeeeggggggu........................",
+        "........................ugeeeggggggu........................",
+        "........................ubeeebbbbbbu........................",
+        ".......................oubeeebbbbbbuo.......................",
+        ".................ooooooossgbbbbbbgggooooooo.................",
+        "............oooooffddooossgbbbbbbgggoooffffooooo............",
+        "............oppqffoohhhossgbbbbbbgggosssoompfdfo............",
+        ".....oo....ommpfdoohhhhossgbbbbbbgggosssgoomfmkfo....oo.....",
+        "..ooopo....ofmfmooshhhhssbbbbbbbbbbggsssgboomfmfo....omooo..",
+        "oommppmoooodmppfooshhhhssbbbbbbbbbbggsssgboomffmdoooomffffoo",
+        "ompmmpmfdkkdmmpmpoossssssbbbbbbbbbbggsssgoommmfmfdkkkffffpdo",
+        "oppmqmmdkkkfpmdpmmpoossssbbbbbbbbbbggssooffmfffpkdkkkmffmddo",
+        "ommmfmpfdddfpmfqpffmmmooooobbbbbbooooomfdffmffffddddkffffffo",
+        "opfpqqffkkkdpmdfmmmpmpffmffkddddddffpmfmfffmmdfdkkkkkmmddkko",
+        "oqfmpffdkkddpfpmfmmffpfmfmkkkkkkkdfpdmffffmfffmddkkkkkkkkkko",
+        "ommpdmmkfkdffqmqmqqqmmfqdmkkkkkkkkmmpmmmmffffddfdkkkkddkkkko",
+        "ofmdmfffdddffqpmmppppffpmfkkkkkkdkmmmppffffffdfkkkkkdkkkkkko",
+        "odmdpqfdddkdmmmqmpmddmffffkkdkdkkkffmmmffdpfffkkkkkkkkkdkkko",
+        "offfmmpkddddpmpmmqpmpmdffdkkkkkkkkfffffdfffdddkkdkkkkdkkkkko",
+        "ommmpmmkkkkdpmmfmmqmdfmmdmkkkkkkkkfmffffmdfdfkffdkkkkkkkkkko",
+        "opfmdmmkfkkdmpmmmpmpdmmmdfkkdkkkkkfkfmmmfmfmfffkkkkkkkkkkkdo",
+        "ofpfpmmkdkkdfmmmfqpqmmfmfdkkkkkkkkmffffmmffmfffkkkkkkkkdkkko",
+        "ofmmmmmfkdkffpppmfqpmpmmfmdkkkkkkkfmmfmfmffffmkkkkkkkkkkkkko",
+        "odmmffffdkkdppqmpfmmmdmffdkkkkkkdkffddpffmffffdfkkkkkkkkdkko",
+        "ofpfmfmdkkkdmmpmmmpmpfffffdkkkkkkdmmffffdkfdfkkfdkkkkfkkkkko",
+        "omfffqmdkkkfpffmfmmmmmmfffkdkkdkkkmfmffkfmmfffkkkkkkkkdkkkko",
+        "omppfdmkdkkdffmqppqmfmmfmddkkkkkkkdmdmmmmmdmmfkfkkkkkkkkkkko",
+        "opfpmpmfkkkdffffpmmdfmfffdddkkkkkdmffdffmffdfkkkkkkkkkddkkko",
+        "omfdfddkkdkdfmmmmppmmdffffdkkkkkdkfmmdffmkfddffdkkkkkkkkkkko",
+        "ommfmffkkkkkpfqfffqfppmpkdkkkkkdkkkmdfddfpkdffkkkkkkkkkkkkko",
+        "omdfmdmdkdkdmmpmmpmdfmffdfkkkkdkdkpfmmpfmdmmfkdkkkkkkkkkkkko",
+        "omfmmmmdkkkdmmpmmqffmpmddfdkkkkkkkmfmffffmmdmfkdkkkkkkkkkkko",
+        "ompddpfdfdddqmpmpppfffmddddkkdkkkkffpfpfmmdffffdkkkkkkkkkdko",
+        "ofmmfmfdkkkkmmfmmffqfmfmkdkkkkkdkkmdffmdffkkmdfkkkkkkkkkkkko",
+        "ofmffmfdkkddpmpmfpfmmmmddkkdkkdkkkmfffmffdffkfkkkkkkkkkkkkko",
+        "omfmmfmdkdkfffmmfpmfffffdkkkkkkkkffffffffmmddffdkkkkkdkkkkko",
+        "ofpfmfmdkkkdqfmpppmmdfmfdddkdkkkkkdfmfffmffmfdkfkkkkkkfkkkko",
+        "odmmfmdddkkdfmfpppfdfdmkmfdkkkkkkkdfmmfmmdmffkddkkkkkkkdkkko",
+        "odmffmmdkkkdpmmfppqpffffdkfkkkdkkkmfpmmmmfmfdfddkkkkkkkkkkko",
+        "omfmmmfdkkfkmmffqmmdfpfffdkkkkkkkkffffmmmfdfddddkkkkkkkkdkko",
+        "omfmmmfdkdkffmmqmpqmfffmddkkkkkkkkmfdffmfmfkdfdkkkkkkkkkkkko",
+        "ommmfffkdkkkmpmqpmmffmfdmdkkkkkkkkffmfmkmdffdmfdkkkkkkkkkkko",
+        "omfmdfmdddkdpfmpfqmmdfffkdkkkkkkkkfffffdmdfddkkkkkkkkkkkkkko",
+        "offfpfdfkkfkqfpmpmfpmffddfddkkkkkddfmfffddmddfdkkkkkkfkkkkko",
+        "omfdfmfddkkkmmpmpmfpfmkfkkkkkkkkkdfmdfffmffkfddkkkkkkdkkdkko",
+        "odmmmmpdkkddpmmpfmffmdmfmkkkkkkkkkmddffmfmmfffdkkkkkkkkkkkko",
+        "odmmmmmdkkkkmfppppfqmffdkfkkkkkkkkddkffmfmdmfkkdkkkkkkkkkkko",
+        "odfmmkdddkddmqfpmpmffmfdddkkkkkkkdddffffmdfffkdkkkkkkkkdkkko",
+        "ommmfmmdkkkkfpmfmmfffddfdkkkkkkkkkmmffkdmdddfddkkkkkkkkkkkko",
+        "omfmdmdkkdkdfpmmmqffmfdmdfkkkkkkdkfffddfmmkdfkkkkkkkkkkkkkdo",
+        "odffmffdkkdfffmdfmqpmdfkfddkkkkkkkfffpffmmffmfdkkkkkkkkkkkko",
+        "ofmfmfmkddkkfffffmmffmpfffdkkkkkkkfpmfmmmfpfddfdkkkkkkkkkkko",
+        "ofmfmffkkkkdpmdpmffmfmmdkdkkkkkkkdmmmmfdfdfddkdfkkkkkkkkkkko",
+        "okdffmfdkkkdmmpmfdpdmdpfdfkkkkkkkkfdffmffdddfdkfkkkkkkkkkdko",
+        "omffffddkkkdpmpmmppffffdffdkkkkkkkkffddmdfmfdfkdkkkkkkkkdkko",
+        "offdfmmdkkkkmmqmmppffmmdfdkkdkkkkkfdmfffdfdmkddkkkkkkdkkkkko",
+        "ommffmddkkkdpmmfmfmmfmmdfdkkkkkkkdfffffffmddfkkdkkkkkkkkkkko",
+        "ofdmfffkkkkdmfmmfmmmffmmmfkkkkkkkkdpdfmdffmmdffkkkkkkkkkkkko",
+        "offmmmmdkkkdfpfmqdfmmffmfkkkkkkkkkfmdffpmmfdkddkkkkkkdkkkkko",
+        "ommmdmfkkkkdpmmpmmfqfffdffkkkkkkdkfffmmmdddfkdkkkkkkkkkkkkko",
+        "omfffkfkkkddffqmmffffmdddkdkkkkkkkpddfmkddmkfdkdkkkkkkkkkkko",
+        "ofpfdfmkddkdpfmppmfpfmffddkkkkkkkkffffdfmfddkdkkkkkkkkkkkkko",
+        "offdmmfkkkkdqqfdpfpdpmffffkkkkkkkkmkdmfmffdkdkfdkkkkkkkkkkko",
+        "offfmmmdddkkfppfmmffmfmmddddkkkkkkmfmmmdmmdddfkkkkkkkkkdkkko",
+        "oommdmkoodkkmfdpmmfmpkffmfdkkkkkkkmmmfkdfffdffkkkkkoodkkkkoo",
+        "..ooooo..okfffpfffmfdmddfdkkkkkkkkfmfmmfdfdfmdkdkko..ooooo..",
+        "......o..obdmfmppmpqmffffkdkkkkkkkmffddmdfddddkdkbo..o......",
+        ".........obbpmmffmmfmmkfkkdkbbbbkkfmmfffdffdfkkkbbo.........",
+        "..........obbbshhmmffmmfkfbbbbbbbbddfddmfdmggggbbo..........",
+        "..........obbbshhsgggggggbbbbbbbbbbbbbbbbggggggbbo..........",
+        "..........obbbsshsgggggggbbbbbbbbbbbbbbbbgggggbbbo..........",
+        "..........obbbbshssggggggbbbbbbbbbbbbbbbbgggggbbbo..........",
+        "...........obbbssssggggggbbbbbbbbbbbbbbbbgggggbbo...........",
+        "...........okkbssssggggggbbbbbbbbbbbbbbbggggggkko...........",
+        "...........ooookkkkggggggbbbbbbbbbbbbbbkgkkkkoooo...........",
+        "...............ooooooookkkkkkkkkkkkkkoooooooo...............",
+        ".......................oooooooooooooo.......................",
+    ],
+]
+
+# The palette icon, at one pixel per cell.
+icon = [
+    "...wl...",
+    "...wt...",
+    "..osho..",
+    ".omdkfm.",
+    ".ofdkdm.",
+    ".omdkdf.",
+    ".oddkdo.",
+    "..osbo..",
+]

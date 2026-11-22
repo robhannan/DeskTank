@@ -47,7 +47,7 @@ use desktank_sim::tools::{
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
-    Propagule, RinseKind, Script, World, WorldConfig, cheats, save,
+    Mount, Propagule, RinseKind, Script, World, WorldConfig, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -1364,15 +1364,25 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
     )
 }
 
-/// Formats a device's inspect line for `web/main.ts` (D27, DV3):
-/// `device <kind> <id> <glass> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`.
+/// Formats a device's inspect line for `web/main.ts` (D27, DV3–DV4):
+/// `device <kind> <id> <place> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`.
+/// `<place>` is `"left"`, `"right"` (side-glass mounts) or `"bed"` (bed mounts).
 fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let s = world.device_status(id)?;
-    let glass = if s.facing_left { "right" } else { "left" };
+    let place = match world.device_kinds().get(s.kind).mount {
+        Mount::SideGlass => {
+            if s.facing_left {
+                "right"
+            } else {
+                "left"
+            }
+        }
+        Mount::Bed => "bed",
+    };
     let guard = if s.intake_guard { "on" } else { "off" };
     let fry_safe = if s.fry_safe { "yes" } else { "no" };
     Some(format!(
-        "device {} {} {glass} {:.1} {:.0} {:.0} {guard} {fry_safe} {x} {y}",
+        "device {} {} {place} {:.1} {:.0} {:.0} {guard} {fry_safe} {x} {y}",
         s.kind.name(),
         id.0,
         s.flow,

@@ -7,6 +7,9 @@
 //! - The **internal filter** is a prefab device (D27, [`crate::device`]):
 //!   it goes on the nearer side glass at the clicked height, and its nozzle
 //!   jets away from the glass. It replaced the bare filter outlet (DV1).
+//! - The **sponge filter** (DV4) is a bed-mounted prefab device: it drops onto
+//!   substrate, hardscape or the floor, emits rising uplift bubbles and gentle
+//!   upward flow, is intrinsically fry-safe, and invites shrimp to graze it.
 
 use crate::device::DeviceKind;
 use crate::{World, WorldError};
@@ -22,18 +25,20 @@ pub enum Placeable {
     Bubbler,
     /// An internal filter on the side glass: makes a water current.
     InternalFilter,
+    /// A bed-mounted air-driven sponge filter: gentle uplift, bubbles, fry-safe.
+    SpongeFilter,
 }
 
 impl Placeable {
     /// Every placeable, in palette order.
-    pub const ALL: [Self; 2] = [Self::Bubbler, Self::InternalFilter];
+    pub const ALL: [Self; 3] = [Self::Bubbler, Self::InternalFilter, Self::SpongeFilter];
 
     /// The material its cells are made of.
     #[must_use]
     pub fn material_name(self) -> &'static str {
         match self {
             Self::Bubbler => "bubbler",
-            Self::InternalFilter => "device",
+            Self::InternalFilter | Self::SpongeFilter => "device",
         }
     }
 
@@ -43,6 +48,7 @@ impl Placeable {
         match self {
             Self::Bubbler => "bubbler",
             Self::InternalFilter => "internal_filter",
+            Self::SpongeFilter => "sponge_filter",
         }
     }
 
@@ -62,6 +68,7 @@ impl Placeable {
         match self {
             Self::Bubbler => None,
             Self::InternalFilter => Some(DeviceKind::InternalFilter),
+            Self::SpongeFilter => Some(DeviceKind::SpongeFilter),
         }
     }
 }
