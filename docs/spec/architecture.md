@@ -240,10 +240,10 @@ Defaults, all configurable:
 |---|---|---|---|
 | Occluded / hidden | `NSWindow` occlusion-state notification | `WM_SIZE` minimise; DWM cloaked; per-frame present status | Wayland frame callbacks stop; X11 `VisibilityNotify` |
 | AC / battery / level | `IOPSNotificationCreateRunLoopSource` | `RegisterPowerSettingNotification` (`GUID_ACDC_POWER_SOURCE`, battery %) | UPower over D-Bus |
-| Low power / saver | `NSProcessInfoPowerStateDidChange` | Energy saver status power setting 🔍 | UPower / power-profiles-daemon |
+| Low power / saver | `NSProcessInfoPowerStateDidChange` | `GUID_ENERGY_SAVER_STATUS` (build 26100+), `GUID_POWER_SAVING_STATUS` on older builds | UPower / power-profiles-daemon |
 | Display sleep / lock | `NSWorkspace` screens sleep/wake; `com.apple.screenIsLocked` | `WTSRegisterSessionNotification`; display-state power setting | logind `Lock`/`Unlock`, `PrepareForSleep` |
-| Full-screen app in front | Active-Space change + `CGWindowListCopyWindowInfo` bounds check (no window titles, so no Screen Recording permission) 🔍 | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` → `SHQueryUserNotificationState` | X11: `_NET_ACTIVE_WINDOW` + `_NET_WM_STATE_FULLSCREEN`; Wayland: `wlr-foreign-toplevel-management` where available, otherwise not detected |
-| Interact modifier | `CGEventSourceFlagsState` polled at 10 Hz while visible 🔍 | `GetAsyncKeyState` polled at 10 Hz while visible | X11 `XQueryKeymap` polled at 10 Hz while visible; Wayland: none (IPC/tray) |
+| Full-screen app in front | Active-Space change + `CGWindowListCopyWindowInfo` bounds check (no window titles, so no Screen Recording permission) | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` → `SHQueryUserNotificationState` | X11: `_NET_ACTIVE_WINDOW` + `_NET_WM_STATE_FULLSCREEN`; Wayland: `wlr-foreign-toplevel-management` where available, otherwise not detected |
+| Interact modifier | `CGEventSourceFlagsState` polled at 10 Hz while visible | `GetAsyncKeyState` polled at 10 Hz while visible | X11 `XQueryKeymap` polled at 10 Hz while visible; Wayland: none (IPC/tray) |
 
 Everything is event-driven except the idle polls (at most every 10 s)
 and the modifier poll (10 Hz, only while a tank is visible and interact
@@ -354,12 +354,12 @@ stubs until O1-Win and O1-Linux.
 | Falling-sand cost on an always-on app | Budget blown during activity or by a "busy" tank | Sleeping chunks, a 20/10 Hz tick, the population cap, profiling in T1; parallel chunks only if needed |
 | Pixel art supply | No art, or inconsistent art | Placeholder art first (D11), behind a consistent palette and sprite-size spec, so real art can be swapped in later |
 | Pet sim feels punishing | Users come back to dead tanks | Easy mode; world time only while visible; catch-up off by default; slow, gentle death curves |
-| Global modifier detection needs permissions | Permission prompts, or the feature fails | P1 verification; the tray toggle as the always-available path |
+| Modifier polling varies by platform | Chord unavailable | macOS aggregate flags worked without a grant in the [P1 probe](../notes/packaging-and-identity.md); the tray toggle is always available |
 | Windows 24H2+ WorkerW changes | Wallpaper broken on new Windows | Test matrix and snapshot fallback; study Lively's behaviour (GPL, so no code copying) |
 | macOS `legacyScreenSaver` leaks and regressions | Saver eats RAM | Mitigations, soak test, and built-in idle mode as a fallback |
 | GNOME lacks layer-shell | No wallpaper or overlay on GNOME Wayland | Document it; X11 session works; a GNOME Shell extension is a possible later option |
-| Transparent overlays on Windows with wgpu | Alpha may not compose | P1 question plus the O1-Win spike; `UpdateLayeredWindow` fallback |
-| Lock-screen API needs package identity | L2 not possible unpackaged | Decided in P1: MSIX packaging, or drop L2 |
+| Transparent overlays on Windows with wgpu | Alpha may not compose | O1-Win checks visible alpha and mouse delivery with the DX12 visual swap chain; `UpdateLayeredWindow` fallback |
+| Lock-screen policy or background mode prevents display | L2 snapshot invisible | Use the unpackaged API with Picture selected and report restrictions |
 | Unsigned builds (D14) | Gatekeeper and SmartScreen warn or block users | Clear README steps (R2); Homebrew and winget channels; signing can be added later |
 | Save corruption or schema drift | A lost pet tank | Versioned format, atomic writes, the last 3 saves kept, fixture tests |
 | WebGL2 limits constrain the renderer | Native features blocked, or web broken | Renderer kept within WebGL2 downlevel limits from T2; CI builds render for wasm32; the WB1 smoke test |
