@@ -214,6 +214,54 @@ fn fish_pass_in_front_of_intake_tube_but_cannot_pass_through_body() {
 }
 
 #[test]
+fn fish_cannot_swim_into_above_water_intake_tube_cells() {
+    // Above-water intake-tube cells (when surface_row > back_band_from) remain
+    // solid in every depth band so a front-band fry cannot swim up into air.
+    let mut low = world(100, 100, 4, 0.76); // surface_row = 24 (> back_band_from = 10)
+    let back_row = low
+        .device_kinds()
+        .get(DeviceKind::HobFilter)
+        .back_band_from
+        .expect("HOB has back-band intake tube");
+    assert!(low.surface_row() > back_row + 4);
+    let low_dev = low
+        .add_device(DeviceKind::HobFilter, 50, 0, false)
+        .unwrap()
+        .expect("HOB fits when strainer reaches water");
+    let ld = *low.device(low_dev).unwrap();
+    let dry_tube_x = i64::try_from(ld.x + 17).unwrap();
+    let dry_tube_y = i64::try_from(low.surface_row() - 4).unwrap();
+    assert_eq!(
+        low.device_at(
+            usize::try_from(dry_tube_x).unwrap(),
+            usize::try_from(dry_tube_y).unwrap()
+        ),
+        Some(low_dev),
+        "probe point is inside the above-water section of the HOB intake tube"
+    );
+    let guppy = low.species().id("guppy").unwrap();
+    let fry_traits = Traits {
+        age: Some(0),
+        ..Traits::default()
+    };
+    let mut front_fry = None;
+    for k in 0..32 {
+        let id = low
+            .add_creature_with_traits(guppy, 20 + k * 2, 50, fry_traits)
+            .expect("fry spawns");
+        if low.creature(id).unwrap().band() <= 3 {
+            front_fry = Some(id);
+            break;
+        }
+    }
+    let front_fry = front_fry.expect("spawned a front-band fry");
+    assert!(
+        !low.move_creature(front_fry, dry_tube_x, dry_tube_y),
+        "front-band fry must not swim into above-water HOB intake tube cells"
+    );
+}
+
+#[test]
 #[allow(clippy::cast_precision_loss)] // small grid coordinates in test
 fn waterfall_drives_downward_circulation_above_surface_ripples_and_costs_zero_when_idle() {
     let mut w = world(140, 96, 5, 0.86); // surface_row = 13 > spillway y = 9

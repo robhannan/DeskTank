@@ -100,7 +100,8 @@ pub enum Mount {
     /// wholly under the water line (symmetric; wall-flip ignored).
     Bed,
     /// Hanging on the top rim of the tank (`y = 0`), partly above the water
-    /// line with its intake submerged; mirrors left/right when flipped.
+    /// line with its intake submerged (also allowed at `surface_row == 0` when
+    /// filled to the brim); mirrors left/right when flipped.
     Rim,
 }
 

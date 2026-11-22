@@ -331,10 +331,11 @@ impl World {
         }
     }
 
-    /// Depth band of device cell `i` if it belongs to a device section
-    /// restricted to a single depth band (e.g. a HOB filter's back-band intake
-    /// tube). Returns `None` for non-device cells and for device sections that
-    /// are solid in every depth band.
+    /// Depth band of device cell `i` if it belongs to a submerged device
+    /// section restricted to a single depth band (e.g. a HOB filter's
+    /// back-band intake tube below the water line). Returns `None` for
+    /// non-device cells, above-water cells (preserving air as a barrier in
+    /// every band), and device sections that are solid in every depth band.
     #[inline]
     pub(super) fn device_cell_band(&self, i: usize) -> Option<u8> {
         let c = self.cells[i];
@@ -343,7 +344,8 @@ impl World {
         }
         let d = self.devices.table.get(&c.state)?;
         let from_row = d.back_band_row(self.devices.kinds.get(d.kind))?;
-        (i / self.width >= from_row).then_some(super::creatures::DEPTH_BANDS - 1)
+        let y = i / self.width;
+        (y >= from_row && y >= self.surface_row).then_some(super::creatures::DEPTH_BANDS - 1)
     }
 
     /// Active surface-ripple zones `[x0, x1_exclusive, spillway_y, strength]`
