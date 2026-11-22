@@ -1,0 +1,3 @@
+# D26: Legacy-Chromium (webOS) web build variant
+
+**The web target gains a legacy-Chromium (webOS) variant** (2026-11-21). The web build (D15) also ships as a Chrome 68 variant (§3.5), so DeskTank can run as the screensaver of an LG webOS 5 TV, whose WebAppManager is Chrome 68.0.3440.106. It is a build variant of the same page, not a second host: MVP wasm, syntax lowered by esbuild, a 1-device-pixel canvas cap and on-screen startup diagnostics, checked in CI so it can't regress. A native webOS app was not chosen, as webOS apps are web apps and the web build already runs there. The screensaver hookup itself comes later, after on-device testing.

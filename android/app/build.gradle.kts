@@ -9,7 +9,7 @@ val abis = providers.gradleProperty("desktank.abis")
     .map { it.split(',').map(String::trim).filter(String::isNotEmpty) }
     .getOrElse(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
 val pinnedNdk: String = libs.versions.ndk.get()
-// Android 8 (SPEC §3.6; the A0 findings in docs/PROGRESS.md). The Rust
+// Android 8 (docs/spec/platforms.md §3.6; A0 findings in docs/notes/android.md). The Rust
 // library is linked against the same API level.
 val minApi = 26
 
