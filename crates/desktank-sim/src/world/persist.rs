@@ -6,7 +6,7 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13};
 use crate::species::SpeciesId;
 
 impl World {
@@ -34,7 +34,28 @@ impl World {
 
     /// A world restored from a version 12 snapshot, on `materials`.
     pub(crate) fn from_v12(s: v12::Save, materials: MaterialTable) -> Result<Self, SaveError> {
-        Self::from_v10_with(s.base.base, materials, Some((&s.devices, s.next_device)))
+        Self::from_v10_with(
+            s.base.base,
+            materials,
+            Some((&s.devices, s.next_device, None)),
+        )
+    }
+
+    /// The world as a version 13 snapshot.
+    pub(crate) fn to_v13(&self) -> v13::Save {
+        v13::Save {
+            base: self.to_v12(),
+            filtration: self.save_device_filtration(),
+        }
+    }
+
+    /// A world restored from a version 13 snapshot, on `materials`.
+    pub(crate) fn from_v13(s: v13::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        Self::from_v10_with(
+            s.base.base.base,
+            materials,
+            Some((&s.base.devices, s.base.next_device, Some(&s.filtration))),
+        )
     }
 
     /// A world restored from a pre-v11 snapshot: resets driftwood cells'
@@ -62,11 +83,12 @@ impl World {
         Self::from_v10_with(s, materials, None)
     }
 
-    /// [`World::from_v10`] with a version 12 device table.
+    /// [`World::from_v10`] with a version 12/13 device table.
+    #[allow(clippy::type_complexity)]
     fn from_v10_with(
         s: v10::Save,
         materials: MaterialTable,
-        devices: Option<(&[v12::Device], u16)>,
+        devices: Option<(&[v12::Device], u16, Option<&[v13::DeviceFiltration]>)>,
     ) -> Result<Self, SaveError> {
         let mut w = Self::from_v9_with(s.base, materials, devices)?;
         w.load_masks(&s.masks)?;
@@ -144,12 +166,13 @@ impl World {
         Self::from_v9_with(s, materials, None)
     }
 
-    /// [`World::from_v9`] with a version 12 device table, restored before
+    /// [`World::from_v9`] with a version 12/13 device table, restored before
     /// the life lists so the current is worked out with the devices.
+    #[allow(clippy::type_complexity)]
     fn from_v9_with(
         s: v9::Save,
         materials: MaterialTable,
-        devices: Option<(&[v12::Device], u16)>,
+        devices: Option<(&[v12::Device], u16, Option<&[v13::DeviceFiltration]>)>,
     ) -> Result<Self, SaveError> {
         let config = WorldConfig {
             width: s.width as usize,
@@ -226,8 +249,8 @@ impl World {
 
         w.next_body = s.next_body;
         w.load_bodies(s.bodies)?;
-        if let Some((devices, next)) = devices {
-            w.load_devices(devices, next)?;
+        if let Some((devices, next, filtration)) = devices {
+            w.load_devices(devices, next, filtration)?;
         }
         w.load_life(s.life)?;
         w.load_plants(s.plants)?;

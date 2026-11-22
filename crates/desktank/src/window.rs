@@ -74,7 +74,7 @@ use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, World, WorldConfig,
+    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, RinseKind, World, WorldConfig,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -291,6 +291,9 @@ struct Running {
     /// The creature inspect last showed, which `N` names; cleared when
     /// another tool is picked.
     inspected: Option<CreatureId>,
+    /// The device inspect last showed (`id`, cell `x`, `y`), which `R` rinses
+    /// and `I` toggles the intake guard on.
+    inspected_device: Option<(DeviceId, usize, usize)>,
 }
 
 /// A one-line text field in the title bar.
@@ -391,6 +394,7 @@ impl Running {
             konami: Konami::new(),
             field: None,
             inspected: None,
+            inspected_device: None,
         };
         // Open the tab and sub-category holding the starting material.
         (s.open, s.open_sub) = s.selection().map_or((0, 0), |(t, sub, _)| (t, sub));
@@ -569,6 +573,7 @@ impl Running {
                 let Some(line) = device_line(self.tank.world(), id, x, y) else {
                     return;
                 };
+                self.inspected_device = Some((id, x, y));
                 line
             }
             Inspection::Creature {
@@ -674,15 +679,52 @@ impl Running {
         self.show_field(None);
     }
 
-    /// Forgets the creature inspect last showed, closing its name field.
+    /// Forgets the creature or device inspect last showed, closing its name field.
     fn forget_inspected(&mut self) {
         self.inspected = None;
+        self.inspected_device = None;
         if self
             .field
             .as_ref()
             .is_some_and(|f| matches!(f.purpose, Purpose::Name(_)))
         {
             self.field = None;
+        }
+    }
+
+    /// Rinses the device inspect last showed (`R` gentle, `Shift+R` hard).
+    fn rinse_inspected_device(&mut self, kind: RinseKind) {
+        let Some((id, x, y)) = self.inspected_device else {
+            return;
+        };
+        if self.tank.world_mut().rinse_device(id, kind)
+            && let Some(line) = device_line(self.tank.world(), id, x, y)
+        {
+            self.window.set_title(&format!("DeskTank — {line}"));
+        } else {
+            self.inspected_device = None;
+            self.window
+                .set_title("DeskTank — that device is no longer in the tank");
+        }
+    }
+
+    /// Toggles the intake guard on the device inspect last showed (`I`).
+    fn toggle_inspected_device_guard(&mut self) {
+        let Some((id, x, y)) = self.inspected_device else {
+            return;
+        };
+        if self
+            .tank
+            .world_mut()
+            .toggle_device_intake_guard(id)
+            .is_some()
+            && let Some(line) = device_line(self.tank.world(), id, x, y)
+        {
+            self.window.set_title(&format!("DeskTank — {line}"));
+        } else {
+            self.inspected_device = None;
+            self.window
+                .set_title("DeskTank — that device is no longer in the tank");
         }
     }
 
@@ -1097,6 +1139,29 @@ impl ApplicationHandler for App {
                     {
                         s.open_name_field();
                     }
+                    // R rinses the inspected filter (Shift+R hard rinse),
+                    // M replaces its media, and I toggles its intake guard
+                    // (D27, DV3).
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("r") && !event.repeat && !s.command() =>
+                    {
+                        let kind = if s.modifiers.shift_key() {
+                            RinseKind::Hard
+                        } else {
+                            RinseKind::Gentle
+                        };
+                        s.rinse_inspected_device(kind);
+                    }
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("m") && !event.repeat && !s.command() =>
+                    {
+                        s.rinse_inspected_device(RinseKind::Replace);
+                    }
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("i") && !event.repeat && !s.command() =>
+                    {
+                        s.toggle_inspected_device_guard();
+                    }
                     Key::Character(c) => {
                         // 1–9 are the open sub-category's first nine slots,
                         // 0 the tenth; P picks the selected plant's next way
@@ -1232,14 +1297,28 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
 }
 
-/// The inspect line for device `id` under cell `(x, y)` (D27). DV1 shows
-/// the jet only; filtering comes in DV3.
+/// The inspect line for device `id` under cell `(x, y)` (D27, DV3).
 fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let status = world.device_status(id)?;
     let label = &world.device_kinds().get(status.kind).label;
     let glass = if status.facing_left { "right" } else { "left" };
+    let guard = if status.fry_safe {
+        "fry-safe"
+    } else if status.intake_guard {
+        "guard on"
+    } else {
+        "guard off"
+    };
+    let hint = if status.fry_safe {
+        "R rinse · Shift+R hard rinse · M replace media"
+    } else {
+        "R rinse · Shift+R hard rinse · M replace media · I guard"
+    };
     Some(format!(
-        "{label} #{} · on the {glass} glass · flow {:.1} cells/s · at ({x}, {y})",
-        id.0, status.flow
+        "{label} #{} · on the {glass} glass · flow {:.1} cells/s · load {:.0}% · maturity {:.0}% · {guard} · at ({x}, {y}) · {hint}",
+        id.0,
+        status.flow,
+        status.media_load * 100.0,
+        status.maturity * 100.0,
     ))
 }

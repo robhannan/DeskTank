@@ -10,23 +10,27 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{World, WorldError};
-use crate::device::{Device, DeviceId, DeviceKind, DeviceKinds, DeviceStatus, MAX_DEVICES, Mount};
+use super::{LIFE_DAY_SECONDS, TICKS_PER_SECOND, World, WorldError};
+use crate::device::{
+    Device, DeviceId, DeviceKind, DeviceKinds, DeviceStatus, MAX_DEVICES, Mount, RinseKind,
+};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
-use crate::save::{SaveError, v12};
+use crate::save::{SaveError, v12, v13};
 
 /// The world's devices.
 #[derive(Clone, Debug)]
 pub(super) struct Devices {
     kinds: DeviceKinds,
-    table: BTreeMap<u16, Device>,
+    pub(super) table: BTreeMap<u16, Device>,
     /// Next id to try (ids are 1..=65535).
     next: u16,
     /// The material footprint cells are made of.
     material: Option<MaterialId>,
     /// Times the jet was rebuilt for a device change (tests).
     pub(super) rebuilds: u64,
+    /// Intake-neighbour cell lookups made by [`World::run_intakes`] (tests).
+    pub(super) intake_checks: u64,
 }
 
 impl Devices {
@@ -37,6 +41,7 @@ impl Devices {
             next: 1,
             material: materials.id("device"),
             rebuilds: 0,
+            intake_checks: 0,
         })
     }
 
@@ -90,6 +95,12 @@ impl World {
         self.devices.rebuilds
     }
 
+    /// Intake-neighbour cell checks performed by filtration (for tests).
+    #[must_use]
+    pub fn intake_cell_checks(&self) -> u64 {
+        self.devices.intake_checks
+    }
+
     /// Where a `kind` placed at cell `(x, y)` would go, and whether it fits
     /// there. An internal filter goes on the nearer side glass (the other
     /// one if `flip`), centred on `y` if it fits, else at the nearest
@@ -117,6 +128,9 @@ impl World {
             x: x0,
             y: usize::try_from(y0).unwrap_or(0),
             facing_left,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
         };
         if w <= self.width && bottom >= top {
             for k in 0..=h_i {
@@ -233,18 +247,198 @@ impl World {
             kind: d.kind,
             flow: (vx * vx + vy * vy).sqrt(),
             facing_left: d.facing_left,
+            media_load: d.media_load,
+            maturity: d.maturity,
+            intake_guard: d.intake_guard,
+            fry_safe: art.fry_safe,
         })
     }
 
-    /// Each device's nozzle (position and unit direction) paired with its own
-    /// intake cells and inward pull direction, for the 2D current field.
+    /// Rinses or replaces device `id`'s filter media (D27, DV3). Returns
+    /// whether the device exists.
+    pub fn rinse_device(&mut self, id: DeviceId, kind: RinseKind) -> bool {
+        let floor = self.life.eco.filtration.clog_floor;
+        let Some(d) = self.devices.table.get_mut(&id.0) else {
+            return false;
+        };
+        let before = d.flow_factor_with(floor);
+        d.media_load = 0.0;
+        match kind {
+            RinseKind::Gentle => {}
+            RinseKind::Hard => d.maturity *= 0.25,
+            RinseKind::Replace => d.maturity = 0.0,
+        }
+        let after = d.flow_factor_with(floor);
+        if before.to_bits() != after.to_bits() {
+            self.recompute_current();
+        }
+        true
+    }
+
+    /// Fits or removes device `id`'s intake guard (D27, DV3). Returns
+    /// whether the device exists.
+    pub fn set_device_intake_guard(&mut self, id: DeviceId, on: bool) -> bool {
+        let Some(d) = self.devices.table.get_mut(&id.0) else {
+            return false;
+        };
+        d.intake_guard = on;
+        true
+    }
+
+    /// Toggles device `id`'s intake guard, returning its new state.
+    pub fn toggle_device_intake_guard(&mut self, id: DeviceId) -> Option<bool> {
+        let d = self.devices.table.get_mut(&id.0)?;
+        d.intake_guard = !d.intake_guard;
+        Some(d.intake_guard)
+    }
+
+    /// Sets device `id`'s media load in `[0.0, 1.0]` (for tests and debug
+    /// scenes). Returns whether the device exists.
+    pub fn set_device_media_load(&mut self, id: DeviceId, load: f32) -> bool {
+        let floor = self.life.eco.filtration.clog_floor;
+        let Some(d) = self.devices.table.get_mut(&id.0) else {
+            return false;
+        };
+        let before = d.flow_factor_with(floor);
+        d.media_load = if load.is_finite() {
+            load.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let after = d.flow_factor_with(floor);
+        if before.to_bits() != after.to_bits() {
+            self.recompute_current();
+        }
+        true
+    }
+
+    /// Sets device `id`'s biological maturity in `[0.0, 1.0]` (for tests and
+    /// debug scenes). Returns whether the device exists.
+    pub fn set_device_maturity(&mut self, id: DeviceId, maturity: f32) -> bool {
+        let Some(d) = self.devices.table.get_mut(&id.0) else {
+            return false;
+        };
+        d.maturity = if maturity.is_finite() {
+            maturity.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        true
+    }
+
+    /// Effective biological filtration capacity across all filters in
+    /// `[0.0, 1.0]`: each filter contributes `maturity * flow_factor`.
+    #[must_use]
+    pub fn filter_bio_capacity(&self) -> f32 {
+        if self.devices.is_empty() {
+            return 0.0;
+        }
+        let floor = self.life.eco.filtration.clog_floor;
+        self.devices
+            .values()
+            .map(|d| d.maturity * d.flow_factor_with(floor))
+            .sum::<f32>()
+            .clamp(0.0, 1.0)
+    }
+
+    /// Adds `delta` to device `id`'s media load; returns whether its
+    /// quantized flow factor changed.
+    pub(super) fn add_device_load(&mut self, id: DeviceId, delta: f32) -> bool {
+        let floor = self.life.eco.filtration.clog_floor;
+        let Some(d) = self.devices.table.get_mut(&id.0) else {
+            return false;
+        };
+        let before = d.flow_factor_with(floor);
+        d.media_load = (d.media_load + delta).clamp(0.0, 1.0);
+        let after = d.flow_factor_with(floor);
+        before.to_bits() != after.to_bits()
+    }
+
+    /// Filtration pass (D27, DV3): checks only the immediate 8-neighbours of
+    /// each device's intake cells, capturing suspended particles into media
+    /// load, and advances biological maturity once per world second.
+    pub(super) fn run_intakes(&mut self) {
+        if self.devices.is_empty() {
+            return;
+        }
+        let cfg = self.life.eco.filtration;
+        let load_per_cell = if cfg.capacity > 0.0 {
+            1.0 / cfg.capacity
+        } else {
+            0.0
+        };
+        if let Some(water) = self.life.water
+            && !cfg.capture.is_empty()
+        {
+            const RING: [(isize, isize); 8] = [
+                (-1, -1),
+                (0, -1),
+                (1, -1),
+                (-1, 0),
+                (1, 0),
+                (-1, 1),
+                (0, 1),
+                (1, 1),
+            ];
+            let mut captured: Vec<(u16, usize)> = Vec::new();
+            let mut checks = 0u64;
+            for d in self.devices.table.values() {
+                let art = self.devices.kinds.get(d.kind);
+                for (ix, iy) in d.intakes(art) {
+                    for (dx, dy) in RING {
+                        checks += 1;
+                        if let Some(j) = self.at(ix, iy, dx, dy)
+                            && cfg.capture.contains(self.cells[j].material)
+                        {
+                            captured.push((d.id.0, j));
+                        }
+                    }
+                }
+            }
+            self.devices.intake_checks += checks;
+            let mut flow_changed = false;
+            for (dev_id, j) in captured {
+                // Re-check in case two intakes shared a neighbour cell.
+                if !cfg.capture.contains(self.cells[j].material) {
+                    continue;
+                }
+                self.write_cell(j % self.width, j / self.width, water, &mut None);
+                flow_changed |= self.add_device_load(DeviceId(dev_id), load_per_cell);
+            }
+            if flow_changed {
+                self.mark_devices_dirty();
+            }
+        }
+        // Biological media colonisation: once per world second.
+        if self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND)) && cfg.maturity_days > 0.0 {
+            #[allow(clippy::cast_precision_loss)] // LIFE_DAY_SECONDS = 600
+            let base_rate = 1.0 / (cfg.maturity_days * LIFE_DAY_SECONDS as f32);
+            for d in self.devices.table.values_mut() {
+                if d.maturity < 1.0 {
+                    let feed_mult = 1.0 + 0.5 * d.media_load;
+                    d.maturity = (d.maturity + base_rate * feed_mult).min(1.0);
+                }
+            }
+        }
+    }
+
+    /// Each device's nozzle (position and unit direction), its intake cells,
+    /// and its current flow factor in `[clog_floor, 1.0]`, for the 2D current
+    /// field.
     #[allow(clippy::type_complexity)] // internal tuple for recompute_current
-    pub(super) fn device_flows(&self) -> Vec<(((usize, usize), [f32; 2]), Vec<(usize, usize)>)> {
+    pub(super) fn device_flows(
+        &self,
+    ) -> Vec<(((usize, usize), [f32; 2]), Vec<(usize, usize)>, f32)> {
+        let floor = self.life.eco.filtration.clog_floor;
         self.devices
             .values()
             .map(|d| {
                 let art = self.devices.kinds.get(d.kind);
-                ((d.nozzle(art), d.nozzle_dir(art)), d.intakes(art).collect())
+                (
+                    (d.nozzle(art), d.nozzle_dir(art)),
+                    d.intakes(art).collect(),
+                    d.flow_factor_with(floor),
+                )
             })
             .collect()
     }
@@ -256,6 +450,9 @@ impl World {
             h.write(&(d.x as u64).to_le_bytes());
             h.write(&(d.y as u64).to_le_bytes());
             h.write(&[u8::from(d.facing_left)]);
+            h.write(&d.media_load.to_bits().to_le_bytes());
+            h.write(&d.maturity.to_bits().to_le_bytes());
+            h.write(&[u8::from(d.intake_guard)]);
         }
     }
 
@@ -274,26 +471,65 @@ impl World {
         (devices, self.devices.next)
     }
 
+    pub(super) fn save_device_filtration(&self) -> Vec<v13::DeviceFiltration> {
+        self.devices
+            .values()
+            .map(|d| v13::DeviceFiltration {
+                media_load: d.media_load,
+                maturity: d.maturity,
+                intake_guard: d.intake_guard,
+            })
+            .collect()
+    }
+
     /// Restores the device table (after the cells, before the life lists,
     /// so the current is worked out with the devices in place).
     pub(super) fn load_devices(
         &mut self,
         saved: &[v12::Device],
         next: u16,
+        filtration: Option<&[v13::DeviceFiltration]>,
     ) -> Result<(), SaveError> {
         if saved.len() > MAX_DEVICES {
             return Err(SaveError::Invalid(format!("{} devices", saved.len())));
         }
+        if let Some(f) = filtration
+            && f.len() != saved.len()
+        {
+            return Err(SaveError::Invalid(format!(
+                "{} device filtration records for {} devices",
+                f.len(),
+                saved.len()
+            )));
+        }
         let mut table = BTreeMap::new();
-        for s in saved {
+        for (i, s) in saved.iter().enumerate() {
             let kind = DeviceKind::from_name(&s.kind)
                 .ok_or_else(|| SaveError::Mismatch(format!("unknown device kind {:?}", s.kind)))?;
+            let (media_load, maturity, intake_guard) = if let Some(f) = filtration.map(|f| f[i]) {
+                if !(f.media_load.is_finite()
+                    && (0.0..=1.0).contains(&f.media_load)
+                    && f.maturity.is_finite()
+                    && (0.0..=1.0).contains(&f.maturity))
+                {
+                    return Err(SaveError::Invalid(format!(
+                        "device {} filtration out of range",
+                        s.id
+                    )));
+                }
+                (f.media_load, f.maturity, f.intake_guard)
+            } else {
+                (0.0, 0.0, false)
+            };
             let d = Device {
                 id: DeviceId(s.id),
                 kind,
                 x: s.x as usize,
                 y: s.y as usize,
                 facing_left: s.facing_left,
+                media_load,
+                maturity,
+                intake_guard,
             };
             let art = self.devices.kinds.get(kind);
             if s.id == 0

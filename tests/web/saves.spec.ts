@@ -14,7 +14,7 @@ const NATIVE_SAVE = path.join(root, "crates/desktank-sim/tests/fixtures/v1.dtank
 // The same tank as native re-saves it with this build's name tables
 // (`desktank-web`'s `a_native_save_opens` keeps it current).
 const NATIVE_RESAVED = path.join(root, "crates/desktank-web/tests/fixtures/v1-resaved.dtank");
-const NATIVE_HASH = "7550da115e75bf97";
+const NATIVE_HASH = "12858282b5ae5235";
 // The `layers` render scene at seed 1, saved natively by desktank-web's
 // tests (re-bless there with DESKTANK_BLESS=1).
 const SCENE = path.join(root, "crates/desktank/tests/scenes/layers.toml");

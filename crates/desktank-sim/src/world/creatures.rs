@@ -1413,6 +1413,7 @@ impl World {
             // A shift in depth alone changes how it is drawn (D21).
             changed |= self.update_creature(c) || c.z != z;
         }
+        changed |= self.intake_suction(&mut list);
         self.creatures.list = list;
         changed |= self.finish_breeding(breeding);
         if !self.creatures.corpses.is_empty() {
@@ -1421,6 +1422,74 @@ impl World {
         if changed {
             self.creatures.version += 1;
         }
+    }
+
+    /// Unguarded filter intakes suck in fry and small shrimp that reach
+    /// adjacent to an intake cell (D27, DV3). Skipped in easy mode (D4) and
+    /// for fry-safe filters or filters with their intake guard on.
+    fn intake_suction(&mut self, list: &mut Vec<Creature>) -> bool {
+        /// Shrimp up to 2.6 cm long (all cherry shrimp and young amano shrimp)
+        /// fit through an unguarded intake slot.
+        const SMALL_SHRIMP_MAX_MM: u32 = 26;
+        if self.creatures.easy || self.devices.is_empty() || list.is_empty() {
+            return false;
+        }
+        let mut intakes: Vec<(crate::DeviceId, usize, usize)> = Vec::new();
+        for d in self.devices.values() {
+            let art = self.devices.kinds().get(d.kind);
+            if art.fry_safe || d.intake_guard {
+                continue;
+            }
+            for (ix, iy) in d.intakes(art) {
+                intakes.push((d.id, ix, iy));
+            }
+        }
+        if intakes.is_empty() {
+            return false;
+        }
+        let mut sucked: Vec<crate::DeviceId> = Vec::new();
+        let before = list.len();
+        list.retain(|c| {
+            if c.held_until >= self.tick {
+                return true;
+            }
+            let is_fry = self.life_stage(c) == LifeStage::Fry;
+            let is_small_shrimp = !is_fry
+                && self
+                    .creatures
+                    .species
+                    .get(c.species)
+                    .is_some_and(|s| s.name.ends_with("_shrimp"))
+                && self.length_mm(c) <= SMALL_SHRIMP_MAX_MM;
+            if !is_fry && !is_small_shrimp {
+                return true;
+            }
+            let body = self.creature_body(c);
+            if body.is_empty() {
+                return true;
+            }
+            if let Some(&(dev_id, _, _)) = intakes.iter().find(|&&(_, ix, iy)| {
+                ix + 1 >= body.x0 && ix <= body.x1 && iy + 1 >= body.y0 && iy <= body.y1
+            }) {
+                sucked.push(dev_id);
+                false
+            } else {
+                true
+            }
+        });
+        if sucked.is_empty() {
+            return false;
+        }
+        let cap = self.life.eco.filtration.capacity;
+        let load_delta = if cap > 0.0 { 2.0 / cap } else { 0.0 };
+        let mut flow_changed = false;
+        for dev_id in sucked {
+            flow_changed |= self.add_device_load(dev_id, load_delta);
+        }
+        if flow_changed {
+            self.recompute_current();
+        }
+        list.len() != before
     }
 
     /// One tick of one creature. Returns whether it moved or turned.

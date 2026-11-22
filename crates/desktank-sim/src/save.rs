@@ -79,7 +79,9 @@
 //! Loading version 11 or older turns each connected group of legacy filter
 //! outlet cells into an internal filter placed at the group's centre on the
 //! nearer side glass, leaving the group as it was where no filter fits
-//! (D27); version 12 has no migration of its own yet.
+//! (D27). Version 13 (DV3) adds each device's filtration state (media load,
+//! biological maturity and intake guard); version 12 migrates with clean
+//! fresh media and guard off.
 
 use thiserror::Error;
 
@@ -91,6 +93,7 @@ pub(crate) mod v1;
 pub(crate) mod v10;
 pub(crate) mod v11;
 pub(crate) mod v12;
+pub(crate) mod v13;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -103,7 +106,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 12;
+pub const FORMAT_VERSION: u16 = 13;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -150,7 +153,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v12();
+    let snapshot = world.to_v13();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     wrap(FORMAT_VERSION, &raw)
@@ -180,6 +183,12 @@ fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
 /// version, or the snapshot doesn't fit the tables or itself.
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
+    if version == 13 {
+        let raw = decompress(payload)?;
+        let snapshot: v13::Save =
+            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
+        return World::from_v13(snapshot, materials);
+    }
     if version == 12 {
         let raw = decompress(payload)?;
         let snapshot: v12::Save =

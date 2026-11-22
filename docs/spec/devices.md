@@ -103,12 +103,15 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   the placement preview is a see-through **ghost** of the footprint at
   the pointer (tinted red where it doesn't fit), and a **flip** key (X)
   or button mounts it on the other glass instead. The inspect card (the
-  one creatures use) shows a device's status: media load, maturity and
-  flow (DV1 shows the flow only). Rinse and the intake-guard toggle join
-  the card with DV3. Drag-to-move (keeping state) and flow/air dials come
+  one creatures use) shows a device's status: flow, media load, maturity,
+  Rinse (gentle, hard, replace), and the intake-guard toggle (DV3).
+  Drag-to-move (keeping state) and flow/air dials come
   later. Non-interactive hosts (screensaver, lock screen) just run the
   devices.
-- **Migration** (save format v12). Version 12 saves the device table.
+- **Migration** (save format v12–v13). Version 12 saves the device table;
+  version 13 adds each device's filtration state (media load, biological
+  maturity and intake guard; version 12 migrates with clean fresh media
+  and guard off).
   Loading a version 11 or older save turns each connected group of
   legacy `filter_outlet` cells into an internal filter at the group's
   centre on the nearer glass; a group with no room for one (boxed in by
