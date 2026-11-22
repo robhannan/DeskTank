@@ -687,8 +687,17 @@ fn surface_ripple(
             let c_env = smoothstep(0.0, 0.18, ag) * (0.30 + 0.70 * ag);
             let dir_x = clamp(fv.x / speed, -1.0, 1.0);
             let vert = abs(fv.y) / speed;
-            let cw1 = sin(pos.x * 0.95 - phase * (4.2 * dir_x));
-            let cw2 = sin(pos.x * 1.9 - phase * (6.6 * dir_x) + 1.1) * 0.45;
+            let dir_t = dir_x * 0.5 + 0.5;
+            let cw1 = mix(
+                sin(pos.x * 0.95 + phase * 4.2),
+                sin(pos.x * 0.95 - phase * 4.2),
+                dir_t,
+            );
+            let cw2 = mix(
+                sin(pos.x * 1.9 + phase * 6.6 + 1.1),
+                sin(pos.x * 1.9 - phase * 6.6 + 1.1),
+                dir_t,
+            ) * 0.45;
             let c_chop = sin(pos.x * 2.1 + phase * 5.8) * 0.55 + cos(pos.x * 3.3 - phase * 7.4) * 0.35;
             let c_wave = mix(cw1 + cw2, c_chop, vert * 0.65) * c_env * 0.85;
             let c_impact = c_env * (0.18 + 0.52 * vert);

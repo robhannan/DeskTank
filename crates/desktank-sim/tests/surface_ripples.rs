@@ -226,3 +226,28 @@ fn hob_and_surface_current_agitation_coexist_cleanly_and_replay_deterministicall
         "far surface away from HOB should stay calm"
     );
 }
+
+#[test]
+fn surface_agitation_at_returns_zero_out_of_grid_for_non_multiple_of_eight_width() {
+    let mut w = world(161, 80, 41, 0.84);
+    // Mount a HOB filter at the right edge so its spillway agitates the final
+    // partial field column (covering x = 160).
+    w.add_device(DeviceKind::HobFilter, 152, 0, true)
+        .unwrap()
+        .expect("HOB fits");
+    for _ in 0..16 {
+        w.tick();
+    }
+    assert!(
+        w.surface_agitation_at(160) > 0.0,
+        "in-grid final column should be agitated (tail={:?})",
+        &w.surface_agitation()[w.surface_agitation().len() - 4..]
+    );
+    for x in 161..168 {
+        assert_eq!(
+            w.surface_agitation_at(x),
+            0.0,
+            "out-of-grid x={x} must return 0.0 even when x / 8 is in-bounds"
+        );
+    }
+}

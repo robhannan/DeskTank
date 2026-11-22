@@ -457,6 +457,9 @@ impl World {
     /// `x` (`0.0` outside the grid or below `surface_ripple_speed`).
     #[must_use]
     pub fn surface_agitation_at(&self, x: usize) -> f32 {
+        if x >= self.width {
+            return 0.0;
+        }
         self.life
             .surface_agitation
             .get(x / FIELD_SCALE)
