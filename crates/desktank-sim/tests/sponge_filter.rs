@@ -117,6 +117,32 @@ fn bed_mount_drops_onto_floor_substrate_and_hardscape_and_refuses_when_blocked()
             .device_placement(DeviceKind::SpongeFilter, 32, 12, false)
             .1
     );
+
+    // 5. Clicking shallow open water above a rock shelf refuses rather than
+    //    jumping downward through the shelf into water beneath it.
+    let mut shelf = world(64, 80, 1, 0.625); // surface_row = 30
+    let rock = shelf.materials().id("rock").unwrap();
+    shelf
+        .fill_rect(
+            Rect {
+                x0: 10,
+                y0: 40,
+                x1: 54,
+                y1: 49,
+            },
+            rock,
+            Brush::Replace,
+        )
+        .unwrap();
+    assert!(
+        !shelf
+            .device_placement(DeviceKind::SpongeFilter, 32, 35, false)
+            .1,
+        "must not jump through a rock shelf to reach water below"
+    );
+    // Clicking in open water beneath the shelf still drops onto the floor.
+    let (under, ok_under) = shelf.device_placement(DeviceKind::SpongeFilter, 32, 55, false);
+    assert!(ok_under && under.y == 80 - sh);
 }
 
 #[test]

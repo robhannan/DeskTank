@@ -388,6 +388,10 @@ impl DeviceShelf {
         Self { x: 0, y, height: 0 }
     }
 
+    /// Allocates a `frames`-frame strip of `w × h` texels. Single-row strips
+    /// (`frames * w <= ATLAS_WIDTH`) pack side-by-side so `frame_origin` never
+    /// wraps (`frame < frames <= ATLAS_WIDTH / w`); multi-row strips always
+    /// start at `x = 0` on a fresh row.
     fn alloc(&mut self, frames: usize, (w, h): (usize, usize)) -> (usize, usize) {
         let strip_w = w.saturating_mul(frames);
         let strip_h = h * frames.div_ceil((ATLAS_WIDTH / w).max(1));
@@ -399,6 +403,7 @@ impl DeviceShelf {
             }
             let origin = (self.x, self.y);
             self.x += strip_w;
+            debug_assert!(self.x <= ATLAS_WIDTH);
             self.height = self.height.max(strip_h);
             origin
         } else {

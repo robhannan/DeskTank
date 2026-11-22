@@ -164,10 +164,17 @@ impl World {
                     }
                 }
                 Mount::Bed => {
+                    // Lift upward when the pointer is on/inside a bed, or nudge
+                    // downward past an overhang only while the device still
+                    // reaches the clicked row `y` (never jumping through a
+                    // shelf below the pointer).
+                    let max_start = bottom.min(y);
                     let start = (0..=h_i).find_map(|k| {
-                        [want - k, want + k]
-                            .into_iter()
-                            .find(|&y0| (top..=bottom).contains(&y0) && self.device_fits(&at(y0)))
+                        [want - k, want + k].into_iter().find(|&y0| {
+                            (top..=bottom).contains(&y0)
+                                && (y0 <= want || y0 <= max_start)
+                                && self.device_fits(&at(y0))
+                        })
                     });
                     if let Some(mut y0) = start {
                         while y0 < bottom && self.device_fits(&at(y0 + 1)) {

@@ -171,6 +171,8 @@ pub(super) struct Life {
     pub(super) rng: Pcg32,
     /// Scratch list of cell indices for one batch.
     batch: Vec<u32>,
+    /// Scratch list of prefab device bubble outlets for one tick (avoids per-tick allocs).
+    bubble_outlets: Vec<(usize, usize, f64)>,
     nutrient: Field,
     co2: Field,
     light: Field,
@@ -296,6 +298,7 @@ impl Life {
             stats: RandomTickStats::default(),
             rng: chunk_stream(seed, 0, LIFE_STREAM),
             batch: Vec::new(),
+            bubble_outlets: Vec::new(),
             nutrient: field.clone(),
             co2: field.clone(),
             light: field,
@@ -1127,7 +1130,8 @@ impl World {
         // Air-driven prefab devices (DV4 sponge filter, later DV7 prefab bubbler).
         if !self.devices.is_empty() {
             let floor = self.life.eco.filtration.clog_floor;
-            let mut outlets: Vec<(usize, usize, f64)> = Vec::new();
+            let mut outlets = mem::take(&mut self.life.bubble_outlets);
+            outlets.clear();
             for d in self.devices.values() {
                 let art = self.devices.kinds().get(d.kind);
                 if art.bubble_rate <= 0.0 || art.bubble_outlets.is_empty() {
@@ -1139,9 +1143,10 @@ impl World {
                     outlets.push((bx, by, p));
                 }
             }
-            for (x, y, p) in outlets {
+            for &(x, y, p) in &outlets {
                 self.emit_bubble_above(x, y, p, emits, water);
             }
+            self.life.bubble_outlets = outlets;
         }
     }
 
