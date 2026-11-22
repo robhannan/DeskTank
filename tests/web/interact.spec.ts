@@ -473,8 +473,9 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await choose(page, "Sand");
 
   // Scrolling over the palette steps through the sub-categories, on into
-  // the next tab.
-  await page.locator("#palette-panel").hover();
+  // the next tab. Over the tab row, which stays put while the panel below
+  // it changes height.
+  await page.locator("#tabs").hover();
   await page.mouse.wheel(0, 40);
   await expect(tab("Hardscape")).toHaveAttribute("aria-selected", "true");
   await page.mouse.wheel(0, 80);
