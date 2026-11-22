@@ -25,7 +25,7 @@
 //
 // The webOS build (`pnpm build:web -- --legacy`, SPEC D26) runs this same
 // page on Chrome 68: <html data-build="webos">, MVP wasm, lowered syntax.
-// Keep to Chrome 68's APIs or feature-detect (docs/PROGRESS.md).
+// Keep to Chrome 68's APIs or feature-detect (docs/notes/web-and-webos.md).
 import init, { Graphics, WebTank, brushRange, gridFor, zoomLevels } from "./pkg/desktank_web.js";
 import type { Hooks, Settings } from "./hooks.js";
 import type { Save } from "./store.ts";

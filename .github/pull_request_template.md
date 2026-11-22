@@ -4,7 +4,7 @@
 - **`crates/desktank-sim`**: fish movement, ecology, plants
 - **`crates/desktank-render`**: shaders, draw passes (stay within WebGL2)
 - **`crates/desktank-platform`** / app crates: per-OS display modes, behind `cfg(target_os = …)`
-- **Web / docs**: `web/`, `docs/PROGRESS.md`, `docs/SPEC.md`
+- **Web / docs**: `web/`, `docs/spec/`, `docs/decisions/`, `docs/notes/`
 -->
 
 -
