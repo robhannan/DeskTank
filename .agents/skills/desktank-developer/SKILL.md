@@ -145,9 +145,18 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    and must not modify, commit or push anything. If nested spawning or
    delegation is unavailable, ask the orchestrator to run the reviewer
    with the same brief. Report any unavailable review.
-2. Verify each finding against the code before acting; reviewers can be
-   wrong.
-3. **Keep the PR's scope fixed.** Review fixes are only for defects in
+2. Check for GitHub Copilot's automated PR review (`copilot-pull-request-reviewer`)
+   in the PR conversation (`pull_request_read` with `sections: ["conversation"]`
+   in T3 Code, or `gh pr view` / `gh api` outside T3 Code). Include all
+   **non-Low** Copilot findings (Medium, High, Critical, or unlabelled) in
+   this review cycle alongside the agent review; Low-severity Copilot
+   findings may be skipped unless trivial. If Copilot has not posted yet
+   when the agent review finishes, check again once CI settles (or on a
+   `watch_pull_request` wake) and address any non-Low findings before
+   hand-off.
+3. Verify each finding from both reviews against the code before acting;
+   reviewers can be wrong.
+4. **Keep the PR's scope fixed.** Review fixes are only for defects in
    what this PR adds or changes: bugs, crashes, leaks, resource
    regressions, or broken tests in the new code. Anything else is a
    follow-up, not a fix:
@@ -162,13 +171,17 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    valid in-scope fix would grow the diff by more than roughly a third, or
    needs a new dependency or a design decision, escalate it in your report
    instead.
-4. Push the fixes, then reply on the PR with one comment that lists each
-   point as one of:
-   - ✅ fixed (with commit hash);
-   - 📝 documented;
-   - ➡️ follow-up (added to the roadmap);
-   - declined, with a short reason.
-5. Do at most one fix round. Only run a second, focused review if a
+5. Push the fixes (batching agent-review and Copilot fixes together when
+   both are available), then reply on the PR:
+   - For the agent review, post one comment listing each point as one of:
+     - ✅ fixed (with commit hash);
+     - 📝 documented;
+     - ➡️ follow-up (added to the roadmap);
+     - declined, with a short reason.
+   - For each addressed Copilot inline thread, reply on the thread with
+     the same outcome and resolve it (`pull_request_respond` with
+     `reviewThreadId` and `resolved: true` in T3 Code).
+6. Do at most one fix round. Only run a second, focused review if a
    fix changed behaviour in a non-trivial way, and apply the same scope
    rule to its findings.
 
@@ -187,7 +200,8 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   re-code) when a push creates no run, the PR head lags the branch, or a
   job is "Abandoned" with no log. Always bound CI waits and check that
   the PR head is the commit you are waiting on.
-- When CI is green on your latest commit and the review is addressed, stop.
+- When CI is green on your latest commit and both the agent review and
+  any non-Low Copilot findings are addressed, stop.
   **Never merge.** Recommend either "merge" or "escalate to the owner" in
   your report. Escalate for anything risky, architectural, hard to reverse,
   security-sensitive, needing new OS permissions or entitlements, or
