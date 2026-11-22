@@ -317,17 +317,18 @@ solid device cells that scoop removes like any other cell. All powders fall
 one cell per tick, so "sinks fast" bloodworms differ by density and repose,
 not speed.
 
-The v1 palette (D2):
+The v1 palette (D2), by where the palette offers it (§2.5; materials
+without a `palette` path, such as air, propagules, eggs and dead plant
+matter, aren't offered):
 
-| Group | Materials |
+| Palette category | Materials |
 |---|---|
-| Water and air | water (the medium, the "empty" cell), air (above the surface) |
-| Substrates | sand, gravel, aquasoil (holds nutrients), rock (rigid), driftwood (rigid, lighter than water) |
-| Food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders); live foods (live bloodworms) are creatures offered from the same group (§2.4 *Live food*, D25) |
-| Fertilisers | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), CO₂ (bubbles that dissolve into the CO₂ field and boost plant growth) |
-| Life | seeds and cuttings of each plant species (become plants, §2.7), moss (grows on rock and wood; a plant species from T6b), algae (nuisance; grows with excess light and nutrients), eggs (one material per breeding species, which hatches into fry) |
-| Gases | air bubbles (from the bubbler, plants and creatures), CO₂ bubbles |
-| Decay | waste, dead plant matter and corpses, which sink and become **detritus**; detritus slowly disintegrates into nutrients |
+| Build › Substrate | sand, gravel, aquasoil (holds nutrients) |
+| Build › Hardscape | rock (rigid), driftwood (rigid, lighter than water) |
+| Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
+| Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders); live foods (live bloodworms) are creatures offered from Food › Live (§2.4 *Live food*, D25) |
+| Care | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), waste and **detritus** (waste, dead plant matter and corpses sink and become detritus, which slowly disintegrates into nutrients) |
+| Plants › Algae | algae (nuisance; grows with excess light and nutrients); plant species (moss among them, from T6b) are palette items of their own under Plants, pouring their seeds, cuttings, fragments, runners or buds (§2.7); eggs (one material per breeding species, which hatch into fry) aren't offered |
 | Chaos *(hidden behind a setting, off by default)* | acid (dissolves substrate and plants), magma (boils water into steam bubbles and cools into rock), dye (tints the water), salt (harms freshwater life), blight (spreads through plants) |
 
 Plants are structures of cells: roots, stems, leaves. A plant grows by
@@ -675,10 +676,10 @@ target computes the same bits.
 
 - *Live food* (D25; `desktank_sim::world::creatures::live`): some foods
   are alive. A species with `live_food = "<material>"` is live food: a
-  small creature moved by the usual systems, offered from the **Food**
-  palette group (a click adds a pinch of `PINCH` = 5, scattered within 3
-  cells of the pointer) and never from Creatures, `spawn` or
-  `scene::stock`. It never breeds (no `[breeding]`, `[genetics]`,
+  small creature moved by the usual systems, offered from **Food › Live**
+  in the palette (a click adds a pinch of `PINCH` = 5, scattered within 3
+  cells of the pointer) and never from Fish, Invertebrates or
+  Amphibians, `spawn` or `scene::stock`. It never breeds (no `[breeding]`, `[genetics]`,
   `prey_cm`, territory or diet is allowed), and it doesn't count against
   the population cap: a tank holds at most `MAX_LIVE_FOOD` = 32 live
   foods beside the cap (the renderer draws up to cap + 32 + corpses).
@@ -725,14 +726,50 @@ target computes the same bits.
     the overlay. In wallpaper-only mode the tank is temporarily drawn in
     that window, with opaque water, so you can see what you are pouring
     through your other windows;
-  - a small pixel-art palette appears in a screen corner. It is grouped
-    (Tools, Substrate, Water, Food, Plants, Waste, Devices, Creatures):
-    a row of group tabs over the open group's items, with number keys
-    picking within the group and a key (`G` / `Shift+G`) or scrolling
-    over the palette switching group. A material's group is data
-    (`palette = "…"` in its TOML; materials without one aren't
-    offered); `desktank_sim::tools::Tools::palette_groups` gives every
-    host the same groups.
+  - a small pixel-art palette appears in a screen corner. It is a
+    two-level tree: a row of top tabs, a row of the open tab's
+    sub-tabs (none where a tab has only one sub-category) and the open
+    sub-category's items:
+    - **Tools**: scoop, net, inspect, glue, magnify;
+    - **Build**: Substrate (sand, gravel, aquasoil), Hardscape (rock,
+      driftwood), Devices (bubbler, filter outlet);
+    - **Water**: water, air bubbles, CO₂ bubbles;
+    - **Food**: Fish food (flakes, pellets, frozen bloodworms, algae
+      wafers), Live (live bloodworms);
+    - **Care**: root tabs, liquid fertiliser, waste, detritus;
+    - **Plants**: Stem, Rosette, Carpet, Floating, Moss & epiphytes
+      (one item per plant species), Algae;
+    - **Fish**, by stocking role: Schooling (neon tetra, harlequin
+      rasbora, guppy), Centrepiece (angelfish, betta, flowerhorn, honey
+      gourami, pea puffer), Coldwater (common and fancy goldfish),
+      Clean-up crew (corydoras, kuhli loach, bristlenose pleco,
+      otocinclus);
+    - **Invertebrates**: Shrimp & crabs, Snails;
+    - **Amphibians**: the frogs and the axolotl (one sub-category, so no
+      sub-tab row).
+
+    The stocking tabs have one item per stocked species; cheat-only
+    species aren't offered.
+
+    The open tab opens into a lighter panel holding its sub-tabs and
+    items, and sub-tabs are framed in their own colour, so the two
+    levels never read as one row of the same kind. Every tab, sub-tab
+    and chip is square-cornered pixel art; on the web the sub-tabs and
+    propagule chips are smaller, lighter bevelled buttons, the open one
+    drawn pressed in.
+    Chaos materials (not built yet, §2.2) will name categories too and
+    be offered only while their setting is on.
+    `G` / `Shift+G` step the top tabs, `H` / `Shift+H` the sub-tabs, `1`–`0`
+    pick within the open sub-category, `P` picks how the selected plant
+    starts, and scrolling over the palette steps through the
+    sub-categories on into the next tab. Where an asset is offered is
+    data: `palette = "top/sub"` (or `"top"` for a tab with one
+    sub-category) in its material, plant or species TOML, checked at
+    load against the tree in `desktank_sim::palette` (an unknown path, or
+    one for another kind of asset, is a load error naming the valid
+    ones); assets without one aren't offered.
+    `desktank_sim::tools::Tools::palette_tree` gives every host the same
+    tree.
 - **Tools:**
   - **pour** the selected material: left-drag, with the scroll wheel
     setting brush size;
@@ -1159,10 +1196,11 @@ stays a material film, not individuals.
     checkbox persisted in `localStorage`), capped at 10 fps
     (`SWAY_MAX_FPS`), and automatically disabled on battery, in
     screensaver mode, while hidden, or when the tank has no plants.
-- **Interaction.** The palette gets one plants slot with a species picker
-  (the palette strip is short, §9 T4) in `desktank window` and on the
-  web, and a propagule picker listing only that species' methods (seeds,
-  cuttings, fragments), pouring the species as the picked propagule. Inspect shows species,
+- **Interaction.** Each plant species is a palette item under Plants
+  (§2.5), in `desktank window` and on the web. It pours the species as
+  its default propagule; `P` (and, on the web, a row of chips under the
+  items listing only that species' methods: seeds, cuttings, fragments,
+  runners, buds) picks another, remembered per species. Inspect shows species,
   age, health, size and what is limiting growth (for example, "light too
   low"). The water-quality score counts plant cells from the table.
 
@@ -2450,9 +2488,10 @@ Each package depends only on the packages before it.
   shader draws the brush outline. Touch strokes start once a finger moves
   8 CSS px, so a long-press (500 ms) or a second finger never pours first;
   a tap uses the tool once. The reference-phone check is left to the
-  owner, see PROGRESS. Later the palette was grouped (§2.5): group tabs
-  over the open group's radio group, both wrapping, so nothing scrolls
-  sideways on a phone.)*
+  owner, see PROGRESS. Later the palette became a category tree (§2.5):
+  tabs, sub-tabs and the open sub-category's radio group, plus a selected
+  plant's propagule chips, all wrapping, so nothing scrolls sideways on a
+  phone.)*
 - [x] **WB3 Web persistence and ownership** (after T8). IndexedDB saves
   using the §2.6 format, save on hide and `pagehide`, autosave,
   `navigator.storage.persist()`, export/import, Web Locks ownership with

@@ -106,100 +106,127 @@ fn palette_matches_the_sim() {
     assert_eq!(t.selected(), sand, "starts on sand");
 }
 
-/// Each item's group, in the sim's group order; a group's items are
-/// consecutive.
+/// Each item's sub-category, in the sim's tree order; a sub-category's
+/// items are consecutive.
 #[test]
-fn palette_groups_follow_the_sim() {
+fn palette_categories_follow_the_sim() {
     let t = tank();
-    let groups = t.palette_groups();
-    assert_eq!(groups.len(), t.palette().len());
-    let mut order: Vec<&str> = groups.iter().map(String::as_str).collect();
+    let cats = t.palette_categories();
+    assert_eq!(cats.len(), t.palette().len());
+    let mut order: Vec<&str> = cats.iter().map(String::as_str).collect();
     order.dedup();
-    let sim: Vec<_> = Tools::palette_groups(t.tank().world())
+    let sim: Vec<_> = Tools::palette_tree(t.tank().world())
         .iter()
-        .map(|(g, _)| format!("{} {}", g.name(), g.label()))
+        .flat_map(|tab| &tab.subs)
+        .map(|s| {
+            format!(
+                "{}\t{}\t{}",
+                s.path.name(),
+                s.path.top_label(),
+                s.path.label()
+            )
+        })
         .collect();
-    assert_eq!(order, sim, "each group once, in order");
+    assert_eq!(order, sim, "each sub-category once, in order");
+    let cat = |entry: &str| cats[slot(&t, entry) as usize].as_str();
+    assert_eq!(cat("material sand"), "build/substrate\tBuild\tSubstrate");
+    assert_eq!(cat("tool net"), "tools\tTools\tTools");
+    assert_eq!(cat("device bubbler"), "build/devices\tBuild\tDevices");
     assert_eq!(
-        groups[slot(&t, "material sand") as usize],
-        "substrate Substrate"
+        cat("plant java_moss"),
+        "plants/moss\tPlants\tMoss & epiphytes"
     );
-    assert_eq!(groups[slot(&t, "tool net") as usize], "tools Tools");
     assert_eq!(
-        groups[slot(&t, "device bubbler") as usize],
-        "devices Devices"
+        cat("creature axolotl"),
+        "amphibians\tAmphibians\tAmphibians"
     );
-    // Live food is in the Food group, not Creatures, and not a species the
+    // Fish are split by stocking role.
+    for (fish, sub) in [
+        ("neon_tetra", "schooling\tFish\tSchooling"),
+        ("betta", "centrepiece\tFish\tCentrepiece"),
+        ("fancy_goldfish", "coldwater\tFish\tColdwater"),
+        ("otocinclus", "cleanup\tFish\tClean-up crew"),
+    ] {
+        assert_eq!(cat(&format!("creature {fish}")), format!("fish/{sub}"));
+    }
+    assert_eq!(
+        cat("creature nerite"),
+        "invertebrates/snails\tInvertebrates\tSnails"
+    );
+    // Live food is in Food › Live, not Fish, and not a species the
     // palette stocks.
     assert_eq!(t.live_foods(), ["live_bloodworm"]);
-    assert_eq!(
-        groups[slot(&t, "live_food live_bloodworm") as usize],
-        "food Food"
-    );
+    assert_eq!(cat("live_food live_bloodworm"), "food/live\tFood\tLive");
     assert!(!t.species().contains(&"live_bloodworm".to_owned()));
+    // Plant slots carry their species' description for a tooltip.
+    let about = t.palette_descriptions();
+    assert_eq!(about.len(), cats.len());
+    assert_ne!(about[slot(&t, "plant rotala") as usize], "");
+    assert_eq!(about[slot(&t, "material sand") as usize], "");
 }
 
 #[test]
-fn the_propagule_picker_lists_the_species_methods_and_seeds_pour() {
+fn the_propagule_chips_list_the_species_methods_and_seeds_pour() {
     let mut t = tank();
-    assert_eq!(t.plant_species_selected(), 0, "hygrophila");
+    // Nothing to pick until a plant slot is selected.
+    assert_eq!(t.plant_propagules(), Vec::<String>::new());
+    assert_eq!(t.plant_propagule(), "");
+    assert!(!t.set_plant_propagule("seeds"));
+    assert_eq!(t.next_plant_propagule(), "");
+    t.select(slot(&t, "plant hygrophila"));
     assert_eq!(t.plant_propagules(), ["seeds", "cuttings", "fragments"]);
     assert_eq!(t.plant_propagule(), "cuttings");
     assert!(!t.set_plant_propagule("spores"));
     assert!(t.set_plant_propagule("seeds"));
     assert_eq!(t.plant_propagule(), "seeds");
-    t.select(slot(&t, "plant plants"));
     t.set_radius(0);
     down(&mut t, PRIMARY, 60, 30);
     t.pointer_up(PRIMARY);
     assert_eq!(t.material_count("seed"), 1);
-    // Rotala only grows from cuttings: seeds fall back, and can't be picked.
-    let rotala = t
-        .plant_species()
-        .iter()
-        .position(|s| s.starts_with("rotala "))
-        .unwrap();
-    t.set_plant_species(u32::try_from(rotala).unwrap());
+    // Rotala only grows from cuttings: seeds can't be picked.
+    t.select(slot(&t, "plant rotala"));
     assert_eq!(t.plant_propagules(), ["cuttings"]);
     assert_eq!(t.plant_propagule(), "cuttings");
     assert!(!t.set_plant_propagule("seeds"));
+    assert_eq!(t.next_plant_propagule(), "cuttings", "one method wraps");
     // Carpets spread by fragments and runners (fragments listed first);
     // picked, runners pour a plantlet (the cutting material).
-    let grass = t
-        .plant_species()
-        .iter()
-        .position(|s| s.starts_with("dwarf_hairgrass "))
-        .unwrap();
-    t.set_plant_species(u32::try_from(grass).unwrap());
+    t.select(slot(&t, "plant dwarf_hairgrass"));
     assert_eq!(t.plant_propagules(), ["fragments", "runners"]);
-    assert!(t.set_plant_propagule("runners"));
+    assert_eq!(t.next_plant_propagule(), "runners");
     assert_eq!(t.plant_propagule(), "runners");
     down(&mut t, PRIMARY, 90, 30);
     t.pointer_up(PRIMARY);
     assert_eq!(t.material_count("cutting"), 1);
-    // Floaters spread by fragments and buds (T6c part 2); a poured bud is
-    // a plantlet too.
-    let duckweed = t
-        .plant_species()
-        .iter()
-        .position(|s| s.starts_with("duckweed "))
-        .unwrap();
-    t.set_plant_species(u32::try_from(duckweed).unwrap());
+    // Floaters spread by fragments and buds (T6c part 2).
+    t.select(slot(&t, "plant duckweed"));
     assert_eq!(t.plant_propagules(), ["fragments", "buds"]);
     assert!(t.set_plant_propagule("buds"));
     assert_eq!(t.plant_propagule(), "buds");
+    // Each species keeps its own pick, and a new tank keeps them all.
+    t.select(slot(&t, "plant hygrophila"));
+    assert_eq!(t.plant_propagule(), "seeds");
+    let mut next = tank();
+    next.keep_plant_picks(&t);
+    next.select(slot(&next, "plant duckweed"));
+    assert_eq!(next.plant_propagule(), "buds");
 }
 
 #[test]
-fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
+fn a_plant_slot_pours_its_species_and_inspect_shows_the_plant() {
     let mut t = tank();
-    let species = t.plant_species();
-    assert_eq!(species.len(), 18);
-    assert!(species[0].starts_with("hygrophila "));
+    let plants: Vec<_> = t
+        .palette()
+        .into_iter()
+        .filter_map(|e| e.strip_prefix("plant ").map(str::to_owned))
+        .collect();
+    assert_eq!(plants.len(), 18, "one slot per species");
     for name in [
+        "hygrophila",
         "ludwigia",
         "cabomba",
         "bacopa",
+        "java_moss",
         "christmas_moss",
         "amazon_sword",
         "vallisneria",
@@ -213,25 +240,16 @@ fn the_plants_slot_pours_the_picked_species_and_inspect_shows_the_plant() {
         "marimo",
         "tiger_lotus",
     ] {
-        let entry = format!("{name} ");
-        assert!(species.iter().any(|s| s.starts_with(&entry)), "{name}");
+        assert!(plants.iter().any(|s| s == name), "{name}");
     }
-    assert_eq!(t.plant_species_selected(), 0);
-    let moss = species
-        .iter()
-        .position(|s| s.starts_with("java_moss "))
-        .unwrap();
-    let moss = u32::try_from(moss).unwrap();
-    t.set_plant_species(moss);
-    t.set_plant_species(99);
-    assert_eq!(t.plant_species_selected(), moss, "bad indices are ignored");
-    let plants = slot(&t, "plant plants");
-    t.select(plants);
+    let moss = slot(&t, "plant java_moss");
+    t.select(moss);
+    assert_eq!(t.selected(), moss);
     t.set_radius(0);
     down(&mut t, PRIMARY, 60, 30);
     t.pointer_up(PRIMARY);
     assert_eq!(t.material_count("cutting"), 1);
-    let colour = &t.palette_colours()[plants as usize];
+    let colour = &t.palette_colours()[moss as usize];
     let moss_colour = t
         .tank()
         .world()

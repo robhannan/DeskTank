@@ -3,7 +3,7 @@
 //! inspect and add tools work on them.
 #![allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
 
-use desktank_sim::tools::{Button, Inspection, Outcome, PaletteGroup, PaletteItem, Tool, Tools};
+use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
     BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, LIFE_DAY_TICKS, MaterialId, MaterialTable,
     MovementClass, Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig,
@@ -551,17 +551,21 @@ fn the_palette_adds_creatures_of_each_species() {
             _ => None,
         })
         .collect();
-    // The Creatures group holds only stocked species (no live food).
-    let (_, group) = Tools::palette_groups(&w)
+    // The Fish, Invertebrates and Amphibians tabs hold only stocked
+    // species (no live food), and every stocked species is in one of them.
+    let stocking: Vec<_> = Tools::palette_tree(&w)
         .into_iter()
-        .find(|(g, _)| *g == PaletteGroup::Creatures)
-        .unwrap();
-    assert!(group.iter().all(|&i| matches!(
+        .filter(|t| ["fish", "invertebrates", "amphibians"].contains(&t.name))
+        .flat_map(|t| t.subs)
+        .flat_map(|s| s.items)
+        .collect();
+    assert!(stocking.iter().all(|&i| matches!(
         i,
         PaletteItem::Tool(Tool::AddCreature(s)) if w.species().get(s).is_some_and(desktank_sim::Species::stocked)
     )));
+    assert_eq!(stocking.len(), adders.len());
     // Every species but the cheat-only crabs and blinker, and live food
-    // (its slot is in the Food group: tests/live_food.rs).
+    // (its slot is in Food › Live: tests/live_food.rs).
     let stocked = w.species().iter().filter(|s| s.stocked()).count();
     let live = w.species().iter().filter(|s| s.live_food).count();
     assert_eq!(

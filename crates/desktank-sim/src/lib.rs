@@ -12,6 +12,7 @@ pub mod field;
 mod grid;
 mod hash;
 pub mod material;
+pub mod palette;
 mod placeable;
 pub mod plants;
 mod rng;
@@ -30,6 +31,7 @@ pub use material::{
     DRIFTWOOD_WET_DENSITY, GLUED_VARIANT_BIT, MAX_DRIFTWOOD_WETNESS, Material, MaterialError,
     MaterialId, MaterialTable, MovementClass, driftwood_variant, driftwood_wetness,
 };
+pub use palette::{Holds, PalettePath, PalettePathError};
 pub use placeable::Placeable;
 pub use plants::{
     Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,

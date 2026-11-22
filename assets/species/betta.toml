@@ -2,6 +2,7 @@
 # surface and gulps air there. Eats flakes, bloodworms and pellets.
 id = 3
 name = "betta"
+palette = "fish/centrepiece"
 zone = "surface"
 depth = [0.0, 0.3]
 # Water twice as deep as its finnage is tall.

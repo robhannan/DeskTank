@@ -91,14 +91,16 @@ export const cellCount = (page: Page, name: string) => page.evaluate((n) => wind
 export const stateHash = (page: Page) => page.evaluate(() => window.desktank.tank.stateHash());
 export const gridSize = (page: Page) => page.evaluate(() => [window.desktank.tank.width(), window.desktank.tank.height()]);
 
-// Selects the palette item labelled `name`: opens its group's tab, then
-// clicks it.
+// Selects the palette item labelled `name`: opens its tab and sub-tab,
+// then clicks it.
 export async function choose(page: Page, name: string) {
-  const group = await page
+  const path = await page
     .locator("#palette .swatch")
-    .evaluateAll((els: HTMLElement[], n) => els.find((b) => b.textContent === n)?.dataset.group, name);
-  expect(group, `${name} in the palette`).toBeTruthy();
-  await page.locator(`#groups [data-group="${group}"]`).click();
+    .evaluateAll((els: HTMLElement[], n) => els.find((b) => b.textContent === n)?.dataset.path, name);
+  expect(path, `${name} in the palette`).toBeTruthy();
+  await page.locator(`#tabs [data-tab="${path?.split("/")[0]}"]`).click();
+  const sub = page.locator(`#subtabs [data-path="${path}"]`);
+  if (await sub.isVisible()) await sub.click();
   await page.getByRole("radio", { name, exact: true }).click();
 }
 

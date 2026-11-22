@@ -7,6 +7,7 @@
 # reddens further in strong light with lean water.
 id = 18
 name = "tiger_lotus"
+palette = "plants/rosette"
 description = "Mottled red leaves on long stalks from a bulb; some float."
 form = "rosette"
 propagation = ["runners"]

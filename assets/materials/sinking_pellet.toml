@@ -1,8 +1,8 @@
 # Sinks straight to the bottom; rots into detritus if nothing eats it.
 id = 31
 name = "sinking_pellet"
-# The palette group it is poured from (SPEC §2.5).
-palette = "food"
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
+palette = "food/fish"
 class = "powder"
 density = 1.4
 repose = 40.0

@@ -1,5 +1,6 @@
 id = 24
 name = "african_dwarf_frog"
+palette = "amphibians"
 zone = "mid"
 depth = [0.0, 1.0]
 min_depth = 12

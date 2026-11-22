@@ -3,8 +3,8 @@
 # (up to 1.2) and sinks gently to the bed.
 id = 14
 name = "driftwood"
-# The palette group it is poured from (SPEC §2.5).
-palette = "substrate"
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
+palette = "build/hardscape"
 class = "rigid"
 density = 0.7
 colour = "#6b4a2f"

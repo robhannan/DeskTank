@@ -4,6 +4,7 @@
 # tops and side shoots root as new plants.
 id = 4
 name = "ludwigia"
+palette = "plants/stem"
 description = "A bronze-red stem plant with round leaves; moderate light."
 form = "stem"
 propagation = ["cuttings", "fragments"]

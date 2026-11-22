@@ -362,7 +362,7 @@ impl Renderer {
         lens: [f32; 4],
     ) -> Vec<u8> {
         let hud = palette.map_or([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, field_mode, 0.0], |p| {
-            let (w, h) = hud::image_size(p.tabs, p.items);
+            let (w, h) = hud::image_size(p.tabs, p.subs, p.items);
             [
                 p.origin.0 as f32,
                 p.origin.1 as f32,

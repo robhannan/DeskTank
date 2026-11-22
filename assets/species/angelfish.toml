@@ -1,5 +1,6 @@
 id = 17
 name = "angelfish"
+palette = "fish/centrepiece"
 zone = "mid"
 depth = [0.18, 0.8]
 min_depth = 46
