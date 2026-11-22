@@ -85,6 +85,17 @@ pub enum Mount {
     SideGlass,
 }
 
+impl Mount {
+    /// Whether devices with this mount can be flipped between opposite sides
+    /// (left and right glass).
+    #[must_use]
+    pub const fn flippable(self) -> bool {
+        match self {
+            Self::SideGlass => true,
+        }
+    }
+}
+
 /// One kind's art and placement rules.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeviceArt {

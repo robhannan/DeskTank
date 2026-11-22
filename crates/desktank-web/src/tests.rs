@@ -1013,3 +1013,45 @@ fn magnify_tool_controls_lens_without_dirtying_world() {
     t.pointer_leave();
     assert_eq!(t.tank().magnifier(), None);
 }
+
+#[test]
+fn flip_device_only_applies_to_flippable_device_tools() {
+    let mut t = paused();
+    // Default tool (sand) and non-flippable tools/devices cannot flip.
+    assert!(!t.can_flip_device());
+    assert!(!t.device_flipped());
+    assert!(!t.flip_device());
+    assert!(!t.device_flipped());
+
+    for entry in [
+        "tool scoop",
+        "tool inspect",
+        "tool magnify",
+        "device bubbler",
+        "plant java_moss",
+        "creature neon_tetra",
+    ] {
+        t.select(slot(&t, entry));
+        assert!(!t.can_flip_device(), "{entry} should not be flippable");
+        assert!(!t.flip_device(), "{entry} should ignore flip_device");
+        assert!(!t.device_flipped());
+    }
+
+    // Internal filter supports flipping.
+    t.select(slot(&t, "device internal_filter"));
+    assert!(t.can_flip_device());
+    assert!(t.flip_device());
+    assert!(t.device_flipped());
+
+    // Switching away preserves the stored setting without letting flip_device toggle it.
+    t.select(slot(&t, "material sand"));
+    assert!(!t.can_flip_device());
+    assert!(t.flip_device());
+    assert!(t.device_flipped());
+
+    // Switching back restores flippability and can toggle off again.
+    t.select(slot(&t, "device internal_filter"));
+    assert!(t.can_flip_device());
+    assert!(!t.flip_device());
+    assert!(!t.device_flipped());
+}

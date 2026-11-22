@@ -288,6 +288,17 @@ impl Tools {
         self.flip
     }
 
+    /// Whether the selected tool places a device that supports flipping onto
+    /// the other side glass.
+    #[must_use]
+    pub fn can_flip(&self, world: &World) -> bool {
+        let Tool::Place(p) = self.tool else {
+            return false;
+        };
+        p.device()
+            .is_some_and(|kind| world.device_kinds().get(kind).mount.flippable())
+    }
+
     /// The ghost of the device the place tool would put down at the
     /// pointer, and whether it fits there ([`World::device_placement`]).
     #[must_use]
@@ -1409,7 +1420,17 @@ mod tests {
             .get(crate::DeviceKind::InternalFilter)
             .cells;
         let mut t = Tools::new(id(&w, "sand"));
+        assert!(!t.can_flip(&w), "pour tool cannot flip");
+        t.select(PaletteItem::Tool(Tool::Scoop));
+        assert!(!t.can_flip(&w), "scoop cannot flip");
+        t.select(PaletteItem::Tool(Tool::Inspect));
+        assert!(!t.can_flip(&w), "inspect cannot flip");
+        t.select(PaletteItem::Tool(Tool::Magnify));
+        assert!(!t.can_flip(&w), "magnify cannot flip");
+        t.select(PaletteItem::Tool(Tool::Place(Placeable::Bubbler)));
+        assert!(!t.can_flip(&w), "bubbler does not flip");
         t.select(PaletteItem::Tool(Tool::Place(Placeable::InternalFilter)));
+        assert!(t.can_flip(&w), "side-glass internal filter flips");
         assert_eq!(t.preview(), None);
         // The ghost follows the pointer: on the nearer (left) glass, or the
         // other one when flipped.
