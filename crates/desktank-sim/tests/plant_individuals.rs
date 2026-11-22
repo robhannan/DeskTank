@@ -419,18 +419,20 @@ fn inspect_shows_species_age_health_size_and_what_limits_growth() {
 }
 
 #[test]
-fn the_plants_slot_pours_the_picked_species() {
+fn each_plant_species_has_a_slot_that_pours_it() {
     let mut w = bedded(64, 8, 7);
     let items = Tools::palette(&w);
-    assert!(items.contains(&PaletteItem::Tool(Tool::Plant)));
+    for s in w.plant_species().iter() {
+        assert!(
+            items.contains(&PaletteItem::Tool(Tool::Plant(s.id))),
+            "{}",
+            s.name
+        );
+    }
     let mut tools = Tools::new(id(&w, "sand"));
-    tools.select(PaletteItem::Tool(Tool::Plant));
-    assert_eq!(
-        tools.plant_species(&w),
-        w.plant_species().default_species().map(|s| s.id)
-    );
     let moss = species(&w, "java_moss");
-    tools.set_plant_species(moss);
+    tools.select(PaletteItem::Tool(Tool::Plant(moss)));
+    assert_eq!(tools.selected_plant(), Some(moss));
     tools.resize(-3);
     assert!(matches!(
         tools.press(&mut w, Button::Primary, (80, 20)),
@@ -442,17 +444,10 @@ fn the_plants_slot_pours_the_picked_species() {
         (c.material, c.state),
         (id(&w, "cutting"), u16::from(moss.0))
     );
-    // Cycling wraps through every species.
-    let n = w.plant_species().len();
-    let mut seen = BTreeSet::new();
-    for _ in 0..n {
-        seen.insert(tools.next_plant_species(&w).unwrap());
-    }
-    assert_eq!(seen.len(), n);
 }
 
 #[test]
-fn the_plants_slot_pours_the_picked_propagule_within_the_species() {
+fn a_plant_slot_pours_the_propagule_picked_within_its_species() {
     let w = bedded(64, 8, 9);
     let (hyg, moss, rotala) = (
         species(&w, "hygrophila"),
@@ -460,27 +455,27 @@ fn the_plants_slot_pours_the_picked_propagule_within_the_species() {
         species(&w, "rotala"),
     );
     let mut tools = Tools::new(id(&w, "sand"));
+    let slot = |s| PaletteItem::Tool(Tool::Plant(s));
     // Each species starts on its default: cuttings if it lists them.
-    tools.set_plant_species(hyg);
+    tools.select(slot(hyg));
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Cuttings));
-    tools.set_plant_species(moss);
+    tools.select(slot(moss));
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Fragments));
     // Only the methods the species lists are taken.
     assert!(!tools.set_plant_propagule(&w, Propagule::Seeds));
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Fragments));
-    tools.set_plant_species(hyg);
+    tools.select(slot(hyg));
     assert!(tools.set_plant_propagule(&w, Propagule::Seeds));
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Seeds));
-    // A species change keeps a choice it allows and falls back otherwise.
-    tools.set_plant_species(rotala);
+    // Picks are per species: rotala keeps its own default.
+    tools.select(slot(rotala));
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Cuttings));
-    // A host's new tools keep both picks as they are.
+    // A host's new tools keep the picks as they are.
     let mut fresh = Tools::new(id(&w, "sand"));
     fresh.keep_plant_picks(&tools);
-    assert_eq!(fresh.plant_species(&w), Some(rotala));
-    fresh.set_plant_species(hyg);
+    fresh.select(slot(hyg));
     assert_eq!(fresh.plant_propagule(&w), Some(Propagule::Seeds));
-    tools.set_plant_species(hyg);
+    tools.select(slot(hyg));
     assert_eq!(tools.plant_propagule(&w), Some(Propagule::Seeds));
     // Cycling goes through hygrophila's three methods and wraps.
     let cycle: Vec<_> = (0..3)
@@ -490,7 +485,7 @@ fn the_plants_slot_pours_the_picked_propagule_within_the_species() {
         cycle,
         [Propagule::Cuttings, Propagule::Fragments, Propagule::Seeds]
     );
-    tools.set_plant_species(rotala);
+    tools.select(slot(rotala));
     assert_eq!(tools.next_plant_propagule(&w), Some(Propagule::Cuttings));
     // The world refuses a propagule the species doesn't grow from.
     let mut w = w;
@@ -502,8 +497,7 @@ fn hygrophila_seeds_pour_from_the_plants_slot_and_germinate() {
     let mut w = bedded(64, 8, 10);
     let hyg = species(&w, "hygrophila");
     let mut tools = Tools::new(id(&w, "sand"));
-    tools.select(PaletteItem::Tool(Tool::Plant));
-    tools.set_plant_species(hyg);
+    tools.select(PaletteItem::Tool(Tool::Plant(hyg)));
     assert!(tools.set_plant_propagule(&w, Propagule::Seeds));
     tools.resize(-3);
     assert!(matches!(

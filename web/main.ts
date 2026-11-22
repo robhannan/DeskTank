@@ -138,13 +138,23 @@ const capStockOut = $<HTMLOutputElement>("set-creature-cap-stock");
 const brushInput = $<HTMLInputElement>("brush");
 const zoomSelect = $<HTMLSelectElement>("zoom");
 const paletteEl = $("palette");
-const groupsEl = $("groups");
-const plantPickEl = $<HTMLSelectElement>("plant-species");
-const propagulePickEl = $<HTMLSelectElement>("plant-propagule");
+const paletteBox = $("palette-box");
+const tabsEl = $("tabs");
+const subtabsEl = $("subtabs");
+const propagulesEl = $("propagules");
 
 let settings = loadSettings();
 let tank: WebTank; // set by main() before anything uses it
-let openGroup: string | undefined; // name of the palette group shown
+// Each palette item's place in the category tree (WebTank.paletteCategories).
+interface Place {
+  path: string; // "fish/schooling", or "water" for a tab's only sub-category
+  tab: string; // the path's first part
+  tabLabel: string;
+  subLabel: string;
+}
+let places: Place[] = [];
+let openTab: string | undefined; // the palette tab shown
+let openSub: string | undefined; // and its sub-category's path
 let backend = "";
 let adapter = "";
 let rafId = 0;
@@ -168,6 +178,7 @@ interface Inspected {
 }
 let inspected: Inspected | null = null;
 let wheelRest = 0;
+let stripRest = 0; // the same over the palette, which it steps through
 let db: IDBDatabase | null = null; // IndexedDB, or null where there is none
 let ownership: Ownership | null = null;
 let owner = false; // this tab simulates and saves the tank
@@ -361,7 +372,7 @@ function replaceTank(next: WebTank) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
   const zoom = tank?.zoom() ?? next.zoom();
-  // It keeps the plant species and propagule picks too.
+  // It keeps the propagule picks (one per plant species) too.
   if (tank) next.keepPlantPicks(tank);
   tank?.free();
   tank = next;
@@ -371,7 +382,6 @@ function replaceTank(next: WebTank) {
   showCreatureCap(true);
   showZoom();
   setRunning(tank.running());
-  buildPlantPicker();
   buildPalette();
 }
 
@@ -841,84 +851,46 @@ function label(name: string) {
   return LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, " ");
 }
 
-// The plants slot pours the species picked here (the sim's list), as the
-// propagule picked in the second picker (only the species' own methods).
-function buildPlantPicker() {
-  setChildren(
-    plantPickEl,
-    ...tank.plantSpecies().map((entry, i) => {
-      const [name, ...description] = entry.split(" ");
-      const o = document.createElement("option");
-      o.value = String(i);
-      o.textContent = label(name);
-      o.title = description.join(" ");
-      return o;
-    }),
-  );
-  plantPickEl.value = String(tank.plantSpeciesSelected());
-  buildPropagulePicker();
-}
-
-function buildPropagulePicker() {
-  const ways = tank.plantPropagules();
-  setChildren(
-    propagulePickEl,
-    ...ways.map((name) => {
-      const o = document.createElement("option");
-      o.value = name;
-      o.textContent = label(name);
-      return o;
-    }),
-  );
-  propagulePickEl.value = tank.plantPropagule();
-  // A species with one method has nothing to pick.
-  propagulePickEl.disabled = ways.length < 2;
-}
-
-function pickPlant() {
-  tank.setPlantSpecies(Number(plantPickEl.value));
-  buildPropagulePicker();
-  choosePlantSlot();
-}
-
-function pickPropagule() {
-  tank.setPlantPropagule(propagulePickEl.value);
-  choosePlantSlot();
-}
-
-// Selects the plants slot (after a pick), with the species' swatch.
-function choosePlantSlot() {
-  const slot = tank.palette().findIndex((e) => e.startsWith("plant "));
-  const colour = tank.paletteColours()[slot];
-  const button = swatch(slot);
-  if (button) {
-    (button.firstElementChild as HTMLElement | null)?.style.setProperty("--c", colour);
-    openGroup = button.dataset.group;
-    choose(slot);
-  }
-}
-
-// The palette is the sim's (WebTank.palette): materials, tools, devices,
-// creatures and the plants slot, in groups (WebTank.paletteGroups). The
-// group tabs show one group's items at a time; the selection can be in a
-// closed group.
+// The palette is the sim's (WebTank.palette): tools, materials, devices,
+// plants and creatures, in the sim's category tree
+// (WebTank.paletteCategories, SPEC §2.5). The top tabs pick a category,
+// the sub-tabs one of its sub-categories (no sub-tab row where it has only
+// one), and the radio group shows that sub-category's items; the selection
+// can be in a closed one.
 function buildPalette() {
   const entries = tank.palette();
   const colours = tank.paletteColours();
-  // "name label" per entry: the group's name and its tab's text.
-  const groups = tank.paletteGroups().map((g) => g.split(" ") as [name: string, text: string]);
-  const tabs = [...new Map(groups).entries()];
+  const about = tank.paletteDescriptions();
+  places = tank.paletteCategories().map((c) => {
+    const [path, tabLabel, subLabel] = c.split("\t");
+    return { path, tab: path.split("/")[0], tabLabel, subLabel };
+  });
+  const tabs = [...new Map(places.map((p) => [p.tab, p.tabLabel])).entries()];
+  const subs = [...new Map(places.map((p) => [p.path, p])).values()];
+  const tab = (id: string, text: string, open: () => void) => {
+    const t = document.createElement("button");
+    t.type = "button";
+    t.id = id;
+    t.setAttribute("role", "tab");
+    t.setAttribute("aria-controls", "palette-panel");
+    t.textContent = text;
+    t.addEventListener("click", open);
+    return t;
+  };
   setChildren(
-    groupsEl,
+    tabsEl,
     ...tabs.map(([name, text]) => {
-      const t = document.createElement("button");
-      t.type = "button";
-      t.id = `group-${name}`;
-      t.dataset.group = name;
-      t.setAttribute("role", "tab");
-      t.setAttribute("aria-controls", "palette-panel");
-      t.textContent = text;
-      t.addEventListener("click", () => showGroup(name));
+      const t = tab(`tab-${name}`, text, () => showTab(name));
+      t.dataset.tab = name;
+      return t;
+    }),
+  );
+  setChildren(
+    subtabsEl,
+    ...subs.map(({ path, tab: top, subLabel }) => {
+      const t = tab(subId(path), subLabel, () => showSub(path));
+      t.dataset.tab = top;
+      t.dataset.path = path;
       return t;
     }),
   );
@@ -927,28 +899,33 @@ function buildPalette() {
     paletteEl,
     ...entries.map((entry, i) => {
       const [kind, name] = entry.split(" ");
-      const group = groups[i][0];
-      slot = i > 0 && groups[i - 1][0] === group ? slot + 1 : 0;
+      const { path, tab: top } = places[i];
+      slot = i > 0 && places[i - 1].path === path ? slot + 1 : 0;
       const b = document.createElement("button");
       b.type = "button";
       b.className = "swatch";
       b.dataset.kind = kind;
       b.dataset.name = name;
-      b.dataset.group = group;
+      b.dataset.tab = top;
+      b.dataset.path = path;
       b.setAttribute("role", "radio");
       const i_ = document.createElement("i");
       if (colours[i]) i_.style.setProperty("--c", colours[i]);
       b.append(i_, label(name));
-      if (slot < 10) b.title = `Key ${(slot + 1) % 10}`;
+      const title = [about[i], slot < 10 ? `Key ${(slot + 1) % 10}` : ""].filter(Boolean).join(" · ");
+      if (title) b.title = title;
       b.addEventListener("click", () => choose(i));
       return b;
     }),
   );
-  // A rebuilt palette (reset, new scale) keeps the open group if it still
-  // exists; the first opens on the selection's.
-  if (!tabs.some(([name]) => name === openGroup)) openGroup = groups[tank.selected()]?.[0] ?? tabs[0]?.[0];
+  // A rebuilt palette (reset, new scale) keeps the open sub-category if it
+  // still exists; the first opens on the selection's.
+  if (!subs.some((s) => s.path === openSub)) openSub = places[tank.selected()]?.path ?? subs[0]?.path;
+  openTab = openSub?.split("/")[0];
   showSelection();
 }
+
+const subId = (path: string) => `sub-${path.replace("/", "-")}`;
 
 function choose(i: number, focus = false) {
   tank.select(i);
@@ -956,85 +933,190 @@ function choose(i: number, focus = false) {
   kick();
 }
 
-// Shows group `name`'s items (the selection stays as it is).
-function showGroup(name: string | undefined, focus = false) {
-  openGroup = name;
+// Opens top tab `name` on the sub-category holding the selection, if it is
+// in that tab, else on its first (the selection stays as it is).
+function showTab(name: string | undefined, focus = false) {
+  const held = places[tank.selected()];
+  openTab = name;
+  openSub = held?.tab === name ? held.path : places.find((p) => p.tab === name)?.path;
   showSelection();
-  if (focus) $(`group-${name}`)?.focus();
+  if (focus) $(`tab-${name}`)?.focus();
 }
 
-// Opens the group `steps` after (or before) the open one, wrapping.
-function stepGroup(steps: number, focus = false) {
-  const tabs = groupTabs();
-  const at = tabs.findIndex((t) => t.dataset.group === openGroup);
-  const n = tabs.length;
-  showGroup(tabs[(((at + steps) % n) + n) % n].dataset.group, focus);
+// Opens sub-category `path` (and its tab).
+function showSub(path: string | undefined, focus = false) {
+  if (!path) return;
+  openSub = path;
+  openTab = path.split("/")[0];
+  showSelection();
+  if (focus) {
+    const t = document.getElementById(subId(path));
+    if (t && !t.hidden) t.focus();
+    else $(`tab-${openTab}`)?.focus();
+  }
 }
 
-// The open group's buttons.
-// The group tabs and the palette's swatches, all buttons (buildPalette).
-const groupTabs = () => [...groupsEl.children] as HTMLButtonElement[];
+const wrapAt = (at: number, steps: number, n: number) => (((at + steps) % n) + n) % n;
+
+// Opens the tab `steps` after (or before) the open one, wrapping.
+function stepTab(steps: number, focus = false) {
+  const tabs = topTabs();
+  const at = tabs.findIndex((t) => t.dataset.tab === openTab);
+  showTab(tabs[wrapAt(at, steps, tabs.length)]?.dataset.tab, focus);
+}
+
+// Opens the open tab's sub-category `steps` after (or before) the open
+// one, wrapping within the tab.
+function stepSub(steps: number, focus = false) {
+  const subs = subTabs().filter((t) => t.dataset.tab === openTab);
+  const at = subs.findIndex((t) => t.dataset.path === openSub);
+  showSub(subs[wrapAt(at, steps, subs.length)]?.dataset.path, focus);
+}
+
+// Steps through every sub-category in palette order, on into the next (or
+// previous) tab and wrapping: what scrolling over the palette does.
+// Focus in the palette follows to the new sub-tab (or tab), as the item
+// it was on may now be hidden.
+function stepThrough(steps: number) {
+  const subs = subTabs();
+  const at = subs.findIndex((t) => t.dataset.path === openSub);
+  showSub(subs[wrapAt(at, steps, subs.length)]?.dataset.path, paletteBox.contains(document.activeElement));
+}
+
+// The tabs, sub-tabs, swatches and propagule chips, all buttons
+// (buildPalette, showPropagules).
+const topTabs = () => [...tabsEl.children] as HTMLButtonElement[];
+const subTabs = () => [...subtabsEl.children] as HTMLButtonElement[];
 const swatches = () => [...paletteEl.children] as HTMLButtonElement[];
+const chips = () => [...propagulesEl.querySelectorAll("button")];
 const swatch = (i: number) => paletteEl.children[i] as HTMLButtonElement | undefined;
 const openItems = () => swatches().filter((b) => !b.hidden);
 
-// Roving tabindex: one tab and one radio are in the tab order, the open
-// tab and the checked radio (or, if the selection is in a closed group,
-// the open group's first).
+// Roving tabindex: one tab, one sub-tab and one radio are in the tab
+// order, the open ones and the checked radio (or, if the selection is in
+// a closed sub-category, the open one's first). A closed tab or sub-tab
+// holding the selection is marked.
+// Sets or clears `data-holds` (Element.toggleAttribute is Chrome 69+, and
+// the webOS build runs on Chrome 68).
+function markHolds(t: HTMLElement, holds: boolean) {
+  if (holds) t.setAttribute("data-holds", "");
+  else t.removeAttribute("data-holds");
+}
+
 function showSelection(focus = false) {
   const selected = tank.selected();
-  const holder = swatch(selected)?.dataset.group;
-  for (const t of groupTabs()) {
-    const open = t.dataset.group === openGroup;
+  const held = places[selected];
+  for (const t of topTabs()) {
+    const open = t.dataset.tab === openTab;
     t.setAttribute("aria-selected", String(open));
     t.tabIndex = open ? 0 : -1;
-    if (!open && t.dataset.group === holder) t.setAttribute("data-holds", "");
-    else t.removeAttribute("data-holds");
+    markHolds(t, !open && t.dataset.tab === held?.tab);
   }
-  $("palette-panel").setAttribute("aria-labelledby", `group-${openGroup}`);
+  const siblings = subTabs().filter((t) => t.dataset.tab === openTab);
+  // A tab with one sub-category has no sub-tab row.
+  const row = siblings.length > 1;
+  subtabsEl.hidden = !row;
+  for (const t of subTabs()) {
+    const open = t.dataset.path === openSub;
+    t.hidden = !row || t.dataset.tab !== openTab;
+    t.setAttribute("aria-selected", String(open));
+    t.tabIndex = open ? 0 : -1;
+    markHolds(t, !open && t.dataset.path === held?.path);
+  }
+  $("palette-panel").setAttribute("aria-labelledby", row && openSub ? subId(openSub) : `tab-${openTab}`);
   swatches().forEach((b, i) => {
     const on = i === selected;
-    b.hidden = b.dataset.group !== openGroup;
+    b.hidden = b.dataset.path !== openSub;
     b.setAttribute("aria-checked", String(on));
     b.tabIndex = on && !b.hidden ? 0 : -1;
     if (on && focus) b.focus({ preventScroll: true });
   });
   const items = openItems();
   if (items.length && !items.some((b) => b.tabIndex === 0)) items[0].tabIndex = 0;
+  showPropagules();
 }
 
-// Selects slot `n` of the open group, if it has one.
+// The selected plant's propagule chips (only its species' own methods),
+// under the items while its sub-category is open.
+function showPropagules(focus = false) {
+  const ways = tank.plantPropagules();
+  const picked = tank.plantPropagule();
+  propagulesEl.hidden = !ways.length || swatch(tank.selected())?.hidden !== false;
+  if (propagulesEl.hidden) return setChildren(propagulesEl);
+  const as = document.createElement("span");
+  as.className = "as";
+  as.textContent = "as";
+  as.setAttribute("aria-hidden", "true");
+  setChildren(
+    propagulesEl,
+    as,
+    ...ways.map((name) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip";
+      b.dataset.propagule = name;
+      b.setAttribute("role", "radio");
+      const on = name === picked;
+      b.setAttribute("aria-checked", String(on));
+      b.tabIndex = on ? 0 : -1;
+      b.textContent = label(name);
+      b.addEventListener("click", () => pickPropagule(name));
+      return b;
+    }),
+  );
+  if (focus) chips().find((b) => b.tabIndex === 0)?.focus();
+}
+
+function pickPropagule(name: string, focus = false) {
+  tank.setPlantPropagule(name);
+  showPropagules(focus);
+}
+
+// P: the selected plant's next propagule.
+function nextPropagule(focus = false) {
+  if (tank.nextPlantPropagule()) showPropagules(focus);
+  else flash("Select a plant, then P picks how it starts");
+}
+
+// Selects slot `n` of the open sub-category, if it has one.
 function chooseSlot(n: number, focus = false) {
   const b = openItems()[n];
   if (b) choose(swatches().indexOf(b), focus);
 }
 
-// Arrow keys: within the tabs, open the next or previous group; within the
-// radio group, select the next or previous item of the open group. Home and
-// End jump to the first and last.
+// Arrow keys: within the tabs or sub-tabs, open the next or previous one;
+// within a radio group, select its next or previous item. Home and End
+// jump to the first and last.
 function arrowStep(e: KeyboardEvent, at: number, n: number): number | undefined {
   const steps: Record<string, number> = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: n - 1 };
   return steps[e.key];
 }
 
-function groupKeys(e: KeyboardEvent) {
-  const tabs = groupTabs();
-  const next = arrowStep(e, Math.max(0, tabs.indexOf(document.activeElement as HTMLButtonElement)), tabs.length);
-  if (next === undefined) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const n = tabs.length;
-  showGroup(tabs[(next + n) % n].dataset.group, true);
-}
-
-function paletteKeys(e: KeyboardEvent) {
-  const items = openItems();
-  const n = items.length;
-  const next = arrowStep(e, Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement)), n);
+// Runs `go` with the arrow-key target among `els` (wrapping), if the key
+// is one.
+function arrows(e: KeyboardEvent, els: HTMLButtonElement[], go: (b: HTMLButtonElement) => void) {
+  const n = els.length;
+  const next = arrowStep(e, Math.max(0, els.indexOf(document.activeElement as HTMLButtonElement)), n);
   if (next === undefined || !n) return;
   e.preventDefault();
   e.stopPropagation();
-  chooseSlot((next + n) % n, true);
+  go(els[wrapAt(next, 0, n)]);
+}
+
+function tabKeys(e: KeyboardEvent) {
+  arrows(e, topTabs(), (t) => showTab(t.dataset.tab, true));
+}
+
+function subKeys(e: KeyboardEvent) {
+  arrows(e, subTabs().filter((t) => !t.hidden), (t) => showSub(t.dataset.path, true));
+}
+
+function paletteKeys(e: KeyboardEvent) {
+  arrows(e, openItems(), (b) => choose(swatches().indexOf(b), true));
+}
+
+function propaguleKeys(e: KeyboardEvent) {
+  arrows(e, chips(), (b) => pickPropagule(b.dataset.propagule ?? "", true));
 }
 
 // --- Input -------------------------------------------------------------------
@@ -1194,7 +1276,7 @@ function chooseMagnifySlot() {
   const slot = tank.palette().findIndex((e) => e === "tool magnify");
   const button = swatch(slot);
   if (button) {
-    openGroup = button.dataset.group;
+    showSub(button.dataset.path);
     choose(slot);
   }
 }
@@ -1390,9 +1472,24 @@ function wireInput() {
   for (const type of ["gesturestart", "gesturechange"]) canvas.addEventListener(type, (e) => e.preventDefault());
 
   paletteEl.addEventListener("keydown", paletteKeys);
-  groupsEl.addEventListener("keydown", groupKeys);
-  plantPickEl.addEventListener("change", pickPlant);
-  propagulePickEl.addEventListener("change", pickPropagule);
+  tabsEl.addEventListener("keydown", tabKeys);
+  subtabsEl.addEventListener("keydown", subKeys);
+  propagulesEl.addEventListener("keydown", propaguleKeys);
+  // Scrolling over the palette steps through the sub-categories, on into
+  // the next tab (as in desktank window).
+  paletteBox.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? WHEEL_STEP / 3 : e.deltaMode === 2 ? WHEEL_STEP * 10 : 1;
+      stripRest += e.deltaY * unit;
+      const steps = Math.trunc(stripRest / WHEEL_STEP);
+      if (!steps) return;
+      stripRest -= steps * WHEEL_STEP;
+      stepThrough(steps);
+    },
+    { passive: false },
+  );
   zoomSelect.addEventListener("change", pickZoom);
   playBtn.addEventListener("click", () => setRunning(!tank.running()));
   stepBtn.addEventListener("click", step);
@@ -1461,15 +1558,20 @@ function wireInput() {
     } else if (e.key === "f" || e.key === "F") {
       const next = FIELDS[(FIELDS.indexOf(settings.field) + 1) % FIELDS.length];
       update({ field: next });
-    } else if (e.key === "g" || e.key === "G") {
-      // G opens the next group, Shift+G the previous (as in desktank window;
-      // Shift, not the letter's case, so Caps Lock doesn't flip it). Focus
-      // in the palette moves to the new tab, as its radio may be hidden.
-      const target = e.target as Node | null;
-      const inPalette = paletteEl.contains(target) || groupsEl.contains(target);
-      stepGroup(e.shiftKey ? -1 : 1, inPalette);
+    } else if (e.key === "g" || e.key === "G" || e.key === "h" || e.key === "H") {
+      // G opens the next tab, Shift+G the previous; H and Shift+H the same
+      // for the open tab's sub-categories (as in desktank window; Shift,
+      // not the letter's case, so Caps Lock doesn't flip it). Focus in the
+      // palette moves to the new tab, as its radio may be hidden.
+      const inPalette = paletteBox.contains(e.target as Node | null);
+      const steps = e.shiftKey ? -1 : 1;
+      if (e.key.toLowerCase() === "g") stepTab(steps, inPalette);
+      else stepSub(steps, inPalette);
+    } else if (e.key === "p" || e.key === "P") {
+      // The selected plant's next propagule.
+      nextPropagule(propagulesEl.contains(e.target as Node | null));
     } else if (/^[0-9]$/.test(e.key)) {
-      // 1–9 are the open group's first nine slots, 0 the tenth.
+      // 1–9 are the open sub-category's first nine slots, 0 the tenth.
       chooseSlot((Number(e.key) + 9) % 10);
     }
   });

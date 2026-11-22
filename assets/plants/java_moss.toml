@@ -3,6 +3,7 @@
 # little light and grows slowly even without nutrients.
 id = 2
 name = "java_moss"
+palette = "plants/moss"
 description = "A slow, hardy moss that creeps over rock and wood."
 form = "mat"
 propagation = ["fragments"]

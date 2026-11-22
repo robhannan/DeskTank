@@ -3,6 +3,7 @@
 # grows a little slower and likes a little more light.
 id = 7
 name = "christmas_moss"
+palette = "plants/moss"
 description = "A bright, layered moss that creeps over rock and wood."
 form = "mat"
 propagation = ["fragments"]

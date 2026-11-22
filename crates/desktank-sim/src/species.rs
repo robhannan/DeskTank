@@ -22,6 +22,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::material::{MaterialId, MaterialTable};
+use crate::palette::{Holds, PalettePath, PalettePathError};
 use crate::world::DEPTH_BANDS;
 
 /// Index of a species in the [`SpeciesTable`]; fixed in each species' TOML
@@ -255,8 +256,11 @@ pub struct Species {
     /// Added only by its own cheat (SPEC §2.5): left out of the palette,
     /// the `spawn` cheat and stocking, and it never breeds.
     pub cheat_only: bool,
+    /// The palette sub-category it is offered in (`palette = "fish/schooling"`),
+    /// or `None` if the palette doesn't offer it (the cheat-only species).
+    pub palette: Option<PalettePath>,
     /// Live food (bloodworms; SPEC §2.4 *Live food*): offered from the
-    /// Food palette group a pinch at a time, never stocked, bred or
+    /// Food palette category a pinch at a time, never stocked, bred or
     /// counted against the population cap. It is eaten whole by any
     /// species at least as long whose diet holds [`Species::food_as`],
     /// and dies into a cell of that material.
@@ -385,6 +389,15 @@ pub enum SpeciesError {
         /// What is wrong.
         reason: &'static str,
     },
+    /// `palette` names no sub-category that holds creatures.
+    #[error("species {name:?}: {source}")]
+    Palette {
+        /// Species name.
+        name: String,
+        /// What is wrong with the path.
+        #[source]
+        source: PalettePathError,
+    },
     /// The diet names a material that doesn't exist.
     #[error("species {name:?}: unknown food {food:?}")]
     UnknownFood {
@@ -432,6 +445,9 @@ struct SpeciesDef {
     home_carpet: Option<String>,
     #[serde(default)]
     cheat_only: bool,
+    /// The palette sub-category it is offered in.
+    #[serde(default)]
+    palette: Option<String>,
     /// The food material a live food counts as (makes it live food).
     #[serde(default)]
     live_food: Option<String>,
@@ -740,6 +756,18 @@ fn validate(
             }
         }
     }
+    if d.cheat_only && d.palette.is_some() {
+        return Err(invalid("a cheat-only species has no palette category"));
+    }
+    let palette = d
+        .palette
+        .as_deref()
+        .map(|p| PalettePath::parse(p, Holds::Creatures))
+        .transpose()
+        .map_err(|source| SpeciesError::Palette {
+            name: d.name.clone(),
+            source,
+        })?;
     let food_as = match &d.live_food {
         None => None,
         Some(food) => {
@@ -828,6 +856,7 @@ fn validate(
         eats_corpses: d.eats_corpses,
         home_carpet: d.home_carpet.clone(),
         cheat_only: d.cheat_only,
+        palette,
         live_food: d.live_food.is_some(),
         food_as,
         prey_cm: d.prey_cm,

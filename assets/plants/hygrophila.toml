@@ -3,6 +3,7 @@
 # leaves every second stem cell and lives on as a fragment when cut.
 id = 1
 name = "hygrophila"
+palette = "plants/stem"
 description = "An easy, fast stem plant that grows in modest light."
 form = "stem"
 propagation = ["seeds", "cuttings", "fragments"]

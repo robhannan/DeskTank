@@ -24,7 +24,7 @@
 //! brush = "pour"     # "pour" fills only fluid cells, "replace" overwrites (default "pour")
 //! glued = true       # a rigid material's body is glued in place (default false)
 //! # plant = "rotala" # instead of a material: pour this plant species
-//!                    # (assets/plants), as the palette's plants slot does
+//!                    # (assets/plants), as its palette slot does
 //! # propagule = "seeds" # with `plant`: "seeds", "cuttings", "fragments" or "runners", one the
 //!                    # species lists (default: cuttings if it lists them, else its first)
 //!

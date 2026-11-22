@@ -2,6 +2,7 @@
 # surface and struggles in shade. Cut pieces don't regrow.
 id = 3
 name = "rotala"
+palette = "plants/stem"
 description = "A fine-leaved stem plant that needs strong light."
 form = "stem"
 propagation = ["cuttings"]

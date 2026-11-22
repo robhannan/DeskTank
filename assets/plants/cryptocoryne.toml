@@ -3,6 +3,7 @@
 # hardy once settled; it spreads slowly by short runners.
 id = 12
 name = "cryptocoryne"
+palette = "plants/rosette"
 description = "A slow, low-light rosette of bronze-green leaves."
 form = "rosette"
 propagation = ["runners"]

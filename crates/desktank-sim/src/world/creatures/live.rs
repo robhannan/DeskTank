@@ -1,5 +1,5 @@
 //! Live food (SPEC §2.4 *Live food*): small living foods such as
-//! bloodworms, offered from the Food palette group a pinch at a time.
+//! bloodworms, offered from the palette's Food › Live a pinch at a time.
 //!
 //! - **Species.** A species with `live_food = "<material>"` is live food.
 //!   It moves by the usual systems (a bloodworm is a bottom walker that
