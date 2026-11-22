@@ -157,7 +157,7 @@ fn overwriting_or_scooping_any_cell_removes_the_whole_sponge_filter() {
     let d = *w.devices().next().unwrap();
 
     // Overwrite just the top uplift tube tip with water: whole device disappears.
-    let (nx, ny) = d.nozzle(&art);
+    let (nx, ny) = d.nozzle(&art).unwrap();
     assert_eq!(w.device_at(nx, ny), Some(d.id));
     w.set_cell(nx, ny, water).unwrap();
     assert_eq!(w.devices().count(), 0);
@@ -202,7 +202,7 @@ fn uplift_spawns_bubbles_drives_gentle_upward_flow_and_scales_with_clog() {
         .get(DeviceKind::SpongeFilter)
         .clone();
     let d = *w_sponge.device(sponge).unwrap();
-    let (nx, ny) = d.nozzle(&art);
+    let (nx, ny) = d.nozzle(&art).unwrap();
     let [vx, vy] = w_sponge.current_at(nx, ny.saturating_sub(4));
     assert!(
         vy < -0.5 && vy.abs() > vx.abs(),

@@ -302,12 +302,15 @@ impl World {
     pub fn device_status(&self, id: DeviceId) -> Option<DeviceStatus> {
         let d = self.device(id)?;
         let art = self.devices.kinds.get(d.kind);
-        let (nx, ny) = self.effective_nozzle(d, art);
-        let [dx, dy] = d.nozzle_dir(art);
-        let [vx, vy] = self.nozzle_flow(nx, ny, [dx, dy]);
+        let flow = self.effective_nozzle(d, art).map_or(0.0, |(nx, ny)| {
+            let [dx, dy] = d.nozzle_dir(art);
+            let [vx, vy] = self.nozzle_flow(nx, ny, [dx, dy]);
+            (vx * vx + vy * vy).sqrt()
+        });
         Some(DeviceStatus {
             kind: d.kind,
-            flow: (vx * vx + vy * vy).sqrt(),
+            is_filter: art.is_filter(),
+            flow,
             facing_left: d.facing_left,
             media_load: d.media_load,
             maturity: d.maturity,
@@ -318,16 +321,21 @@ impl World {
 
     /// World cell where device `d`'s nozzle jet enters the water: for rim
     /// mounts whose spillway hangs above the water line, projects down to
-    /// `surface_row` where the waterfall hits the surface.
-    fn effective_nozzle(&self, d: &Device, art: &crate::device::DeviceArt) -> (usize, usize) {
-        let (nx, ny) = d.nozzle(art);
+    /// `surface_row` where the waterfall hits the surface. Returns `None` for
+    /// non-jet devices (e.g. the prefab bubbler).
+    fn effective_nozzle(
+        &self,
+        d: &Device,
+        art: &crate::device::DeviceArt,
+    ) -> Option<(usize, usize)> {
+        let (nx, ny) = d.nozzle(art)?;
         if art.mount == Mount::Rim {
-            (
+            Some((
                 nx,
                 ny.max(self.surface_row).min(self.height.saturating_sub(1)),
-            )
+            ))
         } else {
-            (nx, ny)
+            Some((nx, ny))
         }
     }
 
@@ -382,9 +390,15 @@ impl World {
     }
 
     /// Rinses or replaces device `id`'s filter media (D27, DV3). Returns
-    /// whether the device exists.
+    /// whether the device exists and has filter media.
     pub fn rinse_device(&mut self, id: DeviceId, kind: RinseKind) -> bool {
         let floor = self.life.eco.filtration.clog_floor;
+        let Some(dev_kind) = self.devices.table.get(&id.0).map(|d| d.kind) else {
+            return false;
+        };
+        if !self.devices.kinds.get(dev_kind).is_filter() {
+            return false;
+        }
         let Some(d) = self.devices.table.get_mut(&id.0) else {
             return false;
         };
@@ -474,6 +488,7 @@ impl World {
         let floor = self.life.eco.filtration.clog_floor;
         self.devices
             .values()
+            .filter(|d| self.devices.kinds.get(d.kind).is_filter())
             .map(|d| d.maturity * d.flow_factor_with(floor))
             .sum::<f32>()
             .clamp(0.0, 1.0)
@@ -496,7 +511,11 @@ impl World {
     /// each device's intake cells, capturing suspended particles into media
     /// load, and advances biological maturity once per world second.
     pub(super) fn run_intakes(&mut self) {
-        if self.devices.is_empty() {
+        if !self
+            .devices
+            .values()
+            .any(|d| self.devices.kinds.get(d.kind).is_filter())
+        {
             return;
         }
         let cfg = self.life.eco.filtration;
@@ -551,8 +570,9 @@ impl World {
         if self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND)) && cfg.maturity_days > 0.0 {
             #[allow(clippy::cast_precision_loss)] // LIFE_DAY_SECONDS = 600
             let base_rate = 1.0 / (cfg.maturity_days * LIFE_DAY_SECONDS as f32);
+            let kinds = &self.devices.kinds;
             for d in self.devices.table.values_mut() {
-                if d.maturity < 1.0 {
+                if kinds.get(d.kind).is_filter() && d.maturity < 1.0 {
                     let feed_mult = 1.0 + 0.5 * d.media_load;
                     d.maturity = (d.maturity + base_rate * feed_mult).min(1.0);
                 }
@@ -569,9 +589,9 @@ impl World {
                 .any(|d| self.devices.kinds.get(d.kind).graze_rows.is_some())
     }
 
-    /// Each device's nozzle (position and unit direction), its intake cells
-    /// with outward open-water directions, and its scaled flow factor
-    /// (`flow_scale * flow_factor`), for the 2D current field.
+    /// Each jet-driving device's nozzle (position and unit direction), its
+    /// intake cells with outward open-water directions, and its scaled flow
+    /// factor (`flow_scale * flow_factor`), for the 2D current field.
     #[allow(clippy::type_complexity)] // internal tuple for recompute_current
     pub(super) fn device_flows(
         &self,
@@ -583,15 +603,19 @@ impl World {
         let floor = self.life.eco.filtration.clog_floor;
         self.devices
             .values()
-            .map(|d| {
+            .filter_map(|d| {
                 let art = self.devices.kinds.get(d.kind);
-                (
-                    (self.effective_nozzle(d, art), d.nozzle_dir(art)),
+                let nozzle = self.effective_nozzle(d, art)?;
+                if art.flow_scale <= 0.0 {
+                    return None;
+                }
+                Some((
+                    (nozzle, d.nozzle_dir(art)),
                     d.intakes(art)
                         .map(|(ix, iy)| ((ix, iy), d.intake_outward(art, ix, iy)))
                         .collect(),
                     art.flow_scale * d.flow_factor_with(floor),
-                )
+                ))
             })
             .collect()
     }
@@ -777,6 +801,97 @@ impl World {
             }
         }
         if !self.devices.is_empty() {
+            self.refresh_all_blocked();
+            self.recompute_current_quiet();
+        }
+    }
+
+    /// Turns legacy `bubbler` cells into prefab bubblers (D27, DV7): each
+    /// connected group of legacy bubbler cells is cleared and a bed-mounted
+    /// prefab bubbler placed at its centre. A group with no room for one
+    /// (boxed in by rock, say) is left untouched as legacy bubbler cells,
+    /// which still emit bubbles, without waking chunks or mutating state.
+    pub fn adopt_legacy_bubblers(&mut self) {
+        if self.devices.material.is_none() {
+            return;
+        }
+        let Some(bubbler) = self.materials.id("bubbler") else {
+            return;
+        };
+        if self.material_counts()[usize::from(bubbler.0)] == 0 {
+            return;
+        }
+        let (Some(water), Some(air)) = (self.materials.id("water"), self.materials.id("air"))
+        else {
+            return;
+        };
+        let mut seen = BTreeSet::new();
+        let mut groups = Vec::new();
+        for i in 0..self.cells.len() {
+            if self.cells[i].material != bubbler || !seen.insert(i) {
+                continue;
+            }
+            let mut group = vec![i];
+            let mut k = 0;
+            while k < group.len() {
+                let j = group[k];
+                k += 1;
+                let (x, y) = (j % self.width, j / self.width);
+                let near = [
+                    (x > 0).then(|| j - 1),
+                    (x + 1 < self.width).then(|| j + 1),
+                    (y > 0).then(|| j - self.width),
+                    (y + 1 < self.height).then(|| j + self.width),
+                ];
+                for n in near.into_iter().flatten() {
+                    if self.cells[n].material == bubbler && seen.insert(n) {
+                        group.push(n);
+                    }
+                }
+            }
+            groups.push(group);
+        }
+        let mut adopted = false;
+        for group in groups {
+            if self.devices.table.len() >= MAX_DEVICES {
+                break;
+            }
+            let n = group.len();
+            let (sx, sy) = group.iter().fold((0, 0), |(sx, sy), &i| {
+                (sx + i % self.width, sy + i / self.width)
+            });
+            let (cx, cy) = (sx / n, sy / n);
+            let (x, y) = (
+                i64::try_from(cx).unwrap_or(0),
+                i64::try_from(cy).unwrap_or(0),
+            );
+            // Probe whether a prefab bubbler fits once the group's own cells
+            // are cleared, without waking chunks or mutating state if it doesn't.
+            let saved: Vec<_> = group.iter().map(|&i| (i, self.cells[i])).collect();
+            for &i in &group {
+                let row = i / self.width;
+                self.cells[i].material = if row < self.surface_row { air } else { water };
+            }
+            let (_, fits) = self.device_placement(DeviceKind::Bubbler, x, y, false);
+            for (i, cell) in saved {
+                self.cells[i] = cell;
+            }
+            if !fits {
+                continue;
+            }
+            for &i in &group {
+                let (gx, gy) = (i % self.width, i / self.width);
+                let to = if gy < self.surface_row { air } else { water };
+                self.write_cell(gx, gy, to, &mut None);
+            }
+            if matches!(
+                self.add_device(DeviceKind::Bubbler, x, y, false),
+                Ok(Some(_))
+            ) {
+                adopted = true;
+            }
+        }
+        if adopted {
             self.refresh_all_blocked();
             self.recompute_current_quiet();
         }

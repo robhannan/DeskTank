@@ -368,11 +368,24 @@ fn a_rock_stroke_makes_one_body_until_release() {
 #[test]
 fn devices_are_placed_once_per_click() {
     let mut t = paused();
+    let bubbler_cells = u32::try_from(
+        t.tank()
+            .world()
+            .device_kinds()
+            .get(desktank_sim::DeviceKind::Bubbler)
+            .cells,
+    )
+    .unwrap();
     t.select(slot(&t, "device bubbler"));
-    assert_eq!(down(&mut t, PRIMARY, 64, 60), 8);
+    assert_eq!(down(&mut t, PRIMARY, 64, 60), bubbler_cells);
     drag(&mut t, 80, 60);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.material_count("bubbler"), 8, "a drag places nothing more");
+    assert_eq!(
+        t.material_count("device"),
+        bubbler_cells,
+        "a drag places nothing more"
+    );
+    assert_eq!(t.tank().world().devices().count(), 1);
     assert_eq!(t.material_count("unobtainium"), 0);
 }
 
@@ -504,6 +517,21 @@ fn device_inspect_rinse_and_guard_round_trip() {
         hob_line.starts_with("device hob_filter 3 rim ") && hob_line.contains(" 0 0 off no "),
         "unexpected HOB inspect line: {hob_line}"
     );
+
+    // DV7: prefab bubbler mounts on the bed and reports `bed air` (no filtration).
+    t.select(slot(&t, "device bubbler"));
+    let bx = i32::try_from(w / 4).unwrap();
+    down(&mut t, PRIMARY, bx, i32::try_from(h / 2).unwrap());
+    t.pointer_up(PRIMARY);
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, bx, i32::try_from(h - 2).unwrap());
+    t.pointer_up(PRIMARY);
+    let bubbler_line = t.take_inspection();
+    assert!(
+        bubbler_line.starts_with("device bubbler 4 bed air "),
+        "unexpected bubbler inspect line: {bubbler_line}"
+    );
+    assert!(t.rinse_device(4, "gentle").is_err());
 }
 
 #[test]
@@ -766,7 +794,7 @@ mod saves {
     /// ticks) and its state hash; `tests/web/saves.spec.ts` imports the
     /// same file on the web and checks the same hash.
     const NATIVE_FIXTURE: &str = "../desktank-sim/tests/fixtures/v1.dtank";
-    const NATIVE_HASH: &str = "12858282b5ae5235";
+    const NATIVE_HASH: &str = "3f946e8345427a1f";
     /// The native fixture as this build re-saves it natively. A save carries
     /// the build's material and species name tables, so it is not the v1
     /// file's bytes once ids are added; the web test compares its export of

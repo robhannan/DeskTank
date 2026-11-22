@@ -267,7 +267,10 @@ fn waterfall_drives_downward_circulation_above_surface_ripples_and_costs_zero_wh
     let mut w = world(140, 96, 5, 0.86); // surface_row = 13 > spillway y = 9
     let art = w.device_kinds().get(DeviceKind::HobFilter).clone();
     let surface = w.surface_row();
-    assert!(surface > art.nozzle.1, "spillway sits in air above water");
+    assert!(
+        surface > art.nozzle.unwrap().1,
+        "spillway sits in air above water"
+    );
 
     let dev = w
         .add_device(DeviceKind::HobFilter, 70, 0, false)

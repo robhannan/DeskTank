@@ -1364,8 +1364,10 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
     )
 }
 
-/// Formats a device's inspect line for `web/main.ts` (D27, DV3–DV5):
-/// `device <kind> <id> <place> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`.
+/// Formats a device's inspect line for `web/main.ts` (D27, DV3–DV7):
+/// - Filter: `device <kind> <id> <place> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`
+/// - Air diffuser (e.g. bubbler): `device <kind> <id> <place> air <x> <y>`
+///
 /// `<place>` is `"left"`, `"right"` (side-glass mounts), `"bed"` (bed mounts) or `"rim"` (rim mounts).
 fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let s = world.device_status(id)?;
@@ -1380,6 +1382,13 @@ fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Optio
         Mount::Bed => "bed",
         Mount::Rim => "rim",
     };
+    if !s.is_filter {
+        return Some(format!(
+            "device {} {} {place} air {x} {y}",
+            s.kind.name(),
+            id.0
+        ));
+    }
     let guard = if s.intake_guard { "on" } else { "off" };
     let fry_safe = if s.fry_safe { "yes" } else { "no" };
     Some(format!(

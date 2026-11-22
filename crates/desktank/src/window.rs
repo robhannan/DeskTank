@@ -1304,7 +1304,7 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
 }
 
-/// The inspect line for device `id` under cell `(x, y)` (D27, DV3–DV4).
+/// The inspect line for device `id` under cell `(x, y)` (D27, DV3–DV7).
 fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let status = world.device_status(id)?;
     let art = world.device_kinds().get(status.kind);
@@ -1320,6 +1320,12 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
         Mount::Bed => "on the bed",
         Mount::Rim => "on the rim",
     };
+    if !status.is_filter {
+        return Some(format!(
+            "{label} #{} · {place} · air diffuser · at ({x}, {y})",
+            id.0
+        ));
+    }
     let guard = if status.fry_safe {
         "fry-safe"
     } else if status.intake_guard {
@@ -1339,4 +1345,38 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
         status.media_load * 100.0,
         status.maturity * 100.0,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use desktank_sim::{DeviceKind, MaterialTable, WorldConfig};
+
+    #[test]
+    fn device_line_omits_filter_fields_for_bubbler() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 120,
+                height: 80,
+                seed: 1,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let bid = w
+            .add_device(DeviceKind::Bubbler, 50, 40, false)
+            .unwrap()
+            .unwrap();
+        let line = device_line(&w, bid, 50, 76).unwrap();
+        assert_eq!(line, "Bubbler #1 · on the bed · air diffuser · at (50, 76)");
+
+        let fid = w
+            .add_device(DeviceKind::InternalFilter, 4, 40, false)
+            .unwrap()
+            .unwrap();
+        let filter_line = device_line(&w, fid, 4, 40).unwrap();
+        assert!(filter_line.contains("Internal filter #2"));
+        assert!(filter_line.contains("R rinse"));
+    }
 }

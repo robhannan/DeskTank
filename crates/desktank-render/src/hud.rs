@@ -58,13 +58,6 @@ const MAGNIFY: [&str; 8] = [
     ".#####..", "#..#..#.", "#.###.#.", "#..#..#.", ".#####..", ".....##.", "......##", ".......#",
 ];
 
-/// The bubbler's icon: `#` is its colour, `o` a bubble. Prefab devices
-/// draw their art's icon (D27).
-const BUBBLER: [&str; 8] = [
-    "...o....", ".o....o.", "....o...", "..o..o..", "........", "..####..", ".######.", "........",
-];
-const BUBBLE: [u8; 3] = [0xe8, 0xf6, 0xff];
-
 /// A plant slot: a sprout, `#` in its species' colour, `s` its stem, `o` a
 /// seed.
 const SPROUT: [&str; 8] = [
@@ -530,16 +523,7 @@ fn slot_pixel(
                     .filter(|p| p[3] > 0)
                     .map_or(ICON_BG, |p| [p[0], p[1], p[2]]);
             }
-            let icon = BUBBLER;
-            let device = materials
-                .id(p.material_name())
-                .and_then(|id| materials.get(id))
-                .map_or(ICON_FG, |m| m.colour);
-            match icon[y as usize].as_bytes().get(x as usize) {
-                Some(b'#') => device.map(|v| v.saturating_add(40)),
-                Some(b'o') => BUBBLE,
-                _ => ICON_BG,
-            }
+            ICON_BG
         }
         PaletteItem::Tool(t) => {
             let icon = match t {

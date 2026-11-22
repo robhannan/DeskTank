@@ -71,6 +71,13 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
     gravel, and a vertical uplift tube in a back corner rising to the
     surface, bending over into a horizontal spray bar held by suction
     cups.
+- **The prefab bubbler** (DV7): a round flat white-rimmed air-stone disc
+  sitting on the bed (`Mount::Bed`, dropped onto substrate, hardscape or the
+  floor, placed and removed whole), with a porous grey diffuser dome in the
+  centre and a small white side airline inlet boss. It emits a dense curtain
+  of rising air bubbles across its diffuser top while conserving the tank
+  water level, drives no water-current jet of its own, and has no filtration
+  intakes (intrinsically fry-safe; zero intake or bio-maturity work per tick).
 - **Flow** (DV2). The current is a static 2D vector field (`[vx, vy]` in
   cells per second) at 1/8 resolution ([world](world.md) §2.1 *Devices*),
   rebuilt only when a device is added or removed or when an 8×8 block
@@ -101,9 +108,9 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
 - **Depth and collision** (D21). A HOB's intake tube is in the back
   depth band, so fish pass in front of it. Internal, sponge and
   under-gravel bodies and tubes are solid in every band.
-- **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the filters
-  and the bubbler as each lands (DV1: internal filter; DV4: sponge filter;
-  DV5: HOB filter, beside the legacy bubbler). Side-glass facing is chosen automatically from
+- **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the
+  prefab bubbler and the filters as each lands (DV7: prefab bubbler; DV1:
+  internal filter; DV4: sponge filter; DV5: HOB filter). Side-glass facing is chosen automatically from
   the nearer wall (with a **flip** key `X` or button to mirror onto the
   other glass); bed-mounted devices drop straight down onto substrate,
   hardscape or the floor (symmetric, ignoring flip); rim-mounted devices
@@ -112,9 +119,11 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   spillway in the renderer (at zero idle cost). The placement preview
   is a see-through **ghost** of the footprint at the pointer (tinted red
   where it doesn't fit). The inspect card (the one creatures use) shows a
-  device's status: mount position, flow, media load, maturity, Rinse
+  filter's status: mount position, flow, media load, maturity, Rinse
   (gentle, hard, replace), and the intake-guard toggle (hidden for
-  intrinsically fry-safe filters, which show `fry-safe`, DV3–DV4).
+  intrinsically fry-safe filters, which show `fry-safe`, DV3–DV4); for a
+  pure air diffuser (the prefab bubbler, DV7) it shows its mount position
+  and `air diffuser` with no filtration actions.
   Drag-to-move (keeping state) and flow/air dials come
   later. Non-interactive hosts (screensaver, lock screen) just run the
   devices.
@@ -126,9 +135,13 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   legacy `filter_outlet` cells into an internal filter at the group's
   centre on the nearer glass; a group with no room for one (boxed in by
   rock, say) is left as legacy outlet cells, which still drive the jet.
-  Legacy `bubbler` cells stay as they are, and keep working, until DV7
-  converts them into prefab bubblers. Nothing places outlet cells any
-  more; scripts naming `filter_outlet` place an internal filter.
+  Loading any save with legacy `bubbler` cells (v12 and earlier, as well as
+  pre-DV7 v13 saves) turns each connected group into a bed-mounted prefab
+  bubbler at the group's centre, leaving any boxed-in group that cannot fit
+  as legacy `bubbler` cells (which still emit bubbles) without mutating or
+  waking chunks. Nothing places legacy `filter_outlet` or `bubbler` cells
+  any more; scripts naming `filter_outlet` place an internal filter and
+  scripts naming `bubbler` place a prefab bubbler.
 - **Resources** ([architecture](architecture.md) §6). An idle device adds no per-tick work of its own:
   the current is rebuilt only when a device changes or a dirty block's
   open/blocked state flips, intake work (DV3) touches only intake cells,

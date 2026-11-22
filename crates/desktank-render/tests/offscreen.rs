@@ -853,7 +853,7 @@ fn hob_filter_draws_air_above_surface_ripples_outlet_and_sorts_fish_in_front_of_
             .get(desktank_sim::DeviceKind::HobFilter)
             .clone();
         let surface = hob_world.surface_row();
-        assert!(surface > art.nozzle.1);
+        assert!(surface > art.nozzle.unwrap().1);
 
         let mut hob_tank = Tank::new(hob_world.clone(), TankConfig::default());
         let with_hob = render_sized(gpu, &mut hob_tank, format, (tw, th));

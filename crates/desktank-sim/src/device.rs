@@ -9,6 +9,9 @@
 //! footprint is every cell its art covers.
 //!
 //! Built-in kinds:
+//! - **Bubbler** (DV7): bed-mounted air-stone diffuser disc (drops onto
+//!   substrate/hardscape/floor), emits a dense curtain of rising air bubbles
+//!   across its porous dome with no water-current jet or filtration intakes.
 //! - **Internal filter** (DV1): suction-cupped to the side glass at any height
 //!   under the water line; its nozzle drives a horizontal jet away from the glass.
 //! - **Sponge filter** (DV4): bed-mounted (drops onto substrate/hardscape/floor),
@@ -52,6 +55,8 @@ pub struct DeviceId(pub u16);
 /// What a device is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DeviceKind {
+    /// A bed-mounted air-stone diffuser bubbler (DV7).
+    Bubbler,
     /// An internal power filter on the side glass (DV1).
     InternalFilter,
     /// A bed-mounted air-driven sponge filter (DV4).
@@ -62,12 +67,18 @@ pub enum DeviceKind {
 
 impl DeviceKind {
     /// Every kind, in palette order.
-    pub const ALL: [Self; 3] = [Self::InternalFilter, Self::SpongeFilter, Self::HobFilter];
+    pub const ALL: [Self; 4] = [
+        Self::Bubbler,
+        Self::InternalFilter,
+        Self::SpongeFilter,
+        Self::HobFilter,
+    ];
 
     /// Its name in saves, scripts and `assets/devices/`.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
+            Self::Bubbler => "bubbler",
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
             Self::HobFilter => "hob_filter",
@@ -82,9 +93,10 @@ impl DeviceKind {
 
     fn index(self) -> usize {
         match self {
-            Self::InternalFilter => 0,
-            Self::SpongeFilter => 1,
-            Self::HobFilter => 2,
+            Self::Bubbler => 0,
+            Self::InternalFilter => 1,
+            Self::SpongeFilter => 2,
+            Self::HobFilter => 3,
         }
     }
 }
@@ -132,12 +144,14 @@ pub struct DeviceArt {
     pub footprint: Vec<bool>,
     /// Footprint cells in all.
     pub cells: usize,
-    /// The nozzle tip in cells from the top-left, facing right.
-    pub nozzle: (usize, usize),
+    /// The nozzle tip in cells from the top-left, facing right, if this
+    /// device drives a directed water-current jet (`None` for pure air
+    /// diffusers such as the bubbler).
+    pub nozzle: Option<(usize, usize)>,
     /// Unit direction the nozzle jets, facing right (`+x` right, `+y` down).
     pub nozzle_dir: [f32; 2],
     /// Flow strength multiplier relative to `[current].speed` (1.0 for power
-    /// filters, gentler for air-driven uplift).
+    /// filters, gentler for air-driven uplift, 0.0 for non-jet diffusers).
     pub flow_scale: f32,
     /// Bubble outlet cells from the top-left, facing right: emit rising air
     /// bubbles from the water cell directly above each outlet.
@@ -166,6 +180,15 @@ pub struct DeviceArt {
     pub sprite: Sprite,
 }
 
+impl DeviceArt {
+    /// Whether this device filters water (has intake cells that capture
+    /// particles, clog media, mature biologically, and can be rinsed).
+    #[must_use]
+    pub fn is_filter(&self) -> bool {
+        !self.intakes.is_empty()
+    }
+}
+
 /// Why the device kinds couldn't be loaded.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DeviceError {
@@ -185,7 +208,8 @@ struct ArtDef {
     name: String,
     label: String,
     mount: Mount,
-    nozzle: [usize; 2],
+    #[serde(default)]
+    nozzle: Option<[usize; 2]>,
     #[serde(default = "default_nozzle_dir")]
     nozzle_dir: [f32; 2],
     #[serde(default = "default_flow_scale")]
@@ -222,6 +246,7 @@ pub struct DeviceKinds {
 }
 
 const BUILTIN: &[&str] = &[
+    include_str!("../../../assets/devices/bubbler.toml"),
     include_str!("../../../assets/devices/internal_filter.toml"),
     include_str!("../../../assets/devices/sponge_filter.toml"),
     include_str!("../../../assets/devices/hob_filter.toml"),
@@ -274,13 +299,18 @@ impl DeviceKinds {
             .collect();
         let in_footprint =
             |x: usize, y: usize| x < size.0 && y < size.1 && footprint[y * size.0 + x];
-        let nozzle = (def.nozzle[0], def.nozzle[1]);
-        if !in_footprint(nozzle.0, nozzle.1) {
-            return Err(bad(
-                &def.name,
-                "the nozzle must be a footprint cell".to_owned(),
-            ));
-        }
+        let nozzle = match def.nozzle {
+            Some([nx, ny]) => {
+                if !in_footprint(nx, ny) {
+                    return Err(bad(
+                        &def.name,
+                        "the nozzle must be a footprint cell".to_owned(),
+                    ));
+                }
+                Some((nx, ny))
+            }
+            None => None,
+        };
         let [dx, dy] = def.nozzle_dir;
         let len = (dx * dx + dy * dy).sqrt();
         if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
@@ -290,10 +320,16 @@ impl DeviceKinds {
             ));
         }
         let nozzle_dir = [dx / len, dy / len];
-        if !(def.flow_scale.is_finite() && def.flow_scale > 0.0) {
+        let flow_ok = def.flow_scale.is_finite()
+            && if nozzle.is_some() {
+                def.flow_scale > 0.0
+            } else {
+                def.flow_scale >= 0.0
+            };
+        if !flow_ok {
             return Err(bad(
                 &def.name,
-                "flow_scale must be finite and positive".to_owned(),
+                "flow_scale must be finite and positive when a nozzle is set".to_owned(),
             ));
         }
         if !(def.bubble_rate.is_finite() && def.bubble_rate >= 0.0) {
@@ -451,16 +487,16 @@ impl Device {
             .filter(move |&(x, y)| self.covers(art, x, y))
     }
 
-    /// The nozzle tip cell in the world.
+    /// The nozzle tip cell in the world, if this device has one.
     #[must_use]
-    pub fn nozzle(&self, art: &DeviceArt) -> (usize, usize) {
-        let (nx, ny) = art.nozzle;
+    pub fn nozzle(&self, art: &DeviceArt) -> Option<(usize, usize)> {
+        let (nx, ny) = art.nozzle?;
         let nx = if self.facing_left {
             art.size.0 - 1 - nx
         } else {
             nx
         };
-        (self.x + nx, self.y + ny)
+        Some((self.x + nx, self.y + ny))
     }
 
     /// Unit direction the nozzle jets in the world (`+x` right, `+y` down).
@@ -553,10 +589,13 @@ impl Device {
 
 /// A device's status, for the inspect card.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // inspect-card flags
 pub struct DeviceStatus {
     /// What it is.
     pub kind: DeviceKind,
-    /// Jet speed at the nozzle, in cells per second.
+    /// Whether this device filters water (intakes, media load, maturity, Rinse).
+    pub is_filter: bool,
+    /// Jet speed at the nozzle, in cells per second (0 for non-jet diffusers).
     pub flow: f32,
     /// Mounted on the right glass, jetting left.
     pub facing_left: bool,
@@ -595,10 +634,40 @@ mod tests {
             maturity: 0.0,
             intake_guard: false,
         };
-        assert_eq!(d(false).nozzle(art), (113, 58));
-        assert_eq!(d(true).nozzle(art), (100, 58));
+        assert_eq!(d(false).nozzle(art), Some((113, 58)));
+        assert_eq!(d(true).nozzle(art), Some((100, 58)));
         assert!(d(true).covers(art, 100, 58));
         assert_eq!(d(true).cells(art).count(), art.cells);
+    }
+
+    #[test]
+    fn the_bubbler_is_bed_mounted_fry_safe_and_pure_air_diffuser() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let art = kinds.get(DeviceKind::Bubbler);
+        assert_eq!(art.size, (14, 6));
+        assert_eq!(art.mount, Mount::Bed);
+        assert!(!art.mount.flippable());
+        assert!(!art.is_filter());
+        assert!(art.fry_safe);
+        assert_eq!(art.nozzle, None);
+        assert_eq!(art.flow_scale, 0.0);
+        assert_eq!(art.intakes, Vec::new());
+        assert!(art.bubble_rate > 0.0 && art.bubble_outlets.len() == 8);
+        // Every bubble outlet has open water (or top edge) directly above it.
+        for &(bx, by) in &art.bubble_outlets {
+            assert!(art.footprint[by * art.size.0 + bx]);
+            if by > 0 {
+                assert!(
+                    !art.footprint[(by - 1) * art.size.0 + bx],
+                    "outlet ({bx}, {by}) must not be covered by another footprint cell"
+                );
+            }
+        }
+        // Open corners beside the dome; solid white rim below.
+        assert!(!art.footprint[0]);
+        assert!(!art.footprint[13]);
+        assert!(art.footprint[3 * 14 + 6]);
+        assert!(art.footprint[3 * 14 + 13]);
     }
 
     #[test]
@@ -607,10 +676,11 @@ mod tests {
         let art = kinds.get(DeviceKind::SpongeFilter);
         assert_eq!(art.size, (15, 26));
         assert_eq!(art.mount, Mount::Bed);
+        assert!(art.is_filter());
         assert!(art.fry_safe);
         assert!(art.flow_scale > 0.0 && art.flow_scale < 1.0);
         assert!(art.bubble_rate > 0.0 && !art.bubble_outlets.is_empty());
-        assert_eq!(art.nozzle, (7, 0));
+        assert_eq!(art.nozzle, Some((7, 0)));
         assert_eq!(art.nozzle_dir, [0.0, -1.0]);
         assert_eq!(art.graze_rows, Some((8, 23)));
         assert!(art.intakes.len() >= 2);

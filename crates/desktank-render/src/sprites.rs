@@ -996,6 +996,9 @@ mod tests {
             "atlas exceeds WebGL2 limit: {:?}",
             atlas.size
         );
+        w.add_device(DeviceKind::Bubbler, 30, 40, false)
+            .unwrap()
+            .unwrap();
         w.add_device(DeviceKind::InternalFilter, 4, 40, false)
             .unwrap()
             .unwrap();
@@ -1006,8 +1009,8 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut out = Vec::new();
-        // Internal (1) + Sponge (1) + HOB split into body & back-band tube (2) = 4.
-        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 4);
+        // Bubbler (1) + Internal (1) + Sponge (1) + HOB split into body & back-band tube (2) = 5.
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 5);
         for d in w.devices() {
             let art = w.device_kinds().get(d.kind);
             let (cw, ch) = art.size;
