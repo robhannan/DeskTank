@@ -928,3 +928,101 @@ fn hob_filter_draws_air_above_surface_ripples_outlet_and_sorts_fish_in_front_of_
         }
     }
 }
+
+/// Strong 2D current at the water surface (#165) visibly disrupts/ripples the
+/// surface without a HOB filter, while a deep filter whose surface current
+/// stays below threshold leaves the water line pixel-identical to calm (both
+/// single-pass and split-grid).
+#[test]
+#[allow(clippy::cast_possible_truncation)]
+fn strong_surface_current_ripples_water_while_weak_current_stays_calm() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (gw, gh) = (160usize, 128usize);
+    let (tw, th) = (640u32, 512u32); // scale 4 (fine)
+
+    let make_world = |filter_y: Option<i64>| {
+        let mut world = World::new(
+            WorldConfig {
+                width: gw,
+                height: gh,
+                seed: 17,
+                water_level: 0.88, // surface_row = 15
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        if let Some(y) = filter_y {
+            world
+                .add_device(desktank_sim::DeviceKind::InternalFilter, 0, y, false)
+                .unwrap()
+                .expect("internal filter fits");
+        }
+        for _ in 0..8 {
+            world.tick();
+        }
+        world
+    };
+
+    let px_at = |frame: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * tw + x) * 4) as usize;
+        [frame[i], frame[i + 1], frame[i + 2], frame[i + 3]]
+    };
+
+    let mut single_high = None;
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let calm_world = make_world(None);
+        let surface = calm_world.surface_row();
+        let mut calm_tank = Tank::new(calm_world, TankConfig::default());
+        let calm = render_sized(gpu, &mut calm_tank, format, (tw, th));
+
+        // 1. High internal filter right beneath the surface: strong current
+        //    ripples the open surface ahead of the nozzle.
+        let high_world = make_world(Some(i64::try_from(surface).unwrap()));
+        assert!(high_world.has_surface_current_ripples());
+        let mut high_tank = Tank::new(high_world, TankConfig::default());
+        let high = render_sized(gpu, &mut high_tank, format, (tw, th));
+
+        let y0 = ((surface - 1) as u32) * 4;
+        let y1 = ((surface + 1) as u32) * 4;
+        let ripple_diffs: usize = (24u32..96)
+            .flat_map(|cx| (y0..y1).map(move |py| (cx * 4 + 2, py)))
+            .filter(|&(x, y)| px_at(&high, x, y) != px_at(&calm, x, y))
+            .count();
+        assert!(
+            ripple_diffs > 40,
+            "split={split_grid}: expected visible current-driven surface ripples, got {ripple_diffs} differing pixels"
+        );
+
+        // 2. Deep internal filter near the floor: surface current stays below
+        //    threshold, so the entire water surface stays identical to calm.
+        let deep_world = make_world(Some(96));
+        assert!(!deep_world.has_surface_current_ripples());
+        let mut deep_tank = Tank::new(deep_world, TankConfig::default());
+        let deep = render_sized(gpu, &mut deep_tank, format, (tw, th));
+        for cx in 24..gw {
+            let px = (cx as u32) * 4 + 2;
+            for py in y0..y1 {
+                assert_eq!(
+                    px_at(&deep, px, py),
+                    px_at(&calm, px, py),
+                    "split={split_grid}: deep filter surface at ({px}, {py}) should stay calm"
+                );
+            }
+        }
+
+        if !split_grid {
+            single_high = Some(high);
+        } else if let Some(ref single) = single_high {
+            assert_eq!(
+                high, *single,
+                "split-grid surface-current output must match single-pass"
+            );
+        }
+    }
+}

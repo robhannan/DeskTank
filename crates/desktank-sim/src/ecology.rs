@@ -253,6 +253,8 @@ struct CurrentDef {
     intake_speed: f32,
     #[serde(default = "default_intake_reach")]
     intake_reach: u32,
+    #[serde(default = "default_surface_ripple_speed")]
+    surface_ripple_speed: f32,
 }
 
 fn default_intake_speed() -> f32 {
@@ -261,6 +263,10 @@ fn default_intake_speed() -> f32 {
 
 fn default_intake_reach() -> u32 {
     32
+}
+
+fn default_surface_ripple_speed() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -582,6 +588,9 @@ pub struct CurrentConfig {
     pub intake_speed: f32,
     /// Cells over which an intake's pull fades to nothing.
     pub intake_reach: u32,
+    /// Minimum current speed (cells/s) at the water surface that triggers
+    /// surface ripples and agitation.
+    pub surface_ripple_speed: f32,
 }
 
 /// The bubbler.
@@ -1221,6 +1230,15 @@ fn current(
             "intake_speed must be within [0, speed] cells/s",
         ));
     }
+    if !(d.surface_ripple_speed.is_finite()
+        && d.surface_ripple_speed > 0.0
+        && d.surface_ripple_speed <= d.speed)
+    {
+        return Err(invalid(
+            &what,
+            "surface_ripple_speed must be within (0, speed] cells/s",
+        ));
+    }
     Ok(CurrentConfig {
         material: lookup(&d.material, materials, strict)?,
         speed: d.speed,
@@ -1228,6 +1246,7 @@ fn current(
         spread: d.spread,
         intake_speed: d.intake_speed,
         intake_reach: d.intake_reach,
+        surface_ripple_speed: d.surface_ripple_speed,
     })
 }
 
