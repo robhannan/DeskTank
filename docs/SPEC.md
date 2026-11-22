@@ -679,8 +679,7 @@ target computes the same bits.
   small creature moved by the usual systems, offered from **Food › Live**
   in the palette (a click adds a pinch of `PINCH` = 5, scattered within 3
   cells of the pointer) and never from Fish, Invertebrates or
-  Amphibians, `spawn` or
-  `scene::stock`. It never breeds (no `[breeding]`, `[genetics]`,
+  Amphibians, `spawn` or `scene::stock`. It never breeds (no `[breeding]`, `[genetics]`,
   `prey_cm`, territory or diet is allowed), and it doesn't count against
   the population cap: a tank holds at most `MAX_LIVE_FOOD` = 32 live
   foods beside the cap (the renderer draws up to cap + 32 + corpses).

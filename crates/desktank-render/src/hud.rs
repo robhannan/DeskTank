@@ -641,16 +641,16 @@ mod tests {
             let grid = Layout::fit((320, 180), target);
             let p = PaletteLayout::fit(target, &grid, tree.len(), subs, widest);
             assert!(p.origin.0 + p.size().0 <= target.0, "{target:?}");
-            let last = u32::try_from(tree.len() - 1).unwrap();
             let centre =
                 |slot: u32| f64::from(p.origin.0 + p.scale * (GAP + slot * ROW + SLOT / 2));
             let y = f64::from(p.origin.1 + p.scale * (GAP + SLOT / 2));
-            assert_eq!(p.hit(centre(0), y), Some(PaletteHit::Tab(0)), "{target:?}");
-            assert_eq!(
-                p.hit(centre(last), y),
-                Some(PaletteHit::Tab(tree.len() - 1)),
-                "{target:?}"
-            );
+            for (slot, n) in (0..).zip(0..tree.len()) {
+                assert_eq!(
+                    p.hit(centre(slot), y),
+                    Some(PaletteHit::Tab(n)),
+                    "{target:?}"
+                );
+            }
         }
     }
 

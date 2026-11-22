@@ -147,7 +147,7 @@ let settings = loadSettings();
 let tank: WebTank; // set by main() before anything uses it
 // Each palette item's place in the category tree (WebTank.paletteCategories).
 interface Place {
-  path: string; // "animals/schooling", or "water" for a tab's only sub-category
+  path: string; // "fish/schooling", or "water" for a tab's only sub-category
   tab: string; // the path's first part
   tabLabel: string;
   subLabel: string;
