@@ -26,8 +26,8 @@ pub mod tools;
 mod world;
 
 pub use device::{
-    Device, DeviceArt, DeviceError, DeviceId, DeviceKind, DeviceKinds, DeviceStatus, MAX_DEVICES,
-    Mount,
+    CLOG_FLOW_FLOOR, Device, DeviceArt, DeviceError, DeviceId, DeviceKind, DeviceKinds,
+    DeviceStatus, MAX_DEVICES, Mount, RinseKind,
 };
 pub use ecology::{Ecology, EcologyError};
 pub use field::{Field, FieldKind};

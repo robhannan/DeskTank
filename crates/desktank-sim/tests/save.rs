@@ -293,7 +293,7 @@ fn a_version_2_fixture_loads() {
     assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0x253a_b791_395a_9e29);
+    assert_eq!(w.state_hash(), 0x86af_22bc_2e5f_230b);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -391,7 +391,7 @@ fn a_version_3_fixture_loads() {
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0x7032_c968_3fff_0d5e);
+    assert_eq!(hash, 0x0109_248a_3952_51fa);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -415,7 +415,7 @@ fn a_version_4_fixture_loads() {
     // pin it (repinned when loading dried its driftwood, version 11, and
     // turned its filter outlet into an internal filter, D27).
     let hash = w.state_hash();
-    assert_eq!(hash, 0x176b_0ae2_f5e6_eb4c);
+    assert_eq!(hash, 0x6e95_0ab1_a1f6_7ea4);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
     let mut again = again;
@@ -448,7 +448,7 @@ fn a_version_5_fixture_loads() {
     // Pinned, so every platform decodes the same state (repinned when
     // loading dried its driftwood, version 11, and turned its filter outlet
     // into an internal filter, D27).
-    assert_eq!(w.state_hash(), 0xd293_1308_a459_0818);
+    assert_eq!(w.state_hash(), 0xcd62_f686_7ed2_a9c8);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -482,7 +482,7 @@ fn a_version_6_fixture_loads() {
     );
     assert_eq!(w.creatures().iter().filter_map(|c| c.name()).count(), 3);
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0xeef7_2214_4c41_7efb);
+    assert_eq!(w.state_hash(), 0x9b45_3dc7_17df_9ea1);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -501,7 +501,7 @@ fn a_version_7_fixture_loads() {
     // Its outlet loads as an internal filter (D27), and the decoded state
     // stays pinned across platforms.
     assert_eq!(w.devices().count(), 1);
-    assert_eq!(w.state_hash(), 0x0b81_c8aa_0d50_8ce3);
+    assert_eq!(w.state_hash(), 0xdb7c_6ec9_60ea_96d9);
     let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(w.state_hash(), fresh.state_hash());
     let floaters = |w: &World| {
@@ -596,7 +596,7 @@ fn a_version_9_fixture_loads() {
     assert_eq!(save::check(&bytes), Ok(9));
     let mut w = save::decode(&bytes, table()).unwrap();
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0xce02_4330_d0de_867b);
+    assert_eq!(w.state_hash(), 0x2e45_e2a0_57bc_2d21);
     let pursuit = |w: &World| -> Vec<Pursuit> {
         w.creatures()
             .iter()
@@ -637,7 +637,7 @@ fn a_version_10_fixture_loads() {
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(save::check(&bytes), Ok(10));
     let mut w = save::decode(&bytes, table()).unwrap();
-    assert_eq!(w.state_hash(), 0xe571_2407_9118_5709);
+    assert_eq!(w.state_hash(), 0xcbeb_e837_b7db_1bab);
     // Its outlet loads as an internal filter (D27).
     assert_eq!(w.devices().count(), 1);
     // Pre-v11 driftwood migrates to dry.
@@ -718,29 +718,18 @@ fn a_version_11_fixture_loads() {
 /// keeps its place, its footprint and its jet.
 #[test]
 fn a_version_12_fixture_loads() {
-    let path = fixture(12);
-    // `busy`'s legacy outlet adopted as an internal filter, run on.
-    let fresh = || {
-        let mut w = busy(5, 300);
-        w.adopt_legacy_outlets();
-        for _ in 0..100 {
-            w.tick();
-        }
-        w
-    };
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&fresh())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    let bytes = std::fs::read(fixture(12)).unwrap();
     assert_eq!(save::check(&bytes), Ok(12));
     let mut w = save::decode(&bytes, table()).unwrap();
-    let mut fresh = fresh();
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    assert_eq!(w.state_hash(), 0xe02d_307f_bc07_3d1b);
     let devices: Vec<_> = w.devices().copied().collect();
     assert_eq!(devices.len(), 1);
-    assert_eq!(devices, fresh.devices().copied().collect::<Vec<_>>());
     let d = devices[0];
     assert!(d.facing_left, "on the right glass");
+    // Version 12 devices migrate with clean, fresh media and guard off.
+    assert_eq!(d.media_load, 0.0);
+    assert_eq!(d.maturity, 0.0);
+    assert!(!d.intake_guard);
     let art = w.device_kinds().get(d.kind).clone();
     let art = &art;
     let device = id(&w, "device");
@@ -751,11 +740,14 @@ fn a_version_12_fixture_loads() {
     );
     let (nx, ny) = d.nozzle(art);
     assert!(w.current_at(nx - 20, ny)[0] < -1.0);
+    // Round-tripping into v13 carries on identically.
+    let mut again = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(w.state_hash(), again.state_hash());
     for _ in 0..200 {
         w.tick();
-        fresh.tick();
+        again.tick();
     }
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    assert_eq!(w.state_hash(), again.state_hash());
     // Scooping one of its cells after loading removes it whole.
     w.set_cell(d.x + 5, d.y + 10, id(&w, "water")).unwrap();
     assert_eq!(w.devices().count(), 0);
@@ -763,6 +755,45 @@ fn a_version_12_fixture_loads() {
         d.cells(art)
             .all(|(x, y)| w.cell(x, y).unwrap().material != device)
     );
+}
+
+#[test]
+fn a_version_13_fixture_loads() {
+    let path = fixture(13);
+    // `busy`'s legacy outlet adopted as an internal filter with filtration
+    // state (media load, maturity, intake guard), run on.
+    let fresh = || {
+        let mut w = busy(5, 300);
+        w.adopt_legacy_outlets();
+        let dev = w.devices().next().unwrap().id;
+        assert!(w.set_device_media_load(dev, 0.45));
+        assert!(w.set_device_maturity(dev, 0.65));
+        assert!(w.set_device_intake_guard(dev, true));
+        for _ in 0..100 {
+            w.tick();
+        }
+        w
+    };
+    if std::env::var_os("DESKTANK_BLESS").is_some() {
+        std::fs::write(&path, save::encode(&fresh())).unwrap();
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(save::check(&bytes), Ok(13));
+    let mut w = save::decode(&bytes, table()).unwrap();
+    let mut fresh = fresh();
+    assert_eq!(w.state_hash(), fresh.state_hash());
+    let devices: Vec<_> = w.devices().copied().collect();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices, fresh.devices().copied().collect::<Vec<_>>());
+    let d = devices[0];
+    assert!(d.media_load >= 0.45);
+    assert!(d.maturity > 0.65);
+    assert!(d.intake_guard);
+    for _ in 0..200 {
+        w.tick();
+        fresh.tick();
+    }
+    assert_eq!(w.state_hash(), fresh.state_hash());
 }
 
 #[test]

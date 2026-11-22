@@ -26,6 +26,12 @@
           <label>Name <input id="name-input" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="none yet" aria-describedby="name-out"></label>
           <output id="name-out" aria-live="polite">Enter names it · Esc closes</output>
         </form>
+        <div id="device-actions" class="device-actions" data-owner-only hidden>
+          <button id="device-rinse" type="button">Rinse</button>
+          <button id="device-hard-rinse" type="button" title="Deep clean (sets maturity back)">Hard rinse</button>
+          <button id="device-replace" type="button" title="Replace filter media (resets maturity)">Replace media</button>
+          <label id="device-guard-label" class="device-guard"><input id="device-guard" type="checkbox"> Intake guard</label>
+        </div>
       </div>
       <form id="cheat" class="cheat" data-owner-only hidden>
         <label>Cheat <input id="cheat-input" type="text" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="help" aria-describedby="cheat-out"></label>

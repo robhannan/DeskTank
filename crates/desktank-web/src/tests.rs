@@ -437,6 +437,45 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
 }
 
 #[test]
+fn device_inspect_rinse_and_guard_round_trip() {
+    let mut t = paused();
+    t.select(slot(&t, "device internal_filter"));
+    down(&mut t, PRIMARY, 4, 30);
+    t.pointer_up(PRIMARY);
+    t.step();
+    let dev = t.tank.world().devices().next().unwrap().id;
+    assert!(t.tank.world_mut().set_device_media_load(dev, 0.8));
+    assert!(t.tank.world_mut().set_device_maturity(dev, 0.6));
+    let _ = t.save();
+
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 4, 30);
+    t.pointer_up(PRIMARY);
+    let line = t.take_inspection();
+    assert!(
+        line.starts_with("device internal_filter 1 left ") && line.contains(" 80 60 off no "),
+        "unexpected device inspect line: {line}"
+    );
+
+    let toggled = t.toggle_device_guard(1).unwrap();
+    assert!(toggled.contains(" 80 60 on no "), "guard on: {toggled}");
+    assert!(t.save_needed());
+
+    let rinsed = t.rinse_device(1, "gentle").unwrap();
+    assert!(rinsed.contains(" 0 60 on no "), "gentle rinse: {rinsed}");
+
+    let hard = t.rinse_device(1, "hard").unwrap();
+    assert!(hard.contains(" 0 15 on no "), "hard rinse: {hard}");
+
+    let replaced = t.rinse_device(1, "replace").unwrap();
+    assert!(replaced.contains(" 0 0 on no "), "replace: {replaced}");
+
+    assert!(t.rinse_device(1, "bogus").is_err());
+    assert!(t.rinse_device(99, "gentle").is_err());
+    assert!(t.toggle_device_guard(99).is_err());
+}
+
+#[test]
 fn easy_mode_reaches_the_world() {
     let mut t = paused();
     assert!(!t.easy_mode());
@@ -696,7 +735,7 @@ mod saves {
     /// ticks) and its state hash; `tests/web/saves.spec.ts` imports the
     /// same file on the web and checks the same hash.
     const NATIVE_FIXTURE: &str = "../desktank-sim/tests/fixtures/v1.dtank";
-    const NATIVE_HASH: &str = "7550da115e75bf97";
+    const NATIVE_HASH: &str = "12858282b5ae5235";
     /// The native fixture as this build re-saves it natively. A save carries
     /// the build's material and species name tables, so it is not the v1
     /// file's bytes once ids are added; the web test compares its export of

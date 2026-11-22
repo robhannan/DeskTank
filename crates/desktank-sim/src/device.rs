@@ -20,6 +20,26 @@ use crate::species::{Sprite, SpriteDef, TEXELS_PER_CELL, sprite};
 /// Most devices a tank holds.
 pub const MAX_DEVICES: usize = 16;
 
+/// Minimum flow fraction at full media clog (D27, DV3: ~30% so an unrinsed
+/// screensaver or lock-screen filter never kills the tank).
+pub const CLOG_FLOW_FLOOR: f32 = 0.3;
+
+/// Discrete media-load steps for flow scaling (every 5% clog) so the 2D
+/// current field rebuilds at most 20 times from clean to full clog while
+/// staying bit-for-bit identical across save/load.
+const FLOW_STEPS: f32 = 20.0;
+
+/// How a filter's media is cleaned (D27, DV3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RinseKind {
+    /// Gentle rinse in tank water: clears media load and keeps bacteria maturity.
+    Gentle,
+    /// Hard rinse (e.g. under tap water): clears media load and sets maturity back sharply.
+    Hard,
+    /// Replace media: clears media load and resets maturity to zero.
+    Replace,
+}
+
 /// A device's id in the world's device table (1..=65535; 0 is no device).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeviceId(pub u16);
@@ -88,6 +108,9 @@ pub struct DeviceArt {
     /// Intake cells from the top-left, facing right: water and loose
     /// particles are drawn towards them.
     pub intakes: Vec<(usize, usize)>,
+    /// Whether this kind is intrinsically safe for fry and small shrimp
+    /// without an intake guard (e.g. sponge filter).
+    pub fry_safe: bool,
     /// The art, facing right (mounted on the left glass).
     pub sprite: Sprite,
 }
@@ -116,6 +139,8 @@ struct ArtDef {
     nozzle_dir: [f32; 2],
     #[serde(default)]
     intakes: Vec<[usize; 2]>,
+    #[serde(default)]
+    fry_safe: bool,
     sprite: SpriteDef,
 }
 
@@ -197,6 +222,7 @@ impl DeviceKinds {
                 nozzle,
                 nozzle_dir,
                 intakes,
+                fry_safe: def.fry_safe,
                 sprite: art,
             });
         }
@@ -225,7 +251,7 @@ impl DeviceKinds {
 }
 
 /// A device in the tank.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Device {
     /// Its id (its footprint cells hold it).
     pub id: DeviceId,
@@ -237,9 +263,31 @@ pub struct Device {
     pub y: usize,
     /// Mirrored: on the right glass, jetting left.
     pub facing_left: bool,
+    /// Mechanical media load in `[0.0, 1.0]` (0 = clean, 1 = clogged).
+    pub media_load: f32,
+    /// Biological media maturity in `[0.0, 1.0]` (0 = fresh, 1 = mature).
+    pub maturity: f32,
+    /// Whether the intake guard is fitted (protects fry and small shrimp).
+    pub intake_guard: bool,
 }
 
 impl Device {
+    /// Effective flow multiplier in `[clog_floor, 1.0]` for this device's
+    /// media load, quantized to 5% load steps so current rebuilds are bounded
+    /// and save/load stays exact.
+    #[must_use]
+    pub fn flow_factor_with(&self, clog_floor: f32) -> f32 {
+        let floor = clog_floor.clamp(0.0, 1.0);
+        let step = (self.media_load.clamp(0.0, 1.0) * FLOW_STEPS).round() / FLOW_STEPS;
+        1.0 - (1.0 - floor) * step
+    }
+
+    /// Effective flow multiplier using [`CLOG_FLOW_FLOOR`].
+    #[must_use]
+    pub fn flow_factor(&self) -> f32 {
+        self.flow_factor_with(CLOG_FLOW_FLOOR)
+    }
+
     /// Whether world cell `(x, y)` is one of its footprint cells.
     #[must_use]
     pub fn covers(&self, art: &DeviceArt, x: usize, y: usize) -> bool {
@@ -301,6 +349,14 @@ pub struct DeviceStatus {
     pub flow: f32,
     /// Mounted on the right glass, jetting left.
     pub facing_left: bool,
+    /// Mechanical media load in `[0.0, 1.0]` (0 = clean, 1 = clogged).
+    pub media_load: f32,
+    /// Biological media maturity in `[0.0, 1.0]` (0 = fresh, 1 = mature).
+    pub maturity: f32,
+    /// Whether the intake guard is fitted.
+    pub intake_guard: bool,
+    /// Whether this kind is intrinsically fry-safe (no guard needed).
+    pub fry_safe: bool,
 }
 
 #[cfg(test)]
@@ -324,6 +380,9 @@ mod tests {
             x: 100,
             y: 50,
             facing_left,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
         };
         assert_eq!(d(false).nozzle(art), (113, 58));
         assert_eq!(d(true).nozzle(art), (100, 58));

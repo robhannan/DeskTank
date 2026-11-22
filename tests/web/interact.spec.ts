@@ -244,13 +244,20 @@ test.describe("touch", () => {
     expect(await glued(page)).toBe(1);
 
     // D27: the internal filter goes whole onto the nearer (left) glass, and
-    // inspect shows its card.
+    // inspect shows its card with load, maturity, Rinse and the guard toggle (DV3).
     await choose(page, "Internal filter");
     await tap(Math.round(w * 0.2), y);
     expect(await cellCount(page, "device")).toBeGreaterThan(300);
     await choose(page, "Inspect");
     await tap(4, y);
-    await expect(page.locator("#inspect")).toHaveText(/^Internal filter #1 · on the left glass · flow /);
+    await expect(page.locator("#inspect")).toHaveText(
+      /^Internal filter #1 · on the left glass · flow [\d.]+ cells\/s · load 0% · maturity 0% · guard off · cell /,
+    );
+    await expect(page.locator("#device-actions")).toBeVisible();
+    await page.locator("#device-guard").check();
+    await expect(page.locator("#inspect")).toContainText("guard on");
+    await page.locator("#device-rinse").click();
+    await expect(page.locator("#inspect")).toContainText("load 0%");
 
     const hash = await stateHash(page);
     await choose(page, "Inspect");

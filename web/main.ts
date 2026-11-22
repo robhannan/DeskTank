@@ -130,6 +130,12 @@ const cheatOut = $<HTMLOutputElement>("cheat-out");
 const nameForm = $<HTMLFormElement>("name");
 const nameInput = $<HTMLInputElement>("name-input");
 const nameOut = $<HTMLOutputElement>("name-out");
+const deviceActions = $("device-actions");
+const deviceRinseBtn = $<HTMLButtonElement>("device-rinse");
+const deviceHardRinseBtn = $<HTMLButtonElement>("device-hard-rinse");
+const deviceReplaceBtn = $<HTMLButtonElement>("device-replace");
+const deviceGuardLabel = $("device-guard-label");
+const deviceGuardInput = $<HTMLInputElement>("device-guard");
 const playBtn = $<HTMLButtonElement>("play");
 const stepBtn = $<HTMLButtonElement>("step");
 const seedInput = $<HTMLInputElement>("seed");
@@ -178,6 +184,9 @@ interface Inspected {
   name: string;
 }
 let inspected: Inspected | null = null;
+// The device inspect last showed (D27, DV3): its id for Rinse / guard actions.
+let inspectedDeviceId: number | null = null;
+let inspectedDeviceCell: [string, string] | null = null;
 let wheelRest = 0;
 let stripRest = 0; // the same over the palette, which it steps through
 let db: IDBDatabase | null = null; // IndexedDB, or null where there is none
@@ -593,6 +602,7 @@ function showOwnership() {
   if (!active) {
     closeCheat();
     closeName();
+    closeDeviceActions();
   }
 }
 
@@ -1137,12 +1147,67 @@ function flash(text: string) {
 }
 
 function fade() {
-  if (document.activeElement === nameInput) {
+  if (
+    document.activeElement === nameInput ||
+    (!deviceActions.hidden && deviceActions.contains(document.activeElement))
+  ) {
     inspectTimer = setTimeout(fade, INSPECT_SHOW_MS);
     return;
   }
   inspectEl.hidden = true;
   closeName();
+  closeDeviceActions();
+}
+
+function closeDeviceActions() {
+  deviceActions.hidden = true;
+  inspectedDeviceId = null;
+  inspectedDeviceCell = null;
+}
+
+function showDeviceLine(rest: string[], preserveCell = false) {
+  const [name, id, glass, flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
+  const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
+  inspectedDeviceCell = [x, y];
+  const guardText = frySafe === "yes" ? "fry-safe" : `guard ${guard}`;
+  const text = `${label(name)} #${id} · on the ${glass} glass · flow ${flow} cells/s · load ${load}% · maturity ${maturity}% · ${guardText} · cell ${x}, ${y}`;
+  inspected = null;
+  closeName();
+  inspectedDeviceId = Number(id);
+  flash(text);
+  if (owner && !handingOver) {
+    deviceGuardLabel.hidden = frySafe === "yes";
+    deviceGuardInput.checked = guard === "on";
+    deviceActions.hidden = false;
+  } else {
+    deviceActions.hidden = true;
+  }
+}
+
+function runDeviceRinse(mode: "gentle" | "hard" | "replace") {
+  if (!owner || handingOver || inspectedDeviceId === null) return closeDeviceActions();
+  try {
+    const line = tank.rinseDevice(inspectedDeviceId, mode);
+    const [kind, ...rest] = line.split(" ");
+    if (kind === "device") showDeviceLine(rest, true);
+    kick();
+  } catch (err) {
+    closeDeviceActions();
+    flash(String(err));
+  }
+}
+
+function runDeviceGuardToggle() {
+  if (!owner || handingOver || inspectedDeviceId === null) return closeDeviceActions();
+  try {
+    const line = tank.toggleDeviceGuard(inspectedDeviceId);
+    const [kind, ...rest] = line.split(" ");
+    if (kind === "device") showDeviceLine(rest, true);
+    kick();
+  } catch (err) {
+    closeDeviceActions();
+    flash(String(err));
+  }
 }
 
 // The name field (SPEC §2.4, T9): shown with a creature's card for the
@@ -1205,6 +1270,7 @@ function runCheat(e: SubmitEvent) {
     closeCheat();
     inspected = null;
     closeName();
+    closeDeviceActions();
     flash(`Cheat: ${done}`);
     showCreatureCap();
     kick();
@@ -1228,11 +1294,12 @@ function showInspection() {
     const old = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
     inspectEl.textContent = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
   } else if (kind === "device") {
-    // D27: DV1 shows the jet only; filtering comes in DV3.
-    const [name, id, glass, flow, x, y] = rest;
-    inspectEl.textContent = `${label(name)} #${id} · on the ${glass} glass · flow ${flow} cells/s · cell ${x}, ${y}`;
+    // D27, DV3: flow, media load, maturity, Rinse and intake guard toggle.
+    showDeviceLine(rest);
+    return;
   } else if (kind === "creature") {
     // The name is last and may hold spaces.
+    closeDeviceActions();
     inspected = { id: Number(rest[1]), parts: rest.slice(0, 12), name: rest.slice(12).join(" ") };
     flash(creatureText(inspected));
     if (owner && !handingOver) {
@@ -1246,6 +1313,7 @@ function showInspection() {
   }
   inspected = null;
   closeName();
+  closeDeviceActions();
   flash(inspectEl.textContent);
 }
 
@@ -1269,6 +1337,7 @@ function showRefusal() {
   }
   inspected = null;
   closeName();
+  closeDeviceActions();
   flash(message);
 }
 
@@ -1525,6 +1594,10 @@ function wireInput() {
   $("take-over").addEventListener("click", takeOver);
   cheatForm.addEventListener("submit", runCheat);
   nameForm.addEventListener("submit", runName);
+  deviceRinseBtn.addEventListener("click", () => runDeviceRinse("gentle"));
+  deviceHardRinseBtn.addEventListener("click", () => runDeviceRinse("hard"));
+  deviceReplaceBtn.addEventListener("click", () => runDeviceRinse("replace"));
+  deviceGuardInput.addEventListener("change", runDeviceGuardToggle);
   nameInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
