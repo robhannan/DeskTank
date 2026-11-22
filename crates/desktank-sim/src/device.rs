@@ -8,10 +8,12 @@
 //! them removes the whole device. It is drawn as a hand-drawn sprite; the
 //! footprint is every cell its art covers.
 //!
-//! DV1 has one kind, the internal filter: suction-cupped to the side glass
-//! at any height under the water line, its nozzle drives the horizontal jet
-//! away from the glass. Filtering (intakes, media load, maturity) comes in
-//! DV3.
+//! Built-in kinds:
+//! - **Internal filter** (DV1): suction-cupped to the side glass at any height
+//!   under the water line; its nozzle drives a horizontal jet away from the glass.
+//! - **Sponge filter** (DV4): bed-mounted (drops onto substrate/hardscape/floor),
+//!   emits air-driven uplift bubbles and gentle upward flow, is intrinsically
+//!   fry-safe, and invites shrimp to graze its porous foam.
 
 use serde::Deserialize;
 
@@ -49,17 +51,20 @@ pub struct DeviceId(pub u16);
 pub enum DeviceKind {
     /// An internal power filter on the side glass (DV1).
     InternalFilter,
+    /// A bed-mounted air-driven sponge filter (DV4).
+    SpongeFilter,
 }
 
 impl DeviceKind {
     /// Every kind, in palette order.
-    pub const ALL: [Self; 1] = [Self::InternalFilter];
+    pub const ALL: [Self; 2] = [Self::InternalFilter, Self::SpongeFilter];
 
     /// Its name in saves, scripts and `assets/devices/`.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::InternalFilter => "internal_filter",
+            Self::SpongeFilter => "sponge_filter",
         }
     }
 
@@ -72,6 +77,7 @@ impl DeviceKind {
     fn index(self) -> usize {
         match self {
             Self::InternalFilter => 0,
+            Self::SpongeFilter => 1,
         }
     }
 }
@@ -83,6 +89,9 @@ pub enum Mount {
     /// Against a side glass (the nearer one, or the other when flipped),
     /// at any height wholly under the water line.
     SideGlass,
+    /// Dropped straight down onto substrate, hardscape or the tank floor,
+    /// wholly under the water line (symmetric; wall-flip ignored).
+    Bed,
 }
 
 impl Mount {
@@ -116,12 +125,24 @@ pub struct DeviceArt {
     pub nozzle: (usize, usize),
     /// Unit direction the nozzle jets, facing right (`+x` right, `+y` down).
     pub nozzle_dir: [f32; 2],
+    /// Flow strength multiplier relative to `[current].speed` (1.0 for power
+    /// filters, gentler for air-driven uplift).
+    pub flow_scale: f32,
+    /// Bubble outlet cells from the top-left, facing right: emit rising air
+    /// bubbles from the water cell directly above each outlet.
+    pub bubble_outlets: Vec<(usize, usize)>,
+    /// Clean bubble emission rate per outlet cell, in bubbles per second
+    /// (scaled by the device's clog flow factor; 0 for no bubbles).
+    pub bubble_rate: f32,
     /// Intake cells from the top-left, facing right: water and loose
     /// particles are drawn towards them.
     pub intakes: Vec<(usize, usize)>,
     /// Whether this kind is intrinsically safe for fry and small shrimp
     /// without an intake guard (e.g. sponge filter).
     pub fry_safe: bool,
+    /// Inclusive local cell rows `(y0, y1)` of the foam body that shrimp seek
+    /// out and graze, if this device invites shrimp grazing.
+    pub graze_rows: Option<(usize, usize)>,
     /// The art, facing right (mounted on the left glass).
     pub sprite: Sprite,
 }
@@ -148,15 +169,27 @@ struct ArtDef {
     nozzle: [usize; 2],
     #[serde(default = "default_nozzle_dir")]
     nozzle_dir: [f32; 2],
+    #[serde(default = "default_flow_scale")]
+    flow_scale: f32,
+    #[serde(default)]
+    bubble_outlets: Vec<[usize; 2]>,
+    #[serde(default)]
+    bubble_rate: f32,
     #[serde(default)]
     intakes: Vec<[usize; 2]>,
     #[serde(default)]
     fry_safe: bool,
+    #[serde(default)]
+    graze_rows: Option<[usize; 2]>,
     sprite: SpriteDef,
 }
 
 fn default_nozzle_dir() -> [f32; 2] {
     [1.0, 0.0]
+}
+
+fn default_flow_scale() -> f32 {
+    1.0
 }
 
 /// The device kinds, by [`DeviceKind`].
@@ -165,7 +198,10 @@ pub struct DeviceKinds {
     arts: Vec<DeviceArt>,
 }
 
-const BUILTIN: &[&str] = &[include_str!("../../../assets/devices/internal_filter.toml")];
+const BUILTIN: &[&str] = &[
+    include_str!("../../../assets/devices/internal_filter.toml"),
+    include_str!("../../../assets/devices/sponge_filter.toml"),
+];
 
 impl DeviceKinds {
     /// The kinds embedded in the binary.
@@ -174,69 +210,10 @@ impl DeviceKinds {
     ///
     /// Returns an error if a kind's TOML is invalid or a kind is missing.
     pub fn builtin() -> Result<Self, DeviceError> {
-        let mut arts: Vec<DeviceArt> = Vec::new();
-        for src in BUILTIN {
-            let bad = |file: &str, message: String| DeviceError::Parse {
-                file: file.to_owned(),
-                message,
-            };
-            let def: ArtDef = toml::from_str(src).map_err(|e| bad("device", e.to_string()))?;
-            let kind = DeviceKind::from_name(&def.name)
-                .ok_or_else(|| bad(&def.name, "unknown device kind".to_owned()))?;
-            let art = sprite(&def.sprite).map_err(|e| bad(&def.name, e.to_owned()))?;
-            let size = (art.width / TEXELS_PER_CELL, art.height / TEXELS_PER_CELL);
-            let frame = &art.frames[0];
-            let footprint: Vec<bool> = (0..size.0 * size.1)
-                .map(|c| {
-                    let (cx, cy) = (c % size.0, c / size.0);
-                    (0..TEXELS_PER_CELL * TEXELS_PER_CELL).any(|t| {
-                        let x = cx * TEXELS_PER_CELL + t % TEXELS_PER_CELL;
-                        let y = cy * TEXELS_PER_CELL + t / TEXELS_PER_CELL;
-                        frame[y * art.width + x][3] > 0
-                    })
-                })
-                .collect();
-            let nozzle = (def.nozzle[0], def.nozzle[1]);
-            if nozzle.0 >= size.0 || nozzle.1 >= size.1 || !footprint[nozzle.1 * size.0 + nozzle.0]
-            {
-                return Err(bad(
-                    &def.name,
-                    "the nozzle must be a footprint cell".to_owned(),
-                ));
-            }
-            let [dx, dy] = def.nozzle_dir;
-            let len = (dx * dx + dy * dy).sqrt();
-            if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
-                return Err(bad(
-                    &def.name,
-                    "nozzle_dir must be a finite non-zero vector".to_owned(),
-                ));
-            }
-            let nozzle_dir = [dx / len, dy / len];
-            let mut intakes = Vec::with_capacity(def.intakes.len());
-            for [ix, iy] in def.intakes {
-                if ix >= size.0 || iy >= size.1 || !footprint[iy * size.0 + ix] {
-                    return Err(bad(
-                        &def.name,
-                        "every intake must be a footprint cell".to_owned(),
-                    ));
-                }
-                intakes.push((ix, iy));
-            }
-            arts.push(DeviceArt {
-                kind,
-                label: def.label,
-                mount: def.mount,
-                size,
-                cells: footprint.iter().filter(|&&f| f).count(),
-                footprint,
-                nozzle,
-                nozzle_dir,
-                intakes,
-                fry_safe: def.fry_safe,
-                sprite: art,
-            });
-        }
+        let mut arts: Vec<DeviceArt> = BUILTIN
+            .iter()
+            .map(|src| Self::parse_art(src))
+            .collect::<Result<_, _>>()?;
         arts.sort_by_key(|a| a.kind.index());
         for (i, k) in DeviceKind::ALL.iter().enumerate() {
             if arts.get(i).map(|a| a.kind) != Some(*k) {
@@ -247,6 +224,106 @@ impl DeviceKinds {
             }
         }
         Ok(Self { arts })
+    }
+
+    fn parse_art(src: &str) -> Result<DeviceArt, DeviceError> {
+        let bad = |file: &str, message: String| DeviceError::Parse {
+            file: file.to_owned(),
+            message,
+        };
+        let def: ArtDef = toml::from_str(src).map_err(|e| bad("device", e.to_string()))?;
+        let kind = DeviceKind::from_name(&def.name)
+            .ok_or_else(|| bad(&def.name, "unknown device kind".to_owned()))?;
+        let art = sprite(&def.sprite).map_err(|e| bad(&def.name, e.to_owned()))?;
+        let size = (art.width / TEXELS_PER_CELL, art.height / TEXELS_PER_CELL);
+        let frame = &art.frames[0];
+        let footprint: Vec<bool> = (0..size.0 * size.1)
+            .map(|c| {
+                let (cx, cy) = (c % size.0, c / size.0);
+                (0..TEXELS_PER_CELL * TEXELS_PER_CELL).any(|t| {
+                    let x = cx * TEXELS_PER_CELL + t % TEXELS_PER_CELL;
+                    let y = cy * TEXELS_PER_CELL + t / TEXELS_PER_CELL;
+                    frame[y * art.width + x][3] > 0
+                })
+            })
+            .collect();
+        let in_footprint =
+            |x: usize, y: usize| x < size.0 && y < size.1 && footprint[y * size.0 + x];
+        let nozzle = (def.nozzle[0], def.nozzle[1]);
+        if !in_footprint(nozzle.0, nozzle.1) {
+            return Err(bad(
+                &def.name,
+                "the nozzle must be a footprint cell".to_owned(),
+            ));
+        }
+        let [dx, dy] = def.nozzle_dir;
+        let len = (dx * dx + dy * dy).sqrt();
+        if !(dx.is_finite() && dy.is_finite() && len > 0.0) {
+            return Err(bad(
+                &def.name,
+                "nozzle_dir must be a finite non-zero vector".to_owned(),
+            ));
+        }
+        let nozzle_dir = [dx / len, dy / len];
+        if !(def.flow_scale.is_finite() && def.flow_scale > 0.0) {
+            return Err(bad(
+                &def.name,
+                "flow_scale must be finite and positive".to_owned(),
+            ));
+        }
+        if !(def.bubble_rate.is_finite() && def.bubble_rate >= 0.0) {
+            return Err(bad(
+                &def.name,
+                "bubble_rate must be finite and non-negative".to_owned(),
+            ));
+        }
+        let mut bubble_outlets = Vec::with_capacity(def.bubble_outlets.len());
+        for [bx, by] in def.bubble_outlets {
+            if !in_footprint(bx, by) {
+                return Err(bad(
+                    &def.name,
+                    "every bubble outlet must be a footprint cell".to_owned(),
+                ));
+            }
+            bubble_outlets.push((bx, by));
+        }
+        let mut intakes = Vec::with_capacity(def.intakes.len());
+        for [ix, iy] in def.intakes {
+            if !in_footprint(ix, iy) {
+                return Err(bad(
+                    &def.name,
+                    "every intake must be a footprint cell".to_owned(),
+                ));
+            }
+            intakes.push((ix, iy));
+        }
+        let graze_rows = match def.graze_rows {
+            Some([y0, y1]) if y0 <= y1 && y1 < size.1 => Some((y0, y1)),
+            Some(_) => {
+                return Err(bad(
+                    &def.name,
+                    "graze_rows must be an inclusive range within sprite height".to_owned(),
+                ));
+            }
+            None => None,
+        };
+        Ok(DeviceArt {
+            kind,
+            label: def.label,
+            mount: def.mount,
+            size,
+            cells: footprint.iter().filter(|&&f| f).count(),
+            footprint,
+            nozzle,
+            nozzle_dir,
+            flow_scale: def.flow_scale,
+            bubble_outlets,
+            bubble_rate: def.bubble_rate,
+            intakes,
+            fry_safe: def.fry_safe,
+            graze_rows,
+            sprite: art,
+        })
     }
 
     /// The art and rules for `kind`.
@@ -349,6 +426,45 @@ impl Device {
             (self.x + ix, self.y + iy)
         })
     }
+
+    /// Outward unit direction into open water from world intake cell `(ix, iy)`.
+    #[must_use]
+    pub fn intake_outward(&self, art: &DeviceArt, ix: usize, _iy: usize) -> [f32; 2] {
+        match art.mount {
+            Mount::SideGlass => self.nozzle_dir(art),
+            Mount::Bed => {
+                let lx = ix.saturating_sub(self.x);
+                match lx.cmp(&(art.size.0 / 2)) {
+                    core::cmp::Ordering::Less => [-1.0, 0.0],
+                    core::cmp::Ordering::Greater => [1.0, 0.0],
+                    core::cmp::Ordering::Equal => [0.0, -1.0],
+                }
+            }
+        }
+    }
+
+    /// Bubble outlet cells in the world.
+    pub fn bubble_outlets<'a>(
+        &'a self,
+        art: &'a DeviceArt,
+    ) -> impl Iterator<Item = (usize, usize)> + 'a {
+        art.bubble_outlets.iter().map(move |&(bx, by)| {
+            let bx = if self.facing_left {
+                art.size.0 - 1 - bx
+            } else {
+                bx
+            };
+            (self.x + bx, self.y + by)
+        })
+    }
+
+    /// Inclusive world row range `(y0, y1)` of this device's shrimp-grazeable
+    /// foam body, if any.
+    #[must_use]
+    pub fn graze_band(&self, art: &DeviceArt) -> Option<(usize, usize)> {
+        let (y0, y1) = art.graze_rows?;
+        Some((self.y + y0, self.y + y1))
+    }
 }
 
 /// A device's status, for the inspect card.
@@ -399,5 +515,24 @@ mod tests {
         assert_eq!(d(true).nozzle(art), (100, 58));
         assert!(d(true).covers(art, 100, 58));
         assert_eq!(d(true).cells(art).count(), art.cells);
+    }
+
+    #[test]
+    fn the_sponge_filter_is_bed_mounted_fry_safe_and_bubbling() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let art = kinds.get(DeviceKind::SpongeFilter);
+        assert_eq!(art.size, (15, 26));
+        assert_eq!(art.mount, Mount::Bed);
+        assert!(art.fry_safe);
+        assert!(art.flow_scale > 0.0 && art.flow_scale < 1.0);
+        assert!(art.bubble_rate > 0.0 && !art.bubble_outlets.is_empty());
+        assert_eq!(art.nozzle, (7, 0));
+        assert_eq!(art.nozzle_dir, [0.0, -1.0]);
+        assert_eq!(art.graze_rows, Some((8, 23)));
+        assert!(art.intakes.len() >= 2);
+        // Open corners beside the uplift tube; solid sponge body below.
+        assert!(!art.footprint[0]);
+        assert!(art.footprint[7]);
+        assert!(art.footprint[15 * 15 + 7]);
     }
 }

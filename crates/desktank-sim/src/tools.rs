@@ -1170,7 +1170,7 @@ mod tests {
         let offered = w.species().iter().filter(|s| s.palette.is_some()).count();
         assert_eq!(
             items.len(),
-            pourable.count() + w.plant_species().len() + 2 + 5 + offered
+            pourable.count() + w.plant_species().len() + Placeable::ALL.len() + 5 + offered
         );
         let gravel = id(&w, "gravel");
         let mut t = Tools::new(id(&w, "sand"));
@@ -1208,6 +1208,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // full palette tree table
     fn palette_tree_comes_from_the_assets() {
         let w = world();
         let tree = Tools::palette_tree(&w);
@@ -1238,7 +1239,11 @@ mod tests {
             ("build/hardscape", vec!["rock", "driftwood"]),
             (
                 "build/devices",
-                vec!["Place(Bubbler)", "Place(InternalFilter)"],
+                vec![
+                    "Place(Bubbler)",
+                    "Place(InternalFilter)",
+                    "Place(SpongeFilter)",
+                ],
             ),
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
             (

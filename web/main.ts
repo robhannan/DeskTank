@@ -1167,11 +1167,12 @@ function closeDeviceActions() {
 }
 
 function showDeviceLine(rest: string[], preserveCell = false) {
-  const [name, id, glass, flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
+  const [name, id, place, flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
   const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
   inspectedDeviceCell = [x, y];
+  const placeText = place === "bed" ? "on the bed" : `on the ${place} glass`;
   const guardText = frySafe === "yes" ? "fry-safe" : `guard ${guard}`;
-  const text = `${label(name)} #${id} · on the ${glass} glass · flow ${flow} cells/s · load ${load}% · maturity ${maturity}% · ${guardText} · cell ${x}, ${y}`;
+  const text = `${label(name)} #${id} · ${placeText} · flow ${flow} cells/s · load ${load}% · maturity ${maturity}% · ${guardText} · cell ${x}, ${y}`;
   inspected = null;
   closeName();
   inspectedDeviceId = Number(id);

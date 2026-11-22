@@ -259,6 +259,21 @@ test.describe("touch", () => {
     await page.locator("#device-rinse").click();
     await expect(page.locator("#inspect")).toContainText("load 0%");
 
+    // DV4: the sponge filter drops onto the bed, is intrinsically fry-safe
+    // (no guard checkbox), and supports Rinse.
+    await choose(page, "Sponge filter");
+    const spongeX = Math.round(w * 0.7);
+    await tap(spongeX, Math.round(h * 0.4));
+    await choose(page, "Inspect");
+    await tap(spongeX, h - 6);
+    await expect(page.locator("#inspect")).toHaveText(
+      /^Sponge filter #2 · on the bed · flow [\d.]+ cells\/s · load 0% · maturity 0% · fry-safe · cell /,
+    );
+    await expect(page.locator("#device-actions")).toBeVisible();
+    await expect(page.locator("#device-guard-label")).toBeHidden();
+    await page.locator("#device-rinse").click();
+    await expect(page.locator("#inspect")).toContainText("fry-safe");
+
     const hash = await stateHash(page);
     await choose(page, "Inspect");
     await tap(Math.round(w * 0.8), Math.round(h * 0.3));
@@ -355,8 +370,8 @@ test("the palette follows the sim's category tree and navigates with the keyboar
       expect(path(i), `${e} is in Food › Live`).toBe("food/live");
     } else if (kind === "plant") expect(path(i), e).toMatch(/^plants\//);
     // Devices are named by kind (D27): the bubbler is still a material, the
-    // internal filter a prefab device.
-    else if (kind === "device") expect(["bubbler", "internal_filter"], e).toContain(name);
+    // internal filter and sponge filter are prefab devices.
+    else if (kind === "device") expect(["bubbler", "internal_filter", "sponge_filter"], e).toContain(name);
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);

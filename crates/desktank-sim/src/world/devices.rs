@@ -102,26 +102,46 @@ impl World {
     }
 
     /// Where a `kind` placed at cell `(x, y)` would go, and whether it fits
-    /// there. An internal filter goes on the nearer side glass (the other
-    /// one if `flip`), centred on `y` if it fits, else at the nearest
-    /// height within its own height where every footprint cell is fluid
-    /// and under the water line. The device's id is 0.
+    /// there.
+    ///
+    /// - [`Mount::SideGlass`]: on the nearer side glass (the other one if
+    ///   `flip`), centred on `y` if it fits, else at the nearest height within
+    ///   its own height where every footprint cell is fluid and under the water
+    ///   line.
+    /// - [`Mount::Bed`]: horizontally centred on `x` (symmetric, ignoring
+    ///   `flip`), dropped straight down onto substrate, hardscape or the tank
+    ///   floor wholly under the water line (lifting up within its own height if
+    ///   the pointer is on or inside the bed).
+    ///
+    /// The returned device's id is 0.
     #[must_use]
     pub fn device_placement(&self, kind: DeviceKind, x: i64, y: i64, flip: bool) -> (Device, bool) {
         let art = self.devices.kinds.get(kind);
         let (w, h) = art.size;
-        let right_half = usize::try_from(x).is_ok_and(|x| 2 * x + 1 >= self.width);
-        let facing_left = right_half != flip;
-        let Mount::SideGlass = art.mount;
-        let x0 = if facing_left {
-            self.width.saturating_sub(w)
-        } else {
-            0
-        };
-        let h_i = i64::try_from(h).unwrap_or(i64::MAX);
+        let (w_i, h_i) = (
+            i64::try_from(w).unwrap_or(i64::MAX),
+            i64::try_from(h).unwrap_or(i64::MAX),
+        );
         let top = i64::try_from(self.surface_row).unwrap_or(0);
         let bottom = i64::try_from(self.height).unwrap_or(0) - h_i;
         let want = (y - h_i / 2).clamp(top, bottom.max(top));
+        let (x0, facing_left) = match art.mount {
+            Mount::SideGlass => {
+                let right_half = usize::try_from(x).is_ok_and(|x| 2 * x + 1 >= self.width);
+                let facing_left = right_half != flip;
+                let x0 = if facing_left {
+                    self.width.saturating_sub(w)
+                } else {
+                    0
+                };
+                (x0, facing_left)
+            }
+            Mount::Bed => {
+                let max_x = i64::try_from(self.width.saturating_sub(w)).unwrap_or(0);
+                let x0 = usize::try_from((x - w_i / 2).clamp(0, max_x)).unwrap_or(0);
+                (x0, false)
+            }
+        };
         let at = |y0: i64| Device {
             id: DeviceId(0),
             kind,
@@ -133,9 +153,26 @@ impl World {
             intake_guard: false,
         };
         if w <= self.width && bottom >= top {
-            for k in 0..=h_i {
-                for y0 in [want - k, want + k] {
-                    if (top..=bottom).contains(&y0) && self.device_fits(&at(y0)) {
+            match art.mount {
+                Mount::SideGlass => {
+                    for k in 0..=h_i {
+                        for y0 in [want - k, want + k] {
+                            if (top..=bottom).contains(&y0) && self.device_fits(&at(y0)) {
+                                return (at(y0), true);
+                            }
+                        }
+                    }
+                }
+                Mount::Bed => {
+                    let start = (0..=h_i).find_map(|k| {
+                        [want - k, want + k]
+                            .into_iter()
+                            .find(|&y0| (top..=bottom).contains(&y0) && self.device_fits(&at(y0)))
+                    });
+                    if let Some(mut y0) = start {
+                        while y0 < bottom && self.device_fits(&at(y0 + 1)) {
+                            y0 += 1;
+                        }
                         return (at(y0), true);
                     }
                 }
@@ -275,18 +312,29 @@ impl World {
         true
     }
 
-    /// Fits or removes device `id`'s intake guard (D27, DV3). Returns
-    /// whether the device exists.
+    /// Fits or removes device `id`'s intake guard (D27, DV3). Intrinsically
+    /// fry-safe devices keep `intake_guard` off. Returns whether the device
+    /// exists.
     pub fn set_device_intake_guard(&mut self, id: DeviceId, on: bool) -> bool {
-        let Some(d) = self.devices.table.get_mut(&id.0) else {
+        let Some(kind) = self.devices.table.get(&id.0).map(|d| d.kind) else {
             return false;
         };
-        d.intake_guard = on;
+        if self.devices.kinds.get(kind).fry_safe {
+            return true;
+        }
+        if let Some(d) = self.devices.table.get_mut(&id.0) {
+            d.intake_guard = on;
+        }
         true
     }
 
-    /// Toggles device `id`'s intake guard, returning its new state.
+    /// Toggles device `id`'s intake guard, returning its new state
+    /// (intrinsically fry-safe devices always stay `false`).
     pub fn toggle_device_intake_guard(&mut self, id: DeviceId) -> Option<bool> {
+        let kind = self.devices.table.get(&id.0)?.kind;
+        if self.devices.kinds.get(kind).fry_safe {
+            return Some(false);
+        }
         let d = self.devices.table.get_mut(&id.0)?;
         d.intake_guard = !d.intake_guard;
         Some(d.intake_guard)
@@ -422,13 +470,26 @@ impl World {
         }
     }
 
-    /// Each device's nozzle (position and unit direction), its intake cells,
-    /// and its current flow factor in `[clog_floor, 1.0]`, for the 2D current
-    /// field.
+    /// Whether any placed device invites shrimp grazing (O(1) over ≤ `MAX_DEVICES`).
+    pub(super) fn has_grazeable_device(&self) -> bool {
+        !self.devices.is_empty()
+            && self
+                .devices
+                .values()
+                .any(|d| self.devices.kinds.get(d.kind).graze_rows.is_some())
+    }
+
+    /// Each device's nozzle (position and unit direction), its intake cells
+    /// with outward open-water directions, and its scaled flow factor
+    /// (`flow_scale * flow_factor`), for the 2D current field.
     #[allow(clippy::type_complexity)] // internal tuple for recompute_current
     pub(super) fn device_flows(
         &self,
-    ) -> Vec<(((usize, usize), [f32; 2]), Vec<(usize, usize)>, f32)> {
+    ) -> Vec<(
+        ((usize, usize), [f32; 2]),
+        Vec<((usize, usize), [f32; 2])>,
+        f32,
+    )> {
         let floor = self.life.eco.filtration.clog_floor;
         self.devices
             .values()
@@ -436,8 +497,10 @@ impl World {
                 let art = self.devices.kinds.get(d.kind);
                 (
                     (d.nozzle(art), d.nozzle_dir(art)),
-                    d.intakes(art).collect(),
-                    d.flow_factor_with(floor),
+                    d.intakes(art)
+                        .map(|(ix, iy)| ((ix, iy), d.intake_outward(art, ix, iy)))
+                        .collect(),
+                    art.flow_scale * d.flow_factor_with(floor),
                 )
             })
             .collect()

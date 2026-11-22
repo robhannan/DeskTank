@@ -473,6 +473,23 @@ fn device_inspect_rinse_and_guard_round_trip() {
     assert!(t.rinse_device(1, "bogus").is_err());
     assert!(t.rinse_device(99, "gentle").is_err());
     assert!(t.toggle_device_guard(99).is_err());
+
+    // DV4: sponge filter mounts on the bed and reports `bed` + `fry_safe = yes`.
+    let w = t.tank().world().width();
+    let h = t.tank().world().height();
+    t.select(slot(&t, "device sponge_filter"));
+    let sx = i32::try_from(w / 2).unwrap();
+    down(&mut t, PRIMARY, sx, i32::try_from(h / 2).unwrap());
+    t.pointer_up(PRIMARY);
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, sx, i32::try_from(h - 6).unwrap());
+    t.pointer_up(PRIMARY);
+    let sponge_line = t.take_inspection();
+    assert!(
+        sponge_line.starts_with("device sponge_filter 2 bed ")
+            && sponge_line.contains(" 0 0 off yes "),
+        "unexpected sponge inspect line: {sponge_line}"
+    );
 }
 
 #[test]
