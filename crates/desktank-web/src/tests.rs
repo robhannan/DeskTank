@@ -484,7 +484,10 @@ fn device_inspect_rinse_and_guard_round_trip() {
     assert!(replaced.contains(" 0 0 on no "), "replace: {replaced}");
 
     assert!(t.rinse_device(1, "bogus").is_err());
-    assert!(t.rinse_device(99, "gentle").is_err());
+    assert_eq!(
+        t.rinse_device(99, "gentle").unwrap_err(),
+        "That device is no longer in the tank"
+    );
     assert!(t.toggle_device_guard(99).is_err());
 
     // DV4: sponge filter mounts on the bed and reports `bed` + `fry_safe = yes`.
@@ -531,7 +534,12 @@ fn device_inspect_rinse_and_guard_round_trip() {
         bubbler_line.starts_with("device bubbler 4 bed air "),
         "unexpected bubbler inspect line: {bubbler_line}"
     );
-    assert!(t.rinse_device(4, "gentle").is_err());
+    for mode in ["gentle", "hard", "replace"] {
+        assert_eq!(
+            t.rinse_device(4, mode).unwrap_err(),
+            "That device has no filter media"
+        );
+    }
 }
 
 #[test]

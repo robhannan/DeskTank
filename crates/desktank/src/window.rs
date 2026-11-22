@@ -698,9 +698,8 @@ impl Running {
         let Some((id, x, y)) = self.inspected_device else {
             return;
         };
-        if self.tank.world_mut().rinse_device(id, kind)
-            && let Some(line) = device_line(self.tank.world(), id, x, y)
-        {
+        self.tank.world_mut().rinse_device(id, kind);
+        if let Some(line) = device_line(self.tank.world(), id, x, y) {
             self.window.set_title(&format!("DeskTank — {line}"));
         } else {
             self.inspected_device = None;

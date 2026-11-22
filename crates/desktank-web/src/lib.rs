@@ -750,8 +750,7 @@ impl WebTank {
     ///
     /// # Errors
     ///
-    /// Returns a message if `mode` is unknown or the device is no longer in
-    /// the tank.
+    /// Returns a message if `mode` is unknown, the device is missing, or it has no filter media.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = rinseDevice))]
     pub fn rinse_device(&mut self, id: u32, mode: &str) -> Result<String, String> {
         let kind = match mode {
@@ -764,6 +763,9 @@ impl WebTank {
             .map(DeviceId)
             .map_err(|_| "That device is no longer in the tank".to_owned())?;
         if !self.tank.world_mut().rinse_device(dev_id, kind) {
+            if self.tank.world().device(dev_id).is_some() {
+                return Err("That device has no filter media".to_owned());
+            }
             return Err("That device is no longer in the tank".to_owned());
         }
         self.dirty = true;
