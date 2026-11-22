@@ -3,7 +3,7 @@
 //!
 //! - The **bubbler** (DV7) is a bed-mounted prefab air-stone diffuser: it drops
 //!   onto substrate, hardscape or the floor and emits a dense curtain of rising
-//!   air bubbles across its porous dome.
+//!   air bubbles across its porous face.
 //! - The **internal filter** (DV1) goes on the nearer side glass at the clicked
 //!   height, and its nozzle jets away from the glass. It replaced the bare
 //!   filter outlet.

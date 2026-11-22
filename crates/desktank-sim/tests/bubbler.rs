@@ -165,7 +165,7 @@ fn bubbler_emits_dense_stream_conserves_water_and_has_no_filter_or_jet_work() {
     assert!(max_bubbles >= 6, "dense bubble stream: {max_bubbles}");
     assert!(
         seen_cols.len() >= 5,
-        "bubbles emit across the diffuser dome, saw columns {seen_cols:?}"
+        "bubbles emit across the diffuser face, saw columns {seen_cols:?}"
     );
     assert_eq!(
         w.intake_cell_checks(),

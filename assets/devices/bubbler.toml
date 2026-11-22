@@ -1,83 +1,72 @@
-# Prefab bubbler (docs/spec/devices.md §2.8, D27, DV7): a round flat
-# white-rimmed air-stone disc sitting on the bed with a porous grey diffuser
-# dome in the centre and a small white side airline inlet boss, releasing a
-# dense curtain of air bubbles across the dome.
+# Prefab bed-mounted air diffuser (docs/spec/devices.md §2.8, D27, DV7).
 name = "bubbler"
 label = "Bubbler"
 # Where it may go: dropped straight down onto substrate, hardscape or the floor.
 mount = "bed"
 # Pure air diffuser: no directed water-current jet or filtration intakes.
 flow_scale = 0.0
-# Bubble outlet cells across the top of the porous grey diffuser dome, and
+# Bubble outlet cells across the top of the porous grey diffuser face, and
 # emission rate in bubbles per second per cell (matches [bubbler].rate).
-bubble_outlets = [[2, 1], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0], [9, 1]]
+bubble_outlets = [[2, 2], [3, 2], [4, 2], [5, 2], [6, 2], [7, 2], [8, 2], [9, 2]]
 bubble_rate = 0.7
 # No intake cells: intrinsically safe for fry and small shrimp.
 fry_safe = true
 
 [sprite]
-# Bed-mounted front view; two texels per cell side: 14x6 cells (28x12).
-# Traced from the owner's reference photo: a round flat white-rimmed base
-# sitting on the bed (cell cols 0..12, centre texel x = 12 / cell x = 6), a
-# porous grey mineral air-stone diffuser dome rising in the centre (cell cols
-# 2..10), and a small white side airline inlet boss on the right (cell cols
-# 12..14). House shading (D19):
-# cool slate-grey outline (never pure black), mottled porous stone dithering
-# on the dome, and cool underwater shading on the white rim.
-colours = { o = "#4d5764", k = "#464f58", d = "#636d76", g = "#828d96", p = "#a4afb8", u = "#738291", s = "#96a6b5", c = "#bccad6", l = "#dae4ed", w = "#f0f6fa", a = "#9ec6db" }
+# Charcoal housing, a narrow bevel around the mineral face and a ribbed barb.
+colours = { o = "#202932", k = "#2c363e", d = "#38434c", b = "#46535d", l = "#63717a", t = "#74818a", g = "#87939b", p = "#97a1a8", h = "#a9b1b6", w = "#ccdee7" }
 frames = [
     [
-        ".......kkkkkkkkkk...........",
-        "......kpgdgpgdgpgk..........",
-        ".....kpgdpggpdpgddk.........",
-        "....kpgdgpgdpgdgpgdk........",
-        "..ooollkggdgpgdpgkccoo......",
-        ".owwwllluukkkkkkuuccssoo....",
-        "owwwwllllllcccccccssssolwao.",
-        "owwwlllllllcccccccssssolcco.",
-        "olwwlllllllcccccccssssolcso.",
-        "ollllllllllcccccccssssocsuo.",
-        ".occlllllllccccccsssuuocuuo.",
-        "..oooooooooooooooooooo.ooo..",
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        ".pggggggpppghpgggttggp......",
+        ".tgtttppgpppgppgptptpg......",
+        ".gtgtgtpgtgpgpgggpttgg......",
+        "bbbbbbbbbbbbbbbbdddddddlblbl",
+        "odddddddddddddkkkkkkkkodkdkd",
+        "odddddddddddddkkkkkkkkodkdkd",
+        "odddddddddddddkkkkkkkko.....",
+        "..ooooooooooooooooooo.......",
     ],
 ]
-# The same pose at four texels per cell side (56x24).
 fine_frames = [
     [
-        "..............kkkkkkkkkkkkkkkkkkkk......................",
-        ".............kppppggggppppggggppppk.....................",
-        "............kpgdpgdppgdpgdpgdppgdpgk....................",
-        "............kpgpgdpgpgdpgpgdpgpgdgdk....................",
-        "..........kkppgdpgdppgdpgdppgdpgdpgdkk..................",
-        ".........kpgdgpgdpggpgdgpgdpggpgdgpgddk.................",
-        "........kppgdpgdppgdpgdpgdppgdpgdpgdpgdk................",
-        "........kgpgdpgdpgdpgdpgdpgdpgdpgdpgdgdk................",
-        "....ooooolllllllkpgdgpgdpgdpgdpgdkccccccoooo............",
-        "..oowwwwllllllllkggdpgdgpgdpgdgpgkccccccsssssoo.........",
-        ".oowwwwwllllllllluukkkkkkkkkkkkuuccccccccssssssooo......",
-        ".owwwwwwlllllllllluuuuuuuuuuuuuucccccccccsssssssaooo....",
-        "oowwwwwwwllllllllllllccccccccccccccssssssssssolwwwaaoo..",
-        "owwwwwwwwllllllllllllccccccccccccccssssssssssolllwwaao..",
-        "owwwwwwwwllllllllllllccccccccccccccssssssssssollllccco..",
-        "owwwwwwwwllllllllllllccccccccccccccssssssssssolllcccso..",
-        "olwwwwwwwllllllllllllccccccccccccccssssssssssolllcssso..",
-        "olwwwwwwwllllllllllllccccccccccccccssssssssssollcsssuo..",
-        "ollllllllllllllllllllccccccccccccccssssssssssolcsssuuo..",
-        "oclllllllllllllllllllccccccccccccccssssssssssocsssuuuo..",
-        ".occlllllllllllllllllccccccccccccsssssssssuuuocsssuuuo..",
-        "..oocclllllllllllllllccccccccccsssssssssuuuuo..ocsuuuo..",
-        "....oooccccccccccccccscsssssssssuuuuuuuooooo....ooooo...",
-        ".......oooooooooooooooooooooooooooooooooo...............",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........pppppppppppppppppppppppppppppp..................",
+        "...pppppgpgptppggggpgpggghgpgpgptggpgpggppp.............",
+        "..tggppppgpggggggggptpppgttpggpggppgptgpggtp............",
+        ".gpggtgggggggghpgpggggphggggtgtgpgggggtgtttgg...........",
+        ".gggggtttppttpgpgggtppgpggppptppggpgggtgtggtg...........",
+        ".tgpgtggpgtttppggggpgggtggpgpgtggtggpggtggtgg...........",
+        ".ttggtgpgtgtgtgttgpgppgtgggtttpggtpgggtggtggt...........",
+        "btbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbddddddddddddtdllbbllbbll",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbddddddddddddddllbbllbbll",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkollbbllbbll",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkoddkkddkkdd",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkoddkkddkkdd",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkoddkkddkkdd",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkko..........",
+        ".oooodddddddddddddddddddddddkkkkkkkkkkkkkoooo...........",
+        "...oooooooooooooooooooooooooooooooooooooooo.............",
+        ".........oooooooooooooooooooooooooooo...................",
     ],
 ]
-# The palette icon, at one pixel per cell.
+# Palette icon, viewed level with the bed.
 icon = [
     "..w..w..",
     "....w...",
-    ".w.kk...",
-    "..kpgk..",
-    "oolllcco",
-    "owwllcco",
-    ".ocssuo.",
-    "..oooo..",
+    ".w......",
+    "........",
+    ".ppgg...",
+    "gpgpgt..",
+    "bddddblk",
+    ".kkkko..",
 ]

@@ -293,7 +293,7 @@ fn a_version_2_fixture_loads() {
     assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0xbc1f_1aa5_acfe_70a0);
+    assert_eq!(w.state_hash(), 0xc1c3_c680_5242_721f);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -391,7 +391,7 @@ fn a_version_3_fixture_loads() {
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0x8f04_6f28_6d87_146e);
+    assert_eq!(hash, 0xdd02_f6f4_f1c1_5d25);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -415,7 +415,7 @@ fn a_version_4_fixture_loads() {
     // pin it (repinned when loading dried its driftwood, version 11, and
     // turned its filter outlet into an internal filter, D27).
     let hash = w.state_hash();
-    assert_eq!(hash, 0x48a3_3142_03cc_b430);
+    assert_eq!(hash, 0xbc13_e00a_4d1c_f84b);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
     let mut again = again;
@@ -448,7 +448,7 @@ fn a_version_5_fixture_loads() {
     // Pinned, so every platform decodes the same state (repinned when
     // loading dried its driftwood, version 11, and turned its filter outlet
     // into an internal filter, D27).
-    assert_eq!(w.state_hash(), 0xd16a_ba58_3a92_16fc);
+    assert_eq!(w.state_hash(), 0x2a7b_14cc_70de_f616);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -482,7 +482,7 @@ fn a_version_6_fixture_loads() {
     );
     assert_eq!(w.creatures().iter().filter_map(|c| c.name()).count(), 3);
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0xe629_34f4_846f_ff55);
+    assert_eq!(w.state_hash(), 0xd0ac_921b_077e_e4f3);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -596,7 +596,7 @@ fn a_version_9_fixture_loads() {
     assert_eq!(save::check(&bytes), Ok(9));
     let mut w = save::decode(&bytes, table()).unwrap();
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0xf56a_a3ee_6431_95ac);
+    assert_eq!(w.state_hash(), 0xe0b0_49d1_7e70_6418);
     let pursuit = |w: &World| -> Vec<Pursuit> {
         w.creatures()
             .iter()
@@ -637,7 +637,7 @@ fn a_version_10_fixture_loads() {
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(save::check(&bytes), Ok(10));
     let mut w = save::decode(&bytes, table()).unwrap();
-    assert_eq!(w.state_hash(), 0x06de_b991_f302_0f38);
+    assert_eq!(w.state_hash(), 0xb7a8_0877_f536_65d6);
     // Its outlet loads as an internal filter (D27) and its legacy bubbler
     // loads as a prefab bubbler (DV7).
     assert_eq!(w.devices().count(), 2);
@@ -722,7 +722,7 @@ fn a_version_12_fixture_loads() {
     let bytes = std::fs::read(fixture(12)).unwrap();
     assert_eq!(save::check(&bytes), Ok(12));
     let mut w = save::decode(&bytes, table()).unwrap();
-    assert_eq!(w.state_hash(), 0x85d2_2b76_a470_3d1a);
+    assert_eq!(w.state_hash(), 0x97fd_1a53_bd73_8783);
     let devices: Vec<_> = w.devices().copied().collect();
     // Internal filter + migrated legacy bubbler (DV7).
     assert_eq!(devices.len(), 2);
@@ -775,7 +775,7 @@ fn a_version_13_fixture_loads() {
     let bytes = std::fs::read(fixture(13)).unwrap();
     assert_eq!(save::check(&bytes), Ok(13));
     let mut w = save::decode(&bytes, table()).unwrap();
-    assert_eq!(w.state_hash(), 0x6515_24a9_73e0_7230);
+    assert_eq!(w.state_hash(), 0x140a_9eb9_0a5e_c3a1);
     let devices: Vec<_> = w.devices().copied().collect();
     assert_eq!(devices.len(), 2);
     let d = *devices

@@ -11,7 +11,7 @@
 //! Built-in kinds:
 //! - **Bubbler** (DV7): bed-mounted air-stone diffuser disc (drops onto
 //!   substrate/hardscape/floor), emits a dense curtain of rising air bubbles
-//!   across its porous dome with no water-current jet or filtration intakes.
+//!   across its porous face with no water-current jet or filtration intakes.
 //! - **Internal filter** (DV1): suction-cupped to the side glass at any height
 //!   under the water line; its nozzle drives a horizontal jet away from the glass.
 //! - **Sponge filter** (DV4): bed-mounted (drops onto substrate/hardscape/floor),
@@ -668,7 +668,7 @@ mod tests {
                 );
             }
         }
-        // Open corners beside the dome; solid white rim below.
+        // Water above the puck, with a solid body and side fitting below.
         assert!(!art.footprint[0]);
         assert!(!art.footprint[13]);
         assert!(art.footprint[3 * 14 + 6]);

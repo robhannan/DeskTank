@@ -71,10 +71,10 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
     gravel, and a vertical uplift tube in a back corner rising to the
     surface, bending over into a horizontal spray bar held by suction
     cups.
-- **The prefab bubbler** (DV7): a round flat white-rimmed air-stone disc
+- **The prefab bubbler** (DV7): a low charcoal air-stone puck
   sitting on the bed (`Mount::Bed`, dropped onto substrate, hardscape or the
-  floor, placed and removed whole), with a porous grey diffuser dome in the
-  centre and a small white side airline inlet boss. It emits a dense curtain
+  floor, placed and removed whole), with a porous grey stone seen side-on above the narrow
+  housing lip and a short ribbed airline fitting. It emits a dense curtain
   of rising air bubbles across its diffuser top while conserving the tank
   water level, drives no water-current jet of its own, and has no filtration
   intakes (intrinsically fry-safe; zero intake or bio-maturity work per tick).
