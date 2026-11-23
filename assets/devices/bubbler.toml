@@ -1,0 +1,72 @@
+# Prefab bed-mounted air diffuser (docs/spec/devices.md §2.8, D27, DV7).
+name = "bubbler"
+label = "Bubbler"
+# Where it may go: dropped straight down onto substrate, hardscape or the floor.
+mount = "bed"
+# Pure air diffuser: no directed water-current jet or filtration intakes.
+flow_scale = 0.0
+# Bubble outlet cells across the top of the porous grey diffuser face, and
+# emission rate in bubbles per second per cell (matches [bubbler].rate).
+bubble_outlets = [[2, 2], [3, 2], [4, 2], [5, 2], [6, 2], [7, 2], [8, 2], [9, 2]]
+bubble_rate = 0.7
+# No intake cells: intrinsically safe for fry and small shrimp.
+fry_safe = true
+
+[sprite]
+# Charcoal housing, a narrow bevel around the mineral face and a ribbed barb.
+colours = { o = "#202932", k = "#2c363e", d = "#38434c", b = "#46535d", l = "#63717a", t = "#74818a", g = "#87939b", p = "#97a1a8", h = "#a9b1b6", w = "#ccdee7" }
+frames = [
+    [
+        "............................",
+        "............................",
+        "............................",
+        "............................",
+        ".pggggggpppghpgggttggp......",
+        ".tgtttppgpppgppgptptpg......",
+        ".gtgtgtpgtgpgpgggpttgg......",
+        "bbbbbbbbbbbbbbbbdddddddlblbl",
+        "odddddddddddddkkkkkkkkodkdkd",
+        "odddddddddddddkkkkkkkkodkdkd",
+        "odddddddddddddkkkkkkkko.....",
+        "..ooooooooooooooooooo.......",
+    ],
+]
+fine_frames = [
+    [
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........................................................",
+        "........pppppppppppppppppppppppppppppp..................",
+        "...pppppgpgptppggggpgpggghgpgpgptggpgpggppp.............",
+        "..tggppppgpggggggggptpppgttpggpggppgptgpggtp............",
+        ".gpggtgggggggghpgpggggphggggtgtgpgggggtgtttgg...........",
+        ".gggggtttppttpgpgggtppgpggppptppggpgggtgtggtg...........",
+        ".tgpgtggpgtttppggggpgggtggpgpgtggtggpggtggtgg...........",
+        ".ttggtgpgtgtgtgttgpgppgtgggtttpggtpgggtggtggt...........",
+        "btbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbddddddddddddtdllbbllbbll",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbddddddddddddddllbbllbbll",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkollbbllbbll",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkoddkkddkkdd",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkoddkkddkkdd",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkkoddkkddkkdd",
+        "odddddddddddddddddddddddddddkkkkkkkkkkkkkkkkko..........",
+        ".oooodddddddddddddddddddddddkkkkkkkkkkkkkoooo...........",
+        "...oooooooooooooooooooooooooooooooooooooooo.............",
+        ".........oooooooooooooooooooooooooooo...................",
+    ],
+]
+# Palette icon, viewed level with the bed.
+icon = [
+    "..w..w..",
+    "....w...",
+    ".w......",
+    "........",
+    ".ppgg...",
+    "gpgpgt..",
+    "bddddblk",
+    ".kkkko..",
+]

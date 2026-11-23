@@ -293,7 +293,7 @@ fn a_version_2_fixture_loads() {
     assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0x86af_22bc_2e5f_230b);
+    assert_eq!(w.state_hash(), 0xc1c3_c680_5242_721f);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -391,7 +391,7 @@ fn a_version_3_fixture_loads() {
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it.
     let hash = w.state_hash();
-    assert_eq!(hash, 0x0109_248a_3952_51fa);
+    assert_eq!(hash, 0xdd02_f6f4_f1c1_5d25);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -415,7 +415,7 @@ fn a_version_4_fixture_loads() {
     // pin it (repinned when loading dried its driftwood, version 11, and
     // turned its filter outlet into an internal filter, D27).
     let hash = w.state_hash();
-    assert_eq!(hash, 0x6e95_0ab1_a1f6_7ea4);
+    assert_eq!(hash, 0xbc13_e00a_4d1c_f84b);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
     let mut again = again;
@@ -448,7 +448,7 @@ fn a_version_5_fixture_loads() {
     // Pinned, so every platform decodes the same state (repinned when
     // loading dried its driftwood, version 11, and turned its filter outlet
     // into an internal filter, D27).
-    assert_eq!(w.state_hash(), 0xcd62_f686_7ed2_a9c8);
+    assert_eq!(w.state_hash(), 0x2a7b_14cc_70de_f616);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -482,7 +482,7 @@ fn a_version_6_fixture_loads() {
     );
     assert_eq!(w.creatures().iter().filter_map(|c| c.name()).count(), 3);
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x9b45_3dc7_17df_9ea1);
+    assert_eq!(w.state_hash(), 0xd0ac_921b_077e_e4f3);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     let mut again = again;
     for _ in 0..200 {
@@ -596,7 +596,7 @@ fn a_version_9_fixture_loads() {
     assert_eq!(save::check(&bytes), Ok(9));
     let mut w = save::decode(&bytes, table()).unwrap();
     // Pinned, so every platform decodes the same state.
-    assert_eq!(w.state_hash(), 0x2e45_e2a0_57bc_2d21);
+    assert_eq!(w.state_hash(), 0xe0b0_49d1_7e70_6418);
     let pursuit = |w: &World| -> Vec<Pursuit> {
         w.creatures()
             .iter()
@@ -637,9 +637,10 @@ fn a_version_10_fixture_loads() {
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(save::check(&bytes), Ok(10));
     let mut w = save::decode(&bytes, table()).unwrap();
-    assert_eq!(w.state_hash(), 0xcbeb_e837_b7db_1bab);
-    // Its outlet loads as an internal filter (D27).
-    assert_eq!(w.devices().count(), 1);
+    assert_eq!(w.state_hash(), 0xb7a8_0877_f536_65d6);
+    // Its outlet loads as an internal filter (D27) and its legacy bubbler
+    // loads as a prefab bubbler (DV7).
+    assert_eq!(w.devices().count(), 2);
     // Pre-v11 driftwood migrates to dry.
     let wood = id(&w, "driftwood");
     let v10_wood: Vec<_> = w.cells().iter().filter(|c| c.material == wood).collect();
@@ -721,10 +722,20 @@ fn a_version_12_fixture_loads() {
     let bytes = std::fs::read(fixture(12)).unwrap();
     assert_eq!(save::check(&bytes), Ok(12));
     let mut w = save::decode(&bytes, table()).unwrap();
-    assert_eq!(w.state_hash(), 0xe02d_307f_bc07_3d1b);
+    assert_eq!(w.state_hash(), 0x97fd_1a53_bd73_8783);
     let devices: Vec<_> = w.devices().copied().collect();
-    assert_eq!(devices.len(), 1);
-    let d = devices[0];
+    // Internal filter + migrated legacy bubbler (DV7).
+    assert_eq!(devices.len(), 2);
+    let d = *devices
+        .iter()
+        .find(|d| d.kind == desktank_sim::DeviceKind::InternalFilter)
+        .unwrap();
+    let b = *devices
+        .iter()
+        .find(|d| d.kind == desktank_sim::DeviceKind::Bubbler)
+        .unwrap();
+    assert!(!b.facing_left, "bed-mounted bubbler");
+    assert_eq!(w.material_counts()[usize::from(id(&w, "bubbler").0)], 0);
     assert!(d.facing_left, "on the right glass");
     // Version 12 devices migrate with clean, fresh media and guard off.
     assert_eq!(d.media_load, 0.0);
@@ -738,7 +749,7 @@ fn a_version_12_fixture_loads() {
             .all(|(x, y)| w.cell(x, y).unwrap().material == device
                 && w.device_at(x, y) == Some(d.id))
     );
-    let (nx, ny) = d.nozzle(art);
+    let (nx, ny) = d.nozzle(art).unwrap();
     assert!(w.current_at(nx - 20, ny)[0] < -1.0);
     // Round-tripping into v13 carries on identically.
     let mut again = save::decode(&save::encode(&w), table()).unwrap();
@@ -750,7 +761,7 @@ fn a_version_12_fixture_loads() {
     assert_eq!(w.state_hash(), again.state_hash());
     // Scooping one of its cells after loading removes it whole.
     w.set_cell(d.x + 5, d.y + 10, id(&w, "water")).unwrap();
-    assert_eq!(w.devices().count(), 0);
+    assert_eq!(w.devices().count(), 1);
     assert!(
         d.cells(art)
             .all(|(x, y)| w.cell(x, y).unwrap().material != device)
@@ -759,41 +770,33 @@ fn a_version_12_fixture_loads() {
 
 #[test]
 fn a_version_13_fixture_loads() {
-    let path = fixture(13);
-    // `busy`'s legacy outlet adopted as an internal filter with filtration
-    // state (media load, maturity, intake guard), run on.
-    let fresh = || {
-        let mut w = busy(5, 300);
-        w.adopt_legacy_outlets();
-        let dev = w.devices().next().unwrap().id;
-        assert!(w.set_device_media_load(dev, 0.45));
-        assert!(w.set_device_maturity(dev, 0.65));
-        assert!(w.set_device_intake_guard(dev, true));
-        for _ in 0..100 {
-            w.tick();
-        }
-        w
-    };
-    if std::env::var_os("DESKTANK_BLESS").is_some() {
-        std::fs::write(&path, save::encode(&fresh())).unwrap();
-    }
-    let bytes = std::fs::read(&path).unwrap();
+    // Frozen pre-DV7 v13 fixture: its internal filter keeps its filtration
+    // state and its legacy bubbler cells migrate into a prefab bubbler (DV7).
+    let bytes = std::fs::read(fixture(13)).unwrap();
     assert_eq!(save::check(&bytes), Ok(13));
     let mut w = save::decode(&bytes, table()).unwrap();
-    let mut fresh = fresh();
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    assert_eq!(w.state_hash(), 0x140a_9eb9_0a5e_c3a1);
     let devices: Vec<_> = w.devices().copied().collect();
-    assert_eq!(devices.len(), 1);
-    assert_eq!(devices, fresh.devices().copied().collect::<Vec<_>>());
-    let d = devices[0];
+    assert_eq!(devices.len(), 2);
+    let d = *devices
+        .iter()
+        .find(|d| d.kind == desktank_sim::DeviceKind::InternalFilter)
+        .unwrap();
+    assert!(
+        devices
+            .iter()
+            .any(|dev| dev.kind == desktank_sim::DeviceKind::Bubbler)
+    );
     assert!(d.media_load >= 0.45);
     assert!(d.maturity > 0.65);
     assert!(d.intake_guard);
+    let mut again = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(w.state_hash(), again.state_hash());
     for _ in 0..200 {
         w.tick();
-        fresh.tick();
+        again.tick();
     }
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    assert_eq!(w.state_hash(), again.state_hash());
 }
 
 #[test]

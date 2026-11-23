@@ -1167,11 +1167,22 @@ function closeDeviceActions() {
 }
 
 function showDeviceLine(rest: string[], preserveCell = false) {
-  const [name, id, place, flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
-  const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
-  inspectedDeviceCell = [x, y];
+  const [name, id, place] = rest;
   const placeText =
     place === "bed" ? "on the bed" : place === "rim" ? "on the rim" : `on the ${place} glass`;
+  if (rest[3] === "air") {
+    const [, , , , rawX, rawY] = rest;
+    const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
+    inspectedDeviceCell = [x, y];
+    inspected = null;
+    closeName();
+    closeDeviceActions();
+    flash(`${label(name)} #${id} · ${placeText} · air diffuser · cell ${x}, ${y}`);
+    return;
+  }
+  const [, , , flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
+  const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
+  inspectedDeviceCell = [x, y];
   const guardText = frySafe === "yes" ? "fry-safe" : `guard ${guard}`;
   const text = `${label(name)} #${id} · ${placeText} · flow ${flow} cells/s · load ${load}% · maturity ${maturity}% · ${guardText} · cell ${x}, ${y}`;
   inspected = null;

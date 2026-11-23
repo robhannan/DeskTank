@@ -750,8 +750,7 @@ impl WebTank {
     ///
     /// # Errors
     ///
-    /// Returns a message if `mode` is unknown or the device is no longer in
-    /// the tank.
+    /// Returns a message if `mode` is unknown, the device is missing, or it has no filter media.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = rinseDevice))]
     pub fn rinse_device(&mut self, id: u32, mode: &str) -> Result<String, String> {
         let kind = match mode {
@@ -764,6 +763,9 @@ impl WebTank {
             .map(DeviceId)
             .map_err(|_| "That device is no longer in the tank".to_owned())?;
         if !self.tank.world_mut().rinse_device(dev_id, kind) {
+            if self.tank.world().device(dev_id).is_some() {
+                return Err("That device has no filter media".to_owned());
+            }
             return Err("That device is no longer in the tank".to_owned());
         }
         self.dirty = true;
@@ -1364,8 +1366,10 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
     )
 }
 
-/// Formats a device's inspect line for `web/main.ts` (D27, DV3–DV5):
-/// `device <kind> <id> <place> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`.
+/// Formats a device's inspect line for `web/main.ts` (D27, DV3–DV7):
+/// - Filter: `device <kind> <id> <place> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`
+/// - Air diffuser (e.g. bubbler): `device <kind> <id> <place> air <x> <y>`
+///
 /// `<place>` is `"left"`, `"right"` (side-glass mounts), `"bed"` (bed mounts) or `"rim"` (rim mounts).
 fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let s = world.device_status(id)?;
@@ -1380,6 +1384,13 @@ fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Optio
         Mount::Bed => "bed",
         Mount::Rim => "rim",
     };
+    if !s.is_filter {
+        return Some(format!(
+            "device {} {} {place} air {x} {y}",
+            s.kind.name(),
+            id.0
+        ));
+    }
     let guard = if s.intake_guard { "on" } else { "off" };
     let fry_safe = if s.fry_safe { "yes" } else { "no" };
     Some(format!(
