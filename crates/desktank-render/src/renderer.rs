@@ -58,9 +58,7 @@ pub struct Renderer {
     view_buffer: wgpu::Buffer,
     lens_view_buffer: wgpu::Buffer,
     cells: wgpu::Texture,
-    /// Each plant cell's depth band (D21), 0 elsewhere; uploaded with the
-    /// cells' dirty rectangles, skipping those without plant cells (the
-    /// shader reads a band only where the cell texture has a plant part).
+    /// Each plant or rigid cell's depth, uploaded with the cell texture.
     bands: wgpu::Texture,
     band_scratch: Vec<u8>,
     /// Each plant's base cell when its bands were last uploaded, and the
@@ -101,7 +99,7 @@ impl Renderer {
         let grid = (side(world.width()), side(world.height()));
         // Material, variant and the state's two bytes (a plant id).
         let cells = create_grid_texture(d, "cells", grid, wgpu::TextureFormat::Rgba8Unorm);
-        let bands = create_grid_texture(d, "plant bands", grid, wgpu::TextureFormat::R8Unorm);
+        let bands = create_grid_texture(d, "depth bands", grid, wgpu::TextureFormat::R8Unorm);
         let palette = create_palette(gpu, world);
         let plant_tints = PlantTints::default();
         let plants = create_plants(gpu, &plant_tints);
@@ -199,7 +197,7 @@ impl Renderer {
     }
 
     /// Copies the waiting dirty rectangles (or the whole grid) into the cell
-    /// texture, and their plant cells' bands into the band texture.
+    /// texture, and their plant and rigid cells' depth into the band texture.
     pub fn upload(&mut self, gpu: &Gpu, world: &World, dirty: &mut DirtyRects) {
         let width = world.width();
         let full = desktank_sim::Rect {
@@ -215,9 +213,8 @@ impl Renderer {
             let r = r.unwrap_or(full);
             grid::pack(cells, width, r, |i| world.rigid_mask(i), scratch);
             write_rect(gpu, texture, r, scratch, grid::TEXEL_BYTES);
-            // A rectangle without plant cells leaves stale bands, which
-            // the shader never reads.
-            if world.plant_bands(r, band_scratch) {
+            // Unbanded cells never sample this texture, so old bytes can stay.
+            if world.render_bands(r, band_scratch) {
                 write_rect(gpu, bands, r, band_scratch, 1);
             }
         });
@@ -231,10 +228,8 @@ impl Renderer {
                     x1: p.bounds.x1.min(full.x1),
                     y1: p.bounds.y1.min(full.y1),
                 };
-                if old.is_some_and(|b| b != p.base)
-                    && !r.is_empty()
-                    && world.plant_bands(r, band_scratch)
-                {
+                if old.is_some_and(|b| b != p.base) && !r.is_empty() {
+                    world.render_bands(r, band_scratch);
                     write_rect(gpu, bands, r, band_scratch, 1);
                 }
             }

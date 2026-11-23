@@ -446,10 +446,17 @@ fn rock_topples_off_its_point() {
     w.fill_rect(rect(32, 59, 38, 64), air, Brush::Replace)
         .unwrap();
     let before = positions(&w, rock);
+    w.tick();
+    let bands = w.rigid_bands(before[0].1 * 64 + before[0].0).unwrap();
     settle(&mut w, 1000);
     let after = positions(&w, rock);
     assert_eq!(after.len(), before.len());
     assert_ne!(after, before);
+    assert!(
+        after
+            .iter()
+            .all(|&(x, y)| w.rigid_bands(y * 64 + x) == Some(bands))
+    );
     assert!(after.iter().filter(|p| p.1 == 63).count() > 1);
 }
 
