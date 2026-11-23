@@ -1096,3 +1096,86 @@ fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
         }
     }
 }
+
+/// A tank of `width`×`height` cells with plants, a rigid rock, a creature
+/// and the nutrient field overlay, all varying with `seed`, ticked so the
+/// plants and rigid body exist.
+fn busy_tank(width: usize, height: usize, seed: u64) -> Tank {
+    let materials = MaterialTable::builtin().unwrap();
+    let leaf = materials.id("leaf").unwrap();
+    let rock = materials.id("rock").unwrap();
+    let mut world = World::new(
+        WorldConfig {
+            width,
+            height,
+            seed,
+            water_level: 1.0,
+        },
+        materials,
+    )
+    .unwrap();
+    let (x, y) = (width / 4 + usize::try_from(seed).unwrap(), height * 3 / 4);
+    let (w, h) = (
+        i64::try_from(width).unwrap(),
+        i64::try_from(height).unwrap(),
+    );
+    world
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: x,
+                y0: y - 3,
+                x1: x + 4,
+                y1: y,
+            },
+            leaf,
+            Brush::Replace,
+        )
+        .unwrap();
+    world
+        .paint(w * 3 / 4, h / 2, 4, rock, Brush::Replace)
+        .unwrap();
+    let tetra = world.species().id("neon_tetra").unwrap();
+    world.add_creature(tetra, w / 2, h / 3).unwrap();
+    for _ in 0..4 {
+        world.tick();
+    }
+    let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_field_overlay(Some(desktank_render::FieldOverlay::Scalar(
+        desktank_sim::FieldKind::Nutrient,
+    )));
+    tank
+}
+
+/// A replacement tank that takes over the old tank's GPU renderer draws
+/// exactly what a fresh tank would, at the same grid size and across
+/// grid-size changes, without rebuilding the renderer.
+#[test]
+fn a_tank_reusing_a_transferred_renderer_matches_a_fresh_tank() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    // Same size, then a larger grid, a smaller one, and back to the first.
+    let grids = [
+        (80, 32, 1),
+        (80, 32, 2),
+        (96, 48, 3),
+        (64, 24, 4),
+        (80, 32, 5),
+    ];
+    let mut previous = busy_tank(grids[0].0, grids[0].1, grids[0].2);
+    render(gpu, &mut previous, format);
+    for (width, height, seed) in grids {
+        let mut fresh = busy_tank(width, height, seed);
+        let expected = render(gpu, &mut fresh, format);
+        let mut reused = busy_tank(width, height, seed);
+        reused.take_gpu(&mut previous);
+        assert!(reused.frame_wanted());
+        let actual = render(gpu, &mut reused, format);
+        assert!(
+            actual == expected,
+            "grid {width}×{height} seed {seed}: reused renderer drew different pixels"
+        );
+        // A second frame stays identical (nothing stale left to re-upload).
+        assert!(render(gpu, &mut reused, format) == expected);
+        previous = reused;
+    }
+}

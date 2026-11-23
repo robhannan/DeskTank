@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
-import { boxOf, cellPoint, choose, gridSize, open, stateHash, watchErrors } from "./support.ts";
+import { boxOf, cellPoint, choose, framesDrawn, gridSize, open, stateHash, watchErrors } from "./support.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // Written by the native app (desktank-sim's T8 fixture: 200×120 cells, tick
@@ -148,7 +148,9 @@ test("a compositor that holds animation frames back doesn't hold world time back
   });
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
-  await pour(page);
+  // No pour: it would wake chunks, and `tank.frame` would then run full
+  // SwiftShader draws from inside the tick loop even with rAF held.
+  await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
   await expect.poll(() => ticks(page)).toBeGreaterThan(20);
   await setHidden(page, true);
   const hiddenAt = await ticks(page);
@@ -158,15 +160,86 @@ test("a compositor that holds animation frames back doesn't hold world time back
   expect(errors).toEqual([]);
 });
 
+test("a second tab is read-only until it takes over, within 1 s and without losing state", async ({ context }) => {
+  const a = await context.newPage();
+  const errors = watchErrors(a);
+  await open(a, "?backend=webgl2");
+  await expect.poll(() => framesDrawn(a)).toBeGreaterThan(0);
+  await pour(a);
+  expect(await owner(a)).toBe(true);
+
+  const b = await context.newPage();
+  errors.push(...watchErrors(b));
+  await open(b, "?backend=webgl2");
+  // Its first shader compile is done before Take over is timed.
+  await expect.poll(() => framesDrawn(b)).toBeGreaterThan(0);
+  expect(await owner(b)).toBe(false);
+  await expect(b.getByText("open in another tab")).toBeVisible();
+  await expect(b.getByRole("button", { name: "Take over" })).toBeVisible();
+
+  // The viewer runs nothing and never writes, hidden, on pagehide or shown.
+  const bTicks = await ticks(b);
+  await b.waitForTimeout(500);
+  expect(await ticks(b), "a viewer doesn't tick").toBe(bTicks);
+  await setHidden(b, true);
+  await b.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await setHidden(b, false);
+  expect(await writes(b), "a viewer never writes").toBe(0);
+  expect(await b.locator("nav.menu").evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+
+  // Pause the owner so it isn't mid-SwiftShader-frame on the shared thread
+  // during the hand-over.
+  await expect.poll(() => ticks(a)).toBeGreaterThan(20);
+  await a.getByRole("button", { name: "Pause" }).click();
+  const aWrites = await writes(a);
+  await b.getByRole("button", { name: "Take over" }).click();
+  await expect.poll(() => owner(b), { timeout: 5000 }).toBe(true);
+  const took = await b.evaluate(() => window.desktank.ownedAt - window.desktank.takeOverAt);
+  expect(took, "an owner that answers hands over fast").toBeLessThan(1000);
+
+  // The new owner opens exactly the state the old one released.
+  const released = await a.evaluate(() => window.desktank.released);
+  const loaded = await b.evaluate(() => window.desktank.loaded);
+  expect({ hash: loaded?.hash, tick: loaded?.tick }).toEqual({ hash: released?.hash, tick: released?.tick });
+  expect(await writes(a), "the old owner saved once on release").toBe(aWrites + 1);
+  await expect(b.locator("#elsewhere")).toBeHidden();
+  await expect.poll(() => ticks(b)).toBeGreaterThan(released!.tick);
+
+  // The old owner is a viewer now.
+  expect(await owner(a)).toBe(false);
+  await expect(a.getByText("open in another tab")).toBeVisible();
+  const aTicks = await ticks(a);
+  const aWrites2 = await writes(a);
+  await setHidden(a, true);
+  await a.waitForTimeout(300);
+  expect(await ticks(a)).toBe(aTicks);
+  expect(await writes(a)).toBe(aWrites2);
+
+  // Closing the new owner hands the tank back, with its last save.
+  await setHidden(b, true);
+  await b.evaluate(() => window.desktank.saving);
+  const last = await stateHash(b);
+  await b.close();
+  await setHidden(a, false);
+  await expect.poll(() => owner(a), { timeout: 5000 }).toBe(true);
+  expect((await a.evaluate(() => window.desktank.loaded))?.hash).toBe(last);
+  expect(errors).toEqual([]);
+});
+
 test("Take over steals the lock from an owner that doesn't answer", async ({ context }) => {
   const a = await context.newPage();
   const errors = watchErrors(a);
   await open(a, "?backend=webgl2");
+  // Neither tab's first shader compile nor background SwiftShader frames
+  // may skew the steal timer: draw once, then pause.
+  await expect.poll(() => framesDrawn(a)).toBeGreaterThan(0);
+  await a.getByRole("button", { name: "Pause" }).click();
   // A frozen owner: it never hears the request.
   await a.evaluate(() => window.desktank.ownership!.channel.close());
   const b = await context.newPage();
   errors.push(...watchErrors(b));
   await open(b, "?backend=webgl2");
+  await expect.poll(() => framesDrawn(b)).toBeGreaterThan(0);
   expect(await owner(b)).toBe(false);
   await b.getByRole("button", { name: "Take over" }).click();
   await expect.poll(() => owner(b), { timeout: 3000 }).toBe(true);
@@ -194,7 +267,7 @@ test("a native save imports, letterboxed, and exports what native writes", async
   await page.getByRole("button", { name: "Pause" }).click();
   const native = await readFile(NATIVE_RESAVED);
   await page.locator("#import-file").setInputFiles(NATIVE_SAVE);
-  // Importing reopens the WebGL2 pipelines for the new tank (as `open` does).
+  // Importing reuses the WebGL2 graphics and pipelines for the new grid size.
   await expect(page.locator("#notice")).toContainText("Imported v1.dtank: 200×120 cells", { timeout: 15_000 });
   expect(await page.evaluate(() => [window.desktank.tank.width(), window.desktank.tank.height()])).toEqual([200, 120]);
   expect(await ticks(page)).toBe(1200);

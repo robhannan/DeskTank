@@ -380,13 +380,18 @@ function setCanvasSize([w, h]: Point) {
   kick();
 }
 
-// Swaps in a new tank; the caller attaches graphics to it.
+// Swaps in a new tank; it takes over the old tank's graphics where it can,
+// otherwise the caller attaches graphics to it.
 function replaceTank(next: WebTank) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
   const zoom = tank?.zoom() ?? next.zoom();
   // It keeps the propagule picks (one per plant species) too.
-  if (tank) next.keepPlantPicks(tank);
+  if (tank) {
+    next.keepPlantPicks(tank);
+    // Reuse the graphics and compiled pipelines (a lost context can't be).
+    if (!contextLost && !restoring) next.takeGraphics(tank);
+  }
   tank?.free();
   tank = next;
   tank.select(selected);
@@ -436,11 +441,12 @@ function sizeCanvas(): Point {
 // Swaps in `next` as the shown tank and reopens the graphics for it.
 async function showTank(next: WebTank) {
   endGestures();
-  // Graphics belong to the old tank; reopen them for the new one.
+  // The new tank takes the old one's graphics; reopen them only if it
+  // couldn't (none yet, or a lost context).
   replaceTank(next);
   if (!owner) setRunning(false);
   // During a loss or recovery, the recovery attaches to the new tank.
-  if (!restoring) await recover(false);
+  if (!tank.backend() && !restoring) await recover(false);
   updateStats();
   kick();
 }
@@ -671,7 +677,7 @@ async function loadScene(toml: string, sceneSeed: number, width: number, height:
   canvas.height = height;
   replaceTank(WebTank.fromScript(toml, sceneSeed, width, height));
   tank.setFieldOverlay("");
-  await attachGraphics();
+  if (!tank.backend()) await attachGraphics();
   kick();
   const drawn = tank.framesDrawn();
   while (tank.framesDrawn() === drawn) {

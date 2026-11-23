@@ -24,6 +24,7 @@ for (const [name, query] of [
 
     const canvas = page.locator("#tank");
     const hash = () => page.evaluate(() => window.desktank.tank.stateHash());
+    await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
     const before = await hash();
     const pixelsBefore = await canvas.screenshot();
     const drawn = await framesDrawn(page);
@@ -31,13 +32,11 @@ for (const [name, query] of [
     const box = await boxOf(canvas);
     await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.2);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.2, { steps: 10 });
-    await page.waitForTimeout(500);
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.2, { steps: 5 });
     await page.mouse.up();
-    await page.waitForTimeout(500);
 
-    expect(await hash(), "pouring changes cells").not.toBe(before);
-    expect(await framesDrawn(page), "frames were drawn").toBeGreaterThan(drawn);
+    await expect.poll(hash, { message: "pouring changes cells" }).not.toBe(before);
+    await expect.poll(() => framesDrawn(page), { message: "frames were drawn" }).toBeGreaterThan(drawn);
     expect(Buffer.compare(await canvas.screenshot(), pixelsBefore), "the canvas changed").not.toBe(0);
     expect(errors).toEqual([]);
   });
@@ -46,6 +45,7 @@ for (const [name, query] of [
 test("recovers from a lost WebGL2 context without a reload", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
+  await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
   await page.evaluate(() => {
     const gl = document.querySelector<HTMLCanvasElement>("#tank")!.getContext("webgl2")!;
     window.loseExt = gl.getExtension("WEBGL_lose_context")!;
@@ -64,10 +64,7 @@ test("recovers from a lost WebGL2 context without a reload", async ({ page }) =>
   // Pour after recovery: the new renderer draws the change.
   const box = await boxOf(page.locator("#tank"));
   const drawn = await framesDrawn(page);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.2);
-  await page.mouse.down();
-  await page.waitForTimeout(400);
-  await page.mouse.up();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height * 0.2);
   await expect.poll(() => framesDrawn(page)).toBeGreaterThan(drawn);
   expect(errors).toEqual([]);
 });
@@ -75,7 +72,7 @@ test("recovers from a lost WebGL2 context without a reload", async ({ page }) =>
 test("reset and a new seed start a fresh tank that draws", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
-  await page.waitForTimeout(300);
+  await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Reset" }).click();
   await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn())).toBeGreaterThan(0);
   const hash = await page.evaluate(() => window.desktank.tank.stateHash());
@@ -128,17 +125,14 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   // Liquid fertiliser pours like any material.
   await choose(page, "Liquid fertiliser");
   b = await box();
-  await page.mouse.move(b.x + b.width * 0.2, b.y + b.height * 0.3);
-  await page.mouse.down();
-  await page.waitForTimeout(300);
-  await page.mouse.up();
-  expect(await cells("liquid_fertiliser")).toBeGreaterThan(0);
+  await page.mouse.click(b.x + b.width * 0.2, b.y + b.height * 0.3);
+  await expect.poll(() => cells("liquid_fertiliser")).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
 
 test("each plant species has a palette item that pours it", async ({ page }) => {
   const errors = watchErrors(page);
-  await open(page, "?backend=webgl2");
+  await openPaused(page);
   const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
   // Java moss is under Plants › Moss & epiphytes, in its own colour.
   await choose(page, "Java moss");
