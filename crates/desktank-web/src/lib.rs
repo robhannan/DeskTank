@@ -937,7 +937,7 @@ impl WebTank {
     }
 
     /// Turns optional render-only plant sway on or off (SPEC §2.7, T6d;
-    /// off by default, capped at 10 fps, disabled on battery and while hidden).
+    /// off by default, capped at 10 fps and disabled while hidden).
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setSway))]
     pub fn set_sway(&mut self, enabled: bool) {
         self.tank.set_sway(enabled);
@@ -949,7 +949,20 @@ impl WebTank {
         self.tank.sway()
     }
 
-    /// Tells the tank whether the device is on battery power (disables sway).
+    /// Allows enabled sway to run on battery power.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setAllowSwayOnBattery))]
+    pub fn set_allow_sway_on_battery(&mut self, allow: bool) {
+        self.tank.set_allow_sway_on_battery(allow);
+    }
+
+    /// Whether the user allows sway on battery power.
+    #[must_use]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = allowsSwayOnBattery))]
+    pub fn allows_sway_on_battery(&self) -> bool {
+        self.tank.allows_sway_on_battery()
+    }
+
+    /// Tells the tank whether the device is on battery power.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setOnBattery))]
     pub fn set_on_battery(&mut self, on_battery: bool) {
         self.tank.set_on_battery(on_battery);

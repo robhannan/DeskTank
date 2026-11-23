@@ -131,6 +131,7 @@ pub fn run(
     saves: Saves,
     life: LifeSettings,
     sway: bool,
+    sway_on_battery: bool,
 ) -> anyhow::Result<()> {
     let saves = if demo_pour.is_some() {
         Saves::Off
@@ -159,6 +160,7 @@ pub fn run(
         fish,
         life,
         sway,
+        sway_on_battery,
         power,
         policy: PowerPolicy::default(),
         state: None,
@@ -187,6 +189,8 @@ struct App {
     life: LifeSettings,
     /// Optional render-only plant sway.
     sway: bool,
+    /// Allow plant sway while running on battery power.
+    sway_on_battery: bool,
     power: PowerMonitor,
     policy: PowerPolicy,
     state: Option<Running>,
@@ -977,6 +981,11 @@ impl ApplicationHandler for App {
                     s.tank.set_time_of_day(minute);
                 }
                 s.tank.set_sway(self.sway);
+                s.tank.set_allow_sway_on_battery(self.sway_on_battery);
+                s.tank.set_on_battery(matches!(
+                    self.power.signals().source,
+                    PowerSource::Battery { .. }
+                ));
                 let world = s.tank.world_mut();
                 if let Some(easy) = self.life.easy {
                     world.set_easy_mode(easy);
@@ -1078,11 +1087,17 @@ impl ApplicationHandler for App {
                             .set_title(&format!("DeskTank — cursor avoidance {state}"));
                     }
                     Key::Character(c) if c.eq_ignore_ascii_case("s") && !event.repeat => {
-                        let next = !s.tank.sway();
-                        s.tank.set_sway(next);
+                        let (label, next) = if s.modifiers.shift_key() {
+                            let next = !s.tank.allows_sway_on_battery();
+                            s.tank.set_allow_sway_on_battery(next);
+                            ("plant sway on battery", next)
+                        } else {
+                            let next = !s.tank.sway();
+                            s.tank.set_sway(next);
+                            ("plant sway", next)
+                        };
                         let state = if next { "on" } else { "off" };
-                        s.window
-                            .set_title(&format!("DeskTank — plant sway {state}"));
+                        s.window.set_title(&format!("DeskTank — {label} {state}"));
                     }
                     Key::Character(c) if c.eq_ignore_ascii_case("f") => {
                         use desktank_render::FieldOverlay::{Flow, Scalar};

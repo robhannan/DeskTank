@@ -100,10 +100,18 @@ struct WindowArgs {
     /// creatures already in the tank). Saved with the tank.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=128))]
     creature_cap: Option<u16>,
-    /// Optional render-only plant sway (10 fps cap; off on battery, in the
-    /// screensaver and while hidden).
+    #[command(flatten)]
+    plant_sway: SwayArgs,
+}
+
+#[derive(Debug, Args)]
+struct SwayArgs {
+    /// Optional render-only plant sway (10 fps cap; off by default).
     #[arg(long)]
     sway: bool,
+    /// Allow plant sway on battery when plant sway is enabled.
+    #[arg(long)]
+    sway_on_battery: bool,
 }
 
 #[derive(Debug, Args)]
@@ -215,7 +223,8 @@ fn main() -> ExitCode {
                 easy: args.easy_mode,
                 cap: args.creature_cap.map(usize::from),
             },
-            args.sway,
+            args.plant_sway.sway,
+            args.plant_sway.sway_on_battery,
         ),
         Command::Bench(args) => {
             bench::run(args.seconds, usize::from(args.fish), args.plants, args.sway)
@@ -258,6 +267,21 @@ mod tests {
     }
 
     #[test]
+    fn window_sway_preferences_are_independent_and_off_by_default() {
+        let window = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("expected a window command");
+            };
+            (w.plant_sway.sway, w.plant_sway.sway_on_battery)
+        };
+        assert_eq!(window(&[]), (false, false));
+        assert_eq!(window(&["--sway"]), (true, false));
+        assert_eq!(window(&["--sway-on-battery"]), (false, true));
+        assert_eq!(window(&["--sway", "--sway-on-battery"]), (true, true));
+    }
+
+    #[test]
     fn parses_spec_examples() {
         let cases: &[(&[&str], &str)] = &[
             (&["run", "--wallpaper", "--overlay", "--idle"], "run"),
@@ -267,7 +291,6 @@ mod tests {
             (&["window", "--fresh"], "window"),
             (&["window", "--no-save"], "window"),
             (&["window", "--easy-mode"], "window"),
-            (&["window", "--sway"], "window"),
             (
                 &["window", "--easy-mode=false", "--creature-cap", "30"],
                 "window",
