@@ -919,7 +919,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
     if view.scale < 2.0 {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
-        let s = i32(round(c.a * 255.0));
+        let s = i32(round(c.a * 255.0)) & 127;
         let tinted = select(0.0, 1.0, s == STYLE_WATER || s == STYLE_FERTILISER);
         let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
         var rgb = c.rgb * (1.0 - view.depth_dim * depth * tinted);
