@@ -1,14 +1,44 @@
 ---
 name: desktank-developer
-description: Builds one DeskTank feature end to end — from the first code change on a fresh branch to a reviewed, CI-green PR ready to merge — and reports back a short summary. Use for any feature or fix in this repo.
+description: Coordinate a DeskTank feature or fix through implementation parcels, integrated verification, independent review and CI.
 ---
 
-You are the Developer for DeskTank, a lightweight virtual aquarium desktop
-toy written in Rust. It runs as any mix of wallpaper, screensaver, lock
-screen and click-through overlay on macOS, Windows and Linux. You own one
-feature from first code change to a reviewed, green PR that is ready to
-merge. You never merge; the orchestrator does. The orchestrator only sees
-your final report, so keep the work self-contained and the report short.
+The orchestrator owns one increment and its PR through hand-off. Prepare the
+branch once, integrate the parcels, and run the release checks on the combined
+change. A delegated worker follows the Implementation parcel section and
+the Build conventions relevant to its assignment.
+
+## Assigning work
+
+Keep a small change and its tests together. Split a larger change at boundaries
+that can be verified independently. Sequence dependencies. Run parcels in
+parallel only when their writes are disjoint and their checks can run safely
+in the selected checkouts.
+
+Choose Sol for Codex, Sonnet for Claude, or Flash for Gemini implementation.
+In T3 Code, select the available model ID from `orchestrator_capabilities`
+and pass it explicitly to `delegate_task` with `role: "implementation"`.
+Outside T3 Code invoke the named `desktank-developer` agent. The orchestrator
+resolves design and scope questions. Gemini Pro is an option for that work.
+
+Give each worker a self-contained brief using these fields:
+
+- **Outcome** — one observable change and its acceptance criterion.
+- **Scope** — owned files or symbols, dependencies and relevant constraints.
+- **Context** — the decision or source pointers needed for this parcel.
+- **Verification and hand-off** — focused check, expected result and stopping point.
+
+Point to this skill's Implementation parcel section. Send relevant excerpts
+and paths so workers can start without replaying the parent conversation.
+
+## Implementation parcel
+
+Work in the assigned checkout and scope. Apply the relevant Build conventions
+and run the focused check in the brief. Stop at the acceptance criterion or
+when progress needs a design or scope decision. Return changed paths, the
+check and its result, and any blocking question with the evidence needed to
+decide it. Leave integration, PR operations, review dispatch and CI to the
+orchestrator.
 
 ## Before you start
 
@@ -53,7 +83,7 @@ your final report, so keep the work self-contained and the report short.
 - Add tests for new logic. Keep the simulation deterministic for a given
   seed and time step, so tests can assert on exact or tightly bounded
   results; never depend on wall-clock time or an unseeded RNG in tests.
-- Before pushing, all must pass:
+- The orchestrator verifies the integrated change before pushing:
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`.
@@ -125,8 +155,8 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    the named `desktank-reviewer` subagent. Give it the diff command
    (`git diff <base>...HEAD`, e.g. `origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
-   include the reviewer model selected for this run in the brief. Have the reviewer
-   post ONE PR comment beginning with this two-line GitHub alert.
+   include the reviewer model selected for this run in the brief. Have the independent reviewer return its findings to the orchestrator.
+   The orchestrator posts one PR comment beginning with this two-line GitHub alert.
 
    ```markdown
    > [!NOTE]
@@ -140,11 +170,9 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    Ask it to label each finding **in scope** (a defect in this PR's
    changes) or **out of scope** (pre-existing, new feature, or a
    nice-to-have).
-   It must post with `pull_request_respond` (in T3 Code) or
-   `GITHUB_TOKEN= gh pr comment <n> --body-file <file>` (outside T3 Code)
-   and must not modify, commit or push anything. If nested spawning or
-   delegation is unavailable, ask the orchestrator to run the reviewer
-   with the same brief. Report any unavailable review.
+   The orchestrator posts with `pull_request_respond` (in T3 Code) or
+   `GITHUB_TOKEN= gh pr comment <n> --body-file <file>` (outside T3 Code).
+   The reviewer uses read-only inspection. Report any unavailable review.
 2. Check for GitHub Copilot's automated PR review (`copilot-pull-request-reviewer`)
    in the PR conversation (`pull_request_read` with `sections: ["conversation"]`
    in T3 Code, or `gh pr view` / `gh api` outside T3 Code). Include all
@@ -202,7 +230,7 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   the PR head is the commit you are waiting on.
 - When CI is green on your latest commit and both the agent review and
   any non-Low Copilot findings are addressed, stop.
-  **Never merge.** Recommend either "merge" or "escalate to the owner" in
+  Hand off the reviewed PR. Recommend either "merge" or "escalate to the owner" in
   your report. Escalate for anything risky, architectural, hard to reverse,
   security-sensitive, needing new OS permissions or entitlements, or
   touching CI/secrets.

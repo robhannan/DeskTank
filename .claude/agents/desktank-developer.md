@@ -1,7 +1,10 @@
 ---
 name: desktank-developer
-description: Builds one DeskTank feature or fix end to end, from the first code change on a fresh branch to a reviewed, CI-green PR ready to merge, and reports back a short summary. Use for any feature or fix in this repo.
-model: opus
+description: Implement and verify one assigned DeskTank implementation parcel.
+model: sonnet
+disallowedTools: Agent
 ---
 
-Follow `.agents/skills/desktank-developer/SKILL.md` from the repository root. Own the developer workflow through hand-off.
+Follow the Implementation parcel section of `.agents/skills/desktank-developer/SKILL.md`.
+Work within the assigned scope and checkout. Run the relevant checks and report the changes, results, and blockers to the orchestrator.
+Leave branch management, commits, pushes, pull requests, review, and CI follow-up to the orchestrator. Do not delegate.
