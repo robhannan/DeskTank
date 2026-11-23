@@ -213,6 +213,7 @@ impl Renderer {
             let r = r.unwrap_or(full);
             grid::pack(cells, width, r, |i| world.rigid_mask(i), scratch);
             write_rect(gpu, texture, r, scratch, grid::TEXEL_BYTES);
+            // Unbanded cells never sample this texture, so old bytes can stay.
             if world.render_bands(r, band_scratch) {
                 write_rect(gpu, bands, r, band_scratch, 1);
             }

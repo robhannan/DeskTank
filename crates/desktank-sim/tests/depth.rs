@@ -334,6 +334,7 @@ fn plant_cells_have_bands_by_part() {
         y1: 8,
     };
     assert!(!stems.plant_bands(water, &mut bands));
+    assert!(!stems.render_bands(water, &mut bands));
     assert_eq!(bands, [0; 64]);
 }
 

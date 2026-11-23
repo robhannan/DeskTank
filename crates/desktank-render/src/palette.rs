@@ -254,6 +254,10 @@ mod tests {
         for m in mats.iter() {
             let style = GroundStyle::for_material(m);
             assert_eq!(texel(&table, m.id.0, 0)[3] & 127, style as u8, "{}", m.name);
+            assert_eq!(
+                texel(&table, m.id.0, 0)[3] & 128 != 0,
+                m.class == MovementClass::Rigid
+            );
             let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
             assert_eq!(style.is_depth_tinted(), dense, "{}", m.name);
         }

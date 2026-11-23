@@ -1058,7 +1058,7 @@ fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
         let mut tank = Tank::new(world, TankConfig::default());
         let bare = render_sized(gpu, &mut tank, format, size);
 
-        for behind in [true, false] {
+        for behind in [false, true] {
             let world = tank.world_mut();
             let fish = (0..64)
                 .find_map(|_| {
@@ -1081,7 +1081,18 @@ fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
                 with_fish[start..end] != bare[start..end]
             });
             assert_eq!(changed, !behind, "split={split_grid}, behind={behind}");
-            tank.world_mut().remove_creature(fish);
+            if behind {
+                let world = tank.world_mut();
+                let water = world.materials().id("water").unwrap();
+                world.paint(40, 24, 12, water, Brush::Replace).unwrap();
+                tank.step();
+                let uncovered = render_sized(gpu, &mut tank, format, size);
+                tank.world_mut().remove_creature(fish);
+                let empty = render_sized(gpu, &mut tank, format, size);
+                assert!(uncovered != empty, "erasing the rock reveals the fish");
+            } else {
+                tank.world_mut().remove_creature(fish);
+            }
         }
     }
 }
