@@ -17,6 +17,8 @@ DeskTank renders a calm, living fish tank that can run as any combination of:
 
 **[Try the sand tank in your browser](https://robhannan.github.io/DeskTank/)**: the simulation and GPU renderer compiled to WebAssembly (WebGPU, or WebGL2 as the fallback). Pour sand, gravel, rock, bubbles and food into the water, glue rocks in place and place bubblers, with the mouse or touch (drag pours, two-finger drag scoops, long-press inspects). Add creatures from the palette, inspect one to see its card and give it a name (N, or click the name field). To make fish flee the pointer, enable **Fish avoid the pointer** in web Settings or press **A** in `desktank window`. Cursor avoidance starts off. The tank is saved in your browser (when you leave the page, and every 5 minutes while it runs) and reopened next visit; **Export** and **Import** move it to and from the desktop app. After the first online visit, you can reopen the aquarium offline. Use your browser’s install command or **Add to Home Screen** to launch it as an app. Open it in a second tab and that tab shows "open in another tab" with **Take over**.
 
+Plant sway is off by default. Enable **Plant sway** in web Settings or press **S** in `desktank window`. Where battery power is detected, also enable **Allow plant sway on battery** in web Settings or press **Shift+S** in the window. To start the desktop window with both enabled, run `desktank window --sway --sway-on-battery`.
+
 ## Status
 
 Early days: the falling-sand simulation core works (see the browser demo above) and renders in a window. Working commands:

@@ -294,10 +294,14 @@ stays a material film, not individuals.
     rhizomes, floaters, crowns and mats anchored) in a smooth wave across
     water cells and matching sprite occlusion (`hidden_by_plant`). It is
     off by default (`Tank::set_sway`, `--sway` / `S` in `desktank window`,
-    `--sway` in `desktank capture` and `desktank bench`, web Settings
-    checkbox persisted in `localStorage`), capped at 10 fps
-    (`SWAY_MAX_FPS`), and automatically disabled on battery, in
-    screensaver mode, while hidden, or when the tank has no plants.
+    `--sway` in `desktank capture` and `desktank bench`, and **Plant sway**
+    in web Settings) and capped at 10 fps (`SWAY_MAX_FPS`). When the host
+    detects battery power, sway also requires a separate opt-in, off by
+    default (`--sway-on-battery` / `Shift+S` in `desktank window`, and
+    **Allow plant sway on battery** in web Settings). The web stores both
+    preferences in `localStorage`. Sway remains disabled in screensaver
+    mode, while hidden, or when the tank has no plants. The host's power
+    and visibility policies still govern the tank's pacing and pauses.
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. It pours the species as
   its default propagule; `P` (and, on the web, a row of chips under the

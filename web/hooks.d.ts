@@ -11,6 +11,7 @@ export interface Settings {
   avoidCursor: boolean;
   easyMode: boolean;
   sway: boolean;
+  swayOnBattery: boolean;
   stats: boolean;
   seed: number;
   radius: number;
