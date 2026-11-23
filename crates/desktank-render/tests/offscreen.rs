@@ -1026,3 +1026,62 @@ fn strong_surface_current_ripples_water_while_weak_current_stays_calm() {
         }
     }
 }
+
+#[test]
+fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let size = (320, 192);
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let materials = MaterialTable::builtin().unwrap();
+        let rock = materials.id("rock").unwrap();
+        let mut world = World::new(
+            WorldConfig {
+                width: 80,
+                height: 48,
+                seed: 1,
+                water_level: 1.0,
+            },
+            materials,
+        )
+        .unwrap();
+        world.paint(40, 24, 8, rock, Brush::Replace).unwrap();
+        world.tick();
+        let (front, back) = world.rigid_bands(24 * 80 + 40).unwrap();
+        assert!(front > 0 && back < desktank_sim::DEPTH_BANDS - 1);
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let bare = render_sized(gpu, &mut tank, format, size);
+
+        for behind in [true, false] {
+            let world = tank.world_mut();
+            let fish = (0..64)
+                .find_map(|_| {
+                    let id = world.add_creature(tetra, 15, 24).unwrap();
+                    let band = world.creature(id).unwrap().band();
+                    if (behind && band > back) || (!behind && band < front) {
+                        Some(id)
+                    } else {
+                        world.remove_creature(id);
+                        None
+                    }
+                })
+                .unwrap();
+            assert!(world.move_creature(fish, 40, 24));
+
+            let with_fish = render_sized(gpu, &mut tank, format, size);
+            let changed = (22 * 4..27 * 4).any(|y| {
+                let start = (y * size.0 as usize + 36 * 4) * 4;
+                let end = start + 9 * 4 * 4;
+                with_fish[start..end] != bare[start..end]
+            });
+            assert_eq!(changed, !behind, "split={split_grid}, behind={behind}");
+            tank.world_mut().remove_creature(fish);
+        }
+    }
+}

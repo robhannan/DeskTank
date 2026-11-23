@@ -411,13 +411,28 @@ impl World {
     /// the renderer, which draws plant cells in front of creatures behind
     /// them (D21).
     pub fn plant_bands(&self, r: Rect, out: &mut Vec<u8>) -> bool {
+        self.pack_bands(r, out, false)
+    }
+
+    /// Packs the renderer's depth texture, row by row in the clipped
+    /// rectangle. Plant cells hold their band. Rigid cells hold their
+    /// front band plus [`DEPTH_BANDS`], and all other cells hold zero.
+    pub fn render_bands(&self, r: Rect, out: &mut Vec<u8>) {
+        self.pack_bands(r, out, true);
+    }
+
+    fn pack_bands(&self, r: Rect, out: &mut Vec<u8>, rigid: bool) -> bool {
         out.clear();
         let (x1, y1) = (r.x1.min(self.width), r.y1.min(self.height));
         let mut memo = None;
         let mut any = false;
         for y in r.y0.min(y1)..y1 {
             for i in y * self.width + r.x0.min(x1)..y * self.width + x1 {
-                let band = self.plant_band_with(i, &mut memo);
+                let band = if rigid && self.is_rigid(i) {
+                    Some(DEPTH_BANDS + self.body_bands_at(i).0)
+                } else {
+                    self.plant_band_with(i, &mut memo)
+                };
                 any |= band.is_some();
                 out.push(band.unwrap_or(0));
             }

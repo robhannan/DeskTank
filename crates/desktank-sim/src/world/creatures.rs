@@ -18,14 +18,14 @@
 //!   band where it is, or else hops to the nearest free spot.
 //! - **Depth** (2.5D, D21). The tank is [`DEPTH_BANDS`] bands deep, 0 at
 //!   the front glass. Each plant cell has a band ([`World::plant_band`]);
-//!   everything else (rock, substrate, glass, bodies, air) spans every
-//!   band, and so do food and other loose particles, which a creature eats
+//!   rigid bodies span a range, and substrate, glass and air span every
+//!   band. So do food and other loose particles, which a creature eats
 //!   from any band. A creature has a depth in 1/256 band (hashed and
 //!   saved) that eases towards a target band: a new random one in its
-//!   species' `bands` with each wander target, or, when a plant blocks its
+//!   species' `bands` with each wander target, or, when a banded obstacle blocks its
 //!   way, the nearest band it can shift to in place where the way is clear
 //!   (front first for even ids, back first for odd), holding still while
-//!   it shifts, so it slips past the plant rather than turning away; it
+//!   it shifts, so it can slip past the obstacle; it
 //!   turns away if that takes over [`DODGE_TICKS`]. A schooler that can't
 //!   reach its school at all strays on a wander target of its own for a
 //!   while, out of whatever pocket holds it. Crawlers keep the band they
@@ -1766,8 +1766,6 @@ impl World {
     /// back first for an odd one.
     #[allow(clippy::many_single_char_names)] // cell maths
     fn depth_route(&self, k: &Kind, c: &Creature, x: i32, y: i32) -> Option<u8> {
-        // Only plants and single-band device sections (e.g. HOB intake tube)
-        // have bands: anything else in the way blocks them all.
         if !self.only_banded_block(k, c.turn, x, y) {
             return None;
         }
@@ -1803,8 +1801,7 @@ impl World {
     }
 
     /// Whether a body turned `turn` at `(x, y)` lies inside the grid and
-    /// overlaps only depth-banded obstacles (plants or back-band device parts
-    /// such as a HOB intake tube) and nothing else it can't swim through.
+    /// overlaps depth-banded obstacles and nothing else it can't swim through.
     fn only_banded_block(&self, k: &Kind, turn: u8, x: i32, y: i32) -> bool {
         let (wide, tall) = extent(k, turn);
         let Some(to) = body_box(wide, tall, x, y, self.width, self.height) else {
@@ -1815,7 +1812,12 @@ impl World {
             for i in row * self.width + to.x0..row * self.width + to.x1 {
                 let m = self.cells[i].material;
                 if !self.creatures.swim[usize::from(m.0)] {
-                    if self.plants.part(m).is_none() && self.device_cell_band(i).is_none() {
+                    if self.plants.part(m).is_none()
+                        && self.device_cell_band(i).is_none()
+                        && self
+                            .rigid_bands(i)
+                            .is_none_or(|bands| bands == (0, DEPTH_BANDS - 1))
+                    {
                         return false;
                     }
                     banded = true;
@@ -2058,8 +2060,9 @@ impl World {
 
     /// Whether a `w × h`-cell box centred at `(x, y)` (fixed point) lies
     /// inside the grid on cells it may overlap: swimmable ones, plant
-    /// cells further than [`BAND_REACH`] from `band` (`None`: none) and,
-    /// if `soft` and in a band, a floater's hanging roots in any band.
+    /// cells further than [`BAND_REACH`] from `band`, rigid cells outside
+    /// their occupied bands and, if `soft` and in a band, a floater's
+    /// hanging roots. With no band, every obstacle counts.
     fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>, soft: bool) -> bool {
         let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
             return false;
@@ -2101,6 +2104,10 @@ impl World {
                     return false;
                 }
                 p.abs_diff(band) <= BAND_REACH
+            }
+            (Some(band), None) if self.is_rigid(i) => {
+                let (front, back) = self.body_bands_at(i);
+                (front..=back).contains(&band)
             }
             (Some(band), None) => self
                 .device_cell_band(i)

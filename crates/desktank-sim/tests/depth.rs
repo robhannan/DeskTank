@@ -390,3 +390,91 @@ fn a_change_of_depth_alone_asks_for_a_frame() {
     }
     assert!(still_shifts > 0);
 }
+
+#[test]
+fn rigid_depth_tracks_reference_shape_and_split_pieces() {
+    for material in ["rock", "driftwood"] {
+        let mut w = world(64, 48, 7);
+        let rigid = id(&w, material);
+        let water = id(&w, "water");
+        let rect = Rect {
+            x0: 16,
+            y0: 16,
+            x1: 25,
+            y1: 25,
+        };
+        w.fill_rect(rect, rigid, Brush::Replace).unwrap();
+        let body = w.body_at(16, 16).unwrap();
+        w.set_anchored(body, true);
+        // Pending edits and settled shapes both rebuild the same band range
+        // when loaded, without any new save fields.
+        for _ in 0..2 {
+            let loaded =
+                save::decode(&save::encode(&w), MaterialTable::builtin().unwrap()).unwrap();
+            for i in 0..w.cells().len() {
+                assert_eq!(w.rigid_bands(i), loaded.rigid_bands(i));
+            }
+            w.tick();
+        }
+        let (front, back) = w.rigid_bands(16 * 64 + 16).unwrap();
+        assert_eq!(back - front + 1, 3);
+
+        let cut = Rect {
+            x0: 20,
+            x1: 21,
+            ..rect
+        };
+        w.fill_rect(cut, water, Brush::Replace).unwrap();
+        w.tick();
+        assert_eq!(w.body_at(16, 16), Some(body));
+        assert_ne!(w.body_at(24, 16), Some(body));
+        let mut packed = Vec::new();
+        w.render_bands(rect, &mut packed);
+        for (x, packed_band) in (16..25).zip(packed) {
+            let bands = w.rigid_bands(16 * 64 + x);
+            if x == 20 {
+                assert_eq!((bands, packed_band), (None, 0));
+            } else {
+                let (front, back) = bands.unwrap();
+                assert_eq!(front, back);
+                assert_eq!(packed_band, DEPTH_BANDS + front);
+            }
+        }
+        // The far side of the split changes body id and band texture even
+        // though the tool never painted that cell.
+        assert!(w.dirty_rects().any(|r| (r.x0..r.x1).contains(&24)));
+    }
+}
+
+#[test]
+fn a_swimmer_can_cross_a_rigid_body_only_in_free_bands() {
+    let mut w = world(80, 48, 7);
+    let rock = id(&w, "rock");
+    w.fill_rect(
+        Rect {
+            x0: 36,
+            y0: 18,
+            x1: 45,
+            y1: 27,
+        },
+        rock,
+        Brush::Replace,
+    )
+    .unwrap();
+    w.tick();
+    let (front, back) = w.rigid_bands(22 * 80 + 40).unwrap();
+    let tetra = species(&w, "neon_tetra");
+    let mut tested = [false; DEPTH_BANDS as usize];
+    for _ in 0..64 {
+        let fish = w.add_creature(tetra, 15, 22).unwrap();
+        let band = w.creature(fish).unwrap().band();
+        assert_eq!(
+            w.move_creature(fish, 40, 22),
+            !(front..=back).contains(&band),
+            "band {band}, body {front}..={back}",
+        );
+        tested[usize::from(band)] = true;
+        w.remove_creature(fish);
+    }
+    assert!(tested.into_iter().all(|seen| seen));
+}

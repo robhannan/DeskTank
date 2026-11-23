@@ -255,7 +255,7 @@ impl World {
             return;
         };
         // The ground beside it: the lower side's top row.
-        let level = self.ground_beside(&b).max(b.y0);
+        let level = self.ground_beside(&b, c.band()).max(b.y0);
         let reach = b.x1 - b.x0 + 2;
         let swim = |w: &World, i: usize| w.creatures.swim[usize::from(w.cells[i].material.0)];
         for n in 0..BACKFILL_CELLS {
@@ -379,14 +379,14 @@ impl World {
             return 0;
         };
         let bottom = c.y + extent(k, c.turn).1 * ONE / 2;
-        let ground = i32::try_from(self.ground_beside(&b)).unwrap_or(i32::MAX);
+        let ground = i32::try_from(self.ground_beside(&b, c.band())).unwrap_or(i32::MAX);
         (bottom - ground * ONE).max(0)
     }
 
     /// The top row of the ground in the columns just beside `body`, from
     /// its top down: the lower side's (the grid's height where there is
     /// none, or no column beside it).
-    fn ground_beside(&self, body: &Rect) -> usize {
+    fn ground_beside(&self, body: &Rect, band: u8) -> usize {
         [
             body.x0.checked_sub(1),
             Some(body.x1).filter(|&x| x < self.width),
@@ -396,7 +396,11 @@ impl World {
         .map(|x| {
             (body.y0..self.height)
                 .find(|&row| {
-                    !self.creatures.swim[usize::from(self.cells[row * self.width + x].material.0)]
+                    let i = row * self.width + x;
+                    !self.creatures.swim[usize::from(self.cells[i].material.0)]
+                        && self
+                            .rigid_bands(i)
+                            .is_none_or(|(front, back)| (front..=back).contains(&band))
                 })
                 .unwrap_or(self.height)
         })

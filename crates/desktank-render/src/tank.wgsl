@@ -87,13 +87,14 @@ struct View {
 // and carpets) and the colouration texel (colour, a = 1 if it colours), as
 // bytes (plants.rs).
 @group(0) @binding(7) var plant_species: texture_2d<f32>;
-// Per cell: a plant cell's depth band (D21) in bands / 255 (0 elsewhere).
+// Per cell: a plant band or a rigid front band tagged with RIGID_BAND_TAG, divided by 255.
 @group(0) @binding(8) var bands: texture_2d<f32>;
 // 2D flow vector (vx, vy) per 8x8-cell field cell (128/255 = 0), for the overlay.
 @group(0) @binding(9) var flow: texture_2d<f32>;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
 const BACK_BAND: f32 = 7.0;
+const RIGID_BAND_TAG: f32 = BACK_BAND + 1.0;
 // Depth cue at the back band: how far colours fade towards HAZE and how
 // much darker they get (none at the front glass).
 const HAZE_MIX: f32 = 0.22;
@@ -2380,6 +2381,29 @@ fn hidden_by_stem(pos: vec2<f32>, depth: f32) -> bool {
     return band + 0.5 < depth && stem_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
 }
 
+// A sprite in front of the body's first occupied band is visible. Test the
+// same outline as ground(), including a partial cell's exposed corners.
+fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return false;
+    }
+    let at = vec2<i32>(cell);
+    let band = band_at(at);
+    if band < RIGID_BAND_TAG || depth < band - RIGID_BAND_TAG - 0.5 {
+        return false;
+    }
+    let t = textureLoad(cells, at, 0);
+    let style = style_of(t);
+    let own = outline_of(t);
+    if view.scale < 2.0 || own == 0xffffu || (style != STYLE_ROCK && style != STYLE_DRIFTWOOD) {
+        return true;
+    }
+    let mat = i32(round(t.r * 255.0));
+    return rigid_drawn(at, mat, own, quarter_of(grid_pos, cell), FINE_PLANTS && fine_scale());
+}
+
 // Whether loose substrate (sand, gravel, aquasoil) covers the pixel at
 // `pos`: a burrower in the bed shows only where the ground drawn there is
 // open, so the cell's trimmed top (`loose_top`) shows it too.
@@ -2503,9 +2527,10 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
     let texel = vec2<i32>(v.frame.xy + p);
     let t = frame_texel(v.frame, p);
     let k = v.glow.w;
+    let covered = hidden || (v.look.x < 2.5 && hidden_by_rigid(v.pos.xy, v.depth));
     if t.a < 0.5 {
         // Only a glowing creature at night draws past its texels: the halo.
-        if k <= 0.0 || hidden {
+        if k <= 0.0 || covered {
             discard;
         }
         let a = halo_alpha(v.frame, p, k);
@@ -2520,7 +2545,7 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
         return vec4<f32>(out(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint).rgb, 0.55);
     }
-    if hidden || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
+    if covered || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;
     }
     var rgb = t.rgb;

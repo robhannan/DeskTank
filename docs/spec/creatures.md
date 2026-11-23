@@ -68,8 +68,9 @@
   to back. Plant cells have a band (a plant's stem keeps one, its leaves
   are up to a band off it, a rosette's blades fan up to two bands either
   way); a creature has a depth that eases between bands and collides with
-  a plant cell only within one band of it. Rock, substrate, glass, bodies
-  and air span every band, and so do food and other loose particles, so a
+  a plant cell only within one band of it. Rock and driftwood occupy a contiguous range of bands. A swimmer
+  can pass in front of or behind a body wherever its band is free.
+  Substrate, glass and air span every band, and so do food and other loose particles, so a
   creature eats from any band. Blocked by a plant, a swimmer shifts band
   to slip past before it turns away. Species may keep to a range of
   bands (`bands`, every band by default). Creatures and corpses are drawn

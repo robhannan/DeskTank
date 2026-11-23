@@ -36,8 +36,8 @@ use crate::material::{
 
 use shape::{Shape, TURN};
 
-use super::World;
 use super::persist::{rect_from_v1, rect_v1};
+use super::{DEPTH_BANDS, World, default_band};
 use crate::save::{SaveError, v1, v10};
 
 /// Ticks a body stays still after cells were last poured into it, so a
@@ -109,6 +109,8 @@ pub(super) struct Body {
     held_until: u64,
     /// Its shape at angle 0 (rebuilt whenever its cells change by edits).
     shape: Shape,
+    /// Inclusive depth range, derived from the seed, id and reference shape.
+    bands: (u8, u8),
     /// World cell where the shape's bitmap corner is drawn.
     anchor: (i64, i64),
     /// Angle the cells are drawn at, a multiple of the raster step.
@@ -135,7 +137,38 @@ impl Body {
     }
 }
 
+/// One band per four cells of the shorter reference dimension, rounded up.
+fn body_bands(seed: u64, id: u16, shape: &Shape) -> (u8, u8) {
+    let width = shape
+        .short_side()
+        .div_ceil(4)
+        .clamp(1, usize::from(DEPTH_BANDS));
+    let width = u8::try_from(width).unwrap_or(DEPTH_BANDS);
+    let centre = default_band(seed, u32::from(id), (0, DEPTH_BANDS - 1));
+    let front = centre
+        .saturating_sub((width - 1) / 2)
+        .min(DEPTH_BANDS - width);
+    (front, front + width - 1)
+}
+
 impl World {
+    /// Inclusive front and back bands of the rigid cell at index `i`.
+    /// Rigid cells without a body (if ids run out) span the whole tank.
+    #[must_use]
+    pub fn rigid_bands(&self, i: usize) -> Option<(u8, u8)> {
+        if i >= self.cells.len() || !self.is_rigid(i) {
+            return None;
+        }
+        Some(self.body_bands_at(i))
+    }
+
+    /// Occupied bands of cell `i`, which the caller knows is rigid.
+    pub(super) fn body_bands_at(&self, i: usize) -> (u8, u8) {
+        self.bodies
+            .get(&self.cells[i].state)
+            .map_or((0, DEPTH_BANDS - 1), |b| b.bands)
+    }
+
     /// All rigid bodies, by id, as of the last tick (edits made since apply
     /// at the next tick).
     pub fn bodies(&self) -> impl Iterator<Item = BodyInfo> + '_ {
@@ -446,6 +479,7 @@ impl World {
                     awake: true,
                     held_until: 0,
                     shape: Shape::default(),
+                    bands: body_bands(self.seed, id, &Shape::default()),
                     anchor: (0, 0),
                     drawn: 0,
                     pos: (0, 0),
@@ -506,6 +540,7 @@ impl World {
             let new = self.new_body(material, anchored);
             for &i in &piece {
                 self.cells[i].state = new;
+                self.mark_visual(i % self.width, i / self.width);
             }
             if let Some(b) = self.bodies.get_mut(&new) {
                 b.bounds = bounds(&piece, self.width);
@@ -537,7 +572,16 @@ impl World {
             })
             .collect();
         let (shape, anchor) = Shape::new(&cells);
+        let bands = body_bands(self.seed, id, &shape);
+        if b.bands.0 != bands.0 {
+            // Retained cells may change the front band they send to the
+            // renderer without changing their material or outline.
+            for (x, y, ..) in cells {
+                self.mark_visual(x, y);
+            }
+        }
         if let Some(b) = self.bodies.get_mut(&id) {
+            b.bands = bands;
             b.anchor = anchor;
             b.shape = shape;
             b.drawn = 0;
@@ -721,6 +765,7 @@ impl World {
                 .iter()
                 .map(|&i| self.cell_index(i, "a body"))
                 .collect::<Result<Vec<_>, _>>()?;
+            let shape = Shape::from_v1(b.shape)?;
             self.bodies.insert(
                 id,
                 Body {
@@ -731,7 +776,8 @@ impl World {
                     pending,
                     awake: b.awake,
                     held_until: b.held_until,
-                    shape: Shape::from_v1(b.shape)?,
+                    bands: body_bands(self.seed, id, &shape),
+                    shape,
                     anchor: b.anchor,
                     drawn: b.drawn,
                     pos: b.pos,
