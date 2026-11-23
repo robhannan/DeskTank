@@ -96,7 +96,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, sway: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, sway: false, swayOnBattery: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -266,6 +266,7 @@ function loadSettings(): Settings {
     avoidCursor: saved.avoidCursor === true,
     easyMode: saved.easyMode === true,
     sway: saved.sway === true,
+    swayOnBattery: saved.swayOnBattery === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
     seed: int(saved.seed, 0, 0xffffffff, DEFAULTS.seed),
     radius: int(saved.radius, 0, 24, DEFAULTS.radius), // the tank clamps it too
@@ -294,6 +295,7 @@ function showSettings() {
   $<HTMLInputElement>("set-avoid-cursor").checked = settings.avoidCursor;
   $<HTMLInputElement>("set-easy-mode").checked = settings.easyMode;
   $<HTMLInputElement>("set-sway").checked = settings.sway;
+  $<HTMLInputElement>("set-sway-on-battery").checked = settings.swayOnBattery;
   $<HTMLInputElement>("set-stats").checked = settings.stats;
   seedInput.value = String(settings.seed);
   brushInput.value = String(settings.radius);
@@ -305,6 +307,7 @@ function showSettings() {
     tank.setCursorAvoidance(settings.avoidCursor);
     tank.setEasyMode(settings.easyMode);
     tank.setSway(settings.sway);
+    tank.setAllowSwayOnBattery(settings.swayOnBattery);
     tank.setOnBattery(onBattery);
     tank.setHidden(hidden);
     tank.setRadius(settings.radius);
@@ -1713,6 +1716,7 @@ function wireSettings(resetTank: () => void) {
   $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: checkedOf(e) }));
   $("set-easy-mode").addEventListener("change", (e) => update({ easyMode: checkedOf(e) }));
   $("set-sway").addEventListener("change", (e) => update({ sway: checkedOf(e) }));
+  $("set-sway-on-battery").addEventListener("change", (e) => update({ swayOnBattery: checkedOf(e) }));
   $("set-stats").addEventListener("change", (e) => {
     update({ stats: checkedOf(e) });
     updateStats();
@@ -1808,6 +1812,7 @@ function wireLifecycle() {
       batteryFps = battery.charging ? FPS_AC : FPS_BATTERY;
       tank?.setMaxFps(maxFps());
       tank?.setOnBattery(onBattery);
+      kick();
     };
     battery.addEventListener("chargingchange", onChange);
     onChange();

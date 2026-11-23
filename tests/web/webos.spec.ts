@@ -87,6 +87,8 @@ test.describe("modern build", () => {
   test.use({ deviceScaleFactor: 2 });
 
   test("uses the display's pixel ratio unless ?dpr= caps it, and shows no diagnostics", async ({ page }) => {
+    // Exercise both pixel ratios with a small software-rendered canvas in CI.
+    await page.setViewportSize({ width: 640, height: 480 });
     await ready(page, "");
     let px = await canvasPixels(page);
     expect(px.width).toBe(px.cssWidth * 2);

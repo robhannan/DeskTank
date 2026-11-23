@@ -2,7 +2,7 @@
 // WebGL2 and once with the default backend (WebGPU, falling back to WebGL2
 // where the browser has no adapter), with no console errors.
 import { expect, test } from "@playwright/test";
-import { boxOf, callTank, choose, framesDrawn, open, type TankMethod, watchErrors, type WebTank } from "./support.ts";
+import { boxOf, callTank, choose, framesDrawn, open, openPaused, type TankMethod, watchErrors, type WebTank } from "./support.ts";
 
 declare global {
   interface Window {
@@ -168,7 +168,8 @@ test("each plant species has a palette item that pours it", async ({ page }) => 
 
 test("the propagule chips offer the species' own methods and pour seeds", async ({ page }) => {
   const errors = watchErrors(page);
-  await open(page, "?backend=webgl2");
+  // Only palette interactions and the pour change this test tank.
+  await openPaused(page);
   const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
   const row = page.locator("#propagules");
   const chips = row.getByRole("radio");

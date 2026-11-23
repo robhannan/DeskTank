@@ -561,8 +561,12 @@ test("settings persist across reloads", async ({ page }) => {
   await page.getByLabel("Easy mode (only old age kills)").check();
   expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(true);
   expect(await page.evaluate(() => window.desktank.tank.sway())).toBe(false);
-  await page.getByLabel("Plant sway (10 fps, off on battery)").check();
+  await expect(page.getByLabel("Allow plant sway on battery")).not.toBeChecked();
+  await page.getByLabel("Plant sway (10 fps)").check();
   expect(await page.evaluate(() => window.desktank.tank.sway())).toBe(true);
+  expect(await page.evaluate(() => window.desktank.tank.allowsSwayOnBattery())).toBe(false);
+  await page.getByLabel("Allow plant sway on battery").check();
+  expect(await page.evaluate(() => window.desktank.tank.allowsSwayOnBattery())).toBe(true);
   await page.locator("#set-stats").uncheck();
   await page.locator("#seed").fill("42");
   await page.locator("#seed").dispatchEvent("change");
@@ -580,6 +584,7 @@ test("settings persist across reloads", async ({ page }) => {
     avoidCursor: true,
     easyMode: true,
     sway: true,
+    swayOnBattery: true,
     seed: 42,
     radius: 7,
   });
@@ -588,10 +593,12 @@ test("settings persist across reloads", async ({ page }) => {
   expect(await page.evaluate(() => window.desktank.tank.radius())).toBe(7);
   expect(await page.evaluate(() => window.desktank.tank.easyMode()), "easy mode applies to the new tank").toBe(true);
   expect(await page.evaluate(() => window.desktank.tank.sway()), "sway applies to the new tank").toBe(true);
+  expect(await page.evaluate(() => window.desktank.tank.allowsSwayOnBattery())).toBe(true);
   await expect(page.locator("#stats")).toBeHidden();
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.locator("#set-scale")).toHaveValue(String(scale));
   await expect(page.locator("#seed")).toHaveValue("42");
+  await expect(page.getByLabel("Allow plant sway on battery")).toBeChecked();
 
   // Defaults restore auto scale and clear the overlay.
   await page.getByRole("button", { name: "Defaults" }).click();
@@ -599,6 +606,7 @@ test("settings persist across reloads", async ({ page }) => {
   expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("");
   expect(await page.evaluate(() => window.desktank.tank.easyMode())).toBe(false);
   expect(await page.evaluate(() => window.desktank.tank.sway())).toBe(false);
+  expect(await page.evaluate(() => window.desktank.tank.allowsSwayOnBattery())).toBe(false);
   // Garbage in storage falls back to the defaults.
   await page.evaluate(() => localStorage.setItem("desktank.settings.v1", "{not json"));
   await page.reload();

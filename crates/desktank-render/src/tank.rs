@@ -23,6 +23,7 @@ const SWAY_ENABLED: u8 = 1 << 0;
 const SWAY_BATTERY: u8 = 1 << 1;
 const SWAY_SAVER: u8 = 1 << 2;
 const SWAY_HIDDEN: u8 = 1 << 3;
+const SWAY_ALLOW_BATTERY: u8 = 1 << 4;
 
 /// Optional plant-sway setting and host-environment gates (SPEC §2.7, T6d).
 #[derive(Clone, Copy, Debug, Default)]
@@ -41,7 +42,13 @@ impl Sway {
     }
 
     fn active(self) -> bool {
-        self.flags == SWAY_ENABLED
+        self.enabled()
+            && self.flags & (SWAY_SAVER | SWAY_HIDDEN) == 0
+            && (self.flags & SWAY_BATTERY == 0 || self.allows_battery())
+    }
+
+    fn allows_battery(self) -> bool {
+        self.flags & SWAY_ALLOW_BATTERY != 0
     }
 
     fn set_flag(&mut self, bit: u8, on: bool) {
@@ -146,8 +153,8 @@ impl Tank {
 
     /// Turns optional render-only plant sway on or off (SPEC §2.7, T6d).
     /// Off by default. While active, sway redraws a settled planted tank at
-    /// most [`SWAY_MAX_FPS`] (10 fps), and is automatically disabled on
-    /// battery, in screensaver mode and while hidden.
+    /// most [`SWAY_MAX_FPS`] (10 fps). Battery power requires a separate
+    /// opt-in. Screensaver mode and hidden surfaces always disable sway.
     pub fn set_sway(&mut self, enabled: bool) {
         self.set_sway_flag(SWAY_ENABLED, enabled);
     }
@@ -158,7 +165,18 @@ impl Tank {
         self.sway.enabled()
     }
 
-    /// Tells the tank whether the host is on battery power (disables sway).
+    /// Allows enabled sway to run on battery power. Disallowed by default.
+    pub fn set_allow_sway_on_battery(&mut self, allow: bool) {
+        self.set_sway_flag(SWAY_ALLOW_BATTERY, allow);
+    }
+
+    /// Whether the user allows sway on battery power.
+    #[must_use]
+    pub fn allows_sway_on_battery(&self) -> bool {
+        self.sway.allows_battery()
+    }
+
+    /// Tells the tank whether the host is on battery power.
     pub fn set_on_battery(&mut self, on_battery: bool) {
         self.set_sway_flag(SWAY_BATTERY, on_battery);
     }
@@ -193,8 +211,8 @@ impl Tank {
         }
     }
 
-    /// Whether plant sway is currently active (enabled, not on battery, not
-    /// in screensaver mode, not hidden, and the tank has at least one plant).
+    /// Whether plant sway is enabled and allowed by power, visibility and
+    /// screensaver settings, and the tank has at least one plant.
     #[must_use]
     pub fn sway_active(&self) -> bool {
         self.sway.active() && self.world.plant_count() > 0
@@ -680,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    fn sway_caps_redraws_at_10_fps_and_disables_on_battery_saver_and_hidden() {
+    fn sway_caps_redraws_at_10_fps_and_respects_power_and_visibility() {
         let mut tank = settled_planted_tank();
         tank.set_sway(true);
         assert!(tank.sway());
@@ -702,6 +720,7 @@ mod tests {
 
         // On battery: one frame to snap back to rest, then 0 sway frames.
         tank.set_on_battery(true);
+        assert!(!tank.allows_sway_on_battery());
         assert!(!tank.sway_active());
         let req = tank.tick(now + Duration::from_millis(50));
         if req.redraw {
@@ -714,7 +733,14 @@ mod tests {
             "sway must draw nothing on battery"
         );
         now += Duration::from_secs(5);
-        tank.set_on_battery(false);
+        tank.set_allow_sway_on_battery(true);
+        assert!(tank.sway_active());
+        let frames = count_frames_every(&mut tank, now, 5, 5);
+        assert!(
+            (5 * SWAY_MAX_FPS - 1..=5 * SWAY_MAX_FPS).contains(&frames),
+            "sway opted in on battery drew {frames} frames in 5 s"
+        );
+        now += Duration::from_secs(5);
 
         // In screensaver mode: 0 sway frames.
         tank.set_saver_mode(true);
@@ -748,6 +774,15 @@ mod tests {
         // Shown again: sway resumes at once.
         tank.set_hidden(false);
         assert!(tank.tick(now + Duration::from_millis(50)).redraw);
+
+        tank.set_sway(false);
+        assert!(!tank.sway_active(), "the battery opt-in requires sway");
+        tank.set_sway(true);
+        assert!(tank.sway_active());
+        tank.set_allow_sway_on_battery(false);
+        assert!(!tank.sway_active());
+        tank.set_on_battery(false);
+        assert!(tank.sway_active());
     }
 
     #[test]
