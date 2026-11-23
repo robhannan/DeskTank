@@ -169,6 +169,10 @@
       one body with `World::paint_into`. A body being poured into is
       **held still** until two ticks after the last stamp, so a stroke can
       draw a shape and it drops when released.
+    - **Depth.** A body occupies one band per four cells of its shorter
+      reference dimension, rounded up and capped at eight. The world seed
+      and body ID determine its placement. Motion and rotation preserve
+      this range. Reshaping or splitting a body recalculates it.
     - **Motion.** Gravity accelerates released bodies. Displaced fluid supplies
       buoyancy and drag. Translation advances one cell at a time within a tick
       to detect obstacles. A body can tip around its support, transfer momentum

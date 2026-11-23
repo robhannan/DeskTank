@@ -19,7 +19,7 @@ fn seconds(s: u32) -> u32 {
 
 /// A sand-bedded tank whose top water row is covered, except for `gap`
 /// (columns), with roots hanging six rows below every other column. The
-/// cover is glued rock, as dense as a thick floating mat: painted floating
+/// cover uses full-depth solid device cells, as dense as a thick floating mat: painted floating
 /// leaves are a plant per stroke in one depth band each, which a breather
 /// in another band slips past (as it should).
 fn matted(seed: u64, gap: Option<(usize, usize)>) -> World {
@@ -34,17 +34,15 @@ fn matted(seed: u64, gap: Option<(usize, usize)>) -> World {
     )
     .unwrap();
     let id = |w: &World, name| w.materials().id(name).unwrap();
-    let (sand, rock, root) = (id(&w, "sand"), id(&w, "rock"), id(&w, "root"));
+    let (sand, cover, root) = (id(&w, "sand"), id(&w, "device"), id(&w, "root"));
     let rect = |x0, y0, x1, y1| Rect { x0, y0, x1, y1 };
     w.fill_rect(rect(0, HEIGHT - BED, WIDTH, HEIGHT), sand, Brush::Replace)
         .unwrap();
     let s = w.surface_row();
     let (a, b) = gap.unwrap_or((WIDTH, WIDTH));
     for (x0, x1) in [(0, a), (b, WIDTH)].into_iter().filter(|(x0, x1)| x0 < x1) {
-        w.fill_rect(rect(x0, s, x1, s + 1), rock, Brush::Replace)
+        w.fill_rect(rect(x0, s, x1, s + 1), cover, Brush::Replace)
             .unwrap();
-        let body = w.body_at(x0, s).unwrap();
-        w.set_anchored(body, true);
     }
     for x in (0..WIDTH).filter(|&x| x % 2 == 0 && !(a..b).contains(&x)) {
         w.fill_rect(rect(x, s + 1, x + 1, s + 7), root, Brush::Replace)
@@ -74,7 +72,7 @@ fn ticks_to_death(w: &mut World, id: CreatureId, limit: u32) -> Option<u32> {
 #[test]
 fn the_mat_stays_put() {
     let mut w = matted(1, None);
-    let leaf = w.materials().id("rock").unwrap();
+    let leaf = w.materials().id("device").unwrap();
     for _ in 0..seconds(60) {
         w.tick();
     }

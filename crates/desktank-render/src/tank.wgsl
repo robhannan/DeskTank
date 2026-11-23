@@ -87,13 +87,14 @@ struct View {
 // and carpets) and the colouration texel (colour, a = 1 if it colours), as
 // bytes (plants.rs).
 @group(0) @binding(7) var plant_species: texture_2d<f32>;
-// Per cell: a plant cell's depth band (D21) in bands / 255 (0 elsewhere).
+// Per cell: a plant band or a rigid front band tagged with RIGID_BAND_TAG, divided by 255.
 @group(0) @binding(8) var bands: texture_2d<f32>;
 // 2D flow vector (vx, vy) per 8x8-cell field cell (128/255 = 0), for the overlay.
 @group(0) @binding(9) var flow: texture_2d<f32>;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
 const BACK_BAND: f32 = 7.0;
+const RIGID_BAND_TAG: f32 = BACK_BAND + 1.0;
 // Depth cue at the back band: how far colours fade towards HAZE and how
 // much darker they get (none at the front glass).
 const HAZE_MIX: f32 = 0.22;
@@ -485,10 +486,14 @@ fn plant_pass_colour(pos: vec2<f32>, src: GridSource, pt: vec4<f32>, band: f32) 
     return vec4<f32>(out(grid_post(rgb, cell)).rgb, alpha);
 }
 
-// Ground style of a cell texel (from the palette alpha byte).
-fn style_of(t: vec4<f32>) -> i32 {
+// Palette alpha holds the ground style in the low seven bits and rigidity in bit 7.
+fn material_flags(t: vec4<f32>) -> i32 {
     let mat = i32(round(t.r * 255.0));
     return i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
+}
+
+fn style_of(t: vec4<f32>) -> i32 {
+    return material_flags(t) & 127;
 }
 
 // Resolves STYLE_DEVICE to STYLE_AIR above the water line and STYLE_WATER at
@@ -906,7 +911,7 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
 fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     var mat = i32(round(t.r * 255.0));
     let v = u32(round(t.g * 255.0));
-    let raw_style = i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
+    let raw_style = i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0)) & 127;
     if raw_style == STYLE_DEVICE {
         // Draw device footprint cells as air above the water line and water at
         // or below it; the device sprite draws on top (D27, DV5).
@@ -914,7 +919,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     }
     if view.scale < 2.0 {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
-        let s = i32(round(c.a * 255.0));
+        let s = i32(round(c.a * 255.0)) & 127;
         let tinted = select(0.0, 1.0, s == STYLE_WATER || s == STYLE_FERTILISER);
         let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
         var rgb = c.rgb * (1.0 - view.depth_dim * depth * tinted);
@@ -932,7 +937,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     let base_v = i32(v & 1u);
     let base_texel = textureLoad(palette, vec2<i32>(mat, base_v), 0);
     let base = base_texel.rgb;
-    let style = i32(round(base_texel.a * 255.0));
+    let style = i32(round(base_texel.a * 255.0)) & 127;
 
     if style == STYLE_WATER || style == STYLE_FERTILISER {
         let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
@@ -2380,6 +2385,33 @@ fn hidden_by_stem(pos: vec2<f32>, depth: f32) -> bool {
     return band + 0.5 < depth && stem_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
 }
 
+// A sprite in front of the body's first occupied band is visible. Test the
+// same outline as ground(), including a partial cell's exposed corners.
+fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        return false;
+    }
+    let at = vec2<i32>(cell);
+    let t = textureLoad(cells, at, 0);
+    let flags = material_flags(t);
+    if (flags & 128) == 0 {
+        return false;
+    }
+    let band = band_at(at);
+    if depth < band - RIGID_BAND_TAG - 0.5 {
+        return false;
+    }
+    let style = flags & 127;
+    let own = outline_of(t);
+    if view.scale < 2.0 || own == 0xffffu || (style != STYLE_ROCK && style != STYLE_DRIFTWOOD) {
+        return true;
+    }
+    let mat = i32(round(t.r * 255.0));
+    return rigid_drawn(at, mat, own, quarter_of(grid_pos, cell), FINE_PLANTS && fine_scale());
+}
+
 // Whether loose substrate (sand, gravel, aquasoil) covers the pixel at
 // `pos`: a burrower in the bed shows only where the ground drawn there is
 // open, so the cell's trimmed top (`loose_top`) shows it too.
@@ -2503,9 +2535,10 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
     let texel = vec2<i32>(v.frame.xy + p);
     let t = frame_texel(v.frame, p);
     let k = v.glow.w;
+    let covered = hidden || (v.look.x < 2.5 && hidden_by_rigid(v.pos.xy, v.depth));
     if t.a < 0.5 {
         // Only a glowing creature at night draws past its texels: the halo.
-        if k <= 0.0 || hidden {
+        if k <= 0.0 || covered {
             discard;
         }
         let a = halo_alpha(v.frame, p, k);
@@ -2520,7 +2553,7 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
         return vec4<f32>(out(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint).rgb, 0.55);
     }
-    if hidden || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
+    if covered || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;
     }
     var rgb = t.rgb;

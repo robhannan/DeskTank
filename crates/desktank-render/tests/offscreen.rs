@@ -603,10 +603,10 @@ fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
             water_level: 1.0,
         };
         let mut world = World::new(config, materials).unwrap();
-        // Single rock cell at (40, 22) and a creature beside it at (43, 22).
+        // Single rock cell at (40, 22) and a creature beside it at (47, 22).
         world.set_cell(40, 22, rock).unwrap();
         let tetra = world.species().id("neon_tetra").unwrap();
-        world.add_creature(tetra, 43, 22).unwrap();
+        world.add_creature(tetra, 47, 22).unwrap();
         let mut tank = Tank::new(world, TankConfig::default());
         let plain = render_sized(gpu, &mut tank, format, (tw, th));
 
@@ -1023,6 +1023,76 @@ fn strong_surface_current_ripples_water_while_weak_current_stays_calm() {
                 high, *single,
                 "split-grid surface-current output must match single-pass"
             );
+        }
+    }
+}
+
+#[test]
+fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let size = (320, 192);
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let materials = MaterialTable::builtin().unwrap();
+        let rock = materials.id("rock").unwrap();
+        let mut world = World::new(
+            WorldConfig {
+                width: 80,
+                height: 48,
+                seed: 1,
+                water_level: 1.0,
+            },
+            materials,
+        )
+        .unwrap();
+        world.paint(40, 24, 8, rock, Brush::Replace).unwrap();
+        world.tick();
+        let (front, back) = world.rigid_bands(24 * 80 + 40).unwrap();
+        assert!(front > 0 && back < desktank_sim::DEPTH_BANDS - 1);
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let bare = render_sized(gpu, &mut tank, format, size);
+
+        for behind in [false, true] {
+            let world = tank.world_mut();
+            let fish = (0..64)
+                .find_map(|_| {
+                    let id = world.add_creature(tetra, 15, 24).unwrap();
+                    let band = world.creature(id).unwrap().band();
+                    if (behind && band > back) || (!behind && band < front) {
+                        Some(id)
+                    } else {
+                        world.remove_creature(id);
+                        None
+                    }
+                })
+                .expect("seeded tetras include a fish on each side of the rock");
+            assert!(world.move_creature(fish, 40, 24));
+
+            let with_fish = render_sized(gpu, &mut tank, format, size);
+            let changed = (22 * 4..27 * 4).any(|y| {
+                let start = (y * size.0 as usize + 36 * 4) * 4;
+                let end = start + 9 * 4 * 4;
+                with_fish[start..end] != bare[start..end]
+            });
+            assert_eq!(changed, !behind, "split={split_grid}, behind={behind}");
+            if behind {
+                let world = tank.world_mut();
+                let water = world.materials().id("water").unwrap();
+                world.paint(40, 24, 12, water, Brush::Replace).unwrap();
+                tank.step();
+                let uncovered = render_sized(gpu, &mut tank, format, size);
+                tank.world_mut().remove_creature(fish);
+                let empty = render_sized(gpu, &mut tank, format, size);
+                assert!(uncovered != empty, "erasing the rock reveals the fish");
+            } else {
+                tank.world_mut().remove_creature(fish);
+            }
         }
     }
 }

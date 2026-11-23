@@ -117,6 +117,11 @@ pub(super) struct Shape {
 }
 
 impl Shape {
+    /// Shorter bitmap dimension in cells, before the shape is turned.
+    pub(super) fn short_side(&self) -> usize {
+        self.w.min(self.h)
+    }
+
     /// The shape of `cells` (world `(x, y, variant, mask)`, non-empty);
     /// returns it with the world cell of the bitmap's top-left corner.
     pub(super) fn new(cells: &[(usize, usize, u8, u16)]) -> (Self, (i64, i64)) {
