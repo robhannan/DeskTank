@@ -137,12 +137,13 @@ impl Body {
     }
 }
 
+fn bounds_short_side(bounds: Rect) -> usize {
+    (bounds.x1 - bounds.x0).min(bounds.y1 - bounds.y0)
+}
+
 /// One band per four cells of the shorter reference dimension, rounded up.
-fn body_bands(seed: u64, id: u16, shape: &Shape) -> (u8, u8) {
-    let width = shape
-        .short_side()
-        .div_ceil(4)
-        .clamp(1, usize::from(DEPTH_BANDS));
+fn body_bands(seed: u64, id: u16, short_side: usize) -> (u8, u8) {
+    let width = short_side.div_ceil(4).clamp(1, usize::from(DEPTH_BANDS));
     let width = u8::try_from(width).unwrap_or(DEPTH_BANDS);
     let centre = default_band(seed, u32::from(id), (0, DEPTH_BANDS - 1));
     let front = centre
@@ -292,6 +293,8 @@ impl World {
         let Some(b) = self.bodies.get_mut(&id) else {
             return false;
         };
+        let old_bounds = b.bounds;
+        let was_settled = b.pending == Pending::None;
         b.cells.push(i);
         b.pending = b.pending.max(Pending::Sort);
         b.bounds = b.bounds.union(Rect {
@@ -300,22 +303,49 @@ impl World {
             x1: x + 1,
             y1: y + 1,
         });
-        b.anchored
+        let anchored = b.anchored;
+        if was_settled || old_bounds != b.bounds {
+            self.refresh_edit_bands(id);
+        }
+        anchored
+    }
+
+    // While edits await the next physics tick, use the current bounds. This
+    // also gives a freshly painted body its depth while the tank is paused.
+    fn refresh_edit_bands(&mut self, id: u16) {
+        let Some(b) = self.bodies.get_mut(&id) else {
+            return;
+        };
+        let updated = body_bands(self.seed, id, bounds_short_side(b.bounds));
+        let old = std::mem::replace(&mut b.bands, updated);
+        if old.0 != updated.0 {
+            for i in b.cells.clone() {
+                self.mark_visual(i % self.width, i / self.width);
+            }
+        }
     }
 
     /// Records that rigid cell `i`'s outline mask changed in place, so its
     /// body takes its cells as its shape again (a turn redraws from the
     /// shape and would otherwise restore the old outline).
     pub(super) fn outline_edited(&mut self, i: usize) {
-        if let Some(b) = self.bodies.get_mut(&self.cells[i].state) {
-            b.pending = b.pending.max(Pending::Sort);
+        let id = self.cells[i].state;
+        if let Some(b) = self.bodies.get_mut(&id)
+            && b.pending == Pending::None
+        {
+            b.pending = Pending::Sort;
+            self.refresh_edit_bands(id);
         }
     }
 
     /// Records that a cell of body `id` was overwritten.
     pub(super) fn body_removed(&mut self, id: u16) {
         if let Some(b) = self.bodies.get_mut(&id) {
+            let was_settled = b.pending == Pending::None;
             b.pending = Pending::Split;
+            if was_settled {
+                self.refresh_edit_bands(id);
+            }
         }
     }
 
@@ -479,7 +509,7 @@ impl World {
                     awake: true,
                     held_until: 0,
                     shape: Shape::default(),
-                    bands: body_bands(self.seed, id, &Shape::default()),
+                    bands: body_bands(self.seed, id, 0),
                     anchor: (0, 0),
                     drawn: 0,
                     pos: (0, 0),
@@ -572,7 +602,7 @@ impl World {
             })
             .collect();
         let (shape, anchor) = Shape::new(&cells);
-        let bands = body_bands(self.seed, id, &shape);
+        let bands = body_bands(self.seed, id, shape.short_side());
         if b.bands.0 != bands.0 {
             // Retained cells may change the front band they send to the
             // renderer without changing their material or outline.
@@ -766,17 +796,23 @@ impl World {
                 .map(|&i| self.cell_index(i, "a body"))
                 .collect::<Result<Vec<_>, _>>()?;
             let shape = Shape::from_v1(b.shape)?;
+            let bounds = rect_from_v1(b.bounds, self.width, self.height)?;
+            let short_side = if pending == Pending::None {
+                shape.short_side()
+            } else {
+                bounds_short_side(bounds)
+            };
             self.bodies.insert(
                 id,
                 Body {
                     material,
                     cells,
-                    bounds: rect_from_v1(b.bounds, self.width, self.height)?,
+                    bounds,
                     anchored: b.anchored,
                     pending,
                     awake: b.awake,
                     held_until: b.held_until,
-                    bands: body_bands(self.seed, id, &shape),
+                    bands: body_bands(self.seed, id, short_side),
                     shape,
                     anchor: b.anchor,
                     drawn: b.drawn,

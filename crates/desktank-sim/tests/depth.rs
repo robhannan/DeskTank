@@ -410,6 +410,8 @@ fn rigid_depth_tracks_reference_shape_and_split_pieces() {
         // Pending edits and settled shapes both rebuild the same band range
         // when loaded, without any new save fields.
         for _ in 0..2 {
+            let (front, back) = w.rigid_bands(16 * 64 + 16).unwrap();
+            assert_eq!(back - front + 1, 3);
             let loaded =
                 save::decode(&save::encode(&w), MaterialTable::builtin().unwrap()).unwrap();
             for i in 0..w.cells().len() {
