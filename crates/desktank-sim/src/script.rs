@@ -601,11 +601,15 @@ mod tests {
     fn places_devices() {
         let s = Script::parse("[[place]]\ntick = 1\nx = 10\ny = 5\ndevice = \"bubbler\"").unwrap();
         let mut w = world(&s, 1);
-        let bubbler = w.materials().id("bubbler").unwrap();
+        let device = w.materials().id("device").unwrap();
+        let cells = w.device_kinds().get(crate::DeviceKind::Bubbler).cells;
         s.run(&mut w, 1).unwrap();
-        assert_eq!(w.material_counts()[usize::from(bubbler.0)], 0);
+        assert_eq!(w.material_counts()[usize::from(device.0)], 0);
+        assert_eq!(w.devices().count(), 0);
         s.run(&mut w, 2).unwrap();
-        assert_eq!(w.material_counts()[usize::from(bubbler.0)], 8);
+        assert_eq!(w.material_counts()[usize::from(device.0)], cells);
+        let d = *w.devices().next().unwrap();
+        assert_eq!(d.kind, crate::DeviceKind::Bubbler);
         // Rejected up front, not mid-run.
         assert!(matches!(
             Script::parse("[[place]]\ntick = 2\nx = 1\ny = 1\ndevice = \"heater\""),

@@ -116,13 +116,13 @@ test("the bubbler and the new materials work from the palette", async ({ page })
   };
   // Material counts, not the state hash: that changes every tick anyway.
   const cells = (name: string) => page.evaluate((n) => window.desktank.tank.materialCount(n), name);
-  expect(await cells("bubbler")).toBe(0);
+  expect(await cells("device")).toBe(0);
 
-  // A click with the bubbler places one (8 cells), which releases bubbles.
+  // A click with the bubbler places a prefab air-stone diffuser, which releases bubbles.
   await choose(page, "Bubbler");
   let b = await box();
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.5);
-  expect(await cells("bubbler")).toBe(8);
+  expect(await cells("device")).toBeGreaterThan(0);
   await expect.poll(() => cells("air_bubble"), { timeout: 10_000 }).toBeGreaterThan(0);
 
   // Liquid fertiliser pours like any material.

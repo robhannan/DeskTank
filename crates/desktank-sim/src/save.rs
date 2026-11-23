@@ -81,7 +81,9 @@
 //! nearer side glass, leaving the group as it was where no filter fits
 //! (D27). Version 13 (DV3) adds each device's filtration state (media load,
 //! biological maturity and intake guard); version 12 migrates with clean
-//! fresh media and guard off.
+//! fresh media and guard off. Loading any save with legacy `bubbler` cells
+//! turns each connected group into a bed-mounted prefab bubbler where one
+//! fits, leaving boxed-in groups as legacy cells (DV7).
 
 use thiserror::Error;
 
@@ -187,18 +189,23 @@ pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError
         let raw = decompress(payload)?;
         let snapshot: v13::Save =
             postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        return World::from_v13(snapshot, materials);
+        let mut world = World::from_v13(snapshot, materials)?;
+        world.adopt_legacy_bubblers();
+        return Ok(world);
     }
     if version == 12 {
         let raw = decompress(payload)?;
         let snapshot: v12::Save =
             postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        return World::from_v12(snapshot, materials);
+        let mut world = World::from_v12(snapshot, materials)?;
+        world.adopt_legacy_bubblers();
+        return Ok(world);
     }
     // Version 11 and older: their filter outlet cells become internal
-    // filters (D27).
+    // filters (D27) and legacy bubbler cells become prefab bubblers (DV7).
     let mut world = decode_v11(version, payload, materials)?;
     world.adopt_legacy_outlets();
+    world.adopt_legacy_bubblers();
     Ok(world)
 }
 
@@ -459,6 +466,75 @@ mod tests {
             World::from_v12(twice, table()),
             Err(SaveError::Invalid(_))
         ));
+    }
+
+    /// DV7: loading a version 12 tank turns each connected group of legacy
+    /// `bubbler` cells into a bed-mounted prefab bubbler where one fits, and
+    /// leaves boxed-in groups as legacy cells.
+    #[test]
+    fn version_12_bubblers_become_prefab_bubblers() {
+        let mut w = World::new(
+            crate::WorldConfig {
+                width: 160,
+                height: 90,
+                seed: 5,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let bubbler = w.materials().id("bubbler").unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        let water = w.materials().id("water").unwrap();
+        // Open legacy 5x2 bubbler on the floor.
+        for dx in 0..5 {
+            w.set_cell(40 + dx, 89, bubbler).unwrap();
+        }
+        for dx in 1..4 {
+            w.set_cell(40 + dx, 88, bubbler).unwrap();
+        }
+        // Boxed-in legacy bubbler inside a narrow rock niche (no room for 14x6).
+        w.fill_rect(
+            crate::Rect {
+                x0: 120,
+                y0: 70,
+                x1: 140,
+                y1: 90,
+            },
+            rock,
+            crate::Brush::Replace,
+        )
+        .unwrap();
+        w.fill_rect(
+            crate::Rect {
+                x0: 128,
+                y0: 70,
+                x1: 132,
+                y1: 88,
+            },
+            water,
+            crate::Brush::Replace,
+        )
+        .unwrap();
+        for dx in 0..3 {
+            w.set_cell(129 + dx, 87, bubbler).unwrap();
+        }
+        let raw = postcard::to_allocvec(&w.to_v12()).unwrap();
+        let bytes = wrap(12, &raw);
+        assert_eq!(check(&bytes), Ok(12));
+
+        let loaded = decode(&bytes, MaterialTable::builtin().unwrap()).unwrap();
+        let devices: Vec<_> = loaded.devices().copied().collect();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].kind, crate::DeviceKind::Bubbler);
+        assert_eq!(
+            loaded.material_counts()[usize::from(bubbler.0)],
+            3,
+            "boxed-in legacy group stays legacy"
+        );
+        // Re-saves as current format and round-trips with identical hash.
+        let again = decode(&encode(&loaded), MaterialTable::builtin().unwrap()).unwrap();
+        assert_eq!(again.state_hash(), loaded.state_hash());
     }
 
     #[test]

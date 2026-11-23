@@ -72,15 +72,24 @@ test.describe("mouse", () => {
     await page.mouse.click(p.x, p.y);
     expect(await glued(page), "the rock is glued").toBe(1);
 
-    // A device goes down once per click.
+    // A device goes down once per click (prefab bubbler, DV7).
     await choose(page, "Bubbler");
-    p = await cellPoint(page, Math.round(w * 0.2), y);
+    const bx = Math.round(w * 0.2);
+    p = await cellPoint(page, bx, y);
     await page.mouse.click(p.x, p.y);
-    expect(await cellCount(page, "bubbler")).toBe(8);
+    expect(await cellCount(page, "device")).toBeGreaterThan(0);
+
+    // Inspecting the prefab bubbler shows its air-diffuser card with no filter actions.
+    await choose(page, "Inspect");
+    p = await cellPoint(page, bx, h - 2);
+    await page.mouse.click(p.x, p.y);
+    await expect(page.locator("#inspect")).toHaveText(
+      /^Bubbler #\d+ · on the bed · air diffuser · cell \d+, \d+$/,
+    );
+    await expect(page.locator("#device-actions")).toBeHidden();
 
     // Inspect shows the cell; inspect and net change nothing.
     const hash = await stateHash(page);
-    await choose(page, "Inspect");
     p = await cellPoint(page, Math.round(w * 0.8), y);
     await page.mouse.click(p.x, p.y);
     await expect(page.locator("#inspect")).toHaveText(/^Water · cell \d+, \d+$/);
