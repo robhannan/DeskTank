@@ -156,6 +156,15 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
    (`git diff <base>...HEAD`, e.g. `origin/main...HEAD`), context and focus areas
    (always include resource use and cross-platform correctness), and
    include the reviewer model selected for this run in the brief. Have the independent reviewer return its findings to the orchestrator.
+   If a usage limit prevents the reviewer from starting, dispatch a fresh
+   review to an available lower-cost model from a different provider. In
+   T3 Code, select it from `orchestrator_capabilities` and start a new
+   `delegate_task` with `role: "review"`. Keep the same diff and focus
+   areas and update the model in the brief. If another provider also hits
+   a usage limit at startup, try each remaining eligible provider once.
+   If none can start, report which providers were tried and why review
+   is unavailable.
+
    The orchestrator posts one PR comment beginning with this two-line GitHub alert.
 
    ```markdown
