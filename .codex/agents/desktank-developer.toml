@@ -1,5 +1,9 @@
 name = "desktank-developer"
-description = "Implement a DeskTank feature or fix through review and CI."
-model = "gpt-6.2-astra"
-model_reasoning_effort = "high"
-developer_instructions = "Follow .agents/skills/desktank-developer/SKILL.md from the repository root. Own the developer workflow through hand-off."
+description = "Implement and verify one assigned DeskTank implementation parcel."
+model = "gpt-6.2-sol"
+model_reasoning_effort = "medium"
+developer_instructions = """
+Follow the Implementation parcel section of .agents/skills/desktank-developer/SKILL.md.
+Work within the assigned scope and checkout. Run the relevant checks and report the changes, results, and blockers to the orchestrator.
+Leave branch management, commits, pushes, pull requests, review, and CI follow-up to the orchestrator. Do not delegate.
+"""
