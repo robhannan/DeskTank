@@ -42,12 +42,16 @@ pub struct Renderer {
     coarse_pipelines: Pipelines,
     /// Border and centre reticle drawn over the magnified lens.
     lens_frame: wgpu::RenderPipeline,
+    /// The layout both bind groups use, kept to rebuild them when the grid
+    /// textures change size.
+    bind_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     /// Second bind group sharing every texture with `lens_view_buffer` at
     /// binding 0, used only while the magnifier is active.
     lens_bind_group: wgpu::BindGroup,
     /// Where each species' frames are in the atlas texture.
     atlas: Atlas,
+    atlas_texture: wgpu::Texture,
     /// Per-instance sprite data, [`sprites::MAX_SPRITES`] slots.
     instances: wgpu::Buffer,
     /// Sprites to draw, and the instance bytes last written.
@@ -66,6 +70,10 @@ pub struct Renderer {
     /// column, which can move without its leaf cells changing.
     plant_bases: BTreeMap<u16, (usize, usize)>,
     bases_version: Option<u64>,
+    /// The material palette, built once.
+    palette: wgpu::Texture,
+    /// Ramps, shapes and sizes per plant species, built once.
+    species: wgpu::Texture,
     /// The palette strip image (top-left corner of a fixed-size texture).
     hud: wgpu::Texture,
     /// Nutrient, CO₂, light and flow speed per field cell (RGBA), for the debug overlay.
@@ -161,9 +169,11 @@ impl Renderer {
             pipelines,
             coarse_pipelines,
             lens_frame,
+            bind_layout,
             bind_group,
             lens_bind_group,
             atlas,
+            atlas_texture,
             instances,
             sprite_count: 0,
             sprite_scratch: Vec::new(),
@@ -176,6 +186,8 @@ impl Renderer {
             band_scratch: Vec::new(),
             plant_bases: BTreeMap::new(),
             bases_version: None,
+            palette,
+            species,
             hud,
             fields,
             flow,
@@ -194,6 +206,52 @@ impl Renderer {
     /// Whether these resources fit `world` and `format`.
     pub fn matches(&self, world: &World, format: wgpu::TextureFormat) -> bool {
         self.format == format && self.grid == (side(world.width()), side(world.height()))
+    }
+
+    /// The target format these resources draw into.
+    #[must_use]
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
+    }
+
+    /// Forgets what was uploaded for the previous world, so a new world's
+    /// cells, plant bases, tints, fields, flow and sprites are all written
+    /// afresh. Textures and pipelines stay.
+    pub fn reset_world(&mut self) {
+        self.plant_bases.clear();
+        self.bases_version = None;
+        self.fields_version = None;
+        self.flow_version = None;
+        self.plant_tints.invalidate();
+        self.instance_bytes.clear();
+        self.view.clear();
+        self.lens_view.clear();
+    }
+
+    /// Resizes the grid-dependent textures and bind groups to `world`'s grid,
+    /// keeping the compiled pipelines and the static textures, and resets
+    /// the per-world state. The caller uploads the whole grid next.
+    pub fn resize_grid(&mut self, gpu: &Gpu, world: &World) {
+        let d = &gpu.device;
+        self.grid = (side(world.width()), side(world.height()));
+        self.cells = create_grid_texture(d, "cells", self.grid, wgpu::TextureFormat::Rgba8Unorm);
+        self.bands = create_grid_texture(d, "depth bands", self.grid, wgpu::TextureFormat::R8Unorm);
+        (self.fields, self.flow, self.fields_size) = create_fields(d, world);
+        let textures = [
+            &self.cells,
+            &self.palette,
+            &self.hud,
+            &self.fields,
+            &self.atlas_texture,
+            &self.plants,
+            &self.species,
+            &self.bands,
+            &self.flow,
+        ];
+        self.bind_group = create_bind_group(d, &self.bind_layout, &self.view_buffer, textures);
+        self.lens_bind_group =
+            create_bind_group(d, &self.bind_layout, &self.lens_view_buffer, textures);
+        self.reset_world();
     }
 
     /// Copies the waiting dirty rectangles (or the whole grid) into the cell

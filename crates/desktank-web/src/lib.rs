@@ -1336,6 +1336,24 @@ impl WebTank {
         self.resize(size.0, size.1);
     }
 
+    /// Moves `old`'s attached graphics and GPU renderer into `self`, so a
+    /// replacement tank reuses the GPU device, surface and compiled shader
+    /// pipelines instead of reopening graphics. Returns whether valid
+    /// graphics were transferred.
+    #[wasm_bindgen(js_name = takeGraphics)]
+    pub fn take_graphics(&mut self, old: &mut WebTank) -> bool {
+        if let Some(mut g) = old.graphics.take()
+            && !g.is_lost()
+        {
+            g.resize(self.size);
+            self.graphics = Some(g);
+            self.tank.take_gpu(&mut old.tank);
+            return true;
+        }
+        old.tank.release_gpu();
+        false
+    }
+
     /// Drops the graphics (after device or context loss). The world keeps
     /// running; nothing is drawn until [`WebTank::attach`].
     pub fn detach(&mut self) {

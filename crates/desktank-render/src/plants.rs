@@ -73,6 +73,14 @@ impl PlantTints {
         &self.image
     }
 
+    /// Forgets the plants version last built from, so the next
+    /// [`PlantTints::update`] rebuilds for a different world. The image and
+    /// row count stay: they describe the texture as uploaded, so the update
+    /// diffs against it and clears rows the new world no longer uses.
+    pub fn invalidate(&mut self) {
+        self.version = None;
+    }
+
     /// Rebuilds from `world`'s plants if they changed since the last call,
     /// and hands each changed row (its index and bytes) to `upload`.
     pub fn update(&mut self, world: &World, mut upload: impl FnMut(usize, &[u8])) {

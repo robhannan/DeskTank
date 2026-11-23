@@ -445,6 +445,26 @@ impl Tank {
         self.needs_frame = true;
     }
 
+    /// Moves `old`'s GPU renderer and timer into this tank, so a replacement
+    /// tank reuses the compiled pipelines and static textures. The renderer
+    /// is reset for this tank's world (resized at the next frame if the
+    /// grid differs), and everything is uploaded again.
+    pub fn take_gpu(&mut self, old: &mut Self) {
+        self.renderer = old.renderer.take();
+        self.timer = old.timer.take();
+        self.gpu_time = None;
+        if let Some(r) = self.renderer.as_mut() {
+            r.reset_world();
+        }
+        self.dirty.mark_all();
+        self.palette_dirty = true;
+        self.needs_frame = true;
+        self.creatures_drawn = None;
+        self.plants_drawn = None;
+        self.fields_drawn = 0;
+        self.flow_drawn = 0;
+    }
+
     /// Measures GPU time per frame with timestamp queries. Returns whether
     /// the device supports them. Reading the time blocks, so only
     /// benchmarks should turn this on.
@@ -498,11 +518,12 @@ impl Tank {
         format: wgpu::TextureFormat,
         size: (u32, u32),
     ) {
-        if !self
-            .renderer
-            .as_ref()
-            .is_some_and(|r| r.matches(&self.world, format))
-        {
+        if let Some(r) = self.renderer.as_mut().filter(|r| r.format() == format) {
+            if !r.matches(&self.world, format) {
+                r.resize_grid(gpu, &self.world);
+                self.dirty.mark_all();
+            }
+        } else {
             self.renderer = Some(Renderer::new(gpu, &self.world, format));
             self.dirty.mark_all();
             self.palette_dirty = true;
