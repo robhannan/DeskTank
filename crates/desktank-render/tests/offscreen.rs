@@ -603,10 +603,10 @@ fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
             water_level: 1.0,
         };
         let mut world = World::new(config, materials).unwrap();
-        // Single rock cell at (40, 22) and a creature beside it at (43, 22).
+        // Single rock cell at (40, 22) and a creature beside it at (47, 22).
         world.set_cell(40, 22, rock).unwrap();
         let tetra = world.species().id("neon_tetra").unwrap();
-        world.add_creature(tetra, 43, 22).unwrap();
+        world.add_creature(tetra, 47, 22).unwrap();
         let mut tank = Tank::new(world, TankConfig::default());
         let plain = render_sized(gpu, &mut tank, format, (tw, th));
 
@@ -1071,7 +1071,7 @@ fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
                         None
                     }
                 })
-                .unwrap();
+                .expect("seeded tetras include a fish on each side of the rock");
             assert!(world.move_creature(fish, 40, 24));
 
             let with_fish = render_sized(gpu, &mut tank, format, size);

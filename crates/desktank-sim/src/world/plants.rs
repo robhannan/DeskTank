@@ -417,8 +417,9 @@ impl World {
     /// Packs the renderer's depth texture, row by row in the clipped
     /// rectangle. Plant cells hold their band. Rigid cells hold their
     /// front band plus [`DEPTH_BANDS`], and all other cells hold zero.
-    pub fn render_bands(&self, r: Rect, out: &mut Vec<u8>) {
-        self.pack_bands(r, out, true);
+    /// Returns whether the rectangle contains a plant or rigid cell.
+    pub fn render_bands(&self, r: Rect, out: &mut Vec<u8>) -> bool {
+        self.pack_bands(r, out, true)
     }
 
     fn pack_bands(&self, r: Rect, out: &mut Vec<u8>, rigid: bool) -> bool {

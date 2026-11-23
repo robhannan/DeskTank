@@ -67,6 +67,8 @@ fn swimmable(w: &World, m: MaterialId) -> bool {
 fn blocks(w: &World, x: usize, y: usize, band: u8) -> bool {
     let m = w.cell(x, y).unwrap().material;
     !swimmable(w, m)
+        && w.rigid_bands(y * w.width() + x)
+            .is_none_or(|(front, back)| (front..=back).contains(&band))
         && w.plant_band(x, y)
             .is_none_or(|p| p.abs_diff(band) <= BAND_REACH)
 }
@@ -782,13 +784,12 @@ fn foot_held(w: &World, c: &Creature) -> bool {
 
 #[test]
 fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
-    // A glued Γ: a pillar on the sand with an arm reaching right over it.
+    // A full-depth solid Γ: a pillar on the sand with an arm reaching right over it.
     let mut w = world(120, 80, 7);
     sand_bed(&mut w, 6);
-    let rock = id(&w, "rock");
+    let wall = id(&w, "device");
     for r in [rect(40, 40, 46, 74), rect(46, 40, 80, 46)] {
-        w.fill_rect(r, rock, Brush::Replace).unwrap();
-        w.set_anchored(w.body_at(r.x0, r.y0).unwrap(), true);
+        w.fill_rect(r, wall, Brush::Replace).unwrap();
     }
     let snail = w.add_creature(species(&w, "nerite"), 20, 72).unwrap();
     let (mut held, mut led, ticks) = (0, 0, 4_000);

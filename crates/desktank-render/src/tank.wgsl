@@ -486,10 +486,14 @@ fn plant_pass_colour(pos: vec2<f32>, src: GridSource, pt: vec4<f32>, band: f32) 
     return vec4<f32>(out(grid_post(rgb, cell)).rgb, alpha);
 }
 
-// Ground style of a cell texel (from the palette alpha byte).
-fn style_of(t: vec4<f32>) -> i32 {
+// Palette alpha holds the ground style in the low seven bits and rigidity in bit 7.
+fn material_flags(t: vec4<f32>) -> i32 {
     let mat = i32(round(t.r * 255.0));
     return i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
+}
+
+fn style_of(t: vec4<f32>) -> i32 {
+    return material_flags(t) & 127;
 }
 
 // Resolves STYLE_DEVICE to STYLE_AIR above the water line and STYLE_WATER at
@@ -907,7 +911,7 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
 fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     var mat = i32(round(t.r * 255.0));
     let v = u32(round(t.g * 255.0));
-    let raw_style = i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0));
+    let raw_style = i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0)) & 127;
     if raw_style == STYLE_DEVICE {
         // Draw device footprint cells as air above the water line and water at
         // or below it; the device sprite draws on top (D27, DV5).
@@ -933,7 +937,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec3<f32> {
     let base_v = i32(v & 1u);
     let base_texel = textureLoad(palette, vec2<i32>(mat, base_v), 0);
     let base = base_texel.rgb;
-    let style = i32(round(base_texel.a * 255.0));
+    let style = i32(round(base_texel.a * 255.0)) & 127;
 
     if style == STYLE_WATER || style == STYLE_FERTILISER {
         let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
@@ -2390,12 +2394,16 @@ fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
         return false;
     }
     let at = vec2<i32>(cell);
-    let band = band_at(at);
-    if band < RIGID_BAND_TAG || depth < band - RIGID_BAND_TAG - 0.5 {
+    let t = textureLoad(cells, at, 0);
+    let flags = material_flags(t);
+    if (flags & 128) == 0 {
         return false;
     }
-    let t = textureLoad(cells, at, 0);
-    let style = style_of(t);
+    let band = band_at(at);
+    if depth < band - RIGID_BAND_TAG - 0.5 {
+        return false;
+    }
+    let style = flags & 127;
     let own = outline_of(t);
     if view.scale < 2.0 || own == 0xffffu || (style != STYLE_ROCK && style != STYLE_DRIFTWOOD) {
         return true;

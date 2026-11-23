@@ -213,8 +213,9 @@ impl Renderer {
             let r = r.unwrap_or(full);
             grid::pack(cells, width, r, |i| world.rigid_mask(i), scratch);
             write_rect(gpu, texture, r, scratch, grid::TEXEL_BYTES);
-            world.render_bands(r, band_scratch);
-            write_rect(gpu, bands, r, band_scratch, 1);
+            if world.render_bands(r, band_scratch) {
+                write_rect(gpu, bands, r, band_scratch, 1);
+            }
         });
         if self.bases_version != Some(world.plants_version()) {
             self.bases_version = Some(world.plants_version());

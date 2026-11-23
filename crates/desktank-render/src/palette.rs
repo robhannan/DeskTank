@@ -166,7 +166,8 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
                 rgb = glue(rgb);
             }
             let [r, g, b] = rgb;
-            let flag = styles[material] as u8;
+            // The high bit marks rigid materials for sprite occlusion.
+            let flag = styles[material] as u8 | (u8::from(rigid[material]) << 7);
             px.copy_from_slice(&[r, g, b, flag]);
         }
     }
@@ -252,7 +253,7 @@ mod tests {
         let table = build(&mats);
         for m in mats.iter() {
             let style = GroundStyle::for_material(m);
-            assert_eq!(texel(&table, m.id.0, 0)[3], style as u8, "{}", m.name);
+            assert_eq!(texel(&table, m.id.0, 0)[3] & 127, style as u8, "{}", m.name);
             let dense = matches!(m.name.as_str(), "water" | "liquid_fertiliser");
             assert_eq!(style.is_depth_tinted(), dense, "{}", m.name);
         }
@@ -283,8 +284,8 @@ mod tests {
         ];
         for (name, style) in expected {
             let id = mats.id(name).unwrap().0;
-            assert_eq!(texel(&table, id, 0)[3], style as u8, "{name}");
-            assert_eq!(texel(&table, id, 1)[3], style as u8, "{name} (glued)");
+            assert_eq!(texel(&table, id, 0)[3] & 127, style as u8, "{name}");
+            assert_eq!(texel(&table, id, 1)[3] & 127, style as u8, "{name} (glued)");
         }
     }
 
