@@ -215,6 +215,8 @@ pub(super) struct Life {
     current: Vec<[f32; 2]>,
     /// Field cells with a current strong enough to move cells.
     current_blocks: Vec<usize>,
+    /// Whether any substrate block carries floor-filter downward seepage.
+    has_seepage: bool,
     /// Current-driven water-surface agitation in `[0.0, 1.0]` per field column
     /// (`fw`), rebuilt alongside `current` whenever devices or obstacles change.
     surface_agitation: Vec<f32>,
@@ -326,6 +328,7 @@ impl Life {
             current_scans: 0,
             current: vec![[0.0, 0.0]; blocks],
             current_blocks: Vec::new(),
+            has_seepage: false,
             surface_agitation: vec![0.0; fw],
             has_surface_agitation: false,
             devices_dirty: false,
@@ -708,6 +711,7 @@ impl World {
         for ci in 0..self.chunks.len() {
             let r = self.chunks[ci].changed;
             if !r.is_empty() {
+                self.devices.invalidate_floor_intakes_in(r.x0, r.x1, r.y1);
                 self.refresh_registries(ci, r);
             }
         }
@@ -738,6 +742,7 @@ impl World {
                 if r.is_empty() {
                     continue;
                 }
+                self.devices.invalidate_floor_intakes_in(r.x0, r.x1, r.y1);
                 for fy in r.y0 / FIELD_SCALE..=(r.y1 - 1) / FIELD_SCALE {
                     for fx in r.x0 / FIELD_SCALE..=(r.x1 - 1) / FIELD_SCALE {
                         self.life.blocked_dirty[fy * fw + fx] = true;
@@ -1298,6 +1303,7 @@ impl World {
         let life = &mut self.life;
         life.current.fill([0.0, 0.0]);
         life.current_blocks.clear();
+        life.has_seepage = false;
         life.surface_agitation.fill(0.0);
         life.has_surface_agitation = false;
         let outlet = life.eco.current.material;
@@ -1534,6 +1540,7 @@ impl World {
         // the field and the Flow overlay show it into the plate (these blocks
         // hold only settled substrate, so they stay out of `current_blocks`
         // and cost nothing per tick).
+        life.has_seepage = !seepage.is_empty();
         for (b, down) in seepage {
             life.current[b][1] = (life.current[b][1] + down).min(cfg.speed);
         }
@@ -1570,7 +1577,7 @@ impl World {
     /// rightwards, `+y` downwards; `[0, 0]` outside the grid or with no current).
     pub(super) fn current_at_cell(&self, x: usize, y: usize) -> [f32; 2] {
         let life = &self.life;
-        if life.current_blocks.is_empty() {
+        if life.current_blocks.is_empty() && !life.has_seepage {
             return [0.0, 0.0];
         }
         let fw = life.light.width();

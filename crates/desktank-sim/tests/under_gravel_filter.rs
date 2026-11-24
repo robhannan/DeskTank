@@ -632,6 +632,12 @@ fn a_settled_filter_rebuilds_no_current_and_scans_nothing() {
     settle(&mut w);
     let rebuilds = w.device_rebuilds();
     let scans = w.current_block_scans();
+    let checks = w.intake_cell_checks();
+    let intakes = w
+        .device_kinds()
+        .get(DeviceKind::UnderGravelFilter)
+        .intakes
+        .len() as u64;
     run(&mut w, 400);
     assert_eq!(
         w.device_rebuilds(),
@@ -642,6 +648,11 @@ fn a_settled_filter_rebuilds_no_current_and_scans_nothing() {
         w.current_block_scans(),
         scans,
         "the settled bed scans no current blocks"
+    );
+    assert_eq!(
+        w.intake_cell_checks() - checks,
+        400 * 8 * intakes,
+        "settled floor intakes cache their bed top and stay O(1) per tick"
     );
 }
 

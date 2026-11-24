@@ -31,6 +31,9 @@ pub(super) struct Devices {
     pub(super) rebuilds: u64,
     /// Intake-neighbour cell lookups made by [`World::run_intakes`] (tests).
     pub(super) intake_checks: u64,
+    /// Cached bed-top row for each `Mount::Floor` intake `(device_id, ix)`,
+    /// invalidated when cells change at or below `top - 1` in column `ix`.
+    floor_intake_tops: BTreeMap<(u16, usize), usize>,
 }
 
 impl Devices {
@@ -42,7 +45,21 @@ impl Devices {
             material: materials.id("device"),
             rebuilds: 0,
             intake_checks: 0,
+            floor_intake_tops: BTreeMap::new(),
         })
+    }
+
+    /// Invalidates cached bed-top rows for any floor intake column whose
+    /// substrate (at or below `top - 1`) overlaps the dirty rect `[x0..x1) × [y0..y1)`.
+    pub(super) fn invalidate_floor_intakes_in(&mut self, x0: usize, x1: usize, y1: usize) {
+        if !self.floor_intake_tops.is_empty() {
+            self.floor_intake_tops
+                .retain(|&(_, ix), &mut top| ix < x0 || ix >= x1 || y1 < top);
+        }
+    }
+
+    pub(super) fn clear_floor_intake_tops(&mut self) {
+        self.floor_intake_tops.clear();
     }
 
     pub(super) fn values(&self) -> impl Iterator<Item = &Device> {
@@ -384,6 +401,7 @@ impl World {
             self.cells[cy * self.width + cx].state = id;
         }
         self.devices.table.insert(id, d);
+        self.devices.clear_floor_intake_tops();
         self.mark_devices_dirty();
         Ok(Some(d.id))
     }
@@ -406,6 +424,7 @@ impl World {
         let Some(d) = self.devices.table.remove(&id.0) else {
             return false;
         };
+        self.devices.clear_floor_intake_tops();
         let (Some(water), Some(air)) = (self.materials.id("water"), self.materials.id("air"))
         else {
             return true;
@@ -673,6 +692,7 @@ impl World {
                 (1, 1),
             ];
             let mut captured: Vec<(u16, usize)> = Vec::new();
+            let mut new_tops: Vec<((u16, usize), usize)> = Vec::new();
             let mut checks = 0u64;
             for d in self.devices.table.values() {
                 let art = self.devices.kinds.get(d.kind);
@@ -680,16 +700,27 @@ impl World {
                     // An under-gravel filter draws through the bed: its
                     // intakes capture at the top of the substrate above them
                     // (debris resting there is a neighbour of the last
-                    // substrate cell, not part of the bed).
+                    // substrate cell, not part of the bed). The bed-top row
+                    // is cached per intake column and invalidated only when
+                    // cells change at or below `top - 1` in that column, so
+                    // an idle bed stays O(1) per tick.
                     let iy = if art.mount == Mount::Floor {
-                        let mut y = iy;
-                        while y > self.surface_row && {
-                            let m = self.cells[(y - 1) * self.width + ix].material;
-                            self.is_powder(m) && !cfg.capture.contains(m)
-                        } {
-                            y -= 1;
+                        if let Some(&cached) = self.devices.floor_intake_tops.get(&(d.id.0, ix)) {
+                            cached.max(self.surface_row)
+                        } else {
+                            let mut y = iy;
+                            while y > self.surface_row {
+                                checks += 1;
+                                let m = self.cells[(y - 1) * self.width + ix].material;
+                                if self.is_powder(m) && !cfg.capture.contains(m) {
+                                    y -= 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            new_tops.push(((d.id.0, ix), y));
+                            y
                         }
-                        y
                     } else {
                         iy
                     };
@@ -702,6 +733,9 @@ impl World {
                         }
                     }
                 }
+            }
+            for (k, top) in new_tops {
+                self.devices.floor_intake_tops.insert(k, top);
             }
             self.devices.intake_checks += checks;
             let mut flow_changed = false;
@@ -893,6 +927,7 @@ impl World {
         }
         self.devices.table = table;
         self.devices.next = next.max(1);
+        self.devices.clear_floor_intake_tops();
         Ok(())
     }
 
