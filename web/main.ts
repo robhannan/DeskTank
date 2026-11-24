@@ -238,7 +238,9 @@ const hooks: Hooks = {
   saving: Promise.resolve(false), // the latest write
   loaded: null, // { hash, tick, width, height } of the save opened, if any
   released: null, // { hash, tick } when this tab handed the tank over
-  ownedAt: 0, // performance.now() when this tab last became the owner
+  ownedAt: 0, // performance.now() when this tab was granted the lock
+  stole: false,
+  claiming: Promise.resolve(),
   takeOverAt: 0, // performance.now() of the last Take over click
   get settings() {
     return { ...settings };
@@ -527,7 +529,7 @@ function askPersist() {
 // The newest save that opens, as a tank for the current canvas, or null.
 // Saves that don't open are logged and skipped, never deleted (one may be
 // from a newer build); pruning drops them once newer saves replace them.
-async function loadNewest(): Promise<WebTank | null> {
+async function loadNewest(keep = () => true): Promise<WebTank | null> {
   if (!db) return null;
   let saves: Save[] = [];
   try {
@@ -536,6 +538,7 @@ async function loadNewest(): Promise<WebTank | null> {
     console.warn(`desktank: couldn't read the saves: ${err}`);
     return null;
   }
+  if (!keep()) return null;
   const [w, h] = sizeCanvas();
   for (const save of saves) {
     try {
@@ -552,21 +555,32 @@ async function loadNewest(): Promise<WebTank | null> {
 
 // This tab now owns the tank: open the newest save (the previous owner
 // saved it when it handed over) and run.
-async function becomeOwner() {
+function becomeOwner(stolen = false) {
+  hooks.ownedAt = performance.now();
+  hooks.stole = stolen;
   owner = true;
   epoch = null;
+  hooks.claiming = claimOwnership();
+  return hooks.claiming;
+}
+
+async function claimOwnership() {
   if (db) {
     try {
-      epoch = await claim(db, TANK);
-      hooks.lastEpoch = epoch;
+      const claimed = await claim(db, TANK);
+      if (!owner) return;
+      epoch = claimed;
+      hooks.lastEpoch = claimed;
     } catch (err) {
       console.warn(`desktank: couldn't claim the tank: ${err}`);
     }
   }
-  hooks.ownedAt = performance.now();
   showOwnership();
-  if (!started) return;
-  const next = await loadNewest();
+  if (owner && started) await resumeOwnership();
+}
+
+async function resumeOwnership() {
+  const next = await loadNewest(() => owner);
   if (next) await showTank(next);
   if (owner) {
     setRunning(true);
@@ -580,7 +594,10 @@ function becomeViewer() {
   epoch = null;
   handingOver = false;
   showOwnership();
-  if (tank) setRunning(false);
+  if (tank) {
+    setRunning(false);
+    if (drewFirst) stopLoop();
+  }
 }
 
 // The owner was asked to hand over: save first (and let a write in flight
@@ -590,7 +607,10 @@ async function handOver() {
   handingOver = true;
   showOwnership();
   endGestures();
-  if (tank) setRunning(false);
+  if (tank) {
+    setRunning(false);
+    if (drewFirst) stopLoop();
+  }
   const forced = saveFailed;
   await persist("hand-over");
   if (!(await hooks.saving) && (forced || tank?.saveNeeded())) {
@@ -1860,6 +1880,7 @@ async function main() {
     startStep("taking the tank's Web Lock");
     ownership = new Ownership(LOCK, { own: becomeOwner, view: becomeViewer, handOver });
     await ownership.start();
+    await hooks.claiming;
   } else {
     startStep(`claiming the tank (no Web Locks)${db ? "" : ", no IndexedDB"}`);
     await becomeOwner();
@@ -1880,9 +1901,10 @@ async function main() {
     showError(`Couldn't start the GPU renderer: ${err}`);
     return;
   }
-  started = true;
   // Granted the lock while starting (the owner closed): open its last save.
-  if (owner && !ownedAtStart) await becomeOwner();
+  if (owner && !ownedAtStart) await hooks.claiming;
+  started = true;
+  if (owner && !ownedAtStart) await (hooks.claiming = resumeOwnership());
   nextAutosave = owner ? performance.now() + AUTOSAVE_MS : Infinity;
   showOwnership();
   showSaved();
