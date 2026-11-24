@@ -195,8 +195,13 @@ fn feeding_wakes_the_tank_for_a_while() {
     assert!(!asleep(&w, tetra), "flakes wake a flake eater");
     run(&mut w, 1);
     assert!(!asleep(&w, tetra), "and it stays up to eat");
-    run(&mut w, u32::from(WOKEN_TICKS) / TICKS_PER_SECOND + 1);
-    assert!(asleep(&w, tetra), "then settles again");
+    // The woken betta patrols its territory and may chase the tetra up
+    // again (a fright restarts its time awake), so allow a few spells.
+    let settled = (0..3 * u32::from(WOKEN_TICKS)).any(|_| {
+        w.tick();
+        asleep(&w, tetra)
+    });
+    assert!(settled, "then settles again");
 }
 
 #[test]

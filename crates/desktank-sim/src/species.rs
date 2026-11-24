@@ -1315,7 +1315,9 @@ mod tests {
             let icon = &s.sprite.icon;
             assert!(icon.pixels.iter().any(|p| p[3] > 0), "{name} has an icon");
             let (w, h) = s.size();
-            assert!(w <= 16 && h <= 16, "{name} is at most 16 cells a side");
+            // The betta's halfmoon fins spread to 20 cells.
+            let most = if name == "betta" { 20 } else { 16 };
+            assert!(w <= most && h <= 16, "{name} is at most {most}x16 cells");
         }
         // Between them they eat every T5 food.
         for food in ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer"] {
@@ -1610,10 +1612,10 @@ mod tests {
         assert!(rasbora.size().1 > tetra.size().1, "harlequins are deeper");
         assert!(gourami.size().1 > rasbora.size().1, "gouramis are deeper");
         // The betta: a 6–6.5 cm body with
-        // flowing fins drawn up to 2 cm past it and tall finnage.
+        // halfmoon fins drawn up to 4 cm past it and tall finnage.
         let betta = get("betta");
         assert!((6.0..=6.5).contains(&betta.length_cm));
-        assert!((0.5..=2.0).contains(&(drawn(betta) - betta.length_cm)));
+        assert!((2.0..=4.0).contains(&(drawn(betta) - betta.length_cm)));
         for s in [guppy, tetra, oto, rasbora, gourami] {
             assert!(betta.length_cm > s.length_cm, "{}", s.name);
             assert!(betta.size().1 > s.size().1, "{}", s.name);
@@ -1660,9 +1662,9 @@ mod tests {
         }
         assert!(drawn(amano) - amano.length_cm > drawn(cherry) - cherry.length_cm);
         // Every species is drawn at the shared scale; only the betta's
-        // flowing fins reach 2 cm past its body.
+        // halfmoon fins reach 4 cm past its body.
         for s in t.iter() {
-            let fins = if s.name == "betta" { 2.0 } else { 1.5 };
+            let fins = if s.name == "betta" { 4.0 } else { 1.5 };
             assert!(
                 s.length_cm <= drawn(s) && drawn(s) - s.length_cm <= fins,
                 "{}",

@@ -110,67 +110,78 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    /// Packs every species' frames, then every device kind's (D27). Frames
-    /// that don't fit the width are wrapped onto further rows of the same
-    /// shelf.
+    /// Packs every species' frames and every device kind's (D27) onto
+    /// shelves, tallest first. Frames that don't fit the width are wrapped
+    /// onto further rows of the same strip.
     #[must_use]
     #[allow(clippy::many_single_char_names)] // texel maths
     pub fn build(species: &SpeciesTable, device_kinds: &DeviceKinds) -> Self {
         let mut entries = vec![Vec::new(); 256];
         let mut glows = vec![None; 256];
-        let mut placed = Vec::new();
-        let mut y = 0;
-        // Rows a shelf of `n` frames of `w × h` texels takes.
-        let rows = |n: usize, (w, h): (usize, usize)| h * n.div_ceil((ATLAS_WIDTH / w).max(1));
+        // Every species' looks, then every device kind's art: frames, fine
+        // frames, frame size, glow, and whose entry it is.
+        let mut arts = Vec::new();
         for s in species.iter() {
             glows[usize::from(s.id.0)] = s
                 .glow
                 .as_ref()
                 .map(|g| (g.colour.map(|c| f32::from(c) / 255.0), g.strength, g.pulse));
             for look in &s.looks {
-                let size = look.size;
-                let n = look.frames.len();
-                let origin = (0, y);
-                y += rows(n, size);
-                let fine = (0, y);
-                y += rows(n, (size.0 * 2, size.1 * 2));
-                entries[usize::from(s.id.0)].push(Entry {
-                    origin,
-                    fine,
-                    size,
-                    frames: n,
-                });
-                placed.push((
+                let owner = Some(usize::from(s.id.0));
+                arts.push((
                     &look.frames,
                     &look.fine_frames,
-                    size,
-                    origin,
-                    fine,
+                    look.size,
                     s.glow.as_ref(),
+                    owner,
                 ));
             }
         }
-        let mut devices = Vec::new();
-        let mut shelf = DeviceShelf::new(y);
         for art in device_kinds.iter() {
             let size = (art.sprite.width, art.sprite.height);
-            let n = art.sprite.frames.len();
-            let origin = shelf.alloc(n, size);
-            let fine = shelf.alloc(n, (size.0 * 2, size.1 * 2));
-            devices.push(Entry {
-                origin,
-                fine,
-                size,
-                frames: n,
-            });
-            placed.push((
+            arts.push((
                 &art.sprite.frames,
                 &art.sprite.fine_frames,
                 size,
-                origin,
-                fine,
+                None,
                 None,
             ));
+        }
+        // Shelf packing: the tallest strips first, so each row's strips are
+        // of similar height (base and fine strips are packed separately).
+        let mut strips: Vec<(usize, bool)> = (0..arts.len())
+            .flat_map(|i| [(i, false), (i, true)])
+            .collect();
+        let strip_size = |&(i, fine): &(usize, bool)| {
+            let (w, h) = arts[i].2;
+            if fine { (w * 2, h * 2) } else { (w, h) }
+        };
+        strips.sort_by_key(|s| std::cmp::Reverse(strip_size(s).1));
+        let mut origins = vec![((0, 0), (0, 0)); arts.len()];
+        let mut shelf = Shelf::new();
+        for strip in &strips {
+            let at = shelf.alloc(arts[strip.0].0.len(), strip_size(strip));
+            if strip.1 {
+                origins[strip.0].1 = at;
+            } else {
+                origins[strip.0].0 = at;
+            }
+        }
+        let mut devices = Vec::new();
+        let mut placed = Vec::new();
+        for (&(base, fine_frames, size, glow, owner), &(origin, fine)) in arts.iter().zip(&origins)
+        {
+            let entry = Entry {
+                origin,
+                fine,
+                size,
+                frames: base.len(),
+            };
+            match owner {
+                Some(id) => entries[id].push(entry),
+                None => devices.push(entry),
+            }
+            placed.push((base, fine_frames, size, origin, fine, glow));
         }
         let height = shelf.finish().max(1);
         let mut image = vec![0; ATLAS_WIDTH * height * 4];
@@ -452,17 +463,21 @@ impl Atlas {
     }
 }
 
-/// Packs narrow device strips side-by-side onto shared rows within
-/// [`ATLAS_WIDTH`] so adding devices stays well inside WebGL2's 2048-texel limit.
-struct DeviceShelf {
+/// Packs narrow creature and device strips side-by-side onto shared rows
+/// within [`ATLAS_WIDTH`] so the atlas stays inside WebGL2's 2048-texel limit.
+struct Shelf {
     x: usize,
     y: usize,
     height: usize,
 }
 
-impl DeviceShelf {
-    fn new(y: usize) -> Self {
-        Self { x: 0, y, height: 0 }
+impl Shelf {
+    fn new() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            height: 0,
+        }
     }
 
     /// Allocates a `frames`-frame strip of `w × h` texels. Single-row strips
@@ -736,8 +751,12 @@ mod tests {
             });
             assert!(matches, "instance {i}");
         }
-        // The male and female guppies sample different shelves.
-        assert_ne!(texel(1).1, texel(2).1);
+        // The male and female guppies sample different art.
+        let origin = |i| {
+            let (x, y, _) = texel(i);
+            (x, y)
+        };
+        assert_ne!(origin(1), origin(2));
     }
 
     #[test]
