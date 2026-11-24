@@ -188,6 +188,20 @@ fn flow_block(block: vec2<i32>) -> vec2<f32> {
     return (raw * 255.0 - 128.0) / 127.0;
 }
 
+// The 2D flow at grid position `g` (in cells), interpolated between
+// field-cell centres so swaying leaves bend smoothly across block edges.
+fn flow_at(g: vec2<f32>) -> vec2<f32> {
+    let f = g / 8.0 - 0.5;
+    let base = floor(f);
+    let t = f - base;
+    let lo = vec2<i32>(base);
+    let a = flow_block(lo);
+    let b = flow_block(lo + vec2<i32>(1, 0));
+    let c = flow_block(lo + vec2<i32>(0, 1));
+    let d = flow_block(lo + vec2<i32>(1, 1));
+    return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+
 // Whether `cell` is inside the brush disc (the same test as World::paint).
 fn in_brush(cell: vec2<f32>) -> bool {
     let d = cell - view.cursor.xy;
@@ -1460,13 +1474,23 @@ fn is_swaying_part(part: i32, t: vec4<f32>) -> bool {
     return part == PART_LEAF || (part == PART_STEM && position_of(t) >= 4);
 }
 
-// Gentle horizontal sway offset in cells (-0.5..+0.5, 1 cell peak-to-peak)
-// as a smooth wave of grid position and sway phase (view.target_size.z).
+// How far the local current leans swaying plants at full current speed, as
+// a fraction of the sway range; the rest is left for the gentle wave.
+const SWAY_LEAN: f32 = 0.6;
+
+// Horizontal sway offset in cells (-0.5..+0.5, 1 cell peak-to-peak): a
+// smooth wave of grid position and sway phase (view.target_size.z), leaned
+// downstream by the local horizontal current. Stronger flow leans further
+// and leaves less room for the wave, so the offset stays in range and still
+// water keeps the plain wave.
 fn sway_dx(grid_pos: vec2<f32>) -> f32 {
     let phase = view.target_size.z;
     let w = sin(phase * 1.6 + grid_pos.y * 0.14 + grid_pos.x * 0.05) * 0.65
         + sin(phase * 0.9 - grid_pos.y * 0.08 + grid_pos.x * 0.11) * 0.35;
-    return w * 0.5;
+    // Square-root response, so moderate currents still lean visibly.
+    let vx = clamp(flow_at(grid_pos).x, -1.0, 1.0);
+    let lean = sign(vx) * sqrt(abs(vx)) * SWAY_LEAN;
+    return (w * (1.0 - abs(lean)) + lean) * 0.5;
 }
 
 // A plant cell's part-local position (the variant's low 6 bits).

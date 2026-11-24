@@ -554,7 +554,8 @@ impl Tank {
         if self.field_overlay.is_some() {
             renderer.upload_fields(gpu, &self.world);
             self.fields_drawn = self.world.fields_version();
-        } else if has_current_ripples {
+        } else if has_current_ripples || sway_on {
+            // Current-driven ripples and sway both read the 2D flow texture.
             renderer.upload_flow(gpu, &self.world);
         }
         self.flow_drawn = self.world.device_rebuilds();
