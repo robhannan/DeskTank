@@ -268,23 +268,41 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
 /// environment names no home.
 #[must_use]
 pub fn data_dir() -> Option<PathBuf> {
-    let var = |k: &str| {
-        std::env::var_os(k)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    if let Some(dir) = var("DESKTANK_DATA_DIR") {
+    if let Some(dir) = path_var("DESKTANK_DATA_DIR") {
         return Some(dir);
     }
     if cfg!(target_os = "macos") {
-        Some(var("HOME")?.join("Library/Application Support/DeskTank"))
+        Some(path_var("HOME")?.join("Library/Application Support/DeskTank"))
     } else if cfg!(windows) {
-        Some(var("APPDATA")?.join("DeskTank"))
+        Some(path_var("APPDATA")?.join("DeskTank"))
     } else {
-        var("XDG_DATA_HOME")
-            .or_else(|| Some(var("HOME")?.join(".local/share")))
+        path_var("XDG_DATA_HOME")
+            .or_else(|| Some(path_var("HOME")?.join(".local/share")))
             .map(|d| d.join("desktank"))
     }
+}
+
+/// The per-user directory for DeskTank configuration.
+#[must_use]
+pub fn config_dir() -> Option<PathBuf> {
+    if let Some(dir) = path_var("DESKTANK_CONFIG_DIR") {
+        return Some(dir);
+    }
+    if cfg!(target_os = "macos") {
+        Some(path_var("HOME")?.join("Library/Application Support/DeskTank"))
+    } else if cfg!(windows) {
+        Some(path_var("APPDATA")?.join("DeskTank"))
+    } else {
+        path_var("XDG_CONFIG_HOME")
+            .or_else(|| Some(path_var("HOME")?.join(".config")))
+            .map(|dir| dir.join("desktank"))
+    }
+}
+
+fn path_var(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 #[cfg(test)]
