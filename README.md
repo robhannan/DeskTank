@@ -60,6 +60,11 @@ Set power, plant sway and life preferences for `desktank window` in
 Use `--catch-up` or set `catch_up = true` in `[life]` to advance the tank
 when it reopens or resumes after a power or visibility pause.
 
+With `desktank window` running, use `desktank status` to see its state,
+`desktank feed [FOOD]` to drop food (flake food by default), and
+`desktank pause` to pause or resume the tank. `desktank interact on|off|toggle`
+sets the interact flag reported by status. The window itself is always interactive.
+
 ## Web
 
 The [web version](https://robhannan.github.io/DeskTank/) (SPEC §3.5, D15) is `crates/desktank-web`, a wasm-bindgen host that drives `desktank-render`'s `Tank` through wgpu (WebGPU first, WebGL2 as the fallback; `?backend=webgpu|webgl2` forces one), plus the static page in `web/` (TypeScript, emitted to JS by the build). To build and preview it locally you need [Node](https://nodejs.org) 22.18+ (it runs the TypeScript scripts directly), [pnpm](https://pnpm.io) and the wasm-bindgen CLI at the version in `Cargo.lock`; [`wasm-opt`](https://github.com/WebAssembly/binaryen) is used if it is on the `PATH`:

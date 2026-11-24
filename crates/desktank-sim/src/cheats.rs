@@ -297,6 +297,11 @@ pub fn feed(world: &mut World) -> usize {
     let Some(food) = world.materials().id(FEED_FOOD) else {
         return 0;
     };
+    feed_with(world, food)
+}
+
+/// Sprinkles the supplied food using the same pattern as [`feed`].
+pub fn feed_with(world: &mut World, food: MaterialId) -> usize {
     let width = i64::try_from(world.width()).unwrap_or(i64::MAX);
     let row = i64::try_from(world.surface_row()).unwrap_or(0) + 1;
     // Spread evenly, shifted by the tick so feeds don't stack exactly.
@@ -561,6 +566,15 @@ mod tests {
         let flakes = w.material_counts()[usize::from(food.0)];
         assert_eq!(out.cells_changed, flakes);
         assert_eq!(flakes, usize::try_from(FEED_PINCHES).expect("pinches"));
+    }
+
+    #[test]
+    fn feed_with_sprinkles_the_selected_food() {
+        let mut w = world();
+        let food = w.materials().id("sinking_pellet").expect("food");
+        let changed = feed_with(&mut w, food);
+        assert_eq!(changed, usize::try_from(FEED_PINCHES).expect("pinches"));
+        assert_eq!(w.material_counts()[usize::from(food.0)], changed);
     }
 
     #[test]
