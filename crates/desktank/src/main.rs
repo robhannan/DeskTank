@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 mod bench;
 mod capture;
+mod config;
 mod persist;
 mod window;
 
@@ -219,12 +220,16 @@ fn main() -> ExitCode {
             } else {
                 window::Saves::Load
             },
-            window::LifeSettings {
-                easy: args.easy_mode,
-                cap: args.creature_cap.map(usize::from),
+            config::CliOverrides {
+                life: config::Life {
+                    easy_mode: args.easy_mode,
+                    population_cap: args.creature_cap,
+                },
+                plants: config::Plants {
+                    sway: args.plant_sway.sway,
+                    sway_on_battery: args.plant_sway.sway_on_battery,
+                },
             },
-            args.plant_sway.sway,
-            args.plant_sway.sway_on_battery,
         ),
         Command::Bench(args) => {
             bench::run(args.seconds, usize::from(args.fish), args.plants, args.sway)
