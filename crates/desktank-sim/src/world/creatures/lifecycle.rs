@@ -439,7 +439,9 @@ impl World {
             let full = energy.saturating_sub(ENERGY_RESERVE / 2).min(ticks);
             let half_end = energy.saturating_sub(ENERGY_RESERVE / 8).min(ticks);
             let half = half_end - full;
-            let first_half = self.tick - u64::from(ticks - 1) + u64::from(full) + u64::from(c.id.0);
+            let first_half = self.tick - u64::from(ticks.saturating_sub(1))
+                + u64::from(full)
+                + u64::from(c.id.0);
             let step = full + half / 2 + u32::from(half % 2 == 1 && first_half.is_multiple_of(2));
             if step > 0 {
                 let size = |growth: u32| {

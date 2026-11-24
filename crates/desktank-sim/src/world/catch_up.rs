@@ -29,8 +29,9 @@ impl CatchUp {
         match cause {
             DeathCause::OldAge => self.old_age_deaths += 1,
             DeathCause::Starvation => self.starvation_deaths += 1,
-            DeathCause::PoorWater => self.poor_water_deaths += 1,
-            DeathCause::Suffocation => unreachable!("catch-up skips air-breathing checks"),
+            // Catch-up skips air-breathing checks, so it never suffocates;
+            // count one as a stress death rather than panic.
+            DeathCause::PoorWater | DeathCause::Suffocation => self.poor_water_deaths += 1,
         }
     }
 }
