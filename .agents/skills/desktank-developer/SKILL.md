@@ -48,8 +48,8 @@ orchestrator.
    one query:
 
    ```sh
-   gh api graphql -f query='{repository(owner:"robhannan",name:"DeskTank"){issues(first:100,states:OPEN){nodes{number title status{name} milestone{title}}}}}' \
-     --jq '.data.repository.issues.nodes[] | select(.status.name=="Todo") | "\(.number)\t\(.milestone.title)\t\(.title)"'
+   gh api graphql -f query='{repository(owner:"robhannan",name:"DeskTank"){issues(first:100,states:OPEN){nodes{id number title status{name} milestone{title}}}}}' \
+     --jq '.data.repository.issues.nodes[] | select(.status.name=="Todo") | "\(.number)\t\(.id)\t\(.milestone.title // "-")\t\(.title)"'
    ```
 
    One issue's status is `status.name` in
@@ -59,7 +59,7 @@ orchestrator.
    PR, and say why when you pass over the first in line.
    Set the issue to In progress when you start and In review when its PR
    opens. Look up the status IDs each time, because they can change, and
-   set one with the issue's `node_id`:
+   set one with the issue's node ID (`id` above, or `node_id` in REST):
 
    ```sh
    gh api graphql -f query='{repository(owner:"robhannan",name:"DeskTank"){planningStatuses(first:20){nodes{id name}}}}'
@@ -168,6 +168,7 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   `.github/pull_request_template.md` (summary, screenshot or GIF, resource
   use, testing) and delete its HTML comments. Keep the body to about 300
   words and say plainly what you could not verify. End with a “🤖 Generated with” credit naming the agent used.
+- Once the PR is open, set its issue to In review (see Before you start).
 - Don't hard-wrap PR bodies or PR comments: GitHub renders single
   newlines as line breaks, so write each paragraph or bullet on one
   line (code blocks excepted).
