@@ -5,7 +5,7 @@ description: Groom the DeskTank GitHub backlog weekly or on request. Refine thin
 
 The product owner (PO) is the coordinator. It runs one grooming session, either weekly (Mondays after the owner's Claude usage resets at 08:00 GMT) or when asked. It reads the whole backlog itself and sends issue refinement to lower-cost models. It checks every draft and applies all GitHub changes itself, then reports. Refiners read the repository and the issues. They never write to GitHub. A delegated refiner follows only the Refinement parcel section.
 
-The session runs in the main checkout or any worktree on `main`. It changes GitHub, not files, so it creates no branch or PR. Work out of the scratchpad directory, or `$TMPDIR` if there is none.
+The session runs in the main checkout or any worktree on `main`. It changes GitHub, not files, so it creates no branch or PR. Work out of the scratchpad directory, or `$TMPDIR` if there is none. Pass `-R robhannan/DeskTank` to `gh issue` and `gh pr` commands there, because they can't infer the repository outside a checkout. Write each parcel's brief to a file and point the refiner at it.
 
 ## Backlog model
 
@@ -76,7 +76,8 @@ Put each open issue in one bucket:
 Also fix the metadata on every issue as you go:
 
 - Issues with no status get Backlog.
-- Owner ideas with no type get Feature.
+- Owner ideas with no type get Feature. `work-package` issues get Feature, and `follow-up` and `decision` issues get Task. Set a type with `updateIssueIssueType` (IDs from `repository.issueTypes`).
+- Leave owner ideas without a milestone unless the spec places them in one.
 - Platform-specific issues get their `platform:*` label.
 
 Refine at most **12 issues per session**, newest owner issues and the next milestone first. Carry the rest over and list them in the summary.
@@ -96,7 +97,7 @@ If a usage limit stops a refiner from starting, start a fresh parcel on another 
 
 ### 5. Apply
 
-Check each draft against the code and spec before applying it. Refiners can invent files, symbols or constraints, so drop anything you can't confirm.
+Check each draft against the code and spec before applying it. Refiners can invent files, symbols or constraints, so drop anything you can't confirm. Remove labels that don't exist. If a draft turns design choices into acceptance criteria (file names, keys, shortcuts the owner never asked for), move them to Notes or turn them into questions. Rewrite local `file://` links as repo-relative paths.
 
 - Append the refinement with `gh issue edit <n> --body-file <file>`. The file holds the original body unchanged, then this block:
 
@@ -164,4 +165,4 @@ You refine backlog issues for DeskTank, a lightweight Rust virtual aquarium (see
 **Questions for the owner:** only what blocks writing the criteria; "none" otherwise.
 ```
 
-Keep the owner's intent and don't add features. Give only paths, symbols and spec sections you opened. If an issue looks done, duplicated or obsolete, say so with evidence instead of refining it.
+Keep the owner's intent and don't add features. Give only paths, symbols and spec sections you opened, as repo-relative paths in backticks, not links. Suggest only labels that already exist. Acceptance criteria state observable behaviour. Put implementation choices in Notes, and put choices the owner hasn't made in Questions. If an issue looks done, duplicated or obsolete, say so with evidence instead of refining it.
