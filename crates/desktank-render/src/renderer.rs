@@ -78,8 +78,9 @@ pub struct Renderer {
     hud: wgpu::Texture,
     /// Nutrient, CO₂, light and flow speed per field cell (RGBA), for the debug overlay.
     fields: wgpu::Texture,
-    /// 2D flow vector `(vx, vy)` per field cell (`Rg8Unorm`, 128 = 0), for the
-    /// flow overlay and current-driven surface ripples.
+    /// 2D flow vector `(vx, vy)` and sway lean per field cell (`Rgba8Unorm`,
+    /// 128 = 0), for the flow overlay, current-driven surface ripples and
+    /// plant sway.
     flow: wgpu::Texture,
     fields_size: (u32, u32),
     /// Field version last uploaded.
@@ -405,7 +406,9 @@ impl Renderer {
         self.flow_version = Some(world.device_rebuilds());
         let speed = world.ecology().current.speed;
         let current = world.current();
-        // 2D flow direction: signed component mapped to 1..=255 with 128 = 0.
+        let lean = sway_lean(current, self.fields_size.0 as usize, speed);
+        // 2D flow direction and sway lean: signed values mapped to 1..=255
+        // with 128 = 0.
         let signed_byte = |v: f32| {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to 1..=255
             let b = (v.clamp(-1.0, 1.0) * 127.0 + 128.0).round() as u8;
@@ -413,17 +416,20 @@ impl Renderer {
         };
         let texels = &mut self.scratch;
         texels.clear();
-        texels.extend(
-            current
-                .iter()
-                .flat_map(|&[vx, vy]| [signed_byte(vx / speed), signed_byte(vy / speed)]),
-        );
+        texels.extend(current.iter().zip(&lean).flat_map(|(&[vx, vy], &l)| {
+            [
+                signed_byte(vx / speed),
+                signed_byte(vy / speed),
+                signed_byte(l),
+                128,
+            ]
+        }));
         gpu.queue.write_texture(
             self.flow.as_image_copy(),
             texels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(self.fields_size.0 * 2),
+                bytes_per_row: Some(self.fields_size.0 * 4),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
@@ -837,8 +843,34 @@ fn create_species(gpu: &Gpu, world: &World) -> wgpu::Texture {
     texture
 }
 
-/// The field-overlay textures: RGBA per field cell (`fields`) and `Rg8Unorm`
-/// per field cell (`flow`, 2D current vector).
+/// How much of a field row's sway lean carries up to the row above.
+const LEAN_CARRY: f32 = 0.8;
+
+/// Per field cell (row-major, `width` across), how far swaying plants lean
+/// downstream there, in -1..=1 of the full lean (`tank.wgsl` `sway_dx`).
+/// A plant is pushed by the horizontal current along its height, so the
+/// lean builds up from the floor through each field row's current
+/// (normalized by `speed`) and fades slowly above it: tops above a jet stay
+/// bent rather than springing back.
+fn sway_lean(current: &[[f32; 2]], width: usize, speed: f32) -> Vec<f32> {
+    let mut lean = vec![0.0; current.len()];
+    if width == 0 || speed <= 0.0 {
+        return lean;
+    }
+    let height = current.len() / width;
+    for x in 0..width {
+        let mut acc = 0.0_f32;
+        for y in (0..height).rev() {
+            let i = y * width + x;
+            acc = (acc * LEAN_CARRY + current[i][0] / speed).clamp(-1.0, 1.0);
+            lean[i] = acc;
+        }
+    }
+    lean
+}
+
+/// The field-overlay textures: RGBA per field cell (`fields`) and RGBA per
+/// field cell (`flow`: 2D current vector and sway lean, see [`sway_lean`]).
 fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, wgpu::Texture, (u32, u32)) {
     let field = world.field(FieldKind::Nutrient);
     let size = (side(field.width()), side(field.height()));
@@ -863,7 +895,7 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, wgpu::Textu
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rg8Unorm,
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -1136,6 +1168,23 @@ fn side(n: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sway_lean_builds_up_through_a_jet_and_fades_above_it() {
+        // One column of 6 field rows, a rightward jet in row 3 only.
+        let mut current = vec![[0.0, 0.0]; 6];
+        current[3] = [0.5, 0.0];
+        let lean = super::sway_lean(&current, 1, 1.0);
+        assert_eq!(&lean[4..], &[0.0, 0.0], "still below the jet");
+        assert!((lean[3] - 0.5).abs() < 1e-6);
+        assert!(lean[2] > 0.3 && lean[2] < lean[3], "fading above: {lean:?}");
+        assert!(lean[0] > 0.0 && lean[0] < lean[2]);
+        // Reversed flow reverses the lean; strong flow saturates at 1.
+        current[3] = [-0.5, 0.0];
+        assert!(super::sway_lean(&current, 1, 1.0)[2] < -0.3);
+        current[3] = [3.0, 0.0];
+        assert!((super::sway_lean(&current, 1, 1.0)[3] - 1.0).abs() < 1e-6);
+    }
+
     #[test]
     fn the_shader_knows_the_back_band() {
         let back = format!(
