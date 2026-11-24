@@ -461,9 +461,11 @@ impl Creature {
 #[derive(Clone, Copy, Debug)]
 #[allow(clippy::struct_excessive_bools)] // independent species traits
 struct Kind {
-    /// Body size in cells.
+    /// Body size in cells: the base sprite in the cache, the individual's
+    /// size after `grown_kind` selects and scales it.
     w: i32,
     h: i32,
+    female_size: (i32, i32),
     /// Cruising and top speed, 1/256 cells per tick.
     cruise: i32,
     top: i32,
@@ -485,8 +487,8 @@ struct Kind {
     /// Ticks of growth to maturity, and the species' lifespan in ticks.
     maturity: u32,
     lifespan: u32,
-    /// Adult body length, and the longest prey it eats (0: none), in mm.
-    length_mm: u32,
+    /// Adult body length by sex, and the longest prey it eats (0: none), in mm.
+    length_mm: [u32; 2],
     prey_mm: u32,
     /// How it breeds, if it does.
     breeding: Option<breeding::Breed>,
@@ -521,6 +523,16 @@ struct Kind {
     is_shrimp: bool,
 }
 
+impl Kind {
+    fn size_of(&self, female: bool) -> (i32, i32) {
+        if female {
+            self.female_size
+        } else {
+            (self.w, self.h)
+        }
+    }
+}
+
 /// The creatures in a world and the per-species and per-material lookups
 /// their update uses.
 #[derive(Clone, Debug)]
@@ -548,7 +560,7 @@ pub(super) struct Creatures {
     detritus: Option<MaterialId>,
     waste: Option<MaterialId>,
     /// Bumped whenever a creature or corpse is added, removed, moves or
-    /// turns, or a corpse fades.
+    /// turns, or its drawn size or look changes.
     version: u64,
     /// The population cap.
     cap: usize,
@@ -598,23 +610,21 @@ impl Creatures {
                     live_prey[usize::from(id.0 >> 6)] |= 1 << (id.0 & 63);
                 }
             }
-            let (w, h) = s.size();
-            let per_tick = |cells_per_s: f32| {
-                // Validated to (0, 16] cells per second: under a cell per tick.
-                #[allow(clippy::cast_possible_truncation)]
-                let v = (f64::from(cells_per_s) * f64::from(ONE) / f64::from(TICKS_PER_SECOND))
-                    .round() as i32;
-                v.max(1)
+            // Sprite sides are at most 32 cells.
+            let size = |female| {
+                let (w, h) = s.size_of(female);
+                (i32::try_from(w).unwrap_or(1), i32::try_from(h).unwrap_or(1))
             };
+            let (w, h) = size(false);
             let mut edible = [false; 256];
             for m in &s.diet {
                 edible[usize::from(m.0)] = true;
             }
-            let (cruise, top) = (per_tick(s.speed), per_tick(s.max_speed));
+            let (cruise, top) = (speed_per_tick(s.speed), speed_per_tick(s.max_speed));
             kinds[usize::from(s.id.0)] = Some(Kind {
-                // Sprite sides are at most 32 cells.
-                w: i32::try_from(w).unwrap_or(1),
-                h: i32::try_from(h).unwrap_or(1),
+                w,
+                h,
+                female_size: size(true),
                 cruise,
                 top,
                 accel: (top / 6).max(2),
@@ -635,7 +645,8 @@ impl Creatures {
                 lifespan: s.lifespan_days.saturating_mul(LIFE_DAY_TICKS),
                 // Validated lengths fit the sprite: at most 16 cm.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                length_mm: (s.length_cm * 10.0).round() as u32,
+                length_mm: [false, true]
+                    .map(|female| (s.length_cm_of(female) * 10.0).round() as u32),
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 prey_mm: s.prey_cm.map_or(0, |p| (p * 10.0).round() as u32),
                 breeding: s.breeding.as_ref().map(breeding::Breed::of),
@@ -744,8 +755,7 @@ impl World {
             .map(|i| &self.creatures.list[i])
     }
 
-    /// Bumped whenever a creature is added, removed, moves or turns, so a
-    /// renderer redraws only then.
+    /// Bumped when a creature or corpse changes in a way the renderer draws.
     #[must_use]
     pub fn creatures_version(&self) -> u64 {
         self.creatures.version
@@ -1030,7 +1040,8 @@ impl World {
         }
         let mut gaps = Vec::new();
         self.surface_gaps(&mut gaps);
-        let wide = s.size().0;
+        // This describes the whole species, including the wider sex.
+        let wide = s.size_of(false).0.max(s.size_of(true).0);
         (!gaps.iter().any(|g| g.width() >= wide)).then_some(UnmetNeed::Air)
     }
 
@@ -1259,24 +1270,23 @@ impl World {
         for c in saved {
             let invalid = |what: &str| SaveError::Invalid(format!("corpse: {what}"));
             let species = SpeciesId(c.species);
-            if self.kind(species).is_none() {
+            let Some(k) = self.kind(species) else {
                 return Err(invalid("unknown species"));
-            }
+            };
             let cause = DeathCause::from_code(c.cause).ok_or_else(|| invalid("unknown cause"))?;
-            // As `corpse_of` makes them: at most the adult body, and a
-            // third of its cells to release.
-            let (full_w, full_h, morphs) = self
-                .kind(species)
-                .map_or((0, 0, 0), |k| (k.w, k.h, k.morphs));
+            // Keep the size at death, including females saved when they
+            // still shared the male's dimensions.
+            let (full_w, full_h) = k.size_of(c.female);
             let fits = |side: u8, full: i32| (1..=full).contains(&i32::from(side));
+            let size_fits = (fits(c.w, full_w) && fits(c.h, full_h))
+                || (c.female && fits(c.w, k.w) && fits(c.h, k.h));
             let total = (u16::from(c.w) * u16::from(c.h)).div_ceil(3).max(1);
             if !inside(c.x, c.y)
-                || !fits(c.w, full_w)
-                || !fits(c.h, full_h)
+                || !size_fits
                 || c.total != total
                 || c.released >= c.total
                 || c.band >= DEPTH_BANDS
-                || c.morph >= morphs
+                || c.morph >= k.morphs
             {
                 return Err(invalid("position, size or decay out of range"));
             }
@@ -1379,7 +1389,7 @@ impl World {
                 }
                 return false;
             }
-            self.breed(c, &mut breeding);
+            self.breed_over(c, &mut breeding, 1, &mut changed);
             true
         });
         if !dead.is_empty() {
@@ -2198,6 +2208,15 @@ fn per_material(
     out
 }
 
+/// A validated swimming speed in 1/256 cells per tick.
+fn speed_per_tick(cells_per_s: f32) -> i32 {
+    // Validated to (0, 16] cells per second: under a cell per tick.
+    #[allow(clippy::cast_possible_truncation)]
+    let speed =
+        (f64::from(cells_per_s) * f64::from(ONE) / f64::from(TICKS_PER_SECOND)).round() as i32;
+    speed.max(1)
+}
+
 /// A species' seconds between chances (validated to at most 600 s) in
 /// ticks, 0 for none.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -2277,6 +2296,131 @@ fn to_i64(v: usize) -> i64 {
 mod tests {
     use super::*;
     use crate::{Brush, WorldConfig};
+
+    fn dimorphic_tank(female_art: &str) -> World {
+        let source = r##"
+            id = 0
+            name = "test_fish"
+            zone = "mid"
+            depth = [0.2, 0.6]
+            min_depth = 2
+            temperament = "peaceful"
+            length_cm = 0.5
+            lifespan_days = 100
+            maturity_days = 10
+            speed = 2.0
+            max_speed = 4.0
+            diet = []
+            [sprite]
+            colours = { a = "#102030" }
+            frames = [["aaaa", "aaaa"]]
+            fine_frames = [["aaaaaaaa", "aaaaaaaa", "aaaaaaaa", "aaaaaaaa"]]
+            icon = ["a"]
+        "##;
+        let mut world = World::new(
+            WorldConfig {
+                width: 40,
+                height: 32,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let art = if female_art.is_empty() {
+            source.to_owned()
+        } else {
+            format!(
+                "{}\n{female_art}",
+                source.replace(
+                    "length_cm = 0.5",
+                    "length_cm = 0.5\nfemale_length_cm = 1.25"
+                )
+            )
+        };
+        let species = SpeciesTable::from_toml_sources(&[&art], &world.materials).unwrap();
+        world.creatures = Creatures::new(
+            species,
+            &world.materials,
+            world.creatures.water,
+            world.creatures.air,
+        );
+        world
+    }
+
+    const BIGGER_FEMALE_ART: &str = r#"
+        female_frames = [["aaaaaa", "aaaaaa", "aaaaaa", "aaaaaa"]]
+        female_fine_frames = [["aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa",
+                               "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa", "aaaaaaaaaaaa"]]
+    "#;
+
+    #[test]
+    fn individuals_use_their_sexes_size_and_length() {
+        let mut world = dimorphic_tank(BIGGER_FEMALE_ART);
+        let species = SpeciesId(0);
+        let male = world.add_creature(species, 10, 15).unwrap();
+        let female = world.add_creature(species, 20, 15).unwrap();
+        let male_creature = world.creature(male).unwrap();
+        let female_creature = world.creature(female).unwrap();
+        assert_eq!(world.creature_size(male_creature), (2, 1));
+        assert_eq!(world.creature_size(female_creature), (3, 2));
+        assert_eq!(
+            (
+                world.length_mm(male_creature),
+                world.length_mm(female_creature)
+            ),
+            (5, 13)
+        );
+        assert_eq!(world.creature_at(20, 16), Some(female));
+        assert!(world.move_creature(male, 10, 31));
+        assert!(!world.move_creature(female, 20, 31));
+        let corpse = world.corpse_of(world.creature(female).unwrap(), DeathCause::OldAge);
+        assert!(corpse.female());
+        assert_eq!(corpse.size(), (3, 2));
+        world.bury([corpse]);
+        world.load_creatures(world.save_creatures()).unwrap();
+        assert_eq!(world.corpses()[0].size(), (3, 2));
+    }
+
+    #[test]
+    fn female_outgrows_saved_position_and_moves_clear_on_tick() {
+        for rock in [false, true] {
+            let prepare = |art| {
+                let mut world = dimorphic_tank(art);
+                if rock {
+                    let rock = world.materials().id("rock").unwrap();
+                    world.set_cell(10, 17, rock).unwrap();
+                    let body = world.body_at(10, 17).unwrap();
+                    world.set_anchored(body, true);
+                }
+                world
+            };
+            let pos = if rock { (10, 16) } else { (10, 31) };
+            let mut old = prepare("");
+            let female = old
+                .add_creature_with_traits(
+                    SpeciesId(0),
+                    pos.0,
+                    pos.1,
+                    Traits {
+                        female: Some(true),
+                        ..Traits::default()
+                    },
+                )
+                .unwrap();
+            let before = old.creature(female).unwrap();
+            let before = (before.centre(), before.band());
+            let mut current = prepare(BIGGER_FEMALE_ART);
+            current.load_creatures(old.save_creatures()).unwrap();
+            let loaded = current.creature(female).unwrap();
+            let k = current.grown_kind(loaded).unwrap();
+            assert_eq!((loaded.centre(), loaded.band()), before);
+            assert!(!current.fits(&k, loaded.turn, loaded.x, loaded.y, loaded.band()));
+            current.tick();
+            let after = current.creature(female).unwrap();
+            assert!(current.fits(&k, after.turn, after.x, after.y, after.band()));
+            assert_ne!((after.centre(), after.band()), before);
+        }
+    }
 
     fn planted(seed: u64) -> World {
         let mut w = World::new(

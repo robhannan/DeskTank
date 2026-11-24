@@ -370,6 +370,7 @@ impl World {
     /// creature's growth.
     pub(super) fn grown_kind(&self, c: &Creature) -> Option<Kind> {
         let mut k = *self.kind(c.species)?;
+        (k.w, k.h) = k.size_of(c.female);
         if c.growth < k.maturity {
             let percent = grown_percent(c.growth, k.maturity);
             k.w = grown_side(k.w, percent);
@@ -444,9 +445,10 @@ impl World {
                 + u64::from(c.id.0);
             let step = full + half / 2 + u32::from(half % 2 == 1 && first_half.is_multiple_of(2));
             if step > 0 {
+                let (w, h) = k.size_of(c.female);
                 let size = |growth: u32| {
                     let percent = grown_percent(growth, k.maturity);
-                    (grown_side(k.w, percent), grown_side(k.h, percent))
+                    (grown_side(w, percent), grown_side(h, percent))
                 };
                 let before = size(c.growth);
                 c.growth = (c.growth + step).min(k.maturity);

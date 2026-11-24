@@ -142,13 +142,23 @@
   - **Species data.** `[breeding]` gives `mode` (`livebearer` or `eggs`),
     `days` (carried, or until a clutch hatches), `brood = [fewest, most]`
     (1–16) and `rest_days`; species without it don't breed in fresh water
-    (nerite, amano shrimp, Thai micro crab). `prey_cm` (below `length_cm`)
-    makes a predator. `[genetics]` lists `[[genetics.morph]]` entries in
+    (nerite, amano shrimp, Thai micro crab). `prey_cm` makes a predator
+    and must be shorter than both sexes' body lengths. `[genetics]` lists
+    `[[genetics.morph]]` entries in
     allele order (append only), each recolouring the sprite by key, and
     names the `wildtype` and the `sprite`'s own morph (the one the palette
     adds); without it a species has one morph, `wild`. `[sprite]` may give
-    `female_frames` (same size and count) and `female` colours for a
-    species drawn differently by sex. Real figures, broods scaled down for
+    `female_frames` and `female` colours for a species drawn differently
+    by sex. Female frames match the male frame count and can have their
+    own even width and height, up to 64 texels per side. They set her
+    body size in cells. The top-level `female_length_cm` defaults to
+    `length_cm` and must fit the female sprite at the same scale. A
+    species with a female look can also give `carrying_frames` to draw
+    her while she carries young or eggs. They match the female size and
+    frame count.
+    Both frame sets require their corresponding `female_fine_frames` or
+    `carrying_fine_frames` at twice the width and height.
+    Real figures, broods scaled down for
     a desktop tank: guppy livebearer 28 days, 3–8; cherry shrimp carries
     her eggs 30 days, 3–8; neon tetra and harlequin eggs 1 day, corydoras
     4, betta 2, honey gourami 1, otocinclus 3. Cherry shrimp morphs red

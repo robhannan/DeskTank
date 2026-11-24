@@ -186,7 +186,8 @@ fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
         .collect();
     for (k, &s) in swimmers.iter().enumerate() {
         // Give large swimmers a gap in the planted stand.
-        if w.species().get(s).unwrap().size().0 > 16 {
+        let art = w.species().get(s).unwrap();
+        if art.size_of(false).0.max(art.size_of(true).0) > 16 {
             let spot = (15..150)
                 .step_by(5)
                 .find(|&x| w.add_creature(s, x, 40).is_ok());

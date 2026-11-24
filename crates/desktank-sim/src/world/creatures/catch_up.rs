@@ -53,7 +53,7 @@ impl World {
                     }
                     return false;
                 }
-                self.breed_over(c, &mut breeding, ticks);
+                self.breed_over(c, &mut breeding, ticks, &mut changed);
                 true
             });
             self.bury(dead);

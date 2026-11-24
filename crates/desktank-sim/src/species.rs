@@ -138,8 +138,7 @@ pub struct Glow {
 }
 
 /// One look of a species: a colour morph (SPEC §2.4, D13), drawn for one
-/// sex. Its frames and fine frames are the sprite's (or the female's),
-/// recoloured.
+/// sex and carrying state. Its frames and fine frames are recoloured.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Look {
     /// The morph's index in [`Species::morphs`].
@@ -147,6 +146,8 @@ pub struct Look {
     /// Whether this is the female's look (only species drawn differently
     /// by sex have one).
     pub female: bool,
+    /// Coarse frame size in texels, `(width, height)`.
+    pub size: (usize, usize),
     /// Animation frames, as [`Sprite::frames`].
     pub frames: Vec<Vec<[u8; 4]>>,
     /// The same poses at twice the size, as [`Sprite::fine_frames`].
@@ -223,7 +224,9 @@ pub struct Species {
     /// outsized fin tail such as a male guppy's (a crab's carapace), drawn
     /// at [`CELLS_PER_CM`]: the sprite is at least this long and adds only
     /// what lies outside it, such as antennae, fins or a crab's legs.
+    /// This is the male's length when sexes differ.
     pub length_cm: f32,
+    female_length_cm: f32,
     /// How far past its body it takes food, in cells (1..=[`MAX_REACH`]):
     /// 1 for a mouth at the body's edge, more for a filter feeder's fans.
     pub reach: u8,
@@ -290,8 +293,8 @@ pub struct Species {
     /// Stock successive palette additions in different inherited colours.
     pub cycle_palette: bool,
     /// Every look: each morph for a male (or either sex), then for a
-    /// female if the species is drawn differently by sex. See
-    /// [`Species::look`].
+    /// female if the species is drawn differently by sex, then for a
+    /// carrying female if it has carrying art. See [`Species::look`].
     pub looks: Vec<Look>,
     /// Its pixel art; half its size in texels is the body size in cells.
     pub sprite: Sprite,
@@ -307,14 +310,31 @@ impl Species {
         !self.cheat_only && !self.live_food
     }
 
-    /// Body size in cells, `(width, height)`: the sprite's size in texels
-    /// over [`TEXELS_PER_CELL`].
+    /// Default sprite's body size in cells, `(width, height)`. Use
+    /// [`Self::size_of`] when the creature's sex is known.
     #[must_use]
     pub fn size(&self) -> (usize, usize) {
         (
             self.sprite.width / TEXELS_PER_CELL,
             self.sprite.height / TEXELS_PER_CELL,
         )
+    }
+
+    /// Adult body size in cells, `(width, height)`, for the given sex.
+    #[must_use]
+    pub fn size_of(&self, female: bool) -> (usize, usize) {
+        let (w, h) = self.looks[self.look(0, female, false)].size;
+        (w / TEXELS_PER_CELL, h / TEXELS_PER_CELL)
+    }
+
+    /// Adult body length in cm for the given sex.
+    #[must_use]
+    pub fn length_cm_of(&self, female: bool) -> f32 {
+        if female {
+            self.female_length_cm
+        } else {
+            self.length_cm
+        }
     }
 
     /// Whether it eats `material`.
@@ -336,18 +356,21 @@ impl Species {
         self.looks.len() > self.morphs.len()
     }
 
-    /// Index in [`Species::looks`] of `morph` drawn for a female or a male
-    /// (the male's look for a species drawn alike; morph 0 for an unknown
-    /// morph).
+    /// Index in [`Species::looks`] for this morph, sex and carrying state.
+    /// Unknown morphs use morph 0. A carrying female without carrying art
+    /// uses the usual female look, or the shared look if both sexes look alike.
     #[must_use]
-    pub fn look(&self, morph: u8, female: bool) -> usize {
-        let morph = if usize::from(morph) < self.morphs.len() {
+    pub fn look(&self, morph: u8, female: bool, carrying: bool) -> usize {
+        let count = self.morphs.len();
+        let morph = if usize::from(morph) < count {
             usize::from(morph)
         } else {
             0
         };
-        if female && self.dimorphic() {
-            self.morphs.len() + morph
+        if female && carrying && self.looks.len() > 2 * count {
+            2 * count + morph
+        } else if female && self.dimorphic() {
+            count + morph
         } else {
             morph
         }
@@ -427,6 +450,7 @@ struct SpeciesDef {
     max_speed: f32,
     diet: Vec<String>,
     length_cm: f32,
+    female_length_cm: Option<f32>,
     #[serde(default = "default_reach")]
     reach: u8,
     #[serde(default)]
@@ -524,7 +548,7 @@ pub(crate) struct SpriteDef {
     #[serde(default)]
     fine_frames: Vec<Vec<String>>,
     icon: Vec<String>,
-    /// Frames drawn for a female instead (the same size and count), for
+    /// Frames drawn for a female instead (the same count), for
     /// species whose sexes look different.
     #[serde(default)]
     female_frames: Option<Vec<Vec<String>>>,
@@ -532,6 +556,10 @@ pub(crate) struct SpriteDef {
     /// `female_frames` (required with them).
     #[serde(default)]
     female_fine_frames: Option<Vec<Vec<String>>>,
+    /// Frames drawn for a carrying female (the female's size and count).
+    carrying_frames: Option<Vec<Vec<String>>>,
+    /// The carrying female's poses at twice the size.
+    carrying_fine_frames: Option<Vec<Vec<String>>>,
     /// Colours replacing the sprite's (after the morph's) on a female.
     #[serde(default)]
     female: Option<BTreeMap<String, String>>,
@@ -796,18 +824,25 @@ fn validate(
         }
     };
     let sprite = sprite(&d.sprite).map_err(invalid)?;
-    // Sprite sides are at most 64 texels: exact in f32.
-    #[allow(clippy::cast_precision_loss)]
-    let drawn_cm = sprite.width.max(sprite.height) as f32 / TEXELS_PER_CELL as f32 / CELLS_PER_CM;
-    if !(d.length_cm.is_finite() && d.length_cm > 0.0 && d.length_cm <= drawn_cm) {
+    let (morphs, wildtype, palette_morph, looks) = looks(d, &sprite).map_err(invalid)?;
+    let female_size = looks.get(morphs.len()).unwrap_or(&looks[0]).size;
+    if !length_fits(d.length_cm, (sprite.width, sprite.height)) {
         return Err(invalid(
             "length_cm must be > 0 and fit the sprite at CELLS_PER_CM",
         ));
     }
+    let female_length_cm = d.female_length_cm.unwrap_or(d.length_cm);
+    if !length_fits(female_length_cm, female_size) {
+        return Err(invalid(
+            "female_length_cm must be > 0 and fit the female sprite at CELLS_PER_CM",
+        ));
+    }
     if let Some(prey) = d.prey_cm
-        && !(prey.is_finite() && prey > 0.0 && prey < d.length_cm)
+        && !(prey.is_finite() && prey > 0.0 && prey < d.length_cm.min(female_length_cm))
     {
-        return Err(invalid("prey_cm must be > 0 and below length_cm"));
+        return Err(invalid(
+            "prey_cm must be > 0 and below both length_cm and female_length_cm",
+        ));
     }
     if let Some(radius) = d.territory_cm
         && !(radius.is_finite()
@@ -830,7 +865,6 @@ fn validate(
         .map(|g| glow(g, &d.sprite.colours))
         .transpose()
         .map_err(invalid)?;
-    let (morphs, wildtype, palette_morph, looks) = looks(d, &sprite).map_err(invalid)?;
     let colour = main_colour(&sprite);
     Ok(Species {
         id: SpeciesId(d.id),
@@ -846,6 +880,7 @@ fn validate(
         max_speed: d.max_speed,
         diet,
         length_cm: d.length_cm,
+        female_length_cm,
         reach: d.reach,
         hop_every: d.hop_every,
         swim_every: d.swim_every,
@@ -871,6 +906,13 @@ fn validate(
         sprite,
         colour,
     })
+}
+
+fn length_fits(length: f32, (w, h): (usize, usize)) -> bool {
+    // Sprite sides are at most 64 texels: exact in f32.
+    #[allow(clippy::cast_precision_loss)]
+    let drawn_cm = w.max(h) as f32 / TEXELS_PER_CELL as f32 / CELLS_PER_CM;
+    length > 0.0 && length <= drawn_cm
 }
 
 fn breeding(b: &BreedingDef) -> Result<Breeding, &'static str> {
@@ -917,10 +959,62 @@ fn glow(g: &GlowDef, colours: &BTreeMap<String, String>) -> Result<Glow, &'stati
     })
 }
 
-/// The morph names, the wildtype's and the sprite's indices, and every
-/// look (each morph for a male, then for a female if the sprite gives
-/// female colours).
+/// The morph names, the wildtype's and the sprite's indices, and every look.
 type Looks = (Vec<String>, u8, u8, Vec<Look>);
+
+#[derive(Clone, Copy)]
+struct LookArt<'a> {
+    frames: &'a [Vec<String>],
+    fine: &'a [Vec<String>],
+    size: (usize, usize),
+}
+
+fn alternate_art<'a>(
+    frames: Option<&'a [Vec<String>]>,
+    fine: Option<&'a [Vec<String>]>,
+    count: usize,
+) -> Result<Option<LookArt<'a>>, &'static str> {
+    match (frames, fine) {
+        (None, None) => Ok(None),
+        (Some(frames), Some(fine)) if frames.len() == count && fine.len() == count => {
+            let size = frame_size(frames)?;
+            Ok(Some(LookArt { frames, fine, size }))
+        }
+        _ => {
+            Err("female and carrying art each need coarse and fine frames matching the base count")
+        }
+    }
+}
+
+fn look_art<'a>(
+    def: &'a SpriteDef,
+    sprite: &Sprite,
+) -> Result<Vec<(bool, LookArt<'a>)>, &'static str> {
+    let base = LookArt {
+        frames: &def.frames,
+        fine: &def.fine_frames,
+        size: (sprite.width, sprite.height),
+    };
+    let female = alternate_art(
+        def.female_frames.as_deref(),
+        def.female_fine_frames.as_deref(),
+        base.frames.len(),
+    )?
+    .or_else(|| def.female.as_ref().map(|_| base));
+    let carrying = alternate_art(
+        def.carrying_frames.as_deref(),
+        def.carrying_fine_frames.as_deref(),
+        base.frames.len(),
+    )?;
+    if let Some(carrying) = carrying
+        && female.is_none_or(|f| f.size != carrying.size)
+    {
+        return Err("carrying_frames require a female look and must match its size");
+    }
+    Ok(std::iter::once((false, base))
+        .chain(female.into_iter().chain(carrying).map(|art| (true, art)))
+        .collect())
+}
 
 fn looks(d: &SpeciesDef, sprite: &Sprite) -> Result<Looks, &'static str> {
     let wild = MorphDef {
@@ -959,51 +1053,23 @@ fn looks(d: &SpeciesDef, sprite: &Sprite) -> Result<Looks, &'static str> {
         }
         Ok(())
     };
-    if let Some(f) = &d.sprite.female_frames
-        && (f.len() != d.sprite.frames.len() || f.iter().any(|rows| rows.len() != sprite.height))
-    {
-        return Err("female_frames must match the frames' count and size");
-    }
-    match (&d.sprite.female_frames, &d.sprite.female_fine_frames) {
-        (Some(_), Some(f))
-            if f.len() == d.sprite.frames.len()
-                && f.iter().all(|rows| rows.len() == sprite.height * 2) => {}
-        (None, None) => {}
-        _ => return Err("female_frames need female_fine_frames: every pose at twice the size"),
-    }
-    let sexes: &[bool] = if d.sprite.female.is_some() || d.sprite.female_frames.is_some() {
-        &[false, true]
-    } else {
-        &[false]
-    };
-    let mut looks = Vec::with_capacity(defs.len() * sexes.len());
-    for &female in sexes {
+    let art = look_art(&d.sprite, sprite)?;
+    let mut looks = Vec::with_capacity(defs.len() * art.len());
+    for (female, art) in art {
         for (i, m) in defs.iter().enumerate() {
             let mut key = base.clone();
             recolour(&mut key, &m.colours)?;
             if female && let Some(f) = &d.sprite.female {
                 recolour(&mut key, f)?;
             }
-            let (source, fine) = match (
-                &d.sprite.female_frames,
-                &d.sprite.female_fine_frames,
-                female,
-            ) {
-                (Some(f), Some(fine), true) => (f, fine),
-                _ => (&d.sprite.frames, &d.sprite.fine_frames),
-            };
-            let decode = |frames: &[Vec<String>], width| {
-                frames
-                    .iter()
-                    .map(|rows| texels(rows, width, &key))
-                    .collect::<Result<Vec<_>, _>>()
-            };
+            let (w, h) = art.size;
             looks.push(Look {
                 // At most MAX_MORPHS.
                 morph: u8::try_from(i).unwrap_or(0),
                 female,
-                frames: decode(source, sprite.width)?,
-                fine_frames: decode(fine, sprite.width * 2)?,
+                size: art.size,
+                frames: decode_frames(art.frames, (w, h), &key)?,
+                fine_frames: decode_frames(art.fine, (w * 2, h * 2), &key)?,
             });
         }
     }
@@ -1036,37 +1102,15 @@ fn colour_key(colours: &BTreeMap<String, String>) -> Result<BTreeMap<char, [u8; 
 /// Turns character rows into RGBA frames.
 pub(crate) fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
     let key = colour_key(&def.colours)?;
-    let first = def
-        .frames
-        .first()
-        .ok_or("a sprite needs at least one frame")?;
-    let height = first.len();
-    let width = first.first().map_or(0, |r| r.chars().count());
-    if !(2..=MAX_SPRITE_SIDE).contains(&width) || !(2..=MAX_SPRITE_SIDE).contains(&height) {
-        return Err("sprite sides must be 2..=64 texels");
-    }
-    if width % TEXELS_PER_CELL != 0 || height % TEXELS_PER_CELL != 0 {
-        return Err("sprite sides must be even (two texels per cell)");
-    }
-    let decode = |frames: &[Vec<String>], width, height| {
-        frames
-            .iter()
-            .map(|rows| {
-                if rows.len() != height {
-                    return Err("every frame must be as tall as the first (fine frames twice it)");
-                }
-                texels(rows, width, &key)
-            })
-            .collect::<Result<Vec<_>, _>>()
-    };
+    let (width, height) = frame_size(&def.frames)?;
     if def.fine_frames.is_empty() {
         return Err("a sprite needs fine_frames: every pose again at twice the width and height");
     }
     if def.fine_frames.len() != def.frames.len() {
         return Err("fine_frames must have one pose for each of frames");
     }
-    let frames = decode(&def.frames, width, height)?;
-    let fine_frames = decode(&def.fine_frames, width * 2, height * 2)?;
+    let frames = decode_frames(&def.frames, (width, height), &key)?;
+    let fine_frames = decode_frames(&def.fine_frames, (width * 2, height * 2), &key)?;
     let icon_height = def.icon.len();
     let icon_width = def.icon.first().map_or(0, |r| r.chars().count());
     if !(1..=MAX_ICON_SIDE).contains(&icon_width) || !(1..=MAX_ICON_SIDE).contains(&icon_height) {
@@ -1084,6 +1128,35 @@ pub(crate) fn sprite(def: &SpriteDef) -> Result<Sprite, &'static str> {
         fine_frames,
         icon,
     })
+}
+
+fn frame_size(frames: &[Vec<String>]) -> Result<(usize, usize), &'static str> {
+    let first = frames.first().ok_or("a sprite needs at least one frame")?;
+    let height = first.len();
+    let width = first.first().map_or(0, |r| r.chars().count());
+    if !(2..=MAX_SPRITE_SIDE).contains(&width) || !(2..=MAX_SPRITE_SIDE).contains(&height) {
+        return Err("sprite sides must be 2..=64 texels");
+    }
+    if width % TEXELS_PER_CELL != 0 || height % TEXELS_PER_CELL != 0 {
+        return Err("sprite sides must be even (two texels per cell)");
+    }
+    Ok((width, height))
+}
+
+fn decode_frames(
+    frames: &[Vec<String>],
+    (w, h): (usize, usize),
+    key: &BTreeMap<char, [u8; 4]>,
+) -> Result<Vec<Vec<[u8; 4]>>, &'static str> {
+    frames
+        .iter()
+        .map(|rows| {
+            if rows.len() != h {
+                return Err("every frame must be as tall as the first (fine frames twice it)");
+            }
+            texels(rows, w, key)
+        })
+        .collect()
 }
 
 /// Rows of `width` keyed characters as RGBA texels.
@@ -1608,13 +1681,16 @@ mod tests {
         let brown = &cherry.looks[usize::from(cherry.wildtype)];
         assert_ne!(brown.frames, cherry.sprite.frames);
         assert_ne!(brown.fine_frames, cherry.sprite.fine_frames);
-        assert_eq!(cherry.look(2, true), 2);
+        assert_eq!(cherry.look(2, true, true), 2);
         // Guppies: females have their own frames, in every strain.
         let guppy = get("guppy");
         assert_eq!(guppy.morphs, ["wild", "red", "blue"]);
         assert!(guppy.dimorphic());
         assert_eq!(guppy.looks.len(), 6);
-        assert_eq!((guppy.look(1, false), guppy.look(1, true)), (1, 4));
+        assert_eq!(
+            (guppy.look(1, false, false), guppy.look(1, true, true)),
+            (1, 4)
+        );
         let (male, female) = (&guppy.looks[1], &guppy.looks[4]);
         assert_eq!((male.morph, male.female), (1, false));
         assert_eq!((female.morph, female.female), (1, true));
@@ -1624,7 +1700,7 @@ mod tests {
         let tetra = get("neon_tetra");
         assert_eq!((tetra.morphs.len(), tetra.looks.len()), (1, 1));
         assert_eq!(tetra.looks[0].frames, tetra.sprite.frames);
-        assert_eq!(tetra.look(5, true), 0);
+        assert_eq!(tetra.look(5, true, true), 0);
     }
 
     #[test]
@@ -1744,48 +1820,155 @@ mod tests {
             ),
             Err(SpeciesError::Invalid { .. })
         ));
-        // Female frames match the frames' count and size, and come with
-        // fine frames at twice the size.
-        let one = "[\"aaaaaa\", \"aaaaaa\", \"aaaaaa\", \"aaaaaa\"]";
-        let row = "\"aaaaaaaaaaaa\"";
-        let fine_one = format!("[{}]", [row; 8].join(", "));
-        let fine_two = format!("[{fine_one}, {fine_one}]");
-        let female_with = |frames: &str, fine: Option<&str>| {
-            let fine = fine.map_or(String::new(), |f| format!("female_fine_frames = {f}\n"));
-            let src = OK.replace(
-                "icon = ",
-                &format!("female_frames = {frames}\n{fine}icon = "),
-            );
-            SpeciesTable::from_toml_sources(&[&src], &m)
-        };
-        let female = |frames: &str| female_with(frames, Some(&fine_two));
-        let t = female(&format!("[{one}, {one}]")).unwrap();
-        let s = t.get(SpeciesId(9)).unwrap();
-        assert!(s.dimorphic());
-        assert_eq!(s.looks[1].frames[0][12], [0x10, 0x20, 0x30, 255]);
-        assert_eq!(s.looks[1].fine_frames[0][12], [0x10, 0x20, 0x30, 255]);
-        assert_eq!(s.looks[1].fine_frames[0].len(), 12 * 8);
-        assert!(matches!(
-            female(&format!("[{one}]")),
-            Err(SpeciesError::Invalid { .. })
-        ));
-        assert!(matches!(
-            female("[[\"aaaaaa\"], [\"aaaaaa\"]]"),
-            Err(SpeciesError::Invalid { .. })
-        ));
-        // Without fine frames, with too few, or at the base size.
-        for fine in [
-            None,
-            Some(format!("[{fine_one}]")),
-            Some(format!("[{one}, {one}]")),
+    }
+
+    fn poses(colour: char, w: usize, h: usize, count: usize) -> String {
+        let row = format!("\"{}\"", colour.to_string().repeat(w));
+        let pose = format!("[{}]", vec![row; h].join(", "));
+        format!("[{}]", vec![pose; count].join(", "))
+    }
+
+    fn art(name: &str, w: usize, h: usize, colour: char) -> String {
+        format!(
+            "\n{name}_frames = {}\n{name}_fine_frames = {}",
+            poses(colour, w, h, 2),
+            poses(colour, w * 2, h * 2, 2)
+        )
+    }
+
+    #[test]
+    fn female_frames_can_have_their_own_size() {
+        let m = materials();
+        let parse = |fields: &str| SpeciesTable::from_toml_sources(&[&format!("{OK}{fields}")], &m);
+        let table = parse(&art("female", 8, 6, 'a')).unwrap();
+        let s = table.get(SpeciesId(9)).unwrap();
+        assert_eq!(s.size_of(false), (3, 2));
+        assert_eq!(s.size_of(true), (4, 3));
+        let female = &s.looks[s.look(0, true, false)];
+        assert_eq!(female.size, (8, 6));
+        assert_eq!(female.frames[1].len(), 8 * 6);
+        assert_eq!(female.fine_frames[1].len(), 16 * 12);
+
+        let good = poses('a', 8, 6, 2);
+        for fields in [
+            format!("female_frames = {good}"),
+            format!("female_fine_frames = {}", poses('a', 16, 12, 2)),
+            format!(
+                "female_frames = {}\nfemale_fine_frames = {}",
+                poses('a', 8, 6, 1),
+                poses('a', 16, 12, 1)
+            ),
+            format!(
+                "female_frames = {good}\nfemale_fine_frames = {}",
+                poses('a', 16, 12, 1)
+            ),
+            format!(
+                "female_frames = {good}\nfemale_fine_frames = {}",
+                poses('a', 16, 6, 2)
+            ),
+            format!(
+                "female_frames = {good}\nfemale_fine_frames = {}",
+                poses('a', 8, 12, 2)
+            ),
+            art("female", 7, 6, 'a'),
+            art("female", 8, 65, 'a'),
+            art("female", 8, 5, 'a'),
         ] {
             assert!(
-                matches!(
-                    female_with(&format!("[{one}, {one}]"), fine.as_deref()),
-                    Err(SpeciesError::Invalid { .. })
-                ),
-                "{fine:?}"
+                matches!(parse(&fields), Err(SpeciesError::Invalid { .. })),
+                "{fields}"
             );
+        }
+    }
+
+    #[test]
+    fn female_length_fits_her_own_sprite_and_limits_prey() {
+        let m = materials();
+        let parse = |fields: &str, w, h| {
+            let src = OK.replace("length_cm = 1.0", &format!("length_cm = 1.0\n{fields}"));
+            SpeciesTable::from_toml_sources(&[&format!("{src}{}", art("female", w, h, 'a'))], &m)
+        };
+        let table = parse("female_length_cm = 2.0", 8, 6).unwrap();
+        let s = table.get(SpeciesId(9)).unwrap();
+        assert!((s.length_cm_of(false) - 1.0).abs() < f32::EPSILON);
+        assert!((s.length_cm_of(true) - 2.0).abs() < f32::EPSILON);
+        let table = parse("", 8, 6).unwrap();
+        assert!((table.get(SpeciesId(9)).unwrap().length_cm_of(true) - 1.0).abs() < f32::EPSILON);
+        for value in ["0.0", "-1.0", "nan", "inf", "2.01"] {
+            assert!(matches!(
+                parse(&format!("female_length_cm = {value}"), 8, 6),
+                Err(SpeciesError::Invalid { reason, .. }) if reason.starts_with("female_length_cm")
+            ));
+        }
+        assert!(matches!(parse("", 2, 2), Err(SpeciesError::Invalid { .. })));
+        for fields in [
+            "female_length_cm = 0.75\nprey_cm = 0.75",
+            "female_length_cm = 2.0\nprey_cm = 1.0",
+        ] {
+            assert!(matches!(
+                parse(fields, 8, 6),
+                Err(SpeciesError::Invalid { reason, .. }) if reason.starts_with("prey_cm")
+            ));
+        }
+        assert!(parse("female_length_cm = 0.75\nprey_cm = 0.5", 8, 6).is_ok());
+    }
+
+    #[test]
+    fn carrying_looks_follow_female_looks_for_each_morph() {
+        let m = materials();
+        let genetics = r##"
+            [genetics]
+            wildtype = "plain"
+            sprite = "plain"
+            [[genetics.morph]]
+            name = "plain"
+            [[genetics.morph]]
+            name = "dark"
+            colours = { b = "#010203" }
+        "##;
+        let base = OK.replace("[sprite]", &format!("{genetics}\n[sprite]"));
+        let parse =
+            |fields: &str| SpeciesTable::from_toml_sources(&[&format!("{base}{fields}")], &m);
+        let female = art("female", 8, 6, 'a');
+        let carrying = art("carrying", 8, 6, 'b');
+        let table = parse(&format!("{female}{carrying}")).unwrap();
+        let s = table.get(SpeciesId(9)).unwrap();
+        assert_eq!(s.looks.len(), 6);
+        assert_eq!(s.look(1, false, true), 1);
+        assert_eq!(s.look(1, true, false), 3);
+        assert_eq!(s.look(1, true, true), 5);
+        assert_eq!(s.look(u8::MAX, true, true), 4);
+        let look = &s.looks[5];
+        assert_eq!((look.size, look.morph, look.female), ((8, 6), 1, true));
+        assert_eq!(look.frames[0][0], [1, 2, 3, 255]);
+        assert_eq!(look.fine_frames[1][0], [1, 2, 3, 255]);
+        assert_eq!(
+            parse(&female)
+                .unwrap()
+                .get(SpeciesId(9))
+                .unwrap()
+                .look(1, true, true),
+            3
+        );
+
+        // Female recolours also establish a female look, with the base size.
+        let base_size = art("carrying", 6, 4, 'b');
+        assert!(parse(&format!("{base_size}\nfemale = {{ b = \"#ffffff\" }}")).is_ok());
+        let good = poses('b', 8, 6, 2);
+        for fields in [
+            base_size.clone(),
+            format!("{female}{base_size}"),
+            format!("{female}\ncarrying_frames = {good}"),
+            format!(
+                "{female}\ncarrying_frames = {good}\ncarrying_fine_frames = {}",
+                poses('b', 16, 12, 1)
+            ),
+            format!(
+                "{female}\ncarrying_frames = {good}\ncarrying_fine_frames = {}",
+                poses('b', 16, 11, 2)
+            ),
+        ] {
+            assert!(matches!(parse(&fields), Err(SpeciesError::Invalid { .. })));
         }
     }
 

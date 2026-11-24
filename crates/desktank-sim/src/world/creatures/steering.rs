@@ -289,7 +289,7 @@ impl World {
         let quirks = Quirks::of(self.seed, c.id, self.tick);
         // Places are laid out in the full-grown length, so young fish
         // spread through the school too; personal space is their own.
-        let grown = self.kind(c.species).map_or(k.w, |g| g.w) * ONE;
+        let grown = self.kind(c.species).map_or(k.w, |g| g.size_of(c.female).0) * ONE;
         let shape = school::shape(Quirks::of(self.seed, lead.id, self.tick));
         let (along, across) = school::slot(quirks, grown, shape);
         let (hx, hy) = school::axis(k, lead);
