@@ -273,6 +273,47 @@ fn a_marimo_rolls_down_a_slope_and_settles_at_the_bottom() {
 }
 
 #[test]
+fn a_mature_marimo_rolls_down_gentle_and_steep_slopes() {
+    for run_per_step in [1usize, 2, 3] {
+        let mut w = tank(2, 0.95);
+        let rock = id(&w, "rock");
+        let water = id(&w, "water");
+        let top = FLOOR - 12;
+        // Grow a full-sized (radius-4) marimo on a flat rock shelf first.
+        w.fill_rect(rect(0, top, 120, FLOOR), rock, Brush::Replace)
+            .unwrap();
+        pour(&mut w, "marimo", 24, top as i64 - 1);
+        run(&mut w, 30 * MINUTE);
+        let s = species(&w, "marimo");
+        let grown = of_species(&w, s)[0];
+        assert!(grown.size() >= 35, "1:{run_per_step}: {grown:?}");
+        assert_eq!(grown.bounds.y1, top);
+        assert_eq!(grown.roll, 0);
+
+        // Carve a 1:run_per_step staircase starting under the ball's centre so
+        // its downhill side overhangs the slope.
+        let start = usize::midpoint(grown.bounds.x0, grown.bounds.x1);
+        for step in 0..12 {
+            let x0 = start + step * run_per_step;
+            w.fill_rect(rect(x0, top, 120, top + step + 1), water, Brush::Replace)
+                .unwrap();
+        }
+        run(&mut w, 4 * MINUTE);
+        let landed = w.plant(grown.id).unwrap();
+        assert_eq!(landed.bounds.y1, FLOOR, "1:{run_per_step}: {landed:?}");
+        assert!(
+            landed.base.0 > grown.base.0 + 10,
+            "1:{run_per_step}: {landed:?}"
+        );
+        assert_ne!(landed.roll, 0, "1:{run_per_step}: {landed:?}");
+        run(&mut w, MINUTE);
+        let later = w.plant(grown.id).unwrap();
+        assert_eq!((later.base, later.roll), (landed.base, landed.roll));
+        check_table(&w);
+    }
+}
+
+#[test]
 fn a_poured_disc_of_marimo_fragments_becomes_one_ball() {
     for seed in [0, 1, 2, 4] {
         let mut w = tank(seed, 0.9);

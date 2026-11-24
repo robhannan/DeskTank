@@ -180,8 +180,9 @@ impl World {
             .species
             .get(p.species)
             .is_some_and(|s| s.form.ball().is_some());
-        let diameter = p.bounds.x1 - p.bounds.x0;
-        let mut members = self.plant_members(id, self.clip_to_grid(p.bounds));
+        let bounds = p.bounds;
+        let diameter = bounds.x1 - bounds.x0;
+        let mut members = self.plant_members(id, self.clip_to_grid(bounds));
         if members.is_empty() {
             return false;
         }
@@ -222,7 +223,7 @@ impl World {
         }
         raft.vel.1 = damp(raft.vel.1, DAMP * mean, water * 256);
         let slope = if ball && fy > 0 && !self.raft_free(&members, id, 0, 1) {
-            self.ball_slope(&members, id, diameter)
+            self.ball_slope(&members, id, bounds)
         } else {
             None
         };
@@ -432,38 +433,84 @@ impl World {
         self.raft_free_offset(members, id, unit(dx), unit(dy))
     }
 
+    fn raft_cell_free(&self, j: usize, id: u16) -> bool {
+        let c = self.cells[j];
+        (c.state == id && self.plants.part(c.material).is_some())
+            || matches!(
+                self.props[usize::from(c.material.0)].class,
+                MovementClass::Liquid | MovementClass::Buoyant | MovementClass::Floating
+            )
+    }
+
     fn raft_free_offset(&self, members: &[usize], id: u16, dx: isize, dy: isize) -> bool {
         members.iter().all(|&i| {
-            let Some(j) = self.at(i % self.width, i / self.width, dx, dy) else {
-                return false;
-            };
-            let c = self.cells[j];
-            (c.state == id && self.plants.part(c.material).is_some())
-                || matches!(
-                    self.props[usize::from(c.material.0)].class,
-                    MovementClass::Liquid | MovementClass::Buoyant | MovementClass::Floating
-                )
+            self.at(i % self.width, i / self.width, dx, dy)
+                .is_some_and(|j| self.raft_cell_free(j, id))
         })
     }
 
-    /// Direction and horizontal run to the nearest reachable step down.
-    fn ball_slope(&self, members: &[usize], id: u16, diameter: usize) -> Option<(i64, i64)> {
-        let reach = [1isize, 2, 3];
-        let run = |dir| {
-            reach[..diameter.clamp(1, 3)]
-                .iter()
-                .copied()
-                .take_while(|&step| self.raft_free_offset(members, id, step * dir, 0))
-                .find(|&step| self.raft_free_offset(members, id, step * dir, 1))
-                .and_then(|step| i64::try_from(step).ok())
+    /// Downhill direction and steepness divisor (1, 2 or 3) for a resting
+    /// ball: rolls when its support contacts sit strictly to one side of its
+    /// centre and the opposite bottom edge overhangs fluid, or on a 1-step
+    /// diagonal drop (for single-cell balls and sharp peaks).
+    fn ball_slope(&self, members: &[usize], id: u16, bounds: Rect) -> Option<(i64, i64)> {
+        let y_bot = bounds.y1.saturating_sub(1);
+        let (mut contact_sum_x, mut contact_count) = (0usize, 0usize);
+        let mut bot_left: Option<(usize, bool)> = None;
+        let mut bot_right: Option<(usize, bool)> = None;
+        for &i in members {
+            let (x, y) = (i % self.width, i / self.width);
+            let supported = self
+                .at(x, y, 0, 1)
+                .is_none_or(|j| !self.raft_cell_free(j, id));
+            if supported {
+                contact_sum_x += x;
+                contact_count += 1;
+            }
+            if y == y_bot {
+                if bot_left.is_none_or(|(bx, _)| x < bx) {
+                    bot_left = Some((x, !supported));
+                }
+                if bot_right.is_none_or(|(bx, _)| x > bx) {
+                    bot_right = Some((x, !supported));
+                }
+            }
+        }
+        let mid_x2 = bounds.x0 + bounds.x1.saturating_sub(1);
+        let steepness = |dir: isize| {
+            if self.raft_free_offset(members, id, dir, 1) {
+                1
+            } else if self.raft_free_offset(members, id, 2 * dir, 1) {
+                2
+            } else {
+                3
+            }
         };
-        match (run(-1), run(1)) {
-            (Some(left), Some(right)) if left < right => Some((-1, left)),
-            (Some(left), Some(right)) if right < left => Some((1, right)),
-            (Some(1), Some(1)) => Some((if id & 1 == 0 { 1 } else { -1 }, 1)),
-            (Some(left), None) => Some((-1, left)),
-            (None, Some(right)) => Some((1, right)),
-            _ => None,
+        if contact_count > 0 {
+            let lhs = 2 * contact_sum_x;
+            let rhs = contact_count * mid_x2;
+            if lhs < rhs
+                && bot_right.is_some_and(|(_, free)| free)
+                && self.raft_free_offset(members, id, 1, 0)
+            {
+                return Some((1, steepness(1)));
+            }
+            if lhs > rhs
+                && bot_left.is_some_and(|(_, free)| free)
+                && self.raft_free_offset(members, id, -1, 0)
+            {
+                return Some((-1, steepness(-1)));
+            }
+        }
+        let left1 =
+            self.raft_free_offset(members, id, -1, 0) && self.raft_free_offset(members, id, -1, 1);
+        let right1 =
+            self.raft_free_offset(members, id, 1, 0) && self.raft_free_offset(members, id, 1, 1);
+        match (left1, right1) {
+            (true, false) => Some((-1, 1)),
+            (false, true) => Some((1, 1)),
+            (true, true) => Some((if id & 1 == 0 { 1 } else { -1 }, 1)),
+            (false, false) => None,
         }
     }
 

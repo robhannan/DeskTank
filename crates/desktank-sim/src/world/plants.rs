@@ -1255,9 +1255,14 @@ impl World {
             if self.coalesce_ball_fragment(i, s, form) {
                 return true;
             }
-            // Cuttings in a falling pile can support each other. Only
-            // its bottom layer can start a new ball.
-            if below.is_some_and(|j| Some(self.cells[j].material) == self.plants.cutting) {
+            // Cuttings in a falling pile can support each other. Defer to
+            // a cutting directly below when it can itself root, so only the
+            // bottom layer starts a new ball without stalling behind an
+            // unrootable support cell.
+            if below.is_some_and(|j| {
+                Some(self.cells[j].material) == self.plants.cutting
+                    && self.response_at(s, x, y + 1).0 > 0.0
+            }) {
                 return true;
             }
             clustered = DIRS.into_iter().any(|(dx, dy)| {

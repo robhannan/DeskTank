@@ -1555,14 +1555,13 @@ fn kin(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> vec2<i32> {
 }
 
 // How many cells of the same plant as `me` follow on from `at` along `d`,
-// up to 8, so for a cell of a ball up to nine cells across, half the
+// up to 16 (`2 * MAX_BALL_RADIUS`), so for any valid ball species half the
 // difference of the runs on opposite ways is its offset from the ball's
-// centre. `STEM_VELVET` calls it four times, so a ball's fragments make up
-// to 32 extra loads; only marimo cells pay this, and a ball is at most 50
-// cells.
+// centre. The loop breaks at the ball's rim, so a radius-4 marimo stops
+// within 8 steps as before; only marimo cells pay this.
 fn ball_run(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> i32 {
     var n = 0;
-    for (var k = 1; k <= 8; k++) {
+    for (var k = 1; k <= 16; k++) {
         if kin(at, d * k, me).x < 0 {
             break;
         }
@@ -2115,7 +2114,7 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             // fixed to the ball and turns with its roll angle, clockwise as
             // it rolls right; the lighting stays put.
             let centre_off = vec2<f32>(f32(dl - dr), f32(du - dd)) * 0.5;
-            let angle = plant.b * 6.2831853;
+            let angle = plant.b * (255.0 / 256.0) * 6.2831853;
             let ca = cos(angle);
             let sa = sin(angle);
             let pid = i32(round(me.b * 255.0)) + i32(round(me.a * 255.0)) * 256;
