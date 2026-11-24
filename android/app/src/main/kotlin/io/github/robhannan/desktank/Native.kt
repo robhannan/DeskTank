@@ -3,14 +3,16 @@ package io.github.robhannan.desktank
 import android.view.Surface
 
 /**
- * The JNI calls into libdesktank_android.so (crates/desktank-android). Each
- * forwards one platform callback, tagged with the calling Dream's token;
- * Rust holds all the state and draws on its own render thread (SPEC §3.6).
+ * JNI calls into libdesktank_android.so (crates/desktank-android). The shim
+ * passes the app files directory and forwards callbacks with the Dream's
+ * token. Rust holds the tank state and draws on its render thread (SPEC §3.6).
  */
 internal object Native {
     init {
         System.loadLibrary("desktank_android")
     }
+
+    @JvmStatic external fun setFilesDir(path: String)
 
     @JvmStatic external fun surfaceCreated(dream: Long, surface: Surface)
 

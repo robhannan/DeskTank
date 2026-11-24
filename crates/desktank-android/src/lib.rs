@@ -5,17 +5,18 @@
 //! callbacks and the Dream's start and stop here, each tagged with the
 //! Dream's token. This crate turns the `Surface` into an `ANativeWindow`,
 //! makes a wgpu surface from it and draws the tank on a render thread it
-//! owns, paced by the tank's frame pacer (A1).
+//! owns, paced by the tank's frame pacer (A1). That thread loads and saves
+//! the shared tank in the app's private files directory.
 //!
-//! The lifecycle rules, grid choice and log filter are OS-agnostic and
-//! tested on the desktop; only the JNI, NDK and render-thread glue is
-//! Android-only. On other targets this crate compiles to an empty library
-//! so that `cargo build --workspace` works on every OS.
+//! The lifecycle rules, grid choice, persistence and log filter are
+//! OS-agnostic and tested on the desktop. The JNI, NDK and render-thread
+//! glue is Android-only.
 // FFI crate: `unsafe` is allowed here, only at the JNI and NDK boundary, and
 // every block needs a `// SAFETY:` comment (SPEC §4.1).
 #![allow(unsafe_code)]
 
 mod lifecycle;
+pub mod persist;
 
 #[cfg(target_os = "android")]
 mod jni_host;
