@@ -142,8 +142,7 @@ impl World {
     ///   tank floor, under any powder substrate already there (`flip` mirrors
     ///   left/right). Every footprint cell must be fluid or powder, the nozzle
     ///   cell fluid (the spray bar not buried), and every powder cell it
-    ///   displaces must find room in the water above or beside it
-    ///   ([`World::floor_placement_plan`]).
+    ///   displaces must find room in the water above or beside it.
     ///
     /// The returned device's id is 0.
     #[must_use]
