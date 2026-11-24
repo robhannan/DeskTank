@@ -1,20 +1,24 @@
-//! macOS power and session event sources (SPEC §6.2, O3).
+//! macOS power and session event sources (SPEC §6.2, O3), overlay window
+//! configuration and full-screen app detection (SPEC §3.2, §6.2, O1).
 //!
 //! Uses event-driven OS notifications with zero polling timers:
 //! - `IOKit` `IOPSNotificationCreateRunLoopSource` for AC/battery/percentage;
 //! - `NSProcessInfoPowerStateDidChangeNotification` for Low Power Mode;
 //! - `NSWorkspace` notifications for display sleep and wake;
-//! - `NSDistributedNotificationCenter` for screen lock and unlock.
+//! - `NSDistributedNotificationCenter` for screen lock and unlock;
+//! - `NSWorkspace` Space and application notifications, then a
+//!   `CGWindowListCopyWindowInfo` bounds check, for full-screen apps.
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{Message, class, msg_send};
+use objc2::{MainThreadMarker, Message, class, msg_send};
 use objc2_core_foundation::{
     CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFRunLoop, CFRunLoopSource, CFString,
     CFType, kCFRunLoopCommonModes,
@@ -24,6 +28,9 @@ use objc2_foundation::{
     NSProcessInfo, NSProcessInfoPowerStateDidChangeNotification, NSString,
 };
 
+use desktank_render::wgpu::rwh::RawWindowHandle;
+
+use crate::overlay::{OverlayError, OverlayOptions};
 use crate::power::{PowerSignals, PowerSource};
 
 /// `IOPSCopyPowerSourcesInfo` / `IOPSNotificationCreateRunLoopSource` keys from
@@ -55,6 +62,15 @@ unsafe extern "C" {
 // depend on AppKit (such as `desktank-platform` unit tests).
 #[link(name = "AppKit", kind = "framework")]
 unsafe extern "C" {}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> *const CFArray;
+    fn CGRectMakeWithDictionaryRepresentation(dict: &CFDictionary, rect: *mut Rect) -> bool;
+    fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayBounds(display: u32) -> Rect;
+}
 
 struct Shared {
     signals: Mutex<PowerSignals>,
@@ -393,6 +409,322 @@ fn dict_value<'a, T: objc2_core_foundation::ConcreteType>(
     cf_type.downcast_ref::<T>()
 }
 
+// --- Overlay window (SPEC §3.2) ---
+
+/// `NSFloatingWindowLevel`: above normal windows (0), below the Dock (20) and
+/// the menu bar (24).
+const NS_FLOATING_WINDOW_LEVEL: isize = 3;
+/// `NSWindowCollectionBehaviorCanJoinAllSpaces | …Stationary | …IgnoresCycle`.
+/// Deliberately not `…FullScreenAuxiliary` (`1 << 8`), so the overlay never
+/// appears in full-screen Spaces.
+const OVERLAY_COLLECTION_BEHAVIOR: usize = (1 << 0) | (1 << 4) | (1 << 6);
+const NS_WINDOW_SHARING_NONE: usize = 0;
+const NS_WINDOW_SHARING_READ_ONLY: usize = 1;
+
+/// Resolves the `NSWindow` behind an `AppKit` window handle.
+fn appkit_window(handle: RawWindowHandle) -> Result<Retained<AnyObject>, OverlayError> {
+    let RawWindowHandle::AppKit(handle) = handle else {
+        return Err(OverlayError::UnsupportedHandle);
+    };
+    if MainThreadMarker::new().is_none() {
+        return Err(OverlayError::NotMainThread);
+    }
+    // SAFETY: `ns_view` is the `NSView *` the window provider vends through
+    // `HasWindowHandle`, valid for the handle's borrow, and we are on the main
+    // thread as AppKit requires.
+    let view: &AnyObject = unsafe { handle.ns_view.cast::<AnyObject>().as_ref() };
+    // SAFETY: `-[NSView window]` returns `NSWindow *` or nil.
+    let window: Option<Retained<AnyObject>> = unsafe { msg_send![view, window] };
+    window.ok_or(OverlayError::NoWindow)
+}
+
+pub(crate) fn configure_overlay_window(
+    handle: RawWindowHandle,
+    opts: OverlayOptions,
+) -> Result<(), OverlayError> {
+    let window = appkit_window(handle)?;
+    let sharing = sharing_type(opts.exclude_from_capture);
+    // SAFETY: `window` is a live `NSWindow` and we are on the main thread
+    // (checked in `appkit_window`); each selector below is an `NSWindow`
+    // setter taking the argument type used (`NSInteger`, `NSUInteger`, `BOOL`
+    // or an `NSColor *`), and `+[NSColor clearColor]` returns a valid colour.
+    unsafe {
+        let clear: Retained<AnyObject> = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![&*window, setLevel: NS_FLOATING_WINDOW_LEVEL];
+        let _: () = msg_send![&*window, setCollectionBehavior: OVERLAY_COLLECTION_BEHAVIOR];
+        let _: () = msg_send![&*window, setIgnoresMouseEvents: opts.click_through];
+        let _: () = msg_send![&*window, setSharingType: sharing];
+        let _: () = msg_send![&*window, setOpaque: false];
+        let _: () = msg_send![&*window, setHasShadow: false];
+        let _: () = msg_send![&*window, setBackgroundColor: &*clear];
+        let _: () = msg_send![&*window, orderFrontRegardless];
+    }
+    Ok(())
+}
+
+const fn sharing_type(exclude_from_capture: bool) -> usize {
+    if exclude_from_capture {
+        NS_WINDOW_SHARING_NONE
+    } else {
+        NS_WINDOW_SHARING_READ_ONLY
+    }
+}
+
+pub(crate) fn set_overlay_capture_excluded(
+    handle: RawWindowHandle,
+    excluded: bool,
+) -> Result<(), OverlayError> {
+    let window = appkit_window(handle)?;
+    let sharing = sharing_type(excluded);
+    // SAFETY: `window` is a live `NSWindow` on the main thread and
+    // `-setSharingType:` takes an `NSUInteger`.
+    unsafe {
+        let _: () = msg_send![&*window, setSharingType: sharing];
+    }
+    Ok(())
+}
+
+pub(crate) fn set_overlay_click_through(
+    handle: RawWindowHandle,
+    click_through: bool,
+) -> Result<(), OverlayError> {
+    let window = appkit_window(handle)?;
+    // SAFETY: `window` is a live `NSWindow` on the main thread and
+    // `-setIgnoresMouseEvents:` takes a `BOOL`.
+    unsafe {
+        let _: () = msg_send![&*window, setIgnoresMouseEvents: click_through];
+    }
+    Ok(())
+}
+
+pub(crate) fn show_overlay_without_focus(handle: RawWindowHandle) -> Result<(), OverlayError> {
+    let window = appkit_window(handle)?;
+    // SAFETY: `window` is a live `NSWindow` on the main thread;
+    // `-orderFrontRegardless` takes no arguments and neither activates the app
+    // nor makes the window key.
+    unsafe {
+        let _: () = msg_send![&*window, orderFrontRegardless];
+    }
+    Ok(())
+}
+
+pub(crate) fn hide_overlay(handle: RawWindowHandle) -> Result<(), OverlayError> {
+    let window = appkit_window(handle)?;
+    // SAFETY: `window` is a live `NSWindow` on the main thread and
+    // `-orderOut:` takes a nullable sender.
+    unsafe {
+        let _: () = msg_send![&*window, orderOut: Option::<&AnyObject>::None];
+    }
+    Ok(())
+}
+
+// --- Full-screen app detection (SPEC §6.2) ---
+
+/// `NSWorkspace` notifications after which the front window set may have
+/// changed.
+const FULLSCREEN_NOTIFICATIONS: [&str; 5] = [
+    "NSWorkspaceActiveSpaceDidChangeNotification",
+    "NSWorkspaceDidActivateApplicationNotification",
+    "NSWorkspaceDidDeactivateApplicationNotification",
+    "NSWorkspaceDidHideApplicationNotification",
+    "NSWorkspaceDidUnhideApplicationNotification",
+];
+
+/// `kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements`.
+const WINDOW_LIST_OPTIONS: u32 = (1 << 0) | (1 << 4);
+/// How far (points) a window may fall short of a display and still cover it.
+const COVER_TOLERANCE: f64 = 1.0;
+/// `kCGWindowBounds`, `kCGWindowLayer` and `kCGWindowOwnerPID`. Window names
+/// are never read, so Screen Recording permission is never needed.
+const KEY_WINDOW_BOUNDS: &str = "kCGWindowBounds";
+const KEY_WINDOW_LAYER: &str = "kCGWindowLayer";
+const KEY_WINDOW_OWNER_PID: &str = "kCGWindowOwnerPID";
+
+/// A `CGRect` (`CGFloat` is `f64` on every 64-bit macOS target).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Rect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl Rect {
+    /// Whether `self` reaches every edge of `other`, within the tolerance.
+    fn covers(&self, other: &Rect) -> bool {
+        other.width > 0.0
+            && other.height > 0.0
+            && self.x <= other.x + COVER_TOLERANCE
+            && self.y <= other.y + COVER_TOLERANCE
+            && self.x + self.width >= other.x + other.width - COVER_TOLERANCE
+            && self.y + self.height >= other.y + other.height - COVER_TOLERANCE
+    }
+}
+
+/// The three window fields the check needs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WindowInfo {
+    owner_pid: i32,
+    layer: i32,
+    bounds: Rect,
+}
+
+/// Whether any window owned by another process covers a whole display.
+///
+/// Normal windows and full-screen app windows sit at layer 0. Negative layers
+/// are desktop elements; the menu bar and Dock are positive but never reach
+/// the full bounds of a display. The overlay's own windows (same PID) are
+/// ignored.
+fn has_fullscreen_window(windows: &[WindowInfo], displays: &[Rect], own_pid: i32) -> bool {
+    windows
+        .iter()
+        .filter(|w| w.owner_pid != own_pid && w.layer >= 0)
+        .any(|w| displays.iter().any(|d| w.bounds.covers(d)))
+}
+
+fn active_display_bounds() -> Vec<Rect> {
+    const MAX_DISPLAYS: usize = 16;
+    let mut ids = [0_u32; MAX_DISPLAYS];
+    let mut count = 0_u32;
+    // SAFETY: `ids` has room for `MAX_DISPLAYS` entries (16 fits `u32`) and
+    // `count` is a valid out-pointer.
+    let status = unsafe { CGGetActiveDisplayList(16, ids.as_mut_ptr(), &raw mut count) };
+    let count = usize::try_from(count).unwrap_or(0).min(MAX_DISPLAYS);
+    if status != 0 || count == 0 {
+        // SAFETY: both calls take no pointers and are always valid.
+        return vec![unsafe { CGDisplayBounds(CGMainDisplayID()) }];
+    }
+    ids[..count]
+        .iter()
+        // SAFETY: each id came from `CGGetActiveDisplayList` above.
+        .map(|&id| unsafe { CGDisplayBounds(id) })
+        .collect()
+}
+
+/// Reads the on-screen window list (bounds, layer and owner PID only).
+fn query_windows() -> Option<Vec<WindowInfo>> {
+    // SAFETY: Takes two scalars and returns an owned `CFArrayRef` of
+    // `CFDictionary` (or NULL), per the CoreFoundation Copy rule.
+    let list_nn =
+        NonNull::new(unsafe { CGWindowListCopyWindowInfo(WINDOW_LIST_OPTIONS, 0) }.cast_mut())?;
+    // SAFETY: `CGWindowListCopyWindowInfo` follows the Copy rule.
+    let list = unsafe { CFRetained::from_raw(list_nn) };
+
+    let bounds_key = CFString::from_static_str(KEY_WINDOW_BOUNDS);
+    let layer_key = CFString::from_static_str(KEY_WINDOW_LAYER);
+    let pid_key = CFString::from_static_str(KEY_WINDOW_OWNER_PID);
+
+    let count = list.count();
+    let mut windows = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+    for i in 0..count {
+        // SAFETY: `0 <= i < count` is within bounds of `list`.
+        let item = unsafe { list.value_at_index(i) };
+        let Some(item) = NonNull::new(item.cast_mut().cast::<CFDictionary>()) else {
+            continue;
+        };
+        // SAFETY: Elements of the window list are `CFDictionary`s alive for
+        // as long as `list`.
+        let dict: &CFDictionary = unsafe { item.as_ref() };
+        let (Some(bounds_dict), Some(layer), Some(pid)) = (
+            dict_value::<CFDictionary>(dict, &bounds_key),
+            dict_value::<CFNumber>(dict, &layer_key).and_then(CFNumber::as_i32),
+            dict_value::<CFNumber>(dict, &pid_key).and_then(CFNumber::as_i32),
+        ) else {
+            continue;
+        };
+        let mut bounds = Rect::default();
+        // SAFETY: `bounds_dict` is a valid `CFDictionary` and `bounds` a valid
+        // out-pointer.
+        if !unsafe { CGRectMakeWithDictionaryRepresentation(bounds_dict, &raw mut bounds) } {
+            continue;
+        }
+        windows.push(WindowInfo {
+            owner_pid: pid,
+            layer,
+            bounds,
+        });
+    }
+    Some(windows)
+}
+
+fn is_fullscreen_app_active_now() -> bool {
+    let Some(windows) = query_windows() else {
+        return false;
+    };
+    let own_pid = i32::try_from(std::process::id()).unwrap_or(-1);
+    has_fullscreen_window(&windows, &active_display_bounds(), own_pid)
+}
+
+struct FullScreenShared {
+    fullscreen: AtomicBool,
+    on_change: Box<dyn Fn() + Send + Sync>,
+}
+
+impl FullScreenShared {
+    fn update(&self, now: bool) {
+        if self.fullscreen.swap(now, Ordering::AcqRel) != now {
+            (self.on_change)();
+        }
+    }
+}
+
+type Detect = Arc<dyn Fn() -> bool + Send + Sync>;
+
+pub(crate) struct FullScreenMonitor {
+    shared: Arc<FullScreenShared>,
+    observers: Vec<ObserverEntry>,
+}
+
+impl FullScreenMonitor {
+    pub(crate) fn new(on_change: impl Fn() + Send + Sync + 'static) -> Self {
+        let detect: Detect = Arc::new(is_fullscreen_app_active_now);
+        let shared = Arc::new(FullScreenShared {
+            fullscreen: AtomicBool::new(detect()),
+            on_change: Box::new(on_change),
+        });
+        let observers = workspace_notification_center().map_or_else(Vec::new, |center| {
+            register_fullscreen_observers(&shared, &center, &detect)
+        });
+        Self { shared, observers }
+    }
+
+    pub(crate) fn is_fullscreen_app_active(&self) -> bool {
+        self.shared.fullscreen.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for FullScreenMonitor {
+    fn drop(&mut self) {
+        for (center, observer) in self.observers.drain(..) {
+            // SAFETY: `observer` is the token returned by
+            // `addObserverForName:object:queue:usingBlock:` on `center`, and
+            // is removed at most once here.
+            unsafe { center.removeObserver(observer.as_ref()) };
+        }
+    }
+}
+
+fn register_fullscreen_observers(
+    shared: &Arc<FullScreenShared>,
+    center: &NSNotificationCenter,
+    detect: &Detect,
+) -> Vec<ObserverEntry> {
+    FULLSCREEN_NOTIFICATIONS
+        .iter()
+        .map(|name| {
+            let s = Arc::clone(shared);
+            let detect = Arc::clone(detect);
+            (
+                center.retain(),
+                observe_center(center, &NSString::from_str(name), move || {
+                    s.update(detect());
+                }),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
@@ -574,5 +906,233 @@ mod tests {
             assert_eq!(result, CFRunLoopRunResult::Finished);
             assert!(start.elapsed() < Duration::from_millis(25));
         }
+    }
+
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    fn window(owner_pid: i32, layer: i32, bounds: Rect) -> WindowInfo {
+        WindowInfo {
+            owner_pid,
+            layer,
+            bounds,
+        }
+    }
+
+    const DISPLAY: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1512.0,
+        height: 982.0,
+    };
+
+    #[test]
+    fn full_display_window_of_another_app_is_fullscreen() {
+        let windows = [window(100, 0, DISPLAY)];
+        assert!(has_fullscreen_window(&windows, &[DISPLAY], 1));
+    }
+
+    #[test]
+    fn bounds_within_tolerance_or_larger_still_cover() {
+        let near = rect(0.5, 0.5, 1511.0, 981.0);
+        assert!(has_fullscreen_window(
+            &[window(100, 0, near)],
+            &[DISPLAY],
+            1
+        ));
+        let larger = rect(-10.0, -10.0, 1600.0, 1100.0);
+        assert!(has_fullscreen_window(
+            &[window(100, 0, larger)],
+            &[DISPLAY],
+            1
+        ));
+        let short = rect(0.0, 0.0, 1512.0, 950.0);
+        assert!(!has_fullscreen_window(
+            &[window(100, 0, short)],
+            &[DISPLAY],
+            1
+        ));
+    }
+
+    #[test]
+    fn maximised_window_below_the_menu_bar_is_not_fullscreen() {
+        let below_menu_bar = rect(0.0, 38.0, 1512.0, 944.0);
+        assert!(!has_fullscreen_window(
+            &[window(100, 0, below_menu_bar)],
+            &[DISPLAY],
+            1
+        ));
+    }
+
+    #[test]
+    fn own_windows_are_ignored() {
+        assert!(!has_fullscreen_window(
+            &[window(1, 0, DISPLAY)],
+            &[DISPLAY],
+            1
+        ));
+    }
+
+    #[test]
+    fn desktop_element_layers_are_ignored() {
+        let desktop = window(100, -2_147_483_624, DISPLAY);
+        assert!(!has_fullscreen_window(&[desktop], &[DISPLAY], 1));
+    }
+
+    #[test]
+    fn menu_bar_and_dock_strips_are_not_fullscreen() {
+        let menu_bar = window(200, 24, rect(0.0, 0.0, 1512.0, 38.0));
+        let dock = window(201, 20, rect(300.0, 930.0, 900.0, 52.0));
+        assert!(!has_fullscreen_window(&[menu_bar, dock], &[DISPLAY], 1));
+    }
+
+    #[test]
+    fn any_display_covered_counts_and_no_display_never_does() {
+        let second = rect(1512.0, 0.0, 1920.0, 1080.0);
+        let on_second = window(100, 0, second);
+        assert!(has_fullscreen_window(&[on_second], &[DISPLAY, second], 1));
+        assert!(!has_fullscreen_window(&[on_second], &[DISPLAY], 1));
+        assert!(!has_fullscreen_window(&[on_second], &[], 1));
+        assert!(!has_fullscreen_window(&[], &[DISPLAY], 1));
+        // A zero-sized display is never covered.
+        assert!(!has_fullscreen_window(&[on_second], &[Rect::default()], 1));
+    }
+
+    #[test]
+    fn live_window_query_reads_without_screen_recording_and_never_panics() {
+        let displays = active_display_bounds();
+        assert!(displays.iter().all(|d| d.width > 0.0 && d.height > 0.0));
+        let windows = query_windows();
+        // Report what the host sees; a real full-screen app may legitimately
+        // be in front while this runs, so the verdict is informational.
+        println!(
+            "displays: {displays:?}\nwindows: {}\nfullscreen: {}",
+            windows.as_ref().map_or(0, Vec::len),
+            is_fullscreen_app_active_now()
+        );
+    }
+
+    #[test]
+    fn live_normal_desktop_windows_never_cover_a_display_except_fullscreen_apps() {
+        let displays = active_display_bounds();
+        let Some(windows) = query_windows() else {
+            return;
+        };
+        for w in &windows {
+            println!("window: {w:?}");
+        }
+        let own_pid = i32::try_from(std::process::id()).unwrap();
+        for w in windows
+            .iter()
+            .filter(|w| w.owner_pid != own_pid && w.layer >= 0)
+        {
+            if displays.iter().any(|d| w.bounds.covers(d)) {
+                println!("display-covering window: {w:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn appkit_window_rejects_wrong_handle_kinds_and_other_threads() {
+        use desktank_render::wgpu::rwh::{AppKitWindowHandle, Win32WindowHandle};
+
+        let win32 = RawWindowHandle::Win32(Win32WindowHandle::new(
+            core::num::NonZeroIsize::new(1).unwrap(),
+        ));
+        assert_eq!(
+            appkit_window(win32).unwrap_err(),
+            OverlayError::UnsupportedHandle
+        );
+
+        let appkit = RawWindowHandle::AppKit(AppKitWindowHandle::new(NonNull::dangling()));
+        if MainThreadMarker::new().is_none() {
+            // Rejected before the dangling view is dereferenced.
+            assert_eq!(
+                appkit_window(appkit).unwrap_err(),
+                OverlayError::NotMainThread
+            );
+            assert_eq!(
+                hide_overlay(appkit).unwrap_err(),
+                OverlayError::NotMainThread
+            );
+        }
+    }
+
+    #[test]
+    fn sharing_type_maps_exclusion_to_none_and_inclusion_to_read_only() {
+        assert_eq!(sharing_type(true), 0);
+        assert_eq!(sharing_type(false), 1);
+    }
+
+    #[test]
+    fn overlay_collection_behavior_never_joins_fullscreen_spaces() {
+        assert_eq!(OVERLAY_COLLECTION_BEHAVIOR, 0b101_0001);
+        assert_eq!(OVERLAY_COLLECTION_BEHAVIOR & (1 << 8), 0);
+    }
+
+    #[test]
+    fn fullscreen_observers_refresh_on_each_workspace_notification_and_unregister_on_drop() {
+        let center = NSNotificationCenter::new();
+        let detected = Arc::new(AtomicBool::new(false));
+        let detected_cb = Arc::clone(&detected);
+        let detect: Detect = Arc::new(move || detected_cb.load(Ordering::Relaxed));
+
+        let changes = Arc::new(AtomicUsize::new(0));
+        let changes_cb = Arc::clone(&changes);
+        let shared = Arc::new(FullScreenShared {
+            fullscreen: AtomicBool::new(false),
+            on_change: Box::new(move || {
+                changes_cb.fetch_add(1, Ordering::Relaxed);
+            }),
+        });
+        let observers = register_fullscreen_observers(&shared, &center, &detect);
+        assert_eq!(observers.len(), FULLSCREEN_NOTIFICATIONS.len());
+        let monitor = FullScreenMonitor { shared, observers };
+
+        for (i, name) in FULLSCREEN_NOTIFICATIONS.iter().enumerate() {
+            let name = NSString::from_str(name);
+            let now = i % 2 == 0;
+            detected.store(now, Ordering::Relaxed);
+
+            // SAFETY: posting a named notification with `object: None` to a
+            // process-local `NSNotificationCenter`.
+            unsafe { center.postNotificationName_object(&name, None) };
+            // Posting an unchanged state does not call back again.
+            unsafe { center.postNotificationName_object(&name, None) };
+
+            assert_eq!(monitor.is_fullscreen_app_active(), now, "{name}");
+            // Each notification flips the state once, so exactly one callback.
+            assert_eq!(changes.load(Ordering::Relaxed), i + 1, "{name}");
+        }
+
+        let before_drop = changes.load(Ordering::Relaxed);
+        let last = monitor.is_fullscreen_app_active();
+        detected.store(!last, Ordering::Relaxed);
+        drop(monitor);
+        let name = NSString::from_str(FULLSCREEN_NOTIFICATIONS[0]);
+        // SAFETY: as above.
+        unsafe { center.postNotificationName_object(&name, None) };
+        assert_eq!(changes.load(Ordering::Relaxed), before_drop);
+    }
+
+    #[test]
+    fn fullscreen_monitor_registers_without_wakes_and_drops_cleanly() {
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let wakes_cb = Arc::clone(&wakes);
+        let monitor = FullScreenMonitor::new(move || {
+            wakes_cb.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(monitor.observers.len(), FULLSCREEN_NOTIFICATIONS.len());
+        let _ = monitor.is_fullscreen_app_active();
+        // No timers or run-loop sources: nothing fires without a notification.
+        assert_eq!(wakes.load(Ordering::Relaxed), 0);
+        drop(monitor);
+        assert_eq!(wakes.load(Ordering::Relaxed), 0);
     }
 }
