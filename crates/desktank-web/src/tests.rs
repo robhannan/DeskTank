@@ -867,6 +867,46 @@ mod saves {
     }
 
     #[test]
+    fn catch_up_matches_the_world_and_survives_a_save() {
+        let mut t = paused();
+        let mut expected = t.tank().world().clone();
+        let report = expected.catch_up(87);
+
+        assert_eq!(
+            t.catch_up(87),
+            [
+                87,
+                count(report.births),
+                count(report.old_age_deaths + report.starvation_deaths + report.poor_water_deaths),
+            ]
+        );
+        assert!(t.save_needed());
+        let bytes = t.save();
+        assert!(!t.save_needed());
+        assert_eq!(bytes, save::encode(&expected));
+        let loaded = WebTank::from_save(&bytes, 512, 288).unwrap();
+        assert_eq!(loaded.state_hash(), t.state_hash());
+    }
+
+    #[test]
+    fn catch_up_skips_short_gaps_and_caps_long_ones() {
+        let mut t = paused();
+        let hash = t.state_hash();
+        assert_eq!(t.catch_up(0), [0, 0, 0]);
+        assert_eq!(t.catch_up(59), [0, 0, 0]);
+        assert_eq!(t.state_hash(), hash);
+        assert!(!t.save_needed());
+
+        let seconds = desktank_sim::MAX_CATCH_UP_SECONDS;
+        assert_eq!(t.catch_up(u32::MAX)[0], seconds);
+        assert_eq!(
+            t.tank().world().tick_count(),
+            u64::from(seconds * desktank_sim::TICKS_PER_SECOND)
+        );
+        assert!(t.save_needed());
+    }
+
+    #[test]
     fn rejects_what_isnt_a_save() {
         assert!(WebTank::from_save(b"not a save", 100, 100).is_err());
         let mut bytes = tank().save();

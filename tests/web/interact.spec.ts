@@ -627,6 +627,7 @@ test("settings persist across reloads", async ({ page }) => {
     stats: false,
     avoidCursor: true,
     easyMode: true,
+    catchUp: false,
     sway: true,
     swayOnBattery: true,
     seed: 42,

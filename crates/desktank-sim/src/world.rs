@@ -29,7 +29,7 @@ mod life;
 mod persist;
 mod plants;
 
-pub use catch_up::{CatchUp, MAX_CATCH_UP_SECONDS};
+pub use catch_up::{CatchUp, MAX_CATCH_UP_SECONDS, catch_up_seconds};
 use creatures::Creatures;
 pub(crate) use creatures::default_band;
 pub use creatures::{

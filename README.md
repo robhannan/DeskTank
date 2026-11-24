@@ -78,6 +78,9 @@ pnpm bench:web chrome 60 # p50/p95 loop and drawn-frame intervals over 60 s of p
 
 `?dpr=<n>` caps the canvas's device pixels per CSS pixel (1 by default on the webOS build) and `?debug=1` lists the startup steps and any error on screen.
 
+Turn on **Catch up after time away** in Settings to advance your tank when
+you return to a hidden tab or reopen a saved tank.
+
 Pushes to `main` deploy it to GitHub Pages (`.github/workflows/pages.yml`).
 
 ## License
