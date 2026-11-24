@@ -664,6 +664,91 @@ fn a_device_and_its_ghost_are_drawn() {
     assert_eq!(render(gpu, &mut with, format), b);
 }
 
+#[test]
+fn under_gravel_filter_draws_the_telescoping_tube_and_connected_floor_plates() {
+    let Some(gpu) = gpu() else { return };
+    let height = 52;
+    let config = WorldConfig {
+        width: W as usize,
+        height,
+        seed: 7,
+        water_level: 0.9,
+    };
+    let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+    let gravel = world.materials().id("gravel").unwrap();
+    world
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: 0,
+                y0: height - 6,
+                x1: W as usize,
+                y1: height,
+            },
+            gravel,
+            Brush::Replace,
+        )
+        .unwrap();
+    let id = world
+        .add_device(desktank_sim::DeviceKind::UnderGravelFilter, 40, 16, false)
+        .unwrap()
+        .unwrap();
+    let device = *world.device(id).unwrap();
+    assert_eq!(device.y, world.surface_row() + 1);
+    let panel_id = world
+        .add_device(desktank_sim::DeviceKind::UnderGravelPanel, 64, 16, false)
+        .unwrap()
+        .unwrap();
+    let panel = *world.device(panel_id).unwrap();
+    assert_eq!(panel.x, device.x + 28);
+    assert!(world.device_status(panel_id).unwrap().connected);
+    let mut tank = Tank::new(world, TankConfig::default());
+    // Four pixels per cell sample the fine sprite at texel centres.
+    let width = W as usize * 4;
+    let frame = render_sized(
+        gpu,
+        &mut tank,
+        wgpu::TextureFormat::Rgba8Unorm,
+        (W * 4, u32::try_from(height).unwrap() * 4),
+    );
+    let sample_at = |x: usize, y: usize| {
+        let index = (y * width + x) * 4;
+        [frame[index], frame[index + 1], frame[index + 2]]
+    };
+
+    let sample = |x, y| sample_at(device.x * 4 + x, (height - 28) * 4 + y);
+    let slot = sample(32, 106);
+    let bevel = sample(34, 106);
+    let floor_edge = sample(34, 111);
+    assert!(
+        floor_edge[0] <= slot[0] && slot[0] < bevel[0] && bevel[0] < bevel[2],
+        "charcoal plate with dark slots at the floor: {floor_edge:?}, {slot:?}, {bevel:?}"
+    );
+    let [red, _, blue] = sample(34, 99);
+    assert!(red > blue && red > bevel[0], "gravel just above the plate");
+
+    let spout = sample_at(device.x * 4 + 22, device.y * 4 + 8);
+    let tube = sample_at(device.x * 4 + 9, device.y * 4 + 40);
+    let water = sample_at(device.x * 4 + 30, device.y * 4 + 8);
+    assert!(spout[0] > water[0], "spout near the surface: {spout:?}");
+    let collar = sample(6, 88);
+    assert!(collar[0] > bevel[0], "frosted collar: {collar:?}");
+    let stone = sample(10, 76);
+    assert!(tube[0] > water[0], "clear tube highlight above the bed");
+    assert!(
+        stone[2] > stone[0].saturating_add(50) && stone[0] < tube[0],
+        "blue air stone inside the tube: {stone:?}"
+    );
+
+    let panel_sample = |x, y| sample_at(panel.x * 4 + x, panel.y * 4 + y);
+    let slot = panel_sample(7, 5);
+    let bevel = panel_sample(9, 5);
+    let floor_edge = panel_sample(9, 11);
+    assert!(
+        floor_edge[0] <= slot[0] && slot[0] < bevel[0] && bevel[0] < bevel[2],
+        "panel plate beside the filter: {floor_edge:?}, {slot:?}, {bevel:?}"
+    );
+}
+
 /// The magnifier zooms a single rock cell and a creature sprite inside the
 /// lens rect, draws a border around it, leaves pixels outside untouched, and
 /// works identically on both single-pass and split-grid (`webOS`) pipelines.

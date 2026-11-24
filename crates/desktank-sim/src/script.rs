@@ -32,7 +32,7 @@
 //! tick = 0           # tick to place on (default 0)
 //! x = 20             # footprint centre, in cells from the top left
 //! y = 60
-//! device = "bubbler" # "bubbler", "internal_filter", "sponge_filter" or "hob_filter" ("filter_outlet" aliases internal_filter; see `Placeable`)
+//! device = "bubbler" # "bubbler", "internal_filter", "sponge_filter", "hob_filter", "under_gravel_filter" or "under_gravel_panel" ("filter_outlet" aliases internal_filter; see `Placeable`)
 //!
 //! [[water_change]]
 //! tick = 600         # tick to change the water on (see `World::water_change`)

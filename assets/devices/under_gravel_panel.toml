@@ -1,0 +1,62 @@
+# Under-gravel filter panel (docs/spec/devices.md §2.8, D27, DV6): a modular
+# slotted charcoal plate laid on the tank floor beside an under-gravel filter
+# (or another panel chained to one) to widen its floor footprint. A panel has
+# no uplift tube or media of its own: connected edge-to-edge to the main
+# filter it draws water down through the gravel above it and the filter's
+# air-lift pulls the water up its tube; on its own it does nothing.
+name = "under_gravel_panel"
+label = "Under-gravel panel"
+# Same floor mount as the filter's plate (under any substrate already there),
+# but it never flips: the plate is symmetric.
+mount = "floor_panel"
+# No spout, no air stone and no jet: all of those belong to the main filter.
+flow_scale = 0.0
+bubble_rate = 0.0
+# Intake slots spaced along the top row of the plate, drawing water down
+# through the gravel once a main filter is connected.
+intakes = [[3, 0], [8, 0], [13, 0], [18, 0], [21, 0]]
+# Always safe for fry and small shrimp without an intake guard.
+fry_safe = true
+
+[sprite]
+# Three interlocking slotted plates, 24x3 cells (48x6 texels), in the same
+# charcoal-slate palette and comb pattern as the under-gravel filter's plate so
+# panels sit seamlessly beside it. House shading (D19): dark local-colour
+# outlines (never pure black), bevel highlights and slot dither.
+colours = { o = "#12161c", k = "#1a1f27", d = "#262d38", b = "#323a47", m = "#424c5d", g = "#58647a", h = "#7a889e" }
+frames = [
+    [
+        "oooooooooooooooooooooooooooooooooooooooooooooooo",
+        "oghghghghghghghgoggbgbgbgbgbgbgboghghghghghghgho",
+        "ommgkgmkmgkgmkmgommkmgkgmkmgkgmkommgkgmkmgkgmkmo",
+        "ommbkbmkmbkbmkmbommkmbkbmkmbkbmkommbkbmkmbkbmkmo",
+        "ombdkbdkbdkbdkbdomdkbdkbdkbdkbdkombdkbdkbdkbdkbo",
+        "oooooooooooooooooooooooooooooooooooooooooooooooo",
+    ],
+]
+fine_frames = [
+    [
+        "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+        "oggghghghghghghghghghghghghghghooggbgbgbgbgbgbgbgbgbgbgbgbgbgbgooggghghghghghghghghghghghghghgho",
+        "ogghghghghghghghghghghghghghghgoogggbgbgbgbgbgbgbgbgbgbgbgbgbgboogghghghghghghghghghghghghghghgo",
+        "oggghghghghghghghghghghghghghghooggbgbgbgbgbgbgbgbgbgbgbgbgbgbgooggghghghghghghghghghghghghghgho",
+        "ommgmgmkkgmgmkkgmgmkkgmgmkkgmgmoommgmkkgmgmkkgmgmkkgmgmkkgmgmkkoommgmgmkkgmgmkkgmgmkkgmgmkkgmgmo",
+        "ommmgmgkkmgmgkkmgmgkkmgmgkkmgmgoommmgkkmgmgkkmgmgkkmgmgkkmgmgkkoommmgmgkkmgmgkkmgmgkkmgmgkkmgmgo",
+        "ommmbmbkkmbmbkkmbmbkkmbmbkkmbmboommmbkkmbmbkkmbmbkkmbmbkkmbmbkkoommmbmbkkmbmbkkmbmbkkmbmbkkmbmbo",
+        "ommbmbmkkbmbmkkbmbmkkbmbmkkbmbmoommbmkkbmbmkkbmbmkkbmbmkkbmbmkkoommbmbmkkbmbmkkbmbmkkbmbmkkbmbmo",
+        "ommbbdbkkbbdbkkbbdbkkbbdbkkbbdboommdbkkbbdbkkbbdbkkbbdbkkbbdbkkoommbbdbkkbbdbkkbbdbkkbbdbkkbbdbo",
+        "ommbdbbkkbdbbkkbdbbkkbdbbkkbdbboommbbkkbdbbkkbdbbkkbdbbkkbdbbkkoommbdbbkkbdbbkkbdbbkkbdbbkkbdbbo",
+        "ommdbbdkkdbbdkkdbbdkkdbbdkkdbbdoommbdkkdbbdkkdbbdkkdbbdkkdbbdkkoommdbbdkkdbbdkkdbbdkkdbbdkkdbbdo",
+        "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+    ],
+]
+icon = [
+    "........",
+    "........",
+    "........",
+    "oooooooo",
+    "oghghgho",
+    "okgmkmko",
+    "okbdkbdo",
+    "oooooooo",
+]

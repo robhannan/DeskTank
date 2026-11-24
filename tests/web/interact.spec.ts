@@ -88,6 +88,22 @@ test.describe("mouse", () => {
     );
     await expect(page.locator("#device-actions")).toBeHidden();
 
+    // DV6: the under-gravel filter can be flipped and mounts flush with the floor.
+    await choose(page, "Under-gravel filter");
+    const filterX = Math.round(w * 0.7);
+    await page.locator("#flip").click();
+    await expect(page.locator("#flip")).toHaveAttribute("aria-pressed", "true");
+    p = await cellPoint(page, filterX, y);
+    await page.mouse.click(p.x, p.y);
+    await choose(page, "Inspect");
+    p = await cellPoint(page, filterX, h - 1);
+    await page.mouse.click(p.x, p.y);
+    await expect(page.locator("#inspect")).toHaveText(
+      /^Under-gravel filter #\d+ · on the floor · flow [\d.]+ cells\/s · load 0% · maturity 0% · fry-safe · cell /,
+    );
+    await expect(page.locator("#device-actions")).toBeVisible();
+    await expect(page.locator("#device-guard-label")).toBeHidden();
+
     // Inspect shows the cell; inspect and net change nothing.
     const hash = await stateHash(page);
     p = await cellPoint(page, Math.round(w * 0.8), y);
@@ -100,6 +116,34 @@ test.describe("mouse", () => {
     await page.mouse.up();
     expect(await stateHash(page)).toBe(hash);
     expect(errors).toEqual([]);
+  });
+
+  test("under-gravel panel connects to a nearby filter", async ({ page }) => {
+    await openPaused(page);
+    const [w, h] = await gridSize(page);
+    const x = Math.round(w / 3);
+    const clickCell = async (x: number, y: number) => {
+      const point = await cellPoint(page, x, y);
+      await page.mouse.click(point.x, point.y);
+    };
+    const inspect = page.locator("#inspect");
+    const actions = page.locator("#device-actions");
+
+    await choose(page, "Under-gravel panel");
+    await clickCell(x, Math.round(h / 2));
+    await choose(page, "Inspect");
+    await clickCell(x, h - 1);
+    await expect(inspect).toHaveText(/^Under-gravel panel #\d+ · on the floor · disconnected · cell /);
+    await expect(actions).toBeHidden();
+
+    await choose(page, "Under-gravel filter");
+    await clickCell(x + 24, Math.round(h / 2));
+    await choose(page, "Inspect");
+    await clickCell(x + 26, h - 1);
+    await expect(actions).toBeVisible();
+    await clickCell(x, h - 1);
+    await expect(inspect).toHaveText(/^Under-gravel panel #\d+ · on the floor · connected · cell /);
+    await expect(actions).toBeHidden();
   });
 
   test("creatures: add, inspect, net and lift out", async ({ page }) => {
@@ -378,9 +422,9 @@ test("the palette follows the sim's category tree and navigates with the keyboar
       expect(liveFoods, e).toContain(name);
       expect(path(i), `${e} is in Food › Live`).toBe("food/live");
     } else if (kind === "plant") expect(path(i), e).toMatch(/^plants\//);
-    // Devices are named by kind (D27): the bubbler is still a material; the
-    // internal, sponge and HOB filters are prefab devices.
-    else if (kind === "device") expect(["bubbler", "internal_filter", "sponge_filter", "hob_filter"], e).toContain(name);
+    // The prefab bubbler and four filters are listed by device kind (D27).
+    else if (kind === "device")
+      expect(["bubbler", "internal_filter", "sponge_filter", "hob_filter", "under_gravel_filter", "under_gravel_panel"], e).toContain(name);
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
@@ -822,7 +866,7 @@ test("flip device button only appears for flippable device tools and X ignores o
   await expect(flipBtn).toBeHidden();
   expect(await flipped()).toBe(false);
 
-  // Stays hidden for non-device tools and non-flippable devices (Bubbler, Sponge filter).
+  // Stays hidden for non-device tools and non-flippable devices.
   for (const name of [
     "Scoop",
     "Inspect",
@@ -831,6 +875,7 @@ test("flip device button only appears for flippable device tools and X ignores o
     "Neon tetra",
     "Bubbler",
     "Sponge filter",
+    "Under-gravel panel",
   ]) {
     await choose(page, name);
     await expect(flipBtn, `${name} should keep Flip device hidden`).toBeHidden();
