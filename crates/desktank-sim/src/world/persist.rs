@@ -6,7 +6,7 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14};
 use crate::species::SpeciesId;
 
 impl World {
@@ -56,6 +56,26 @@ impl World {
             materials,
             Some((&s.base.devices, s.base.next_device, Some(&s.filtration))),
         )
+    }
+
+    pub(crate) fn to_v14(&self) -> v14::Save {
+        v14::Save {
+            base: self.to_v13(),
+            raft_rolls: self.save_raft_rolls(),
+        }
+    }
+
+    pub(crate) fn from_v14(s: v14::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let rafts = &s.base.base.base.base.base.rafts;
+        if s.raft_rolls.len() != rafts.len() {
+            return Err(SaveError::Invalid(
+                "raft roll count differs from raft count".into(),
+            ));
+        }
+        let rolls: Vec<_> = rafts.iter().map(|r| r.plant).zip(s.raft_rolls).collect();
+        let mut world = Self::from_v13(s.base, materials)?;
+        world.load_raft_rolls(rolls);
+        Ok(world)
     }
 
     /// A world restored from a pre-v11 snapshot: resets driftwood cells'
