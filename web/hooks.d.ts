@@ -34,8 +34,8 @@ export interface Hooks {
   saving: Promise<boolean>; // the latest write
   loaded: { hash: string; tick: number; width: number; height: number } | null; // the save opened, if any
   released: { hash: string; tick: number } | null; // when this tab handed the tank over
-  ownedAt: number; // performance.now() when this tab last became the owner
-  stole: boolean;
+  ownedAt: number; // performance.now() when this tab was granted the lock
+  stole: boolean; // whether that lock grant came from a steal
   claiming: Promise<void>; // the current claim and its state restore
   takeOverAt: number; // performance.now() of the last Take over click
   persisted?: boolean; // navigator.storage.persist()'s answer

@@ -238,7 +238,7 @@ const hooks: Hooks = {
   saving: Promise.resolve(false), // the latest write
   loaded: null, // { hash, tick, width, height } of the save opened, if any
   released: null, // { hash, tick } when this tab handed the tank over
-  ownedAt: 0, // performance.now() when this tab last became the owner
+  ownedAt: 0, // performance.now() when this tab was granted the lock
   stole: false,
   claiming: Promise.resolve(),
   takeOverAt: 0, // performance.now() of the last Take over click
@@ -529,7 +529,7 @@ function askPersist() {
 // The newest save that opens, as a tank for the current canvas, or null.
 // Saves that don't open are logged and skipped, never deleted (one may be
 // from a newer build); pruning drops them once newer saves replace them.
-async function loadNewest(): Promise<WebTank | null> {
+async function loadNewest(keep = () => true): Promise<WebTank | null> {
   if (!db) return null;
   let saves: Save[] = [];
   try {
@@ -538,6 +538,7 @@ async function loadNewest(): Promise<WebTank | null> {
     console.warn(`desktank: couldn't read the saves: ${err}`);
     return null;
   }
+  if (!keep()) return null;
   const [w, h] = sizeCanvas();
   for (const save of saves) {
     try {
@@ -579,11 +580,7 @@ async function claimOwnership() {
 }
 
 async function resumeOwnership() {
-  const next = await loadNewest();
-  if (!owner) {
-    next?.free();
-    return;
-  }
+  const next = await loadNewest(() => owner);
   if (next) await showTank(next);
   if (owner) {
     setRunning(true);
@@ -599,7 +596,7 @@ function becomeViewer() {
   showOwnership();
   if (tank) {
     setRunning(false);
-    stopLoop();
+    if (drewFirst) stopLoop();
   }
 }
 
@@ -612,7 +609,7 @@ async function handOver() {
   endGestures();
   if (tank) {
     setRunning(false);
-    stopLoop();
+    if (drewFirst) stopLoop();
   }
   const forced = saveFailed;
   await persist("hand-over");

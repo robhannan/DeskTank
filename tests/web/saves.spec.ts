@@ -187,7 +187,10 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await expect(b.getByText("open in another tab")).toBeVisible();
   await expect(b.getByRole("button", { name: "Take over" })).toBeVisible();
 
-  // The viewer runs nothing and never writes, hidden, on pagehide or shown.
+  // The viewer runs nothing and never writes, hidden, on pagehide or shown,
+  // while the owner keeps ticking beside it.
+  const aTicksBeforeViewer = await ticks(a);
+  await a.getByRole("button", { name: "Play" }).click();
   const bTicks = await ticks(b);
   await b.waitForTimeout(500);
   expect(await ticks(b), "a viewer doesn't tick").toBe(bTicks);
@@ -197,7 +200,11 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await b.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   expect(await writes(b), "a viewer never writes").toBe(0);
   expect(await b.locator("nav.menu").evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+  await expect.poll(() => ticks(a), { timeout: 15_000 }).toBeGreaterThan(aTicksBeforeViewer);
 
+  // Pause and drain the owner so no SwiftShader draw is still in flight
+  // during the 1 s hand-over budget.
+  await pauseAndDrainFrames(a);
   const aWrites = await writes(a);
   await b.getByRole("button", { name: "Take over" }).click();
   await expect.poll(() => owner(b), { timeout: 5000 }).toBe(true);
