@@ -42,18 +42,44 @@ orchestrator.
 
 ## Before you start
 
-1. Read `AGENTS.md`, the relevant GitHub Issue (work package, goal,
+1. When asked to pick up work, choose an issue whose **Status** is Todo.
+   Status is a native issue field, not a Projects board, so `gh project`
+   and the `read:project` scope don't apply. List open issues by status in
+   one query:
+
+   ```sh
+   gh api graphql -f query='{repository(owner:"robhannan",name:"DeskTank"){issues(first:100,states:OPEN){nodes{id number title status{name} milestone{title}}}}}' \
+     --jq '.data.repository.issues.nodes[] | select(.status.name=="Todo") | "\(.number)\t\(.id)\t\(.milestone.title // "-")\t\(.title)"'
+   ```
+
+   One issue's status is `status.name` in
+   `gh api repos/robhannan/DeskTank/issues/<n>`. The latest comment on the
+   **Backlog grooming log** discussion orders the Todo batch: milestone
+   work first, then easy wins. Skip Todo issues that already have an open
+   PR, and say why when you pass over the first in line.
+   Set the issue to In progress when you start and In review when its PR
+   opens. Look up the status IDs each time, because they can change, and
+   set one with the issue's node ID (`id` above, or `node_id` in REST):
+
+   ```sh
+   gh api graphql -f query='{repository(owner:"robhannan",name:"DeskTank"){planningStatuses(first:20){nodes{id name}}}}'
+   gh api graphql -f query='mutation($i:ID!,$s:ID!){setIssueStatus(input:{issueId:$i,statusId:$s}){issue{number status{name}}}}' -f i=<node_id> -f s=<status_id>
+   ```
+
+   Merging a PR with `Closes #<n>` sets Done. Never set Done, Not planned
+   or Duplicate by hand.
+2. Read `AGENTS.md`, the relevant GitHub Issue (work package, goal,
    acceptance criteria), the matching files in `docs/spec/` and
    `docs/notes/`, and the code you will touch. Reference `Closes #<n>`
    (or `Part of #<n>`) in your PR description rather than editing a
    central changelog.
-2. `git fetch origin` and branch from the latest `origin/main` (or from the
+3. `git fetch origin` and branch from the latest `origin/main` (or from the
    lower PR's remote-tracking branch `origin/<lower-branch>` when stacking
    onto an open PR):
    `git checkout -b feat/<short-slug> origin/<base>` (where `<base>` is `main`
    or `<lower-branch>`). Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
-3. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
+4. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
    must be the scaffold (workspace, toolchain, lints, `deny.toml`, CI);
    don't build features until it has merged. Install missing tools such as
    `cargo-deny` with `cargo install --locked`.
@@ -142,6 +168,7 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   `.github/pull_request_template.md` (summary, screenshot or GIF, resource
   use, testing) and delete its HTML comments. Keep the body to about 300
   words and say plainly what you could not verify. End with a “🤖 Generated with” credit naming the agent used.
+- Once the PR is open, set its issue to In review (see Before you start).
 - Don't hard-wrap PR bodies or PR comments: GitHub renders single
   newlines as line breaks, so write each paragraph or bullet on one
   line (code blocks excepted).
