@@ -145,7 +145,8 @@ fn a_covered_surface_is_an_unmet_need() {
     assert_eq!(covered.unmet_need(betta), Some(UnmetNeed::Air));
     assert_eq!(covered.unmet_need(species(&covered, "corydoras")), None);
     // A gap narrower than a betta is no help; a wide one is.
-    let wide = covered.species().get(betta).unwrap().size().0;
+    let s = covered.species().get(betta).unwrap();
+    let wide = s.size_of(false).0.max(s.size_of(true).0);
     let narrow = matted(5, Some((50, 50 + wide - 1)));
     assert_eq!(narrow.unmet_need(betta), Some(UnmetNeed::Air));
     let open = matted(5, Some((50, 50 + wide)));

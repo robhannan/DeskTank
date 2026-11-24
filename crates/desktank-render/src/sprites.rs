@@ -1,8 +1,8 @@
 //! The creature sprite atlas and per-frame sprite instances (SPEC §4.2).
 //!
 //! Every species' frames are packed side by side, two shelves per look
-//! (each colour morph, and each sex for a species drawn differently by
-//! sex, T9 part 2: its frames, then its fine frames at twice the size),
+//! (each colour morph, with optional female and carrying looks:
+//! its frames, then its fine frames at twice the size),
 //! into one RGBA
 //! texture (sRGB-encoded, read raw with `textureLoad` like
 //! the palette). Each frame, every creature becomes one instance: its
@@ -19,7 +19,7 @@
 //! size from the full frame, an elder a little greyer. Corpses follow the
 //! creatures, belly up on their first frame, desaturated and losing texels
 //! as they rot. Each creature or corpse is drawn in its look: the morph it
-//! shows, for its sex.
+//! shows, for its sex and, while alive, whether it carries young.
 //!
 //! Night glow: a species with a `[glow]` (the blinker) gives each of its
 //! instances its glow colour and strength (times a slow pulse); the shader
@@ -123,12 +123,12 @@ impl Atlas {
         // Rows a shelf of `n` frames of `w × h` texels takes.
         let rows = |n: usize, (w, h): (usize, usize)| h * n.div_ceil((ATLAS_WIDTH / w).max(1));
         for s in species.iter() {
-            let size = (s.sprite.width, s.sprite.height);
             glows[usize::from(s.id.0)] = s
                 .glow
                 .as_ref()
                 .map(|g| (g.colour.map(|c| f32::from(c) / 255.0), g.strength, g.pulse));
             for look in &s.looks {
+                let size = look.size;
                 let n = look.frames.len();
                 let origin = (0, y);
                 y += rows(n, size);
@@ -208,9 +208,16 @@ impl Atlas {
         }
     }
 
-    /// Where `species`' look for `morph` and sex is, if anywhere.
-    fn entry(&self, world: &World, species: SpeciesId, morph: u8, female: bool) -> Option<Entry> {
-        let look = world.species().get(species)?.look(morph, female);
+    /// Where `species`' look for this morph, sex and carrying state is.
+    fn entry(
+        &self,
+        table: &SpeciesTable,
+        species: SpeciesId,
+        morph: u8,
+        female: bool,
+        carrying: bool,
+    ) -> Option<Entry> {
+        let look = table.get(species)?.look(morph, female, carrying);
         self.entries[usize::from(species.0)].get(look).copied()
     }
 
@@ -266,8 +273,13 @@ impl Atlas {
         let ghost_count = sprites.len();
         let tick = world.tick_count();
         for c in world.creatures() {
-            let Some(e) = self.entry(world, c.species(), world.creature_morph(c), c.female())
-            else {
+            let Some(e) = self.entry(
+                world.species(),
+                c.species(),
+                world.creature_morph(c),
+                c.female(),
+                c.carrying() > 0,
+            ) else {
                 continue;
             };
             if sprites.len() == MAX_SPRITES {
@@ -310,7 +322,8 @@ impl Atlas {
             });
         }
         for c in world.corpses() {
-            let Some(e) = self.entry(world, c.species(), c.morph(), c.female()) else {
+            let Some(e) = self.entry(world.species(), c.species(), c.morph(), c.female(), false)
+            else {
                 continue;
             };
             if sprites.len() == MAX_SPRITES {
@@ -630,11 +643,14 @@ mod tests {
         assert!(include_str!("tank.wgsl").contains("@location(5) look: vec2<f32>"));
         // The frame the instance names holds the species' texels.
         let s = w.species().get(tetra).unwrap();
-        let frame = usize::try_from(w.creatures()[0].id().0).unwrap() % s.sprite.frames.len();
+        let c = &w.creatures()[0];
+        let art = &s.looks[s.look(w.creature_morph(c), c.female(), c.carrying() > 0)];
+        let frame = usize::try_from(c.id().0).unwrap() % art.frames.len();
+        let width = art.size.0;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (ox, oy) = (out[4] as usize, out[5] as usize);
-        for (i, t) in s.sprite.frames[frame].iter().enumerate() {
-            let (x, y) = (ox + i % s.sprite.width, oy + i / s.sprite.width);
+        for (i, t) in art.frames[frame].iter().enumerate() {
+            let (x, y) = (ox + i % width, oy + i / width);
             let o = (y * ATLAS_WIDTH + x) * 4;
             assert_eq!(&atlas.image[o..o + 4], t);
         }
@@ -689,18 +705,31 @@ mod tests {
         };
         // Each instance's frame is its look's (frame by id and tick).
         let looks = [
-            (shrimp, w.species().get(shrimp).unwrap().look(blue, false)),
-            (guppy, w.species().get(guppy).unwrap().look(red, false)),
-            (guppy, w.species().get(guppy).unwrap().look(red, true)),
-            (shrimp, w.species().get(shrimp).unwrap().look(blue, true)),
+            (
+                shrimp,
+                w.species().get(shrimp).unwrap().look(blue, false, false),
+            ),
+            (
+                guppy,
+                w.species().get(guppy).unwrap().look(red, false, false),
+            ),
+            (
+                guppy,
+                w.species().get(guppy).unwrap().look(red, true, false),
+            ),
+            (
+                shrimp,
+                w.species().get(shrimp).unwrap().look(blue, true, false),
+            ),
         ];
         for (i, (s, look)) in looks.into_iter().enumerate() {
             let sp = w.species().get(s).unwrap();
             let (ox, oy, _) = texel(i);
-            let frames = &sp.looks[look].frames;
-            let matches = frames.iter().any(|f| {
+            let art = &sp.looks[look];
+            let width = art.size.0;
+            let matches = art.frames.iter().any(|f| {
                 f.iter().enumerate().all(|(j, t)| {
-                    let (x, y) = (ox + j % sp.sprite.width, oy + j / sp.sprite.width);
+                    let (x, y) = (ox + j % width, oy + j / width);
                     let o = (y * ATLAS_WIDTH + x) * 4;
                     &atlas.image[o..o + 4] == t
                 })
@@ -709,6 +738,76 @@ mod tests {
         }
         // The male and female guppies sample different shelves.
         assert_ne!(texel(1).1, texel(2).1);
+    }
+
+    #[test]
+    fn carrying_art_has_a_separate_shelf_at_the_females_size() {
+        let world = world();
+        let frames = |colour: char, w, h| {
+            let row = format!("\"{}\"", colour.to_string().repeat(w));
+            format!("[[{}]]", vec![row; h].join(", "))
+        };
+        let src = format!(
+            r##"
+            id = 0
+            name = "test_shrimp"
+            zone = "bottom"
+            depth = [0.5, 1.0]
+            min_depth = 2
+            temperament = "peaceful"
+            length_cm = 0.5
+            lifespan_days = 100
+            maturity_days = 10
+            speed = 2.0
+            max_speed = 4.0
+            diet = []
+            [breeding]
+            mode = "livebearer"
+            days = 30
+            brood = [3, 8]
+            rest_days = 7
+            [sprite]
+            colours = {{ a = "#102030", b = "#405060" }}
+            icon = ["a"]
+            frames = {}
+            fine_frames = {}
+            female_frames = {}
+            female_fine_frames = {}
+            carrying_frames = {}
+            carrying_fine_frames = {}
+            "##,
+            frames('a', 4, 2),
+            frames('a', 8, 4),
+            frames('a', 6, 4),
+            frames('a', 12, 8),
+            frames('b', 6, 4),
+            frames('b', 12, 8),
+        );
+        let table = SpeciesTable::from_toml_sources(&[&src], world.materials()).unwrap();
+        let atlas = Atlas::build(&table, world.device_kinds());
+        let id = table.id("test_shrimp").unwrap();
+        let male = atlas.entry(&table, id, 0, false, false).unwrap();
+        let female = atlas.entry(&table, id, 0, true, false).unwrap();
+        let carrying = atlas.entry(&table, id, 0, true, true).unwrap();
+        assert_eq!(male.size, (4, 2));
+        assert_eq!(female.size, (6, 4));
+        assert_eq!(carrying.size, female.size);
+        assert_ne!(carrying.origin, female.origin);
+        assert_ne!(carrying.fine, female.fine);
+        let rgba = |(x, y)| {
+            let i = (y * ATLAS_WIDTH + x) * 4;
+            &atlas.image[i..i + 4]
+        };
+        for (entry, colour) in [(female, [0x10, 0x20, 0x30]), (carrying, [0x40, 0x50, 0x60])] {
+            assert_eq!(
+                rgba((entry.origin.0 + 5, entry.origin.1 + 3)),
+                [colour[0], colour[1], colour[2], 255]
+            );
+            assert_eq!(
+                rgba((entry.fine.0 + 11, entry.fine.1 + 7)),
+                [colour[0], colour[1], colour[2], 255]
+            );
+        }
     }
 
     #[test]
@@ -739,10 +838,10 @@ mod tests {
         for c in world.creatures() {
             let inst = instance_at(&out, c.centre());
             let s = world.species().get(c.species()).unwrap();
-            let look = &s.looks[s.look(world.creature_morph(c), c.female())];
+            let look = &s.looks[s.look(world.creature_morph(c), c.female(), c.carrying() > 0)];
             let frame = c.id().0 as usize % look.fine_frames.len();
             let (ox, oy) = (inst[12] as usize, inst[13] as usize);
-            let width = s.sprite.width * 2;
+            let width = look.size.0 * 2;
             for (i, texel) in look.fine_frames[frame].iter().enumerate() {
                 let offset = ((oy + i / width) * ATLAS_WIDTH + ox + i % width) * 4;
                 // The colour, and opaque where it is (a glowing species'
@@ -876,10 +975,11 @@ mod tests {
         assert_eq!(c.turn(), 1);
         let mut out = Vec::new();
         atlas.instances(&w, &mut Vec::new(), &mut out);
-        let (fw, fh) = w.species().get(nerite).unwrap().size();
+        let s = w.species().get(nerite).unwrap();
+        let (fw, fh) = s.size_of(c.female());
         // Quads are in cells: the body, half the sprite's texels.
-        let sprite = &w.species().get(nerite).unwrap().sprite;
-        assert_eq!((fw * 2, fh * 2), (sprite.width, sprite.height));
+        let size = s.looks[s.look(w.creature_morph(c), c.female(), c.carrying() > 0)].size;
+        assert_eq!((fw * 2, fh * 2), size);
         #[allow(clippy::cast_precision_loss)]
         let swapped = [fh as f32, fw as f32];
         assert_eq!(out[2..4], swapped);
@@ -918,9 +1018,6 @@ mod tests {
         let mut w = world();
         let atlas = Atlas::build(w.species(), w.device_kinds());
         let tetra = w.species().id("neon_tetra").unwrap();
-        let s = w.species().get(tetra).unwrap();
-        let (full_w, full_h) = s.size();
-        let frame = [s.sprite.width as f32, s.sprite.height as f32];
         let fry = w.add_creature_aged(tetra, 20, 30, 0).unwrap();
         let old = w.add_creature(tetra, 40, 30).unwrap();
         let span = w.creature_lifespan(w.creature(old).unwrap());
@@ -937,7 +1034,11 @@ mod tests {
             instance_at(&out, w.corpses()[0].centre()),
         );
         // The fry: its smaller body on screen, the whole frame sampled.
-        let (bw, bh) = w.creature_size(w.creature(fry).unwrap());
+        let fry = w.creature(fry).unwrap();
+        let species = w.species().get(tetra).unwrap();
+        let (full_w, full_h) = species.size_of(fry.female());
+        let frame = [(full_w * 2) as f32, (full_h * 2) as f32];
+        let (bw, bh) = w.creature_size(fry);
         assert!(bw < full_w && bh <= full_h);
         assert_eq!(fry_i[2..4], [bw as f32, bh as f32]);
         assert_eq!(fry_i[8..10], frame);
@@ -945,12 +1046,16 @@ mod tests {
         assert!(old_i[12] >= 0.0);
         assert_eq!(fry_i[10], LOOK_ALIVE);
         assert_eq!(old_i[10], LOOK_ELDER);
-        assert_eq!(old_i[2..4], [full_w as f32, full_h as f32]);
+        let (old_w, old_h) = species.size_of(w.creature(old).unwrap().female());
+        assert_eq!(old_i[2..4], [old_w as f32, old_h as f32]);
         // The corpse: full size, upside down on frame 0, not yet rotting.
         assert_eq!(dead_i[7], 2.0);
         assert_eq!(dead_i[10], LOOK_DEAD);
         assert_eq!(dead_i[11], 0.0);
-        let e = atlas.entries[usize::from(tetra.0)][0];
+        let corpse = &w.corpses()[0];
+        let e = atlas
+            .entry(w.species(), tetra, corpse.morph(), corpse.female(), false)
+            .unwrap();
         assert_eq!(dead_i[4..6], [e.origin.0 as f32, e.origin.1 as f32]);
         assert_eq!(dead_i[12..14], [e.fine.0 as f32, e.fine.1 as f32]);
     }
