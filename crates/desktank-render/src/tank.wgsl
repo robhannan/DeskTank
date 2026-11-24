@@ -1555,12 +1555,14 @@ fn kin(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> vec2<i32> {
 }
 
 // How many cells of the same plant as `me` follow on from `at` along `d`,
-// up to 3 (how far a ball runs on that way). `STEM_VELVET` calls it four
-// times, so a ball's fragments make up to 12 extra loads; only marimo cells
-// pay this, and a ball is at most 50 cells.
+// up to 8, so for a cell of a ball up to nine cells across, half the
+// difference of the runs on opposite ways is its offset from the ball's
+// centre. `STEM_VELVET` calls it four times, so a ball's fragments make up
+// to 32 extra loads; only marimo cells pay this, and a ball is at most 50
+// cells.
 fn ball_run(at: vec2<i32>, d: vec2<i32>, me: vec4<f32>) -> i32 {
     var n = 0;
-    for (var k = 1; k <= 3; k++) {
+    for (var k = 1; k <= 8; k++) {
         if kin(at, d * k, me).x < 0 {
             break;
         }
@@ -2104,18 +2106,42 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             let open_r = dr == 0;
             let rim = (top && open_u) || (!top && open_d) || (sub.x == 0 && open_l)
                 || (sub.x == 1 && open_r);
-            var h = hash(at * 2 + sub);
-            let lit = 3.6 + f32(dd - du) * 0.75 + f32(dr - dl) * 0.3
+            // The sphere's lighting only looks 3 cells out, as tuned.
+            let du3 = min(du, 3);
+            let dd3 = min(dd, 3);
+            let dl3 = min(dl, 3);
+            let dr3 = min(dr, 3);
+            // The pile (grain, rim tufts and the cell-scale mottling) is
+            // fixed to the ball and turns with its roll angle, clockwise as
+            // it rolls right; the lighting stays put.
+            let centre_off = vec2<f32>(f32(dl - dr), f32(du - dd)) * 0.5;
+            let angle = plant.b * 6.2831853;
+            let ca = cos(angle);
+            let sa = sin(angle);
+            let pid = i32(round(me.b * 255.0)) + i32(round(me.a * 255.0)) * 256;
+            let seed_off = vec2<i32>(pid * 17, pid * 31);
+            let sub_p = centre_off + (vec2<f32>(sub) - 0.5) * 0.5;
+            let sub_local = vec2<f32>(sub_p.x * ca + sub_p.y * sa, -sub_p.x * sa + sub_p.y * ca);
+            var h = hash(vec2<i32>(floor(sub_local * 2.0 + 32.0)) + seed_off);
+            var mottle_h = hash(vec2<i32>(floor(sub_local + 16.0)) + seed_off);
+            var mottle_n = (mottle_h >> 5u) & 3u;
+            var mottle = select(select(1, -1, mottle_n == 2u), 0, mottle_n < 2u);
+            let lit = 3.6 + f32(dd3 - du3) * 0.75 + f32(dr3 - dl3) * 0.3
                 - select(0.0, 0.6, min(dl, dr) == 0);
             step = i32(round(lit + select(-0.3, 0.3, top) + select(-0.15, 0.15, sub.x == 0)))
-                + i32((h >> 3u) & 1u) - 1 + noise_step(me);
+                + i32((h >> 3u) & 1u) - 1 + mottle;
             // Corners open on both sides are rounded off.
             let corner = select(open_d, open_u, top) && select(open_r, open_l, sub.x == 0);
             covered = (!rim || (h & 3u) != 0u) && !corner;
             if fine {
                 // Fine pile: the outer quarter facing the water is a
                 // sparse fringe of lit tufts; the corners round off.
-                h = hash(at * 4 + quarter);
+                let fine_p = centre_off + (vec2<f32>(quarter) - 1.5) * 0.25;
+                let fine_local = vec2<f32>(fine_p.x * ca + fine_p.y * sa, -fine_p.x * sa + fine_p.y * ca);
+                h = hash(vec2<i32>(floor(fine_local * 4.0 + 64.0)) + seed_off);
+                mottle_h = hash(vec2<i32>(floor(fine_local + 16.0)) + seed_off);
+                mottle_n = (mottle_h >> 5u) & 3u;
+                mottle = select(select(1, -1, mottle_n == 2u), 0, mottle_n < 2u);
                 let fringe = (quarter.y == 0 && open_u) || (quarter.y == 3 && open_d)
                     || (quarter.x == 0 && open_l) || (quarter.x == 3 && open_r);
                 let cx = select(select(-1, 3, open_r), 0, open_l);
@@ -2124,7 +2150,7 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 covered = (!fringe || (h & 3u) == 0u) && !near;
                 let q = vec2<f32>(quarter) - 1.5;
                 step = i32(round(lit - q.y * 0.25 - q.x * 0.1)) + i32((h >> 3u) & 1u) - 1
-                    + noise_step(me) + select(0, 1, fringe);
+                    + mottle + select(0, 1, fringe);
             }
         } else {
             let left = kin(at, vec2<i32>(-1, 0), me);

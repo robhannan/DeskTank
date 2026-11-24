@@ -191,10 +191,17 @@ stays a material film, not individuals.
     density less the fluid's everywhere, so it sinks to rest on the bed;
     it grips the current a third as hard and rolls at most at a quarter
     of its speed, so a current nudges it along the bottom. A cut piece
-    lives on as a ball of its own. Drawn with the `velvet` stem shape: a
-    sphere lit from above by how far the ball runs on each way from a
-    cell, its rim fuzzed and corners rounded. Marimo (*Aegagropila
-    linnaei*, id 17) ships.
+    lives on as a ball of its own. A poured disc of fragments coalesces
+    into one ball (or a few) rather than rooting separately. A ball
+    **rolls down a slope** of the bed, tracking a roll angle (a clockwise
+    turn, saved with the raft) that advances as it moves. Drawn with the
+    `velvet` stem shape: a sphere lit from above by how far the ball runs
+    on each way from a cell, its rim fuzzed and corners rounded; the
+    velvet texture (pile grain, rim tufts and cell mottling) is fixed to
+    the ball and turns with its roll angle (carried in the plant texture's
+    blue channel), clockwise as it rolls right, while the lighting stays
+    fixed from above and to the left. Marimo (*Aegagropila linnaei*, id
+    17) ships.
   - **Leaf pads** (issue #45, tiger lotus type): a rosette with `[rosette]
     pad` (1–4) has petioles in place of blades (`lotus` leaf shape). Each
     leans out by the column it rose from (every `lean` cells from the
