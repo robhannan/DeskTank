@@ -761,6 +761,11 @@ mod tests {
             speed = 2.0
             max_speed = 4.0
             diet = []
+            [breeding]
+            mode = "livebearer"
+            days = 30
+            brood = [3, 8]
+            rest_days = 7
             [sprite]
             colours = {{ a = "#102030", b = "#405060" }}
             icon = ["a"]
