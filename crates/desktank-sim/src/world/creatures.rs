@@ -524,6 +524,8 @@ struct Kind {
 }
 
 impl Kind {
+    /// Adult body size for a sex. Call it on the species' base kind only:
+    /// a grown kind (`grown_kind`) scales `w`/`h` but not `female_size`.
     fn size_of(&self, female: bool) -> (i32, i32) {
         if female {
             self.female_size

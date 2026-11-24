@@ -153,9 +153,9 @@
     own even width and height, up to 64 texels per side. They set her
     body size in cells. The top-level `female_length_cm` defaults to
     `length_cm` and must fit the female sprite at the same scale. A
-    species with a female look can also give `carrying_frames` to draw
-    her while she carries young or eggs. They match the female size and
-    frame count.
+    livebearer with a female look (a shrimp carrying her eggs breeds as
+    one) can also give `carrying_frames` to draw her while she carries.
+    They match the female size and frame count.
     Both frame sets require their corresponding `female_fine_frames` or
     `carrying_fine_frames` at twice the width and height.
     Real figures, broods scaled down for

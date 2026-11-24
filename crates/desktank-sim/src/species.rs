@@ -833,8 +833,19 @@ fn validate(
     }
     let female_length_cm = d.female_length_cm.unwrap_or(d.length_cm);
     if !length_fits(female_length_cm, female_size) {
+        return Err(invalid(if d.female_length_cm.is_some() {
+            "female_length_cm must be > 0 and fit the female sprite at CELLS_PER_CM"
+        } else {
+            "length_cm does not fit the female sprite at CELLS_PER_CM: set female_length_cm"
+        }));
+    }
+    // Only a livebearer (or a shrimp carrying her eggs) is ever carrying:
+    // an egg layer lays a clutch instead, so its carrying art would never show.
+    if d.sprite.carrying_frames.is_some()
+        && !matches!(&d.breeding, Some(b) if b.mode == BreedingMode::Livebearer)
+    {
         return Err(invalid(
-            "female_length_cm must be > 0 and fit the female sprite at CELLS_PER_CM",
+            "carrying_frames need [breeding] mode = \"livebearer\"",
         ));
     }
     if let Some(prey) = d.prey_cm
@@ -1926,11 +1937,19 @@ mod tests {
             name = "dark"
             colours = { b = "#010203" }
         "##;
-        let base = OK.replace("[sprite]", &format!("{genetics}\n[sprite]"));
+        let livebearer =
+            "[breeding]\nmode = \"livebearer\"\ndays = 28\nbrood = [3, 8]\nrest_days = 7\n";
+        let base = OK.replace("[sprite]", &format!("{genetics}\n{livebearer}[sprite]"));
         let parse =
             |fields: &str| SpeciesTable::from_toml_sources(&[&format!("{base}{fields}")], &m);
         let female = art("female", 8, 6, 'a');
         let carrying = art("carrying", 8, 6, 'b');
+        // An egg layer is never carrying, so carrying art is refused.
+        let eggs = format!("{}{female}{carrying}", base.replace("livebearer", "eggs"));
+        assert!(matches!(
+            SpeciesTable::from_toml_sources(&[&eggs], &m),
+            Err(SpeciesError::Invalid { .. })
+        ));
         let table = parse(&format!("{female}{carrying}")).unwrap();
         let s = table.get(SpeciesId(9)).unwrap();
         assert_eq!(s.looks.len(), 6);
