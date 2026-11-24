@@ -273,32 +273,46 @@ impl World {
         )
     }
 
-    /// The first free schoolmate wanders; the others swim loosely around
-    /// it (see [`school`](super::school) for why the school stays
-    /// irregular and out of step). All sample the same tick snapshot.
+    /// The school's heads wander (its lead, and a sub-lead while it is
+    /// split); the others swim loosely around their head (see
+    /// [`school`](super::school) for why the school stays irregular and out
+    /// of step, and how it splits and rejoins). All sample the same tick
+    /// snapshot.
     fn school_target(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, i32)> {
-        let mut mates = self
-            .creatures
-            .school
-            .iter()
-            .filter(|m| m.species == c.species);
-        let lead = mates.next()?;
-        if c.id == lead.id {
-            return None;
-        }
+        let all = &self.creatures.school;
+        let lead = all.iter().find(|m| m.species == c.species)?;
+        let find = |id| {
+            all.binary_search_by_key(&id, |m| m.id)
+                .ok()
+                .map(|i| &all[i])
+        };
+        let head = find(c.id).and_then(|m| find(m.head)).unwrap_or(lead);
         let quirks = Quirks::of(self.seed, c.id, self.tick);
+        if c.id == head.id {
+            let ty = if k.zone == Zone::Bottom { c.y } else { c.ty };
+            return Some((c.tx, ty, school::lead_pace(quirks, k)));
+        }
         // Places are laid out in the full-grown length, so young fish
         // spread through the school too; personal space is their own.
         let grown = self.kind(c.species).map_or(k.w, |g| g.w) * ONE;
-        let shape = school::shape(Quirks::of(self.seed, lead.id, self.tick));
+        let shape = school::shape(Quirks::of(self.seed, head.id, self.tick));
         let (along, across) = school::slot(quirks, grown, shape);
-        let (hx, hy) = school::axis(k, lead);
-        let mut tx = lead.x + 8 * lead.vx + (along * hx - across * hy) / ONE;
-        let mut ty = lead.y + 8 * lead.vy + (along * hy + across * hx) / ONE;
+        let (hx, hy) = school::axis(k, head);
+        let mut tx = head.x + 8 * head.vx + (along * hx - across * hy) / ONE;
+        let mut ty = head.y + 8 * head.vy + (along * hy + across * hx) / ONE;
         let len = k.w * ONE;
         let spacing = school::spacing(quirks, len);
         let (mut px, mut py) = (0, 0);
-        for m in std::iter::once(lead).chain(mates).filter(|m| m.id != c.id) {
+        // The mean heading of the group's mates close by.
+        let (mut ax, mut ay, mut near) = (0, 0, 0);
+        let reach = school::align_reach(grown);
+        for m in all
+            .iter()
+            .filter(|m| m.species == c.species && m.id != c.id)
+        {
+            if m.head == head.id && dist(c.x - m.x, c.y - m.y) <= reach {
+                (ax, ay, near) = (ax + m.vx, ay + m.vy, near + 1);
+            }
             // Personal space is a body long and half as tall, like the
             // fish, so close neighbours stack loosely rather than in a disc.
             let (mut dx, dy) = (c.x - m.x, 2 * (c.y - m.y));
@@ -325,9 +339,15 @@ impl World {
         }
         tx += px;
         ty += py;
-        // A slot reaches 3.5 lengths from the lead: keep it to the rows
-        // that hold the whole body in the species' zone, as a wander
-        // target is, so a follower near the edge isn't led out of its band.
+        if near > 0 {
+            tx += ax / near * school::ALIGN_TICKS;
+            ty += ay / near * school::ALIGN_TICKS;
+        }
+        // A slot reaches 3.5 lengths from its head: keep it to the rows
+        // that hold the whole body in the species' zone and the columns
+        // that hold it inside the side walls, as a wander target is, so a
+        // follower near an edge isn't led out of its band or the tank.
+        tx = school::clamp_to_walls(tx, k.w, self.width);
         let (top, bottom) = zone(k, self.surface_row, self.height);
         let hh = i64::from(k.h / 2);
         let (y0, y1) = (to_i64(top) + hh, to_i64(bottom) - hh - 1);
