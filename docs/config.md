@@ -1,6 +1,7 @@
-# Desktop window configuration
+# Desktop configuration
 
-`desktank window` reads `config.toml` from the directory for your OS.
+`desktank window` and `desktank run --overlay` read `config.toml` from
+the directory for your OS. Overlay mode is available on macOS.
 Set `DESKTANK_CONFIG_DIR` to use another directory.
 
 | OS | File |
@@ -40,6 +41,12 @@ sway_on_battery = false
 # population_cap = 60
 # Advance the tank when it reopens or resumes after a power or visibility pause.
 catch_up = false
+
+[overlay]
+# Water opacity, from fully clear (0.0) to fully opaque (1.0).
+tint = 0.0
+# Ask macOS to exclude the overlay from screen capture where supported.
+exclude_from_capture = true
 ```
 
 Catch-up applies elapsed wall-clock time in one summarised step. Reopening

@@ -53,9 +53,12 @@ The overlay is transparent, click-through, always on top, takes no focus
 and has no taskbar or Dock entry. By default it is excluded from screen
 capture on a best-effort basis, using `NSWindow.sharingType = .none` on
 macOS and `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on Windows.
-🔍 Newer macOS capture paths may ignore `sharingType`; O1-Mac verifies
-this and documents what is actually excluded. This is
-configurable, because some people want to show their tank off.
+*O1-Mac:* verified on arm64 macOS 27 (26B131): `NSWindow.sharingType = .none`
+excludes the overlay from `screencapture`, and switching to `.readOnly` via
+`[overlay] exclude_from_capture = false` includes it again live;
+third-party ScreenCaptureKit recorders that ignore `sharingType` remain
+best-effort. This is configurable, because some people want to show their
+tank off.
 
 - **macOS**: transparent `NSWindow` at the floating window level, with
   `ignoresMouseEvents` and `canJoinAllSpaces | stationary`. It does
