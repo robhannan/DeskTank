@@ -342,7 +342,7 @@ fn a_saved_rolling_marimo_continues_exactly() {
     let bytes = save::encode(&w);
     let mut loaded = save::decode(&bytes, table()).unwrap();
     assert_eq!(of_species(&loaded, s), balls);
-    assert_eq!(save::check(&bytes), Ok(14));
+    assert_eq!(save::check(&bytes), Ok(save::FORMAT_VERSION));
     assert_eq!(loaded.state_hash(), w.state_hash());
     for _ in 0..30 {
         run(&mut w, 20);
