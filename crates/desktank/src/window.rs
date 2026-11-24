@@ -59,6 +59,7 @@
 //! starts a new tank (saved as the newest, the older saves kept);
 //! `--no-save` neither loads nor saves.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -84,6 +85,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::config::{self, CliOverrides, Config, Life};
 use crate::persist::Persistence;
 use desktank_sim::scene;
 
@@ -98,14 +100,9 @@ const SCROLL_STEP_PX: f64 = 24.0;
 /// World seed for the window's starter scene.
 const SEED: u64 = 7;
 
-/// Life-cycle settings given on the command line (SPEC §2.4, T9); `None`
-/// keeps what the tank has (a new tank: easy mode off, a cap of 60).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LifeSettings {
-    /// Easy mode: only old age kills.
-    pub easy: Option<bool>,
-    /// The population cap.
-    pub cap: Option<usize>,
+enum Wake {
+    Power,
+    Config,
 }
 
 /// Which tank the window opens, and whether it saves it.
@@ -129,9 +126,7 @@ pub fn run(
     time: Option<u16>,
     fish: usize,
     saves: Saves,
-    life: LifeSettings,
-    sway: bool,
-    sway_on_battery: bool,
+    cli: CliOverrides,
 ) -> anyhow::Result<()> {
     let saves = if demo_pour.is_some() {
         Saves::Off
@@ -146,11 +141,32 @@ pub fn run(
         (Some(p), Saves::Load) => p.load(),
         _ => None,
     };
-    let event_loop = EventLoop::new().context("creating the event loop")?;
+    let event_loop = EventLoop::<Wake>::with_user_event()
+        .build()
+        .context("creating the event loop")?;
     let proxy = event_loop.create_proxy();
     let power = PowerMonitor::new(move || {
-        let _ = proxy.send_event(());
+        let _ = proxy.send_event(Wake::Power);
     });
+    let config_dir = desktank_platform::config_dir();
+    let config_path = config_dir.as_ref().map(|dir| dir.join(config::FILE_NAME));
+    // Register before reading so edits during startup are delivered too.
+    let _watcher = config_dir.as_deref().and_then(|dir| {
+        let proxy = event_loop.create_proxy();
+        match config::watch(dir, move || proxy.send_event(Wake::Config).is_ok()) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                eprintln!(
+                    "desktank window: watching config directory {}: {error}",
+                    dir.display()
+                );
+                None
+            }
+        }
+    });
+    let settings = config_path
+        .as_deref()
+        .and_then(|path| read_config(path).ok());
     let mut app = App {
         instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
             Box::new(event_loop.owned_display_handle()),
@@ -158,11 +174,10 @@ pub fn run(
         origin: Instant::now(),
         time,
         fish,
-        life,
-        sway,
-        sway_on_battery,
+        cli,
+        config_path,
+        settings: config::merge(settings.unwrap_or_default(), cli),
         power,
-        policy: PowerPolicy::default(),
         state: None,
         error: None,
         persist,
@@ -185,14 +200,10 @@ struct App {
     time: Option<u16>,
     /// Creatures to stock the tank with.
     fish: usize,
-    /// Life-cycle settings to apply to the tank.
-    life: LifeSettings,
-    /// Optional render-only plant sway.
-    sway: bool,
-    /// Allow plant sway while running on battery power.
-    sway_on_battery: bool,
+    cli: CliOverrides,
+    config_path: Option<PathBuf>,
+    settings: Config,
     power: PowerMonitor,
-    policy: PowerPolicy,
     state: Option<Running>,
     error: Option<anyhow::Error>,
     /// The saved tank, unless saving is off.
@@ -968,7 +979,35 @@ impl Running {
     }
 }
 
-impl ApplicationHandler for App {
+fn read_config(path: &Path) -> Result<Config, config::ConfigError> {
+    config::load(path)
+        .map(Option::unwrap_or_default)
+        .inspect_err(|error| {
+            eprintln!("desktank window: config {}: {error}", path.display());
+        })
+}
+
+fn apply_life(world: &mut World, life: Life, previous: Life) {
+    if let Some(easy) = life.easy_mode
+        && life.easy_mode != previous.easy_mode
+    {
+        world.set_easy_mode(easy);
+    }
+    if let Some(cap) = life.population_cap
+        && life.population_cap != previous.population_cap
+    {
+        let cap = usize::from(cap);
+        let set = world.set_creature_cap(cap);
+        if set != cap {
+            eprintln!(
+                "desktank window: the tank holds {} creatures, so its cap is {set}, not {cap}",
+                world.stock_count()
+            );
+        }
+    }
+}
+
+impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;
@@ -980,25 +1019,14 @@ impl ApplicationHandler for App {
                 if let Some(minute) = self.time {
                     s.tank.set_time_of_day(minute);
                 }
-                s.tank.set_sway(self.sway);
-                s.tank.set_allow_sway_on_battery(self.sway_on_battery);
+                s.tank.set_sway(self.settings.plants.sway);
+                s.tank
+                    .set_allow_sway_on_battery(self.settings.plants.sway_on_battery);
                 s.tank.set_on_battery(matches!(
                     self.power.signals().source,
                     PowerSource::Battery { .. }
                 ));
-                let world = s.tank.world_mut();
-                if let Some(easy) = self.life.easy {
-                    world.set_easy_mode(easy);
-                }
-                if let Some(cap) = self.life.cap {
-                    let set = world.set_creature_cap(cap);
-                    if set != cap {
-                        eprintln!(
-                            "desktank window: the tank holds {} creatures, so its cap is {set}, not {cap}",
-                            world.stock_count()
-                        );
-                    }
-                }
+                apply_life(s.tank.world_mut(), self.settings.life, Life::default());
                 // A loaded tank keeps the creatures it had.
                 let fish = if fresh { self.fish } else { 0 };
                 if let Err(e) = scene::stock(s.tank.world_mut(), fish, SEED) {
@@ -1015,7 +1043,37 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn user_event(&mut self, _: &ActiveEventLoop, (): ()) {}
+    fn user_event(&mut self, _: &ActiveEventLoop, wake: Wake) {
+        // Power wakes and config changes both go through the existing power
+        // decision and frame-cap update in about_to_wait.
+        if let Wake::Config = wake
+            && let Some(path) = &self.config_path
+            && let Ok(config) = read_config(path)
+        {
+            let settings = config::merge(config, self.cli);
+            if let Some(s) = &mut self.state {
+                // Only changed keys apply, so an unrelated edit keeps the
+                // sway the keyboard toggles chose.
+                let (new, old) = (settings.plants, self.settings.plants);
+                if new.sway != old.sway {
+                    s.tank.set_sway(new.sway);
+                }
+                if new.sway_on_battery != old.sway_on_battery {
+                    s.tank.set_allow_sway_on_battery(new.sway_on_battery);
+                }
+                apply_life(s.tank.world_mut(), settings.life, self.settings.life);
+            }
+            self.settings = settings;
+            if path.exists() {
+                eprintln!("desktank window: reloaded config {}", path.display());
+            } else {
+                eprintln!(
+                    "desktank window: config {} removed, using defaults",
+                    path.display()
+                );
+            }
+        }
+    }
 
     #[allow(clippy::too_many_lines)] // one arm per event and key binding
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
@@ -1025,7 +1083,7 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 s.resized(size);
                 if matches!(
-                    s.decision(&self.policy, &self.power),
+                    s.decision(&self.settings.power, &self.power),
                     PowerDecision::Run { .. }
                 ) {
                     s.window.request_redraw();
@@ -1034,7 +1092,7 @@ impl ApplicationHandler for App {
             WindowEvent::Occluded(occluded) => {
                 s.hidden.occluded = occluded;
                 if matches!(
-                    s.decision(&self.policy, &self.power),
+                    s.decision(&self.settings.power, &self.power),
                     PowerDecision::Run { .. }
                 ) {
                     s.tank.invalidate();
@@ -1043,7 +1101,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 if matches!(
-                    s.decision(&self.policy, &self.power),
+                    s.decision(&self.settings.power, &self.power),
                     PowerDecision::Run { .. }
                 ) && let Err(e) = s.tank.draw(&s.gpu, &s.surface)
                 {
@@ -1227,7 +1285,7 @@ impl ApplicationHandler for App {
         s.hidden.minimised = s.window.is_minimized() == Some(true);
         let on_battery = matches!(self.power.signals().source, PowerSource::Battery { .. });
         s.tank.set_on_battery(on_battery);
-        let decision = s.decision(&self.policy, &self.power);
+        let decision = s.decision(&self.settings.power, &self.power);
         s.tank
             .set_hidden(matches!(decision, PowerDecision::Pause(_)));
         if decision != s.last_decision {
