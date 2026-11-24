@@ -3,6 +3,8 @@ name = "african_dwarf_frog"
 palette = "amphibians"
 zone = "mid"
 depth = [0.0, 1.0]
+# At night it settles on the bed, rising only to breathe.
+rests = "bottom"
 min_depth = 12
 length_cm = 4.0
 lifespan_days = 1825

@@ -44,7 +44,7 @@ pub use plants::{
 };
 pub use script::{Player, Script, ScriptError};
 pub use species::{
-    Breeding, BreedingMode, Glow, Look, Species, SpeciesError, SpeciesId, SpeciesTable,
+    Breeding, BreedingMode, Glow, Look, RestSpot, Species, SpeciesError, SpeciesId, SpeciesTable,
     TEXELS_PER_CELL,
 };
 pub use world::{
@@ -58,6 +58,6 @@ pub use world::{
     POOR_QUALITY, PREY_ENERGY, PlantId, PlantInfo, RANDOM_TICK_BUDGET, REVERSION_PER_MILLE,
     ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, RandomTickStats, SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT,
     STRIKE_ODDS, TICKS_PER_SECOND, TINT_STEPS, Traits, UPDATE_SECONDS, UnmetNeed, World,
-    WorldConfig, WorldError, catch_up_seconds, clean_name, disc_mask, pursuit, quarter_bit,
+    WorldConfig, WorldError, catch_up_seconds, clean_name, disc_mask, night, pursuit, quarter_bit,
     tint_step,
 };

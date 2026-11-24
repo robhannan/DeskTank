@@ -38,7 +38,7 @@ pub use creatures::{
     ENERGY_RESERVE, LIFE_DAY_SECONDS, LIFE_DAY_TICKS, LIVE_FOOD_BITES, LifeStage, MAX_CLUTCHES,
     MAX_CORPSES, MAX_CREATURE_CAP, MAX_LIVE_FOOD, MAX_NAME_CHARS, MUTATION_PER_MILLE, PINCH,
     POOR_QUALITY, PREY_ENERGY, REVERSION_PER_MILLE, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS,
-    SETTLE_TICKS, STRESS_LIMIT, STRIKE_ODDS, Traits, UnmetNeed, clean_name, pursuit,
+    SETTLE_TICKS, STRESS_LIMIT, STRIKE_ODDS, Traits, UnmetNeed, clean_name, night, pursuit,
 };
 pub use hardscape::{FULL_MASK, disc_mask, quarter_bit};
 use life::Life;
@@ -562,6 +562,9 @@ impl World {
                     self.add_mask(i, disc_mask(dx, dy, r));
                 }
             }
+        }
+        if changed > 0 && !self.creatures().is_empty() {
+            self.disturb_creatures(cx, cy, radius, material);
         }
         Ok((changed, body.filter(|_| rigid).map(BodyId)))
     }
