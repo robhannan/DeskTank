@@ -129,7 +129,7 @@ Use judgement. The aim is a short, ready queue that the developer workflow can p
 
 ### 8. Summarise
 
-Write one summary of about 400 words or fewer, with links as `#n`:
+Write one summary with links as `#n`. Keep it to about 400 words, not counting the Questions section. Include every open question in full: new ones, any still unanswered from earlier sessions (marked *still open*), and each proposal. Number them across the whole session so the owner can answer by number:
 
 ```markdown
 ## Backlog grooming — YYYY-MM-DD
@@ -139,16 +139,35 @@ Write one summary of about 400 words or fewer, with links as `#n`:
 **Metadata** : N statuses set, N labels/types/milestones changed (list notable ones)
 **Follow-ups filed** : #n …
 **Needs you**
-- Questions asked: #n …
 - Proposed closes: #n reason + evidence
 - Decisions blocking the next milestone: #n …
 - Milestone corrections: …
 - Stale or drifting PRs/issues: …
+### Questions
+
+Answer by number, in the T3 thread or on each issue.
+
+**#n issue title**
+1. the full question text
+2. …
+
+**Proposals**
+3. each proposed close, split or milestone change as a yes/no question
+
 **Carried over** : issues not refined this session
 **Models used** : coordinator + refiner models (and any fallbacks)
 ```
 
 Post it as a new comment on the **Backlog grooming log** discussion with `addDiscussionComment`, and give the same text as the final reply in the T3 thread, with the discussion comment's link.
+
+### 9. Apply answers
+
+When the owner answers in the T3 thread (or on an issue):
+- Fold each answer into the issue's Refinement section, turning proposed criteria into firm ones.
+- Reply on the issue's question comment, quoting the answer.
+- Carry out any approved proposals, such as closes, splits or milestone changes.
+- Move issues that are now ready into Todo if they fit the batch rules.
+- Edit the session's discussion comment to mark the questions that were answered, and report the changes in the thread.
 
 ## Refinement parcel
 
