@@ -226,7 +226,8 @@ modes; it is a "window mode" in a page.
   in §2.6.
 - **Time and power**:
   - Hidden tabs pause through the Page Visibility API, so world time
-    stops (§2.6). Optional catch-up works as on native.
+    stops (§2.6). The **Catch up after time away** checkbox in Settings
+    enables catch-up on the owning tab's next load or resume.
   - Visible tabs get rAF at the display refresh rate. The host draws
     only when a frame is due, capped at 30 fps, and skips the rest. The
     simulation only runs when a tick is due.

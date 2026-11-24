@@ -5,6 +5,18 @@ use super::{DeathCause, TICKS_PER_SECOND, World};
 /// Most elapsed world seconds applied by one catch-up call.
 pub const MAX_CATCH_UP_SECONDS: u32 = 24 * 3600;
 
+/// Bounds a host's elapsed wall-clock seconds and skips gaps under a minute.
+/// Hosts pass zero when their clock went backwards.
+#[must_use]
+pub fn catch_up_seconds(elapsed: u64) -> u32 {
+    if elapsed < 60 {
+        return 0;
+    }
+    u32::try_from(elapsed)
+        .unwrap_or(u32::MAX)
+        .min(MAX_CATCH_UP_SECONDS)
+}
+
 const STEP_TICKS: u32 = 5 * 60 * TICKS_PER_SECOND;
 
 /// Creature lifecycle events during one catch-up call.

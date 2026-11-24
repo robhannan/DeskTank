@@ -47,7 +47,7 @@ use desktank_sim::tools::{
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
-    Mount, Propagule, RinseKind, Script, World, WorldConfig, cheats, save,
+    Mount, Propagule, RinseKind, Script, World, WorldConfig, catch_up_seconds, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -230,6 +230,22 @@ impl WebTank {
         let world = save::decode(bytes, builtin()?).map_err(|e| e.to_string())?;
         check_side(side(world.width()), side(world.height()))?;
         Self::with_world(world, (canvas_width, canvas_height))
+    }
+
+    /// Applies a wall-clock gap on behalf of the owning tab (SPEC §2.6).
+    /// Returns `[seconds applied, births, deaths]` and marks changes for
+    /// the next frame and save.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = catchUp))]
+    pub fn catch_up(&mut self, elapsed_seconds: u32) -> Vec<u32> {
+        let seconds = catch_up_seconds(u64::from(elapsed_seconds));
+        if seconds == 0 {
+            return vec![0, 0, 0];
+        }
+        let report = self.tank.world_mut().catch_up(seconds);
+        self.tank.cells_edited();
+        self.dirty = true;
+        let deaths = report.old_age_deaths + report.starvation_deaths + report.poor_water_deaths;
+        vec![report.seconds, count(report.births), count(deaths)]
     }
 
     /// Encodes the tank as a save file (SPEC §2.6; the native app's

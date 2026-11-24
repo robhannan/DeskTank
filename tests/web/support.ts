@@ -45,6 +45,15 @@ export async function open(page: Page, query = "") {
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
 }
 
+// Makes the page hidden as a background tab or a minimised window would.
+export async function setHidden(page: Page, hidden: boolean) {
+  await page.evaluate((hidden) => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, hidden);
+}
+
 // Decodes PNG bytes to RGBA8 in the page (no colour conversion).
 export async function decodePng(page: Page, png: Buffer) {
   const data = await page.evaluate(async (b64: string) => {
