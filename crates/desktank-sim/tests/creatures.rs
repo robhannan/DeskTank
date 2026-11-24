@@ -1426,7 +1426,10 @@ fn palette_bettas_cycle_through_inheritable_colours() {
     let betta = species(&w, "betta");
     let mut tools = Tools::new(id(&w, "sand"));
     tools.select(PaletteItem::Tool(Tool::AddCreature(betta)));
-    for morph in [0, 1, 2, 0] {
+    let morphs = w.species().get(betta).unwrap().morphs.len();
+    assert_eq!(morphs, 8, "betta colours");
+    let cycle = (0..morphs).chain([0]).map(|m| u8::try_from(m).unwrap());
+    for morph in cycle {
         let Outcome::Added(id) = tools.press(&mut w, Button::Primary, (80, 40)) else {
             panic!("expected a betta");
         };
