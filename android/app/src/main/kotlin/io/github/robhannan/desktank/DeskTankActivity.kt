@@ -20,7 +20,7 @@ class DeskTankActivity : Activity(), SurfaceHolder.Callback {
         val view = SurfaceView(this)
         view.holder.addCallback(this)
         // Give the callback coordinates relative to the surface view.
-        view.setOnTouchListener { _, event -> onTouchEvent(event) }
+        view.setOnTouchListener { _, event -> handleTouch(event) }
         setContentView(view)
         enterImmersiveMode()
     }
@@ -63,7 +63,8 @@ class DeskTankActivity : Activity(), SurfaceHolder.Callback {
 
     override fun surfaceDestroyed(holder: SurfaceHolder) = Native.surfaceDestroyed(token)
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
+    /** Forwards the view's touches; others go unhandled, so none reach Rust twice. */
+    private fun handleTouch(event: MotionEvent): Boolean {
         val density = resources.displayMetrics.density
         fun forward(action: Int, index: Int) {
             Native.touch(
@@ -80,7 +81,7 @@ class DeskTankActivity : Activity(), SurfaceHolder.Callback {
                 forward(MotionEvent.ACTION_UP, event.actionIndex)
             MotionEvent.ACTION_CANCEL ->
                 Native.touch(token, MotionEvent.ACTION_CANCEL, -1, 0f, 0f, event.eventTime, density)
-            else -> return super.onTouchEvent(event)
+            else -> return false
         }
         return true
     }

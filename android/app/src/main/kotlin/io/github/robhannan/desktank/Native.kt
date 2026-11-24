@@ -21,6 +21,7 @@ internal object Native {
     fun nextToken(): Long = tokens.incrementAndGet()
 
     /** Called from each host's onCreate, on the main thread. */
+    @Synchronized
     fun initialize(context: Context) {
         if (!initialized) {
             val television = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
