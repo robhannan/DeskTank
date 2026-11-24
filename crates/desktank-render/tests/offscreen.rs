@@ -496,6 +496,97 @@ fn flow_tint_shows_speed_in_either_direction() {
     }
 }
 
+/// #186: swaying leaves lean downstream in the local current. A leaf block
+/// in an internal filter's jet spills over more pixels on its downstream
+/// side than in still water, in either jet direction.
+#[test]
+fn swaying_leaves_lean_downstream_with_the_current() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (gw, gh) = (80usize, 64usize);
+    let (tw, th) = (320u32, 256u32); // scale 4: quarter-cell sway is visible
+    // Leaf block rows 40..46, in the jet (field row 5) driven by a filter
+    // at the bottom left (rightward) or bottom right (leftward).
+    let (y0, y1) = (40usize, 46usize);
+    // (filter outlet x, block x0) per case; `None` is still water.
+    let lean = |outlet: Option<i64>, x0: usize| -> (i32, f32) {
+        let materials = MaterialTable::builtin().unwrap();
+        let leaf = materials.id("leaf").unwrap();
+        let config = WorldConfig {
+            width: gw,
+            height: gh,
+            seed: 4,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, materials).unwrap();
+        if let Some(x) = outlet {
+            world
+                .add_device(desktank_sim::DeviceKind::InternalFilter, x, 49, false)
+                .unwrap()
+                .expect("internal filter fits");
+        }
+        let x1 = x0 + 6;
+        world
+            .fill_rect(
+                desktank_sim::Rect { x0, y0, x1, y1 },
+                leaf,
+                desktank_sim::Brush::Replace,
+            )
+            .unwrap();
+        world.tick();
+        let speed = world.ecology().current.speed;
+        let vx = world.current_at(x0 + 3, y0 + 3)[0] / speed;
+        let mut tank = Tank::new(world, TankConfig::default());
+        let px = |c: usize| u32::try_from(c * 4).unwrap();
+        let (l, r) = (px(x0), px(x1));
+        let rows = px(y0)..px(y1);
+        // Over several sway phases, pixels changed by sway in the cell-wide
+        // strip just outside the right side, minus those outside the left.
+        let mut net = 0;
+        for _ in 0..8 {
+            for _ in 0..13 {
+                tank.step();
+            }
+            tank.set_sway(true);
+            let swayed = render_sized(gpu, &mut tank, format, (tw, th));
+            tank.set_sway(false);
+            tank.invalidate();
+            let still = render_sized(gpu, &mut tank, format, (tw, th));
+            let changed = |cols: std::ops::Range<u32>| -> i32 {
+                let n = cols
+                    .flat_map(|x| rows.clone().map(move |y| (x, y)))
+                    .filter(|&(x, y)| {
+                        let i = ((y * tw + x) * 4) as usize;
+                        swayed[i..i + 3] != still[i..i + 3]
+                    })
+                    .count();
+                i32::try_from(n).unwrap()
+            };
+            net += changed(r..r + 4) - changed(l - 4..l);
+        }
+        (net, vx)
+    };
+    for (outlet, x0) in [(5, 25), (74, 49)] {
+        let (calm, _) = lean(None, x0);
+        let (jet, vx) = lean(Some(outlet), x0);
+        assert!(
+            vx.abs() > 0.3,
+            "outlet {outlet}: weak jet at the block ({vx})"
+        );
+        if vx > 0.0 {
+            assert!(
+                jet > calm && jet > 0,
+                "rightward jet leans right: {jet} vs still {calm}"
+            );
+        } else {
+            assert!(
+                jet < calm && jet < 0,
+                "leftward jet leans left: {jet} vs still {calm}"
+            );
+        }
+    }
+}
+
 /// D27: a device is drawn as its sprite over cells drawn as water, on its
 /// glass; its placement ghost is see-through, lighter than the device.
 #[test]
