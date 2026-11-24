@@ -661,18 +661,11 @@ struct FullScreenShared {
     on_change: Box<dyn Fn() + Send + Sync>,
 }
 
-impl FullScreenShared {
-    fn update(&self, now: bool) {
-        if self.fullscreen.swap(now, Ordering::AcqRel) != now {
-            (self.on_change)();
-        }
-    }
-}
-
 type Detect = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub(crate) struct FullScreenMonitor {
     shared: Arc<FullScreenShared>,
+    detect: Detect,
     observers: Vec<ObserverEntry>,
 }
 
@@ -686,11 +679,21 @@ impl FullScreenMonitor {
         let observers = workspace_notification_center().map_or_else(Vec::new, |center| {
             register_fullscreen_observers(&shared, &center, &detect)
         });
-        Self { shared, observers }
+        Self {
+            shared,
+            detect,
+            observers,
+        }
     }
 
     pub(crate) fn is_fullscreen_app_active(&self) -> bool {
         self.shared.fullscreen.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn refresh(&self) -> bool {
+        let now = (self.detect)();
+        self.shared.fullscreen.store(now, Ordering::Release);
+        now
     }
 }
 
@@ -715,10 +718,17 @@ fn register_fullscreen_observers(
         .map(|name| {
             let s = Arc::clone(shared);
             let detect = Arc::clone(detect);
+            let is_space_change = *name == FULLSCREEN_NOTIFICATIONS[0];
             (
                 center.retain(),
                 observe_center(center, &NSString::from_str(name), move || {
-                    s.update(detect());
+                    let now = detect();
+                    let prev = s.fullscreen.swap(now, Ordering::AcqRel);
+                    // Always wake on Space switches so the host can schedule a
+                    // one-shot re-check after the Space transition animation settles.
+                    if prev != now || is_space_change {
+                        (s.on_change)();
+                    }
                 }),
             )
         })
@@ -1008,34 +1018,8 @@ mod tests {
     fn live_window_query_reads_without_screen_recording_and_never_panics() {
         let displays = active_display_bounds();
         assert!(displays.iter().all(|d| d.width > 0.0 && d.height > 0.0));
-        let windows = query_windows();
-        // Report what the host sees; a real full-screen app may legitimately
-        // be in front while this runs, so the verdict is informational.
-        println!(
-            "displays: {displays:?}\nwindows: {}\nfullscreen: {}",
-            windows.as_ref().map_or(0, Vec::len),
-            is_fullscreen_app_active_now()
-        );
-    }
-
-    #[test]
-    fn live_normal_desktop_windows_never_cover_a_display_except_fullscreen_apps() {
-        let displays = active_display_bounds();
-        let Some(windows) = query_windows() else {
-            return;
-        };
-        for w in &windows {
-            println!("window: {w:?}");
-        }
-        let own_pid = i32::try_from(std::process::id()).unwrap();
-        for w in windows
-            .iter()
-            .filter(|w| w.owner_pid != own_pid && w.layer >= 0)
-        {
-            if displays.iter().any(|d| w.bounds.covers(d)) {
-                println!("display-covering window: {w:?}");
-            }
-        }
+        let _ = query_windows();
+        let _ = is_fullscreen_app_active_now();
     }
 
     #[test]
@@ -1093,8 +1077,13 @@ mod tests {
         });
         let observers = register_fullscreen_observers(&shared, &center, &detect);
         assert_eq!(observers.len(), FULLSCREEN_NOTIFICATIONS.len());
-        let monitor = FullScreenMonitor { shared, observers };
+        let monitor = FullScreenMonitor {
+            shared,
+            detect: Arc::clone(&detect),
+            observers,
+        };
 
+        let mut expected_wakes = 0;
         for (i, name) in FULLSCREEN_NOTIFICATIONS.iter().enumerate() {
             let name = NSString::from_str(name);
             let now = i % 2 == 0;
@@ -1103,13 +1092,24 @@ mod tests {
             // SAFETY: posting a named notification with `object: None` to a
             // process-local `NSNotificationCenter`.
             unsafe { center.postNotificationName_object(&name, None) };
-            // Posting an unchanged state does not call back again.
+            expected_wakes += 1;
+            // Posting an unchanged state only re-wakes on Space switches (for
+            // the host's post-transition one-shot re-check).
             unsafe { center.postNotificationName_object(&name, None) };
+            if i == 0 {
+                expected_wakes += 1;
+            }
 
             assert_eq!(monitor.is_fullscreen_app_active(), now, "{name}");
-            // Each notification flips the state once, so exactly one callback.
-            assert_eq!(changes.load(Ordering::Relaxed), i + 1, "{name}");
+            assert_eq!(changes.load(Ordering::Relaxed), expected_wakes, "{name}");
         }
+
+        // `refresh()` updates the cached state directly without firing a wake.
+        let flipped = !monitor.is_fullscreen_app_active();
+        detected.store(flipped, Ordering::Relaxed);
+        assert_eq!(monitor.refresh(), flipped);
+        assert_eq!(monitor.is_fullscreen_app_active(), flipped);
+        assert_eq!(changes.load(Ordering::Relaxed), expected_wakes);
 
         let before_drop = changes.load(Ordering::Relaxed);
         let last = monitor.is_fullscreen_app_active();

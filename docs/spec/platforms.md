@@ -81,7 +81,10 @@ tank off.
 - **Linux Wayland**: a layer-shell `overlay` layer with an empty input
   region.
 - **Full-screen apps**: the overlay and wallpaper pause and hide while a
-  full-screen app is in front (§6.2 has detection details).
+  full-screen app is in front (§6.2 has detection details). *O1-Mac:* any
+  active display covered by another process's window at `layer >= 0` hides
+  and pauses the overlay; with both menu bar and Dock set to auto-hide, a
+  display-sized maximised window can also match.
 - **Interact input** (§2.5). Entering interact mode makes the
   overlay-type window accept mouse input. In toggle mode it also takes
   key focus for Esc and for typing creature names. It shows that window

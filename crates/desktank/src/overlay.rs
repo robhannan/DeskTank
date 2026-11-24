@@ -103,6 +103,10 @@ mod macos {
         error: Option<anyhow::Error>,
     }
 
+    /// One-shot delay after a Space/full-screen notification so the bounds
+    /// check also sees the post-animation window list.
+    const FULLSCREEN_RECHECK_DELAY: Duration = Duration::from_millis(400);
+
     struct Running {
         window: Arc<Window>,
         gpu: Gpu,
@@ -113,6 +117,11 @@ mod macos {
         occluded: bool,
         paused_at: Option<SystemTime>,
         next_clock_update: Instant,
+        /// Draw one static frame even while power-paused (startup, resize,
+        /// unhide, or tint change) so a visible overlay is never blank.
+        needs_static_frame: bool,
+        /// Optional one-shot re-check deadline after a Space/app transition.
+        fullscreen_recheck_at: Option<Instant>,
     }
 
     impl Running {
@@ -200,6 +209,8 @@ mod macos {
                 occluded: false,
                 paused_at: None,
                 next_clock_update: Instant::now(),
+                needs_static_frame: true,
+                fullscreen_recheck_at: None,
             })
         }
 
@@ -210,6 +221,7 @@ mod macos {
                 } else {
                     show_overlay_without_focus(&*self.window)?;
                     self.tank.invalidate();
+                    self.needs_static_frame = true;
                 }
                 self.fullscreen_hidden = active;
             }
@@ -221,36 +233,48 @@ mod macos {
             if size.width != 0 && size.height != 0 {
                 self.surface.resize(&self.gpu, size.width, size.height);
                 self.tank.invalidate();
+                self.needs_static_frame = true;
             }
         }
     }
 
     impl App {
-        fn reload_config(&mut self) -> anyhow::Result<()> {
+        fn reload_config(&mut self) {
             if let Some(path) = &self.config_path
-                && let Ok(settings) = read_config(path)
+                && let Ok(mut settings) = read_config(path)
             {
                 if let Some(s) = &mut self.state {
                     if settings.overlay.exclude_from_capture
                         != self.settings.overlay.exclude_from_capture
-                    {
-                        set_overlay_capture_excluded(
+                        && let Err(error) = set_overlay_capture_excluded(
                             &*s.window,
                             settings.overlay.exclude_from_capture,
-                        )?;
+                        )
+                    {
+                        eprintln!("desktank overlay: failed to update capture exclusion: {error}");
+                        settings.overlay.exclude_from_capture =
+                            self.settings.overlay.exclude_from_capture;
+                    }
+                    if settings.overlay.tint.to_bits() != self.settings.overlay.tint.to_bits() {
+                        s.needs_static_frame = true;
                     }
                     apply_settings(&mut s.tank, settings, self.settings.life);
                 }
                 self.settings = settings;
             }
-            Ok(())
         }
 
         fn evaluate_state(&mut self, event_loop: &ActiveEventLoop) -> anyhow::Result<()> {
             let Some(s) = &mut self.state else {
                 return Ok(());
             };
-            let fullscreen_active = self.fullscreen.is_fullscreen_app_active();
+            let now = Instant::now();
+            let fullscreen_active = if s.fullscreen_recheck_at.is_some_and(|at| now >= at) {
+                s.fullscreen_recheck_at = None;
+                self.fullscreen.refresh()
+            } else {
+                self.fullscreen.is_fullscreen_app_active()
+            };
             s.update_fullscreen(fullscreen_active)?;
             let surface_hidden =
                 s.occluded || fullscreen_active || s.size.width == 0 || s.size.height == 0;
@@ -258,17 +282,24 @@ mod macos {
             let PowerDecision::Run { max_fps } =
                 self.settings.power.evaluate(signals, surface_hidden)
             else {
+                if !surface_hidden && s.needs_static_frame {
+                    s.tank.draw(&s.gpu, &s.surface)?;
+                    s.needs_static_frame = false;
+                }
                 if s.paused_at.is_none() {
                     s.paused_at = Some(SystemTime::now());
                     self.persist.save(s.tank.world(), "saved while paused");
                     s.tank.set_hidden(true);
                     s.tank.pause();
                 }
-                event_loop.set_control_flow(ControlFlow::Wait);
+                if let Some(recheck_at) = s.fullscreen_recheck_at {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(recheck_at));
+                } else {
+                    event_loop.set_control_flow(ControlFlow::Wait);
+                }
                 return Ok(());
             };
 
-            let now = Instant::now();
             if let Some(paused_at) = s.paused_at.take() {
                 if self.settings.life.catch_up && self.persist.owns() {
                     catch_up(&mut s.tank, paused_at);
@@ -287,11 +318,16 @@ mod macos {
                 s.next_clock_update = now + Duration::from_mins(1);
             }
             let req = s.tank.tick(self.origin.elapsed());
-            if req.redraw {
+            if req.redraw || s.needs_static_frame {
                 s.tank.draw(&s.gpu, &s.surface)?;
+                s.needs_static_frame = false;
             }
             self.persist.autosave(s.tank.world(), Instant::now());
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.origin + req.wake_at));
+            let mut wake_at = self.origin + req.wake_at;
+            if let Some(recheck_at) = s.fullscreen_recheck_at {
+                wake_at = wake_at.min(recheck_at);
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(wake_at));
             Ok(())
         }
 
@@ -317,12 +353,15 @@ mod macos {
             }
         }
 
-        fn user_event(&mut self, event_loop: &ActiveEventLoop, wake: Wake) {
-            // Power and fullscreen events wake about_to_wait to re-evaluate state.
-            if let Wake::Config = wake
-                && let Err(error) = self.reload_config()
-            {
-                self.fail(event_loop, error);
+        fn user_event(&mut self, _event_loop: &ActiveEventLoop, wake: Wake) {
+            match wake {
+                Wake::Power => {}
+                Wake::FullScreen => {
+                    if let Some(s) = &mut self.state {
+                        s.fullscreen_recheck_at = Some(Instant::now() + FULLSCREEN_RECHECK_DELAY);
+                    }
+                }
+                Wake::Config => self.reload_config(),
             }
         }
 

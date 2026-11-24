@@ -168,6 +168,14 @@ impl FullScreenMonitor {
     pub fn is_fullscreen_app_active(&self) -> bool {
         self.backend.is_fullscreen_app_active()
     }
+
+    /// Re-queries the OS immediately and updates the cached full-screen state.
+    ///
+    /// Useful for a one-shot re-check after a Space transition animation settles.
+    #[must_use]
+    pub fn refresh(&self) -> bool {
+        self.backend.refresh()
+    }
 }
 
 impl fmt::Debug for FullScreenMonitor {
@@ -225,6 +233,11 @@ mod unsupported {
 
         #[allow(clippy::unused_self)] // macOS reads self; keep uniform backend signature
         pub(super) fn is_fullscreen_app_active(&self) -> bool {
+            false
+        }
+
+        #[allow(clippy::unused_self)] // macOS reads self; keep uniform backend signature
+        pub(super) fn refresh(&self) -> bool {
             false
         }
     }

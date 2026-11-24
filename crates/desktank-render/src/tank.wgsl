@@ -1345,11 +1345,12 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let same_r = style_at(at + vec2<i32>(1, 0)) == STYLE_BUBBLE;
         let isolated = !same_u && !same_d && !same_l && !same_r;
         let bg = water_bg(at, quarter, fine);
+        let wa = water_opacity();
         if isolated {
             if fine {
                 let corner = (quarter.x == 0 || quarter.x == 3) && (quarter.y == 0 || quarter.y == 3);
                 if corner {
-                    return vec4<f32>(bg, water_opacity());
+                    return vec4<f32>(bg, wa);
                 }
                 if quarter.x == 1 && quarter.y == 1 {
                     return vec4<f32>(mix(base, vec3<f32>(1.0), 0.65), 1.0);
@@ -1357,18 +1358,24 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
                 let rim = quarter.x == 0 || quarter.x == 3 || quarter.y == 0 || quarter.y == 3;
                 if rim {
                     let lit = quarter.x == 0 || quarter.y == 0;
-                    return vec4<f32>(mix(bg, base * select(0.82, 1.05, lit), select(0.55, 0.80, lit)), 1.0);
+                    let fg = base * select(0.82, 1.05, lit);
+                    let k = select(0.55, 0.80, lit);
+                    let a = mix(wa, 1.0, k);
+                    return vec4<f32>(mix(bg * wa, fg, k) / max(a, 1e-5), a);
                 }
                 // Translucent interior showing water behind.
-                return vec4<f32>(mix(bg, base, 0.35), 1.0);
+                let a = mix(wa, 1.0, 0.35);
+                return vec4<f32>(mix(bg * wa, base, 0.35) / max(a, 1e-5), a);
             } else {
                 if sub.x == 0 && sub.y == 0 {
                     return vec4<f32>(mix(base, vec3<f32>(1.0), 0.55), 1.0);
                 }
                 if sub.x == 1 && sub.y == 1 {
-                    return vec4<f32>(mix(bg, base * 0.80, 0.50), 1.0);
+                    let a = mix(wa, 1.0, 0.50);
+                    return vec4<f32>(mix(bg * wa, base * 0.80, 0.50) / max(a, 1e-5), a);
                 }
-                return vec4<f32>(mix(bg, base, 0.68), 1.0);
+                let a = mix(wa, 1.0, 0.68);
+                return vec4<f32>(mix(bg * wa, base, 0.68) / max(a, 1e-5), a);
             }
         }
         // Multi-cell bubble: round outer convex corners and add a glossy rim.
@@ -1378,7 +1385,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             let cut_bl = !same_d && !same_l && quarter.x == 0 && quarter.y == 3;
             let cut_br = !same_d && !same_r && quarter.x == 3 && quarter.y == 3;
             if cut_tl || cut_tr || cut_bl || cut_br {
-                return vec4<f32>(bg, water_opacity());
+                return vec4<f32>(bg, wa);
             }
             let top_rim = (!same_u && quarter.y == 0) || (!same_l && quarter.x == 0);
             let bot_rim = (!same_d && quarter.y == 3) || (!same_r && quarter.x == 3);
@@ -1386,9 +1393,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
                 return vec4<f32>(mix(base, vec3<f32>(1.0), 0.55), 1.0);
             }
             if bot_rim {
-                return vec4<f32>(mix(bg, base * 0.84, 0.72), 1.0);
+                let a = mix(wa, 1.0, 0.72);
+                return vec4<f32>(mix(bg * wa, base * 0.84, 0.72) / max(a, 1e-5), a);
             }
-            return vec4<f32>(mix(bg, base, 0.72), 1.0);
+            let a = mix(wa, 1.0, 0.72);
+            return vec4<f32>(mix(bg * wa, base, 0.72) / max(a, 1e-5), a);
         }
         let top_rim = (!same_u && sub.y == 0) || (!same_l && sub.x == 0);
         let bot_rim = (!same_d && sub.y == 1) || (!same_r && sub.x == 1);
@@ -1396,9 +1405,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             return vec4<f32>(mix(base, vec3<f32>(1.0), 0.45), 1.0);
         }
         if bot_rim {
-            return vec4<f32>(mix(bg, base * 0.85, 0.75), 1.0);
+            let a = mix(wa, 1.0, 0.75);
+            return vec4<f32>(mix(bg * wa, base * 0.85, 0.75) / max(a, 1e-5), a);
         }
-        return vec4<f32>(mix(bg, base, 0.78), 1.0);
+        let a = mix(wa, 1.0, 0.78);
+        return vec4<f32>(mix(bg * wa, base, 0.78) / max(a, 1e-5), a);
     }
 
     if style == STYLE_ALGAE {
