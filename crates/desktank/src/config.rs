@@ -63,19 +63,23 @@ pub struct Plants {
 pub struct Life {
     pub easy_mode: Option<bool>,
     pub population_cap: Option<u16>,
+    pub catch_up: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CliOverrides {
     pub plants: Plants,
-    pub life: Life,
+    pub easy_mode: Option<bool>,
+    pub population_cap: Option<u16>,
+    pub catch_up: Option<bool>,
 }
 
 pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
     config.plants.sway |= cli.plants.sway;
     config.plants.sway_on_battery |= cli.plants.sway_on_battery;
-    config.life.easy_mode = cli.life.easy_mode.or(config.life.easy_mode);
-    config.life.population_cap = cli.life.population_cap.or(config.life.population_cap);
+    config.life.easy_mode = cli.easy_mode.or(config.life.easy_mode);
+    config.life.population_cap = cli.population_cap.or(config.life.population_cap);
+    config.life.catch_up = cli.catch_up.unwrap_or(config.life.catch_up);
     config
 }
 
@@ -181,6 +185,7 @@ mod tests {
         assert_eq!(defaults.power, PowerPolicy::default());
         assert_eq!(defaults.plants, Plants::default());
         assert_eq!(defaults.life, Life::default());
+        assert!(!defaults.life.catch_up);
         assert_eq!(
             parse("[power]\nac_fps = 60").unwrap().power.battery_fps,
             defaults.power.battery_fps
@@ -204,6 +209,7 @@ mod tests {
             [life]
             easy_mode = true
             population_cap = 42
+            catch_up = true
         ",
         )
         .unwrap();
@@ -228,7 +234,8 @@ mod tests {
             config.life,
             Life {
                 easy_mode: Some(true),
-                population_cap: Some(42)
+                population_cap: Some(42),
+                catch_up: true,
             }
         );
     }
@@ -268,8 +275,10 @@ mod tests {
 
     #[test]
     fn cli_overrides_only_explicit_values() {
-        let config =
-            parse("[plants]\nsway = true\n[life]\neasy_mode = true\npopulation_cap = 42").unwrap();
+        let config = parse(
+            "[plants]\nsway = true\n[life]\neasy_mode = true\npopulation_cap = 42\ncatch_up = false",
+        )
+        .unwrap();
         assert_eq!(merge(config, CliOverrides::default()), config);
         let effective = merge(
             config,
@@ -278,10 +287,9 @@ mod tests {
                     sway: false,
                     sway_on_battery: true,
                 },
-                life: Life {
-                    easy_mode: Some(false),
-                    population_cap: Some(30),
-                },
+                easy_mode: Some(false),
+                population_cap: Some(30),
+                catch_up: Some(true),
             },
         );
         assert_eq!(
@@ -295,8 +303,20 @@ mod tests {
             effective.life,
             Life {
                 easy_mode: Some(false),
-                population_cap: Some(30)
+                population_cap: Some(30),
+                catch_up: true,
             }
+        );
+        assert!(
+            !merge(
+                effective,
+                CliOverrides {
+                    catch_up: Some(false),
+                    ..CliOverrides::default()
+                }
+            )
+            .life
+            .catch_up
         );
         assert_eq!(effective.power, config.power);
     }
