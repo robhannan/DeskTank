@@ -1,7 +1,7 @@
 //! The JNI entry points the Kotlin shim calls (`io.github.robhannan.desktank.Native`),
 //! the render thread they feed, and the logcat logger.
 //!
-//! The shim supplies the files directory before forwarding Dream callbacks.
+//! The shim initializes the process before forwarding host callbacks.
 //! The render thread owns the GPU device, surfaces, tank and save store.
 //! `surfaceDestroyed` alone waits for the surface to be dropped (up to
 //! [`DESTROY_WAIT`]). The render thread blocks on its channel while idle
@@ -16,15 +16,21 @@ use std::sync::{Mutex, Once, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, TankSurface, wgpu};
+use desktank_sim::scene;
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jfloat, jint, jlong};
 use log::{Level, LevelFilter};
 use ndk::native_window::NativeWindow;
 
+use crate::brush::Brush;
 use crate::persist::{Persistence, start_world};
-use crate::{DreamId, Dreams, Event, backend_order, log_enabled, log_override, tv_grid};
+use crate::touch::{Touch, TouchEvent};
+use crate::{
+    Drawable, Event, HostId, HostKind, Hosts, backend_order, log_enabled, log_override, phone_grid,
+    tv_grid,
+};
 
 /// Logcat tag for everything this crate logs, wgpu's lines included.
 const TAG: &str = "DeskTank";
@@ -42,17 +48,38 @@ const DESTROY_WAIT: Duration = Duration::from_secs(2);
 
 /// The render thread's inbox; spawned on the first callback.
 static RENDER: Mutex<Option<Sender<Command>>> = Mutex::new(None);
-static FILES_DIR: OnceLock<PathBuf> = OnceLock::new();
+static SETTINGS: OnceLock<Settings> = OnceLock::new();
+
+struct Settings {
+    files_dir: PathBuf,
+    television: bool,
+    /// Relates Android's uptime clock (`MotionEvent` timestamps) to `Instant`.
+    uptime: Duration,
+    epoch: Instant,
+}
+
+impl Settings {
+    fn now(&self) -> Duration {
+        self.uptime + self.epoch.elapsed()
+    }
+}
 
 /// One callback, for the render thread.
 struct Command {
-    dream: DreamId,
-    event: Event,
-    /// The new surface's window, with [`Event::SurfaceCreated`].
-    window: Option<NativeWindow>,
-    /// Signalled once the surface is dropped, with
-    /// [`Event::SurfaceDestroyed`].
-    done: Option<SyncSender<()>>,
+    id: HostId,
+    callback: Callback,
+}
+
+enum Callback {
+    Lifecycle(Event),
+    Created(Option<NativeWindow>),
+    /// Acknowledged once the surface is dropped.
+    Destroyed(SyncSender<()>),
+    Touch(TouchEvent, Duration),
+}
+
+fn millis(time: jlong) -> Duration {
+    Duration::from_millis(u64::try_from(time).unwrap_or(0))
 }
 
 /// Posts `command` to the render thread, starting it (and the logger) on
@@ -61,10 +88,14 @@ fn post(command: Command) {
     init_logging();
     let mut render = RENDER.lock().unwrap_or_else(PoisonError::into_inner);
     if render.is_none() {
+        let Some(settings) = SETTINGS.get() else {
+            log::error!("host callback before initialization");
+            return;
+        };
         let (tx, rx) = mpsc::channel();
         match std::thread::Builder::new()
             .name("desktank-render".to_owned())
-            .spawn(move || run(&rx))
+            .spawn(move || run(&rx, settings))
         {
             Ok(_) => *render = Some(tx),
             Err(e) => {
@@ -95,8 +126,8 @@ impl raw_window_handle::HasDisplayHandle for AndroidDisplay {
     }
 }
 
-/// A Dream's configured surface.
-struct DreamSurface {
+/// A host's configured surface.
+struct HostSurface {
     surface: TankSurface,
     /// When the surface was created, until its first frame is logged.
     created_at: Option<Instant>,
@@ -104,34 +135,35 @@ struct DreamSurface {
 
 /// The render thread's state.
 struct Host {
-    dreams: Dreams,
+    hosts: Hosts,
     /// The instance and device, created on the first surface and kept for
-    /// the process's life so a later Dream starts faster.
+    /// the process's life so later surfaces start faster.
     gpu: Option<(wgpu::Instance, Gpu)>,
-    surfaces: HashMap<DreamId, DreamSurface>,
+    surfaces: HashMap<HostId, HostSurface>,
     /// The shared tank, loaded or created on the first drawable surface
-    /// and kept across Dreams for the process's life.
+    /// and kept across hosts for the process's life.
     tank: Option<Tank>,
     persistence: Option<Persistence>,
-    /// The Dream and size last drawn, so a change redraws.
-    drawn: Option<(DreamId, (u32, u32))>,
-    /// Origin of the clock the tank's pacer runs on.
-    epoch: Instant,
+    /// The host and size last drawn, so a change redraws.
+    drawn: Option<Drawable>,
+    settings: &'static Settings,
+    touch: Touch,
+    brush: Option<Brush>,
 }
 
 /// The render thread: applies commands and draws until every sender is
 /// gone (never, in practice: the inbox is static).
-fn run(rx: &Receiver<Command>) {
-    let mut host = Host::new();
+fn run(rx: &Receiver<Command>, settings: &'static Settings) {
+    let mut host = Host::new(settings);
     let mut wake_at: Option<Duration> = None;
     loop {
         let first = match wake_at {
-            // Idle: no Dream draws, so block until a callback arrives.
+            // Idle: no host draws, so block until a callback arrives.
             None => match rx.recv() {
                 Ok(c) => Some(c),
                 Err(_) => return,
             },
-            Some(at) => match rx.recv_timeout(at.saturating_sub(host.now())) {
+            Some(at) => match rx.recv_timeout(at.saturating_sub(settings.now())) {
                 Ok(c) => Some(c),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -139,7 +171,9 @@ fn run(rx: &Receiver<Command>) {
         };
         if let Some(command) = first {
             host.apply(command);
-            while let Ok(command) = rx.try_recv() {
+            // Bound each pass so a stream of touch samples can't starve a
+            // frame. Keep sample order for the slop and long-press checks.
+            for command in rx.try_iter().take(127) {
                 host.apply(command);
             }
         }
@@ -148,75 +182,90 @@ fn run(rx: &Receiver<Command>) {
 }
 
 impl Host {
-    fn new() -> Self {
+    fn new(settings: &'static Settings) -> Self {
         Self {
-            dreams: Dreams::default(),
+            hosts: Hosts::default(),
             gpu: None,
             surfaces: HashMap::new(),
             tank: None,
             persistence: None,
             drawn: None,
-            epoch: Instant::now(),
+            settings,
+            touch: Touch::default(),
+            brush: None,
         }
     }
 
-    fn now(&self) -> Duration {
-        self.epoch.elapsed()
+    fn active(&self) -> Option<Drawable> {
+        self.hosts
+            .active_with_surface(|id| self.surfaces.contains_key(&id))
     }
 
-    fn apply(&mut self, command: Command) {
-        let Command {
-            dream,
-            event,
-            window,
-            done,
-        } = command;
+    fn apply(&mut self, Command { id, callback }: Command) {
+        let previous = self.active();
+        let event = match callback {
+            Callback::Touch(event, at) => {
+                if let Some(host) = previous.filter(|h| h.id == id && h.kind == HostKind::App) {
+                    self.apply_touch(host.size, event, at);
+                }
+                return;
+            }
+            Callback::Created(window) => {
+                if let Some(window) = window {
+                    self.surface_created(id, window);
+                }
+                Event::SurfaceCreated
+            }
+            Callback::Destroyed(done) => {
+                // Release the native window before acknowledging the callback
+                // or starting disk I/O.
+                self.surfaces.remove(&id);
+                let _ = done.send(());
+                Event::SurfaceDestroyed
+            }
+            Callback::Lifecycle(event) => event,
+        };
+        if let Event::SurfaceChanged { width, height } = event
+            && let (Some(s), Some((_, gpu))) = (self.surfaces.get_mut(&id), &self.gpu)
+        {
+            s.surface.resize(gpu, width, height);
+        }
+        self.hosts.handle(id, event);
+        let active = self.active();
+        if previous.map(|h| h.id) != active.map(|h| h.id) {
+            self.drawn = None;
+            if let Some(old) = previous.filter(|h| h.kind == HostKind::App) {
+                self.cancel_touch(old.size);
+            }
+            if active.is_none()
+                && let Some(tank) = &mut self.tank
+            {
+                tank.pause();
+            }
+        }
+
         let save_reason = match event {
-            Event::DreamingStopped => Some("dreaming stopped"),
-            Event::SurfaceDestroyed if self.dreams.active().is_some_and(|(id, _)| id == dream) => {
+            Event::Stopped => Some("host stopped"),
+            Event::SurfaceDestroyed if previous.is_some_and(|h| h.id == id) => {
                 Some("active surface destroyed")
             }
             _ => None,
         };
-        self.dreams.handle(dream, event);
-        match event {
-            Event::SurfaceCreated => {
-                if let Some(window) = window {
-                    self.surface_created(dream, window);
-                }
-            }
-            Event::SurfaceChanged { width, height } => {
-                if let (Some(s), Some((_, gpu))) = (self.surfaces.get_mut(&dream), &self.gpu) {
-                    s.surface.resize(gpu, width, height);
-                }
-            }
-            Event::SurfaceDestroyed => {
-                // The surface (and the window it holds) must go before
-                // `surfaceDestroyed` returns.
-                self.surfaces.remove(&dream);
-            }
-            Event::DreamingStarted | Event::DreamingStopped => {}
-        }
-        if let Some(done) = done {
-            // The caller may have stopped waiting; nothing to do then.
-            let _ = done.send(());
-        }
-        // Acknowledge surface release before starting disk I/O.
         if let (Some(why), Some(tank), Some(persist)) =
             (save_reason, &self.tank, &mut self.persistence)
         {
-            persist.save(tank.world(), why, self.epoch.elapsed());
+            persist.save(tank.world(), why, self.settings.now());
         }
     }
 
-    fn surface_created(&mut self, dream: DreamId, window: NativeWindow) {
+    fn surface_created(&mut self, id: HostId, window: NativeWindow) {
         let created_at = Instant::now();
         let (width, height) = window_size(&window);
         match self.make_surface(window, width, height) {
             Ok(surface) => {
                 self.surfaces.insert(
-                    dream,
-                    DreamSurface {
+                    id,
+                    HostSurface {
                         surface,
                         created_at: Some(created_at),
                     },
@@ -286,60 +335,100 @@ impl Host {
         Err(format!("no backend worked: {errors:?}"))
     }
 
-    /// Advances and draws the active Dream's tank, if a Dream is drawing.
-    /// Returns when to call again, or `None` to idle until a callback.
+    fn init_tank(&mut self, (width, height): (u32, u32)) {
+        if self.tank.is_some() {
+            return;
+        }
+        let grid = if self.settings.television {
+            tv_grid(width, height)
+        } else {
+            phone_grid(width, height)
+        };
+        let dir = &self.settings.files_dir;
+        self.persistence = match Persistence::open(dir, self.settings.now()) {
+            Ok(persist) => Some(persist),
+            Err(e) => {
+                log::warn!("could not open the tank store under {}: {e}", dir.display());
+                None
+            }
+        };
+        match start_world(self.persistence.as_mut(), grid) {
+            Ok(world) => {
+                match scene::material(&world, "sand") {
+                    Ok(sand) => self.brush = Some(Brush::new(sand)),
+                    Err(e) => log::error!("touch tools unavailable: {e}"),
+                }
+                self.tank = Some(Tank::new(world, TankConfig::default()));
+            }
+            Err(e) => log::error!("no tank: {e}"),
+        }
+    }
+
+    fn apply_touch(&mut self, size: (u32, u32), event: TouchEvent, at: Duration) {
+        self.init_tank(size);
+        self.touch_actions(size, |touch, emit| touch.handle(event, at, emit));
+    }
+
+    fn cancel_touch(&mut self, size: (u32, u32)) {
+        self.touch_actions(size, |touch, emit| touch.cancel(emit));
+    }
+
+    fn touch_actions(
+        &mut self,
+        size: (u32, u32),
+        generate: impl FnOnce(&mut Touch, &mut dyn FnMut(crate::touch::TouchAction)),
+    ) {
+        if let (Some(brush), Some(tank)) = (&mut self.brush, &mut self.tank) {
+            let mut edited = false;
+            generate(&mut self.touch, &mut |action| {
+                edited |= brush.apply(action, tank, size);
+            });
+            if edited && let Some(persist) = &mut self.persistence {
+                persist.mark_edited();
+            }
+        }
+    }
+
+    /// Advances and draws the active host's tank. Returns the next wake
+    /// time, or `None` to idle until a callback.
     fn frame(&mut self) -> Option<Duration> {
-        let wake_at = self.draw_active();
+        let active = self.active()?;
+        self.init_tank(active.size);
+        let now = self.settings.now();
+        if active.kind == HostKind::App {
+            self.touch_actions(active.size, |touch, emit| touch.advance(now, emit));
+        }
+        let wake_at = self.draw_active(active, now);
         if wake_at.is_none() {
-            // Nothing drawing: world time stops (SPEC §6.2) and nothing runs.
+            // A draw failed; let another drawable host take over if present.
+            self.cancel_touch(active.size);
+            self.drawn = None;
             if let Some(tank) = &mut self.tank {
                 tank.pause();
             }
-            self.drawn = None;
+            return self.active().filter(|h| h.id != active.id).map(|_| now);
         }
-        wake_at
+        wake_at.map(|wake| self.touch.deadline().map_or(wake, |touch| wake.min(touch)))
     }
 
-    /// [`Host::frame`]'s work while a Dream can draw; `None` if none can.
-    fn draw_active(&mut self) -> Option<Duration> {
-        let (dream, size) = self.dreams.active()?;
-        // No device or no surface means creating them failed (logged), or a
-        // draw failed; nothing can draw until the next surface.
-        let (_, gpu) = self.gpu.as_ref()?;
-        let s = self.surfaces.get_mut(&dream)?;
-        if self.tank.is_none() {
-            let grid = tv_grid(size.0, size.1);
-            if let Some(dir) = FILES_DIR.get() {
-                self.persistence = match Persistence::open(dir, self.epoch.elapsed()) {
-                    Ok(persist) => Some(persist),
-                    Err(e) => {
-                        log::warn!("could not open the tank store under {}: {e}", dir.display());
-                        None
-                    }
-                };
-            } else {
-                log::warn!("no app files directory; running without saves");
-            }
-            match start_world(self.persistence.as_mut(), grid) {
-                Ok(world) => {
-                    let mut tank = Tank::new(world, TankConfig::default());
-                    // A Dream is a screensaver: no optional sway (T6d).
-                    tank.set_saver_mode(true);
-                    self.tank = Some(tank);
-                }
-                Err(e) => {
-                    log::error!("no tank: {e}");
-                    return None;
-                }
-            }
-        }
+    fn draw_active(&mut self, active: Drawable, now: Duration) -> Option<Duration> {
         let tank = self.tank.as_mut()?;
-        if self.drawn != Some((dream, size)) {
-            // A new Dream or size: the old frame isn't on this surface.
+        let (_, gpu) = self.gpu.as_ref()?;
+        let s = self.surfaces.get_mut(&active.id)?;
+        if self.drawn != Some(active) {
+            // A different host or size needs a frame on this surface.
+            tank.set_saver_mode(active.kind == HostKind::Dream);
             tank.invalidate();
-            self.drawn = Some((dream, size));
+            self.drawn = Some(active);
         }
-        let request = tank.tick(self.epoch.elapsed());
+        let request = tank.tick(now);
+        if active.kind == HostKind::App
+            && let Some(brush) = &mut self.brush
+            && brush.hold(tank.world_mut(), request.sim_ticks)
+            && let Some(persist) = &mut self.persistence
+        {
+            persist.mark_edited();
+        }
         if request.redraw {
             let started = Instant::now();
             match tank.draw(gpu, &s.surface) {
@@ -348,11 +437,12 @@ impl Host {
                         let (w, h) = s.surface.size();
                         log::info!(
                             "first frame {w}x{h} {:?} at {}x, {} ms after surfaceCreated \
-                             (the draw took {} ms)",
+                             (the draw took {} ms, host {:?})",
                             s.surface.format(),
                             tank.layout((w, h)).scale,
                             created.elapsed().as_millis(),
-                            started.elapsed().as_millis()
+                            started.elapsed().as_millis(),
+                            active.kind,
                         );
                     }
                 }
@@ -363,13 +453,13 @@ impl Host {
                     // A validation error, not a transient: drop the surface
                     // rather than retry it every tick.
                     log::error!("draw failed, dropping the surface: {e}");
-                    self.surfaces.remove(&dream);
+                    self.surfaces.remove(&active.id);
                     return None;
                 }
             }
         }
         if let Some(persist) = &mut self.persistence {
-            persist.autosave(tank.world(), self.epoch.elapsed());
+            persist.autosave(tank.world(), self.settings.now());
         }
         Some(request.wake_at)
     }
@@ -386,31 +476,35 @@ fn system_property(name: &str) -> Option<String> {
         .filter(|p| !p.is_empty())
 }
 
-/// `Native.setFilesDir(path)`.
+/// `Native.init(path, television, uptimeMs)`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_robhannan_desktank_Native_setFilesDir<'local>(
+pub extern "system" fn Java_io_github_robhannan_desktank_Native_init<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
     path: JString<'local>,
+    television: jboolean,
+    uptime_ms: jlong,
 ) {
+    let epoch = Instant::now();
     env.with_env(|env| -> jni::errors::Result<()> {
-        let path = PathBuf::from(path.try_to_string(env)?);
-        let dir = FILES_DIR.get_or_init(|| path.clone());
-        if dir != &path {
-            init_logging();
-            log::warn!("ignoring change to the app files directory");
-        }
+        let settings = Settings {
+            files_dir: PathBuf::from(path.try_to_string(env)?),
+            television,
+            uptime: millis(uptime_ms),
+            epoch,
+        };
+        let _ = SETTINGS.set(settings);
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
-/// `Native.surfaceCreated(dream, Surface)`.
+/// `Native.surfaceCreated(id, Surface)`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_robhannan_desktank_Native_surfaceCreated<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    dream: jlong,
+    id: jlong,
     surface: JObject<'local>,
 ) {
     env.with_env(|env| -> jni::errors::Result<()> {
@@ -423,98 +517,116 @@ pub extern "system" fn Java_io_github_robhannan_desktank_Native_surfaceCreated<'
         // and may move to the render thread (`NativeWindow` is `Send`).
         let window =
             unsafe { NativeWindow::from_surface(env.get_raw().cast(), surface.as_raw().cast()) };
-        let missing = window.is_none();
-        // Posted even without a window, so the Dream's state stays right.
-        post(Command {
-            dream,
-            event: Event::SurfaceCreated,
-            window,
-            done: None,
-        });
-        if missing {
+        if window.is_none() {
+            init_logging();
             log::error!("surfaceCreated: no ANativeWindow for the Surface");
         }
+        post(Command {
+            id,
+            callback: Callback::Created(window),
+        });
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
-/// `Native.surfaceChanged(dream, width, height)`.
+/// `Native.surfaceChanged(id, width, height)`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_robhannan_desktank_Native_surfaceChanged<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    dream: jlong,
+    id: jlong,
     width: jint,
     height: jint,
 ) {
     let side = |v: jint| u32::try_from(v).unwrap_or(0);
     forward(
         &mut env,
-        dream,
-        Event::SurfaceChanged {
+        id,
+        Callback::Lifecycle(Event::SurfaceChanged {
             width: side(width),
             height: side(height),
-        },
+        }),
     );
 }
 
-/// `Native.surfaceDestroyed(dream)`: returns once the render thread has
+/// `Native.surfaceDestroyed(id)`: returns once the render thread has
 /// dropped the surface (or after [`DESTROY_WAIT`]).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_robhannan_desktank_Native_surfaceDestroyed<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    dream: jlong,
+    id: jlong,
 ) {
-    env.with_env(|_| -> jni::errors::Result<()> {
-        let (done, dropped) = mpsc::sync_channel(1);
-        post(Command {
-            dream,
-            event: Event::SurfaceDestroyed,
-            window: None,
-            done: Some(done),
-        });
-        // A disconnect means the render thread is gone, and its surfaces
-        // with it.
-        if let Err(RecvTimeoutError::Timeout) = dropped.recv_timeout(DESTROY_WAIT) {
-            log::error!("surfaceDestroyed: the render thread didn't release the surface in time");
-        }
-        Ok(())
-    })
-    .resolve::<ThrowRuntimeExAndDefault>();
+    let (done, dropped) = mpsc::sync_channel(1);
+    forward(&mut env, id, Callback::Destroyed(done));
+    // A disconnect means the render thread is gone, and its surfaces
+    // with it.
+    if let Err(RecvTimeoutError::Timeout) = dropped.recv_timeout(DESTROY_WAIT) {
+        log::error!("surfaceDestroyed: the render thread didn't release the surface in time");
+    }
 }
 
-/// `Native.dreamingStarted(dream)`.
+/// `Native.started(id, app)`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_robhannan_desktank_Native_dreamingStarted<'local>(
+pub extern "system" fn Java_io_github_robhannan_desktank_Native_started<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    dream: jlong,
+    id: jlong,
+    app: jboolean,
 ) {
-    forward(&mut env, dream, Event::DreamingStarted);
+    let kind = if app { HostKind::App } else { HostKind::Dream };
+    forward(&mut env, id, Callback::Lifecycle(Event::Started(kind)));
 }
 
-/// `Native.dreamingStopped(dream)`.
+/// `Native.stopped(id)`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_robhannan_desktank_Native_dreamingStopped<'local>(
+pub extern "system" fn Java_io_github_robhannan_desktank_Native_stopped<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    dream: jlong,
+    id: jlong,
 ) {
-    forward(&mut env, dream, Event::DreamingStopped);
+    forward(&mut env, id, Callback::Lifecycle(Event::Stopped));
 }
 
-/// Posts `event` inside `with_env`, so a panic becomes a Java exception
-/// instead of unwinding into the JVM (where unwinding is enabled).
-fn forward(env: &mut EnvUnowned<'_>, dream: DreamId, event: Event) {
+/// `Native.touch(id, action, pointerId, x, y, eventTimeMs, density)`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_robhannan_desktank_Native_touch<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    id: jlong,
+    action: jint,
+    pointer_id: jint,
+    x: jfloat,
+    y: jfloat,
+    event_time_ms: jlong,
+    density: jfloat,
+) {
+    let point = (f64::from(x), f64::from(y));
+    let event = match action {
+        // MotionEvent.ACTION_DOWN / UP / MOVE / CANCEL; Kotlin maps pointer
+        // down/up to the same codes so each sample describes one pointer.
+        0 => TouchEvent::Down {
+            id: pointer_id,
+            point,
+            density: f64::from(density),
+        },
+        1 => TouchEvent::Up(pointer_id),
+        2 => TouchEvent::Move {
+            id: pointer_id,
+            point,
+        },
+        3 => TouchEvent::Cancel,
+        _ => return,
+    };
+    forward(&mut env, id, Callback::Touch(event, millis(event_time_ms)));
+}
+
+/// Posts the callback inside `with_env`, so a panic becomes a Java exception
+/// instead of unwinding into the JVM.
+fn forward(env: &mut EnvUnowned<'_>, id: HostId, callback: Callback) {
     env.with_env(|_| -> jni::errors::Result<()> {
-        post(Command {
-            dream,
-            event,
-            window: None,
-            done: None,
-        });
+        post(Command { id, callback });
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
