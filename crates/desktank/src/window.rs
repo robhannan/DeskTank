@@ -1068,9 +1068,14 @@ impl ApplicationHandler<Wake> for App {
                 if self.settings.life.catch_up
                     && self.persist.as_ref().is_some_and(Persistence::owns)
                     && let Some(path) = path
-                    && let Ok(modified) = path.metadata().and_then(|metadata| metadata.modified())
                 {
-                    catch_up(&mut s.tank, modified);
+                    match path.metadata().and_then(|metadata| metadata.modified()) {
+                        Ok(modified) => catch_up(&mut s.tank, modified),
+                        Err(e) => eprintln!(
+                            "desktank window: no catch-up, can't read when {} was saved: {e}",
+                            path.display()
+                        ),
+                    }
                 }
                 // A loaded tank keeps the creatures it had.
                 let fish = if fresh { self.fish } else { 0 };
@@ -1350,7 +1355,7 @@ impl ApplicationHandler<Wake> for App {
                 (PowerDecision::Pause(_), PowerDecision::Run { max_fps }) => {
                     let paused_at = s.paused_at.take();
                     if self.settings.life.catch_up
-                        && self.persist.as_ref().is_none_or(Persistence::owns)
+                        && self.persist.as_ref().is_some_and(Persistence::owns)
                         && let Some(paused_at) = paused_at
                     {
                         catch_up(&mut s.tank, paused_at);

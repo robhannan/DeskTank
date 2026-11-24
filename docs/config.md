@@ -42,8 +42,13 @@ sway_on_battery = false
 catch_up = false
 ```
 
-Catch-up applies elapsed wall-clock time in one summarised step, including
-time the computer spent asleep. Reopening uses the loaded save's last
-modification time. Gaps shorter than one minute are ignored and gaps over
-24 hours are capped at 24 hours. Read-only viewers skip catch-up. Changes
-to `catch_up` take effect on the next resume.
+Catch-up applies elapsed wall-clock time in one summarised step. Reopening
+uses the loaded save's last modification time. A resume counts from when
+the window paused: when it was hidden, occluded or minimised, and on macOS
+also when the display slept, the session locked or power ran low. Until the
+Windows and Linux power monitors land (O1), a system sleep with the window
+in view doesn't pause it there, so that time isn't caught up. Gaps shorter
+than one minute are ignored and gaps over 24 hours are capped at 24 hours.
+Only the process that owns the saved tank catches up: read-only viewers and
+`--no-save` tanks don't. Changes to `catch_up` take effect on the next
+resume.
