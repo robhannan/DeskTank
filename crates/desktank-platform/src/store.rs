@@ -299,6 +299,24 @@ pub fn config_dir() -> Option<PathBuf> {
     }
 }
 
+/// The per-user directory for DeskTank's instance lock and local socket.
+#[must_use]
+pub fn runtime_dir() -> Option<PathBuf> {
+    if let Some(dir) = path_var("DESKTANK_RUNTIME_DIR") {
+        return Some(dir);
+    }
+    if cfg!(target_os = "macos") {
+        Some(path_var("HOME")?.join("Library/Caches/DeskTank"))
+    } else if cfg!(windows) {
+        Some(path_var("LOCALAPPDATA")?.join("DeskTank"))
+    } else {
+        path_var("XDG_RUNTIME_DIR")
+            .or_else(|| path_var("XDG_CACHE_HOME"))
+            .or_else(|| Some(path_var("HOME")?.join(".cache")))
+            .map(|dir| dir.join("desktank"))
+    }
+}
+
 fn path_var(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .filter(|value| !value.is_empty())

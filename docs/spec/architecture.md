@@ -142,8 +142,8 @@ directory for custom materials and species is a stretch goal.
   - `desktank run [--wallpaper] [--overlay] [--idle]`;
   - `desktank window` (a normal resizable window, for development and
     for users who want a desk-toy window);
-  - `desktank interact on|off|toggle`, `desktank feed [FOOD]` and
-    `desktank pause` (sent over IPC to the running app);
+  - `desktank interact on|off|toggle`, `desktank feed [FOOD]`,
+    `desktank pause` and `desktank status` (sent over IPC to the running app);
   - `desktank capture --seed N --time HH:MM --size WxH --frames K --script FILE --out DIR`
     (headless offscreen renders; scripted pours make the output
     reproducible);
@@ -152,16 +152,25 @@ directory for custom materials and species is a stretch goal.
     and from the web version or another machine; WB3);
   - `desktank saver install|uninstall`.
 - **Single instance and IPC.**
-  - An advisory lock (`fd-lock`) in the runtime dir is released
+  - An advisory lock (`File::try_lock`) in the runtime dir is released
     automatically if the process crashes, so a stale lock can't block
     startup.
-  - The local socket lives at `$XDG_RUNTIME_DIR/desktank.sock` on Linux
-    and in the app's cache dir on macOS, both mode `0600`. On Windows it
+  - The local socket lives at `$XDG_RUNTIME_DIR/desktank/desktank.sock` on
+    Linux and in the app's cache dir on macOS, both mode `0600`. On Windows it
     is a named pipe with a DACL for the current user only.
   - The protocol is line-based. Commands are `interact`, `feed`,
     `pause`, `saver-handover` and `status`. Arguments are validated
     against the material table and config, unknown input is rejected,
     and each line is capped at 1 KB.
+  - *(O2: `desktank window` hosts IPC, including `desktank status`, until
+    `desktank run` is implemented. The runtime directory is
+    `$XDG_RUNTIME_DIR/desktank` on Linux (with an XDG cache fallback),
+    `~/Library/Caches/DeskTank` on macOS and `%LOCALAPPDATA%\DeskTank`
+    on Windows. `DESKTANK_RUNTIME_DIR` overrides it. On Unix the runtime
+    directory is private (mode `0700`). Windows uses a per-user local
+    pipe name with the default DACL pending a
+    current-user-only DACL. The blocking Windows pipe API has no read
+    timeout, so an idle connection can stall IPC on Windows.)*
 - **Start at login**: `SMAppService` on macOS, the `HKCU\…\Run` key on
   Windows, and an XDG autostart `.desktop` file on Linux.
 - **Logging**: `tracing`, with `tracing-appender` writing a rotating file

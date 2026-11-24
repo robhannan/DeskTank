@@ -32,6 +32,12 @@ confidence-threshold = 0.9
 # The list anticipates future dependencies; don't warn about unused entries.
 unused-allowed-license = "allow"
 
+# BSD Zero Clause is permissive. Interprocess uses these two support crates.
+exceptions = [
+    { allow = ["0BSD"], crate = "doctest-file" },
+    { allow = ["0BSD"], crate = "recvmsg" },
+]
+
 [licenses.private]
 # Workspace crates are `publish = false` and carry the repository licence.
 ignore = true
