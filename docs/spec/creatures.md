@@ -168,7 +168,10 @@
     4, betta 2, honey gourami 1, otocinclus 3. Cherry shrimp morphs red
     (palette), wild (brown, the wildtype), blue and yellow; guppy strains
     wild (palette and wildtype), red and blue, and a plainer, deeper,
-    short-tailed female. Predators: betta 2.5 cm (fry, cherry shrimp,
+    short-tailed female; betta morphs wild (red; palette and wildtype),
+    royal blue, copper, koi (red and black patches on white), marble
+    (blue and red patches), butterfly (white-edged fins), yellow and
+    lavender. Predators: betta 2.5 cm (fry, cherry shrimp,
     crabs), honey gourami and guppy 1.2 cm (fry, shrimplets, crabs).
   - **Sexes.** Every creature is male or female. One added from the
     palette (or a script or host without a sex) takes whichever sex its

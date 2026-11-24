@@ -523,13 +523,13 @@ fn same_morph_lines_breed_true_and_mixed_lines_revert_to_wildtype() {
 
 #[test]
 fn a_hungry_predator_eats_small_prey_it_touches() {
-    // A shallow tank, about 14 rows of water: room for the betta's 12-cell
-    // body (though below its `min_depth`), so the betta (surface) and
+    // A shallow tank, 18 rows of water: room for the betta's 16-cell
+    // finnage (though below its `min_depth`), so the betta (surface) and
     // shrimp (bottom) meet.
     let mut w = World::new(
         WorldConfig {
             width: 40,
-            height: 16,
+            height: 20,
             seed: 8,
             water_level: 0.9,
         },
@@ -538,8 +538,8 @@ fn a_hungry_predator_eats_small_prey_it_touches() {
     .unwrap();
     let betta = species(&w, "betta");
     let shrimp = species(&w, "cherry_shrimp");
-    let hunter = w.add_creature(betta, 20, 7).unwrap();
-    let prey = w.add_creature(shrimp, 20, 14).unwrap();
+    let hunter = w.add_creature(betta, 20, 10).unwrap();
+    let prey = w.add_creature(shrimp, 20, 18).unwrap();
     let energy = desktank_sim::ENERGY_RESERVE / 2;
     w.set_creature_energy(hunter, energy);
     let eaten = (1..=120 * TICKS_PER_SECOND).find(|_| {
@@ -560,7 +560,7 @@ fn predators_leave_larger_creatures_alone_and_easy_mode_stops_them() {
         World::new(
             WorldConfig {
                 width: 40,
-                height: 16,
+                height: 20,
                 seed,
                 water_level: 0.9,
             },
@@ -571,8 +571,8 @@ fn predators_leave_larger_creatures_alone_and_easy_mode_stops_them() {
     let minutes = 3 * 60 * TICKS_PER_SECOND;
     // An amano (4 cm) is too big for the betta (2.5 cm prey).
     let mut w = shallow(9);
-    w.add_creature(species(&w, "betta"), 20, 7).unwrap();
-    w.add_creature(species(&w, "amano_shrimp"), 20, 14).unwrap();
+    w.add_creature(species(&w, "betta"), 20, 10).unwrap();
+    w.add_creature(species(&w, "amano_shrimp"), 20, 18).unwrap();
     for _ in 0..minutes {
         w.tick();
     }
@@ -580,8 +580,8 @@ fn predators_leave_larger_creatures_alone_and_easy_mode_stops_them() {
     // A cherry it would eat survives in easy mode.
     let mut w = shallow(8);
     w.set_easy_mode(true);
-    w.add_creature(species(&w, "betta"), 20, 7).unwrap();
-    w.add_creature(species(&w, "cherry_shrimp"), 20, 14)
+    w.add_creature(species(&w, "betta"), 20, 10).unwrap();
+    w.add_creature(species(&w, "cherry_shrimp"), 20, 18)
         .unwrap();
     for _ in 0..minutes {
         w.tick();
