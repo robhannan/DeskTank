@@ -29,6 +29,10 @@ pub(super) mod salt {
     pub const PACE: u64 = 0x5105;
     pub const SHAPE_ALONG: u64 = 0x5106;
     pub const SHAPE_ACROSS: u64 = 0x5107;
+    pub const SPLIT: u64 = 0x5108;
+    pub const SIDE: u64 = 0x5109;
+    pub const LEAD_PACE: u64 = 0x510a;
+    pub const REACT: u64 = 0x510b;
     pub const SPEED: u64 = 0x5200;
     pub const MOOD: u64 = 0x5201;
     pub const RESTLESS: u64 = 0x5202;
@@ -181,6 +185,12 @@ mod tests {
             salt::WOBBLE_ACROSS,
             salt::SPACING,
             salt::PACE,
+            salt::SHAPE_ALONG,
+            salt::SHAPE_ACROSS,
+            salt::SPLIT,
+            salt::SIDE,
+            salt::LEAD_PACE,
+            salt::REACT,
             salt::SPEED,
             salt::MOOD,
             salt::RESTLESS,

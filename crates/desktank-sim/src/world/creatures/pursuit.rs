@@ -25,6 +25,15 @@
 //!   its range), or else straight away from the threat. Already in cover,
 //!   it holds still. It flees at a burst speed: its top speed scaled by its
 //!   size, at least its cruising speed, so fry are slow.
+//! - **Startle.** A schooler that is calm and within one and a half of its
+//!   species' full-grown lengths of a frightened schoolmate catches the fright
+//!   (see `World::startle`): it takes `STARTLE_HOP` ticks less than that
+//!   mate has left, so the wave fades as it passes through the school, and
+//!   it runs the way the mate is heading. Each fish looks only every 3–8
+//!   ticks (its own reaction time), so the fright ripples outward from the
+//!   fish that saw the threat rather than reaching all at once. Calm tanks
+//!   pay nothing: the look is skipped unless the tick's snapshot of the
+//!   school (`Creatures::school`) holds a frightened fish.
 //! - **Cover.** A creature is in cover when [`COVER_CELLS`] plant cells
 //!   within [`COVER_BANDS`] of its band lie within [`COVER_REACH`] cells of
 //!   its body. A predator neither sees nor strikes prey in cover.
@@ -90,6 +99,14 @@ pub const COVER_CELLS: u32 = 4;
 pub const TERRITORY_MARGIN: i32 = 6;
 /// How far a creature flees with no cover near, in cells.
 const FLEE_RUN: i32 = 24;
+/// How far a startle reaches, in halves of the species' full-grown length.
+const STARTLE_REACH: i32 = 3;
+/// Ticks of fright a startle loses with each fish it passes through.
+pub(super) const STARTLE_HOP: u16 = 4;
+/// Ticks of a mate's heading the startled run from, behind the mate.
+const STARTLE_BEHIND: i32 = 12;
+/// A schooler's reaction time, 3–8 ticks (each fish draws its own).
+const REACT_TICKS: (u64, u64) = (3, 8);
 
 /// A creature as the others see it at the start of a tick.
 #[derive(Clone, Copy, Debug)]
@@ -403,6 +420,47 @@ impl World {
             }
         }
         self.run_from(k, c, fx, fy);
+    }
+
+    /// A calm schooler within reach of a frightened schoolmate takes fright
+    /// from it: [`STARTLE_HOP`] ticks less, running away from a point
+    /// behind the mate along its heading (the way it is going), or from
+    /// the mate itself while it is still. It looks every 3–8 ticks, from
+    /// its own reaction time. The start-of-tick snapshot makes the wave
+    /// independent of update order.
+    pub(super) fn startle(&self, k: &Kind, c: &mut Creature) {
+        if !self.creatures.scared || !k.schooling || c.fear > 0 {
+            return;
+        }
+        let delay = self
+            .quirks(c)
+            .percent(salt::REACT, REACT_TICKS.0, REACT_TICKS.1);
+        if !(self.tick + u64::from(c.id.0)).is_multiple_of(delay) {
+            return;
+        }
+        let grown = self.kind(c.species).map_or(k.w, |g| g.w);
+        let reach = i64::from(STARTLE_REACH * grown * ONE / 2);
+        let mut loudest: Option<&super::Schoolmate> = None;
+        for m in &self.creatures.school {
+            if m.species == c.species
+                && m.id != c.id
+                && m.fear > STARTLE_HOP
+                && loudest.is_none_or(|l| m.fear > l.fear)
+                && dist(m.x - c.x, m.y - c.y) <= reach
+            {
+                loudest = Some(m);
+            }
+        }
+        let Some(m) = loudest else {
+            return;
+        };
+        c.fear = m.fear - STARTLE_HOP;
+        self.run_from(
+            k,
+            c,
+            m.x - m.vx * STARTLE_BEHIND,
+            m.y - m.vy * STARTLE_BEHIND,
+        );
     }
 
     /// Sets `c`'s target [`FLEE_RUN`] cells straight away from `(fx, fy)`,
