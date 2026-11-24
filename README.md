@@ -57,6 +57,8 @@ Before a PR, also run `cargo fmt --all --check`, `cargo clippy --workspace --all
 
 Set power, plant sway and life preferences for `desktank window` in
 [`config.toml`](docs/config.md). Changes apply while the window is open.
+Use `--catch-up` or set `catch_up = true` in `[life]` to advance the tank
+when it reopens or resumes after a power or visibility pause.
 
 ## Web
 

@@ -101,6 +101,9 @@ struct WindowArgs {
     /// creatures already in the tank). Saved with the tank.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=128))]
     creature_cap: Option<u16>,
+    /// Apply elapsed time when the tank reopens or resumes (off by default).
+    #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
+    catch_up: Option<bool>,
     #[command(flatten)]
     plant_sway: SwayArgs,
 }
@@ -224,10 +227,9 @@ fn main() -> ExitCode {
                 window::Saves::Load
             },
             config::CliOverrides {
-                life: config::Life {
-                    easy_mode: args.easy_mode,
-                    population_cap: args.creature_cap,
-                },
+                easy_mode: args.easy_mode,
+                population_cap: args.creature_cap,
+                catch_up: args.catch_up,
                 plants: config::Plants {
                     sway: args.plant_sway.sway,
                     sway_on_battery: args.plant_sway.sway_on_battery,
@@ -350,13 +352,19 @@ mod tests {
             let Command::Window(w) = cli.command else {
                 panic!("not a window command");
             };
-            (w.easy_mode, w.creature_cap)
+            (w.easy_mode, w.creature_cap, w.catch_up)
         };
-        assert_eq!(window(&[]), (None, None));
-        assert_eq!(window(&["--easy-mode"]), (Some(true), None));
+        assert_eq!(window(&[]), (None, None, None));
+        assert_eq!(window(&["--easy-mode"]), (Some(true), None, None));
+        assert_eq!(window(&["--catch-up"]), (None, None, Some(true)));
         assert_eq!(
-            window(&["--easy-mode=false", "--creature-cap", "30"]),
-            (Some(false), Some(30))
+            window(&[
+                "--easy-mode=false",
+                "--creature-cap",
+                "30",
+                "--catch-up=false"
+            ]),
+            (Some(false), Some(30), Some(false))
         );
         assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "129"]).is_err());
         assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "0"]).is_err());

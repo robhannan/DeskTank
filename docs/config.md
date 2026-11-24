@@ -12,8 +12,9 @@ Set `DESKTANK_CONFIG_DIR` to use another directory.
 A missing file or omitted key uses its default. Saves apply within a second
 while the window is running. An invalid file logs an error to stderr and
 keeps the last good settings, or uses defaults at startup. Explicit
-`--sway`, `--sway-on-battery`, `--easy-mode` and `--creature-cap` flags
-take precedence.
+`--sway`, `--sway-on-battery`, `--easy-mode`, `--creature-cap` and
+`--catch-up` flags take precedence. Use `--catch-up=false` to turn it off
+when the file enables it.
 
 ```toml
 version = 1
@@ -37,4 +38,12 @@ sway_on_battery = false
 # lowered below the tank's current population.
 # easy_mode = false
 # population_cap = 60
+# Advance the tank when it reopens or resumes after a power or visibility pause.
+catch_up = false
 ```
+
+Catch-up applies elapsed wall-clock time in one summarised step, including
+time the computer spent asleep. Reopening uses the loaded save's last
+modification time. Gaps shorter than one minute are ignored and gaps over
+24 hours are capped at 24 hours. Read-only viewers skip catch-up. Changes
+to `catch_up` take effect on the next resume.
