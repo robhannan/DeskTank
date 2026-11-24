@@ -8,43 +8,21 @@ import {
   DREAM,
   DREAM_FULL,
   adb,
-  appFatals,
   currentDream,
   decodePng,
   getSecure,
+  logcat,
   putSecure,
+  recordedFatals,
   tankShares,
   shell,
+  waitForFirstFrame,
 } from "./support.ts";
 
 const OUT = "tapsmith-results/dream";
 
 const SETTINGS = ["screensaver_enabled", "screensaver_components"] as const;
 const saved = new Map<string, string | undefined>();
-
-async function logcat(): Promise<{ crash: string; main: string }> {
-  return {
-    crash: await adb("logcat", "-d", "-b", "crash", "-v", "threadtime"),
-    main: await adb("logcat", "-d", "-v", "threadtime"),
-  };
-}
-
-async function waitForFirstFrame(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const { crash, main } = await logcat();
-    const fatals = appFatals(crash, main);
-    if (fatals.length > 0) throw new Error(`the app crashed before its first frame:\n${fatals.join("\n")}`);
-    if (/ I DeskTank\s*: first frame /.test(main)) return;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  throw new Error(`no first frame within ${timeoutMs / 1000} s`);
-}
-
-async function expectNoFatals(): Promise<void> {
-  const { crash, main } = await logcat();
-  expect(appFatals(crash, main)).toEqual([]);
-}
 
 beforeAll(async () => {
   for (const name of SETTINGS) saved.set(name, await getSecure(name));
@@ -73,7 +51,7 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
   await expect.poll(currentDream, { timeout: 30_000 }).toBe(DREAM_FULL);
   // The first draw compiles the pipelines (seconds on a device). Fail at
   // once, with the lines, if the app crashes meanwhile.
-  await waitForFirstFrame(120_000);
+  await waitForFirstFrame("Dream", 120_000);
 
   // The tank is drawn: mostly water, with sand along the bottom. The Dream
   // window fades in over what was on screen, so poll until the frame
@@ -90,11 +68,11 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
       { timeout: 30_000, intervals: [1000] },
     )
     .toBe("drawn");
-  await expectNoFatals();
+  expect(await recordedFatals()).toEqual([]);
 
   // Still up (not ended on its own); non-interactive, so any key ends it.
   expect(await currentDream()).toBe(DREAM_FULL);
   await device.pressKey("DPAD_CENTER");
   await expect.poll(currentDream, { timeout: 15_000 }).toBe("");
-  await expectNoFatals();
+  expect(await recordedFatals()).toEqual([]);
 });

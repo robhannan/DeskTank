@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { inflateSync } from "node:zlib";
 
 export const PACKAGE = "io.github.robhannan.desktank";
+export const ACTIVITY = `${PACKAGE}/.DeskTankActivity`;
 export const DREAM = `${PACKAGE}/.DeskTankDream`;
 // The same component as `dumpsys` prints it.
 export const DREAM_FULL = `${PACKAGE}/${PACKAGE}.DeskTankDream`;
@@ -70,6 +71,35 @@ export function appFatals(crash: string, main: string): string[] {
     }
   });
   return found;
+}
+
+export async function logcat(): Promise<{ crash: string; main: string }> {
+  return {
+    crash: await adb("logcat", "-d", "-b", "crash", "-v", "threadtime"),
+    main: await adb("logcat", "-d", "-v", "threadtime"),
+  };
+}
+
+export async function waitForFirstFrame(
+  host: "App" | "Dream",
+  timeoutMs: number,
+): Promise<{ width: number; height: number }> {
+  const frame = new RegExp(` I DeskTank\\s*: first frame (\\d+)x(\\d+)[^\\n]*, host ${host}\\)`);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { crash, main } = await logcat();
+    const fatals = appFatals(crash, main);
+    if (fatals.length > 0) throw new Error(`the app crashed before its first frame:\n${fatals.join("\n")}`);
+    const match = frame.exec(main);
+    if (match) return { width: Number(match[1]), height: Number(match[2]) };
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`no ${host} first frame within ${timeoutMs / 1000} s`);
+}
+
+export async function recordedFatals(): Promise<string[]> {
+  const { crash, main } = await logcat();
+  return appFatals(crash, main);
 }
 
 export interface Image {

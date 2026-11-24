@@ -7,13 +7,16 @@ import { defineConfig } from "tapsmith";
 
 export default defineConfig({
   apk: "./android/app/build/outputs/apk/debug/app-debug.apk",
+  package: "io.github.robhannan.desktank",
+  // Keep the shared tank between files. Tapsmith clears it at suite startup.
+  appReset: "none",
   // Only these: Tapsmith's default would also pick up tests/web/*.spec.ts.
   testMatch: ["tests/android/**/*.tapsmith.ts"],
   ...(process.env.ANDROID_SERIAL ? { device: process.env.ANDROID_SERIAL } : {}),
   // CI emulators run on software rendering and are slow.
   timeout: 60_000,
   screenshot: "always",
-  // The Dream makes no network requests: no proxy on the device.
+  // DeskTank makes no network requests: no proxy on the device.
   trace: { mode: "retain-on-failure", network: false },
   telemetry: false,
   reporter: process.env.CI ? ["list", ["html", { open: "never" }]] : "list",
