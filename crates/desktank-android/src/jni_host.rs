@@ -327,6 +327,13 @@ impl Host {
                 info.driver,
                 info.driver_info
             );
+            // wgpu's default handler panics, which aborts the app. A surface
+            // Android has already destroyed (a release that outlived
+            // DESTROY_WAIT) fails `configure` this way; log it instead, and
+            // the next draw sees the surface lost.
+            gpu.device.on_uncaptured_error(std::sync::Arc::new(|e| {
+                log::error!("GPU error: {e}");
+            }));
             let surface =
                 TankSurface::new(&gpu, surface, width, height).map_err(|e| e.to_string())?;
             self.gpu = Some((instance, gpu));

@@ -21,10 +21,13 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name">
 
+        <!-- singleTask: one tank, one window; launching again (from the
+             launcher or `am start`) brings this one back, not a second. -->
         <activity
             android:name=".DeskTankActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
             <intent-filter>
