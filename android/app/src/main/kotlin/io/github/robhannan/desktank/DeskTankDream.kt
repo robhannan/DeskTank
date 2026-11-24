@@ -10,11 +10,16 @@ import java.util.concurrent.atomic.AtomicLong
  * the Dream's start and stop go to Rust over JNI. It holds no tank state.
  *
  * Non-interactive, so any key or touch ends it, as a screensaver should.
- * Every call carries this instance's [token], so Rust can tell a stopping
- * Dream's late callbacks from the next Dream's.
+ * Surface and dreaming callbacks carry this instance's [token], so Rust can
+ * tell a stopping Dream's late callbacks from the next Dream's.
  */
 class DeskTankDream : DreamService(), SurfaceHolder.Callback {
     private val token = nextToken.incrementAndGet()
+
+    override fun onCreate() {
+        super.onCreate()
+        Native.setFilesDir(filesDir.absolutePath)
+    }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()

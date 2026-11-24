@@ -1,30 +1,30 @@
 //! The JNI entry points the Kotlin shim calls (`io.github.robhannan.desktank.Native`),
 //! the render thread they feed, and the logcat logger.
 //!
-//! Every callback arrives on the app's main thread and only posts a command
-//! to the render thread, which owns the GPU device, the surfaces and the
-//! tank. `surfaceDestroyed` alone waits for its command (up to
-//! [`DESTROY_WAIT`]), so the surface is normally gone before the callback
-//! returns; a first draw still compiling its pipelines can outlast the wait. The render thread sleeps in a channel
-//! receive: with no Dream drawing it blocks until the next callback, and
-//! while one draws it wakes only when the tank's pacer asks (the 20 Hz
-//! simulation tick, frames capped at 30 fps).
+//! The shim supplies the files directory before forwarding Dream callbacks.
+//! The render thread owns the GPU device, surfaces, tank and save store.
+//! `surfaceDestroyed` alone waits for the surface to be dropped (up to
+//! [`DESTROY_WAIT`]). The render thread blocks on its channel while idle
+//! and wakes on the tank's existing frame schedule while drawing (20 Hz
+//! simulation, frames capped at 30 fps). Autosave uses those same wakeups.
 
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Mutex, Once, PoisonError};
+use std::sync::{Mutex, Once, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, TankSurface, wgpu};
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
-use jni::objects::{JClass, JObject};
+use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jint, jlong};
 use log::{Level, LevelFilter};
 use ndk::native_window::NativeWindow;
 
-use crate::{DreamId, Dreams, Event, backend_order, log_enabled, log_override, new_world, tv_grid};
+use crate::persist::{Persistence, start_world};
+use crate::{DreamId, Dreams, Event, backend_order, log_enabled, log_override, tv_grid};
 
 /// Logcat tag for everything this crate logs, wgpu's lines included.
 const TAG: &str = "DeskTank";
@@ -42,6 +42,7 @@ const DESTROY_WAIT: Duration = Duration::from_secs(2);
 
 /// The render thread's inbox; spawned on the first callback.
 static RENDER: Mutex<Option<Sender<Command>>> = Mutex::new(None);
+static FILES_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// One callback, for the render thread.
 struct Command {
@@ -108,9 +109,10 @@ struct Host {
     /// the process's life so a later Dream starts faster.
     gpu: Option<(wgpu::Instance, Gpu)>,
     surfaces: HashMap<DreamId, DreamSurface>,
-    /// The tank, created from the first drawable surface's size and kept
-    /// across Dreams for the process's life.
+    /// The shared tank, loaded or created on the first drawable surface
+    /// and kept across Dreams for the process's life.
     tank: Option<Tank>,
+    persistence: Option<Persistence>,
     /// The Dream and size last drawn, so a change redraws.
     drawn: Option<(DreamId, (u32, u32))>,
     /// Origin of the clock the tank's pacer runs on.
@@ -152,6 +154,7 @@ impl Host {
             gpu: None,
             surfaces: HashMap::new(),
             tank: None,
+            persistence: None,
             drawn: None,
             epoch: Instant::now(),
         }
@@ -168,6 +171,13 @@ impl Host {
             window,
             done,
         } = command;
+        let save_reason = match event {
+            Event::DreamingStopped => Some("dreaming stopped"),
+            Event::SurfaceDestroyed if self.dreams.active().is_some_and(|(id, _)| id == dream) => {
+                Some("active surface destroyed")
+            }
+            _ => None,
+        };
         self.dreams.handle(dream, event);
         match event {
             Event::SurfaceCreated => {
@@ -190,6 +200,12 @@ impl Host {
         if let Some(done) = done {
             // The caller may have stopped waiting; nothing to do then.
             let _ = done.send(());
+        }
+        // Acknowledge surface release before starting disk I/O.
+        if let (Some(why), Some(tank), Some(persist)) =
+            (save_reason, &self.tank, &mut self.persistence)
+        {
+            persist.save(tank.world(), why, self.epoch.elapsed());
         }
     }
 
@@ -293,16 +309,19 @@ impl Host {
         let s = self.surfaces.get_mut(&dream)?;
         if self.tank.is_none() {
             let grid = tv_grid(size.0, size.1);
-            match new_world(grid) {
+            if let Some(dir) = FILES_DIR.get() {
+                self.persistence = match Persistence::open(dir, self.epoch.elapsed()) {
+                    Ok(persist) => Some(persist),
+                    Err(e) => {
+                        log::warn!("could not open the tank store under {}: {e}", dir.display());
+                        None
+                    }
+                };
+            } else {
+                log::warn!("no app files directory; running without saves");
+            }
+            match start_world(self.persistence.as_mut(), grid) {
                 Ok(world) => {
-                    log::info!(
-                        "new tank: {}x{} cells at {}x for a {}x{} surface",
-                        grid.cells.0,
-                        grid.cells.1,
-                        grid.scale,
-                        size.0,
-                        size.1
-                    );
                     let mut tank = Tank::new(world, TankConfig::default());
                     // A Dream is a screensaver: no optional sway (T6d).
                     tank.set_saver_mode(true);
@@ -349,6 +368,9 @@ impl Host {
                 }
             }
         }
+        if let Some(persist) = &mut self.persistence {
+            persist.autosave(tank.world(), self.epoch.elapsed());
+        }
         Some(request.wake_at)
     }
 }
@@ -362,6 +384,25 @@ fn system_property(name: &str) -> Option<String> {
     android_system_properties::AndroidSystemProperties::new()
         .get(name)
         .filter(|p| !p.is_empty())
+}
+
+/// `Native.setFilesDir(path)`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_robhannan_desktank_Native_setFilesDir<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    path: JString<'local>,
+) {
+    env.with_env(|env| -> jni::errors::Result<()> {
+        let path = PathBuf::from(path.try_to_string(env)?);
+        let dir = FILES_DIR.get_or_init(|| path.clone());
+        if dir != &path {
+            init_logging();
+            log::warn!("ignoring change to the app files directory");
+        }
+        Ok(())
+    })
+    .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 /// `Native.surfaceCreated(dream, Surface)`.

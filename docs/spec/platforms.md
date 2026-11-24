@@ -373,14 +373,14 @@ over the keyguard while charging).
   with a code), and the "Stay awake" developer option stops the
   screensaver from starting; A1's README says both (PROGRESS).
 - **Persistence**: one shared tank across the modes (D10): the same
-  envelope and payload as §2.6, through `SaveStore` in the app's private
-  files directory (`Context.getFilesDir()`, passed in over JNI). Every
-  host runs in the one app process, so at most one surface owns the tank
-  at a time; when another becomes visible it takes over as in §2.6's
-  saver handover. Saves happen when a surface stops or is destroyed, and
-  every 5 minutes. The app offers export and import of a save file
-  (Storage Access Framework), so a tank moves between Android, the web
-  and the desktop.
+  envelope and payload as §2.6, through `SaveStore` with the tank name
+  `main` in the `tanks` subdirectory of `Context.getFilesDir()` (passed in
+  over JNI). Every host runs in the one app process, so at most one
+  surface owns the tank at a time. When another becomes visible it takes
+  over as in §2.6's saver handover. Saves happen when a surface stops or
+  is destroyed, and every 5 minutes while drawing. The app offers export
+  and import of a save file (Storage Access Framework), so a tank moves
+  between Android, the web and the desktop.
 - **Time and power** (§6.2):
   - world time runs only while a surface is visible (§2.6); optional
     catch-up works as on native;
