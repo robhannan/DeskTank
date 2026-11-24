@@ -7,51 +7,30 @@ import { afterAll, beforeAll, expect, test } from "tapsmith";
 import {
   DREAM,
   DREAM_FULL,
-  adb,
-  appFatals,
   currentDream,
   decodePng,
   getSecure,
+  logcat,
+  logcatTime,
   putSecure,
+  recordedFatals,
   tankShares,
   shell,
+  waitForFirstFrame,
 } from "./support.ts";
 
 const OUT = "tapsmith-results/dream";
+let logStart: string;
 
 const SETTINGS = ["screensaver_enabled", "screensaver_components"] as const;
 const saved = new Map<string, string | undefined>();
 
-async function logcat(): Promise<{ crash: string; main: string }> {
-  return {
-    crash: await adb("logcat", "-d", "-b", "crash", "-v", "threadtime"),
-    main: await adb("logcat", "-d", "-v", "threadtime"),
-  };
-}
-
-async function waitForFirstFrame(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const { crash, main } = await logcat();
-    const fatals = appFatals(crash, main);
-    if (fatals.length > 0) throw new Error(`the app crashed before its first frame:\n${fatals.join("\n")}`);
-    if (/ I DeskTank\s*: first frame /.test(main)) return;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  throw new Error(`no first frame within ${timeoutMs / 1000} s`);
-}
-
-async function expectNoFatals(): Promise<void> {
-  const { crash, main } = await logcat();
-  expect(appFatals(crash, main)).toEqual([]);
-}
-
 beforeAll(async () => {
+  await mkdir(OUT, { recursive: true });
+  logStart = await logcatTime();
   for (const name of SETTINGS) saved.set(name, await getSecure(name));
   await putSecure("screensaver_enabled", "1");
   await putSecure("screensaver_components", DREAM);
-  await adb("logcat", "-b", "all", "-c");
-  await mkdir(OUT, { recursive: true });
 });
 
 afterAll(async () => {
@@ -61,7 +40,7 @@ afterAll(async () => {
   } finally {
     for (const [name, value] of saved) await putSecure(name, value);
   }
-  const { crash, main } = await logcat();
+  const { crash, main } = await logcat(logStart);
   await writeFile(`${OUT}/logcat.txt`, main);
   await writeFile(`${OUT}/logcat-crash.txt`, crash);
 });
@@ -73,7 +52,7 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
   await expect.poll(currentDream, { timeout: 30_000 }).toBe(DREAM_FULL);
   // The first draw compiles the pipelines (seconds on a device). Fail at
   // once, with the lines, if the app crashes meanwhile.
-  await waitForFirstFrame(120_000);
+  await waitForFirstFrame("Dream", logStart, 120_000);
 
   // The tank is drawn: mostly water, with sand along the bottom. The Dream
   // window fades in over what was on screen, so poll until the frame
@@ -90,11 +69,11 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
       { timeout: 30_000, intervals: [1000] },
     )
     .toBe("drawn");
-  await expectNoFatals();
+  expect(await recordedFatals(logStart)).toEqual([]);
 
   // Still up (not ended on its own); non-interactive, so any key ends it.
   expect(await currentDream()).toBe(DREAM_FULL);
   await device.pressKey("DPAD_CENTER");
   await expect.poll(currentDream, { timeout: 15_000 }).toBe("");
-  await expectNoFatals();
+  expect(await recordedFatals(logStart)).toEqual([]);
 });

@@ -55,7 +55,11 @@
 //! - **Habits** of a few species (waste, eating corpses, a home with a
 //!   carpet patch) are in [`habits`].
 //! - **Names** and the inspect card are in [`naming`].
-//! - **Hunting, fleeing to cover and territory** are in [`pursuit`].
+//! - **Schooling** (loose, irregular, splitting and rejoining) is in
+//!   [`school`]: a school follows its lead, or a sub-lead while it is
+//!   split, and a fright ripples through it from fish to fish.
+//! - **Hunting, fleeing to cover, startling a school and territory** are in
+//!   [`pursuit`].
 //! - **Live food** (bloodworms) are creatures of a `live_food` species,
 //!   kept to [`MAX_LIVE_FOOD`] beside the population cap, eaten whole by
 //!   species whose diet holds the food they count as (see [`live`]).
@@ -545,6 +549,9 @@ pub(super) struct Creatures {
     cursor: Option<(i32, i32)>,
     /// Reused start-of-tick snapshots for schooling, in creature id order.
     school: Vec<Schoolmate>,
+    /// Whether a schooler is frightened enough this tick to startle its
+    /// mates (see [`pursuit`]); calm tanks skip the look.
+    scared: bool,
     /// Reused start-of-tick snapshot for hunting and territory, in id
     /// order (empty while no creature hunts or keeps a territory).
     near: Vec<pursuit::Near>,
@@ -585,9 +592,15 @@ struct Schoolmate {
     y: i32,
     vx: i32,
     vy: i32,
+    /// Ticks of fright it had at the start of the tick.
+    fear: u16,
+    /// The one its group follows: its species' lead, or a sub-lead while
+    /// the school is split (see [`school`]).
+    head: CreatureId,
 }
 
 impl Creatures {
+    #[allow(clippy::too_many_lines)] // one field per piece of tank state
     pub(super) fn new(
         species: SpeciesTable,
         materials: &MaterialTable,
@@ -683,6 +696,7 @@ impl Creatures {
             list: Vec::new(),
             cursor: None,
             school: Vec::new(),
+            scared: false,
             gaps: Vec::new(),
             near: Vec::new(),
             next_id: 1,
@@ -1413,8 +1427,10 @@ impl World {
         self.snapshot_near(&list);
         self.refresh_air_gaps(&list);
         self.creatures.school.clear();
+        let mut scared = false;
         for c in &list {
             if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
+                scared |= c.fear > pursuit::STARTLE_HOP;
                 self.creatures.school.push(Schoolmate {
                     id: c.id,
                     species: c.species,
@@ -1422,9 +1438,13 @@ impl World {
                     y: c.y,
                     vx: c.vx,
                     vy: c.vy,
+                    fear: c.fear,
+                    head: c.id,
                 });
             }
         }
+        self.creatures.scared = scared;
+        school::divide(&mut self.creatures.school, self.seed, self.tick);
         for c in &mut list {
             let z = c.z;
             // A shift in depth alone changes how it is drawn (D21).
@@ -1564,6 +1584,7 @@ impl World {
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
         self.pursue(&k, c);
+        self.startle(&k, c);
         self.choose_food(&k, c, hungry);
         let sponge = self.sponge_graze_target(&k, c, hungry);
 

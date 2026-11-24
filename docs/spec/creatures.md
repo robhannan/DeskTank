@@ -44,7 +44,10 @@
   honey gourami 4.5 cm.
 - **Behaviour** is steering-based:
   - wander;
-  - schooling for schoolers;
+  - schooling for schoolers: loose and irregular, speeding up and slowing
+    with the lead's pace, splitting now and then into groups that travel
+    apart (a sub-lead each) and rejoining, with followers always aiming
+    inside the zone and the side walls;
   - zone preference;
   - bottom-walking for corydoras and shrimp, with short swims now and
     then for bottom dwellers that can swim, and burrowing into loose
@@ -254,6 +257,11 @@
     cells straight away; already in cover it holds still. It flees at its
     top speed scaled by its size, at least its cruising speed, so fry are
     slow.
+  - **Startle.** A calm schooler within 1.5 of its species' lengths of a
+    frightened schoolmate catches the fright, 4 ticks shorter than the
+    mate's, and runs the way that mate is heading. Each looks every 3–8
+    ticks (its own reaction time), so the fright ripples outward through
+    the school, fading as it goes, rather than reaching every fish at once.
   - **Cover.** A creature is in cover with 4 plant cells within 2 bands
     of its own inside 2 cells of its body. A predator neither sees nor
     strikes prey in cover.
