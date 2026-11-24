@@ -3,6 +3,8 @@ name = "kuhli_loach"
 palette = "fish/cleanup"
 zone = "bottom"
 depth = [0.72, 1.0]
+# Nocturnal: it stays up through the night (SPEC §2.4).
+rests = "never"
 min_depth = 12
 length_cm = 10.0
 lifespan_days = 2920

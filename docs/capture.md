@@ -10,7 +10,7 @@ desktank capture --seed 7 --size 640x360 --frames 60 \
 | Flag | Default | Meaning |
 |---|---|---|
 | `--seed N` | 1 | World seed; the same seed and script give the same pixels. |
-| `--time HH:MM` | 12:00 | Local time of day the tank is lit for (day and night, `desktank_sim::daylight`): 07:30–19:30 is untinted day, with warm dawn (05:30–07:30) and dusk (19:30–21:30) and blue moonlight overnight. Lighting only: the simulation is the same at every hour. |
+| `--time HH:MM` | 12:00 | Local time of day the tank is lit for (day and night, `desktank_sim::daylight`): 07:30–19:30 is untinted day, with warm dawn (05:30–07:30) and dusk (19:30–21:30) and blue moonlight overnight. Creatures rest at night too (SPEC §2.4 *Night*): from about 21:00 to 06:00 they settle and hold still. |
 | `--size WxH` | `640x360` | Output size in pixels. The grid is drawn at the largest integer scale that fits, letterboxed. |
 | `--frames K` | 1 | Frames to write, `frame_every` ticks apart. One frame is `frame.png`; several are `frame_0000.png`, `frame_0001.png`, … |
 | `--script FILE` | none | Input script (below). Without one, an empty 160×90 tank. |

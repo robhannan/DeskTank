@@ -138,7 +138,12 @@ impl World {
             let Some(k) = self.grown_kind(p) else {
                 continue;
             };
-            if !k.eats_live || eaten.contains(&i) || !p.hungry() || p.held_until >= self.tick {
+            if !k.eats_live
+                || eaten.contains(&i)
+                || !p.hungry()
+                || p.held_until >= self.tick
+                || p.asleep
+            {
                 continue;
             }
             let length = self.length_mm(p);

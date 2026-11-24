@@ -21,7 +21,8 @@
 //! `save::v3::Save` for 3, `save::v4::Save` for 4, `save::v5::Save` for 5,
 //! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8,
 //! `save::v9::Save` for 9, `save::v10::Save` for 10, `save::v11::Save` for 11,
-//! `save::v12::Save` for 12).
+//! `save::v12::Save` for 12, `save::v13::Save` for 13, `save::v14::Save`
+//! for 14, `save::v15::Save` for 15).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -46,7 +47,8 @@
 //! counter and fright (hunting and territory, version 9); and the
 //! sub-cell outline masks of rigid cells and bodies' shapes (version 10);
 //! the device table (D27, version 12), device filtration (version 13),
-//! and ball rotation (version 14).
+//! ball rotation (version 14), and whether each creature is asleep for
+//! the night and how long it stays up after being woken (version 15).
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -83,7 +85,8 @@
 //! (D27). Version 13 (DV3) adds each device's filtration state (media load,
 //! biological maturity and intake guard); version 12 migrates with clean
 //! fresh media and guard off. Version 14 adds the ball roll angles; older
-//! tanks start with zero rotation. Loading any save with legacy `bubbler` cells
+//! tanks start with zero rotation. Version 15 (#195) adds each creature's
+//! rest for the night; version 14 migrates with every creature awake. Loading any save with legacy `bubbler` cells
 //! turns each connected group into a bed-mounted prefab bubbler where one
 //! fits, leaving boxed-in groups as legacy cells (DV7).
 
@@ -99,6 +102,7 @@ pub(crate) mod v11;
 pub(crate) mod v12;
 pub(crate) mod v13;
 pub(crate) mod v14;
+pub(crate) mod v15;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -111,7 +115,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 14;
+pub const FORMAT_VERSION: u16 = 15;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -158,7 +162,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v14();
+    let snapshot = world.to_v15();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     wrap(FORMAT_VERSION, &raw)
@@ -188,6 +192,14 @@ fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
 /// version, or the snapshot doesn't fit the tables or itself.
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
+    if version == 15 {
+        let raw = decompress(payload)?;
+        let snapshot: v15::Save =
+            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
+        let mut world = World::from_v15(snapshot, materials)?;
+        world.adopt_legacy_bubblers();
+        return Ok(world);
+    }
     if version == 14 {
         let raw = decompress(payload)?;
         let snapshot: v14::Save =

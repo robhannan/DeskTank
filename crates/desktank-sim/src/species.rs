@@ -79,6 +79,38 @@ pub enum Zone {
     Surfaces,
 }
 
+/// Where a species rests at night (SPEC §2.4, #195). The default follows
+/// its zone: [`RestSpot::Surface`] for surface fish, [`RestSpot::Plants`]
+/// for mid-water fish, and [`RestSpot::InPlace`] for bottom walkers and
+/// surface crawlers, which already rest on the bed or a face they hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestSpot {
+    /// It settles on the bed below it.
+    Bottom,
+    /// It drifts in among the nearest plants (the lower part of its zone
+    /// where there are none).
+    Plants,
+    /// It hangs just under the surface.
+    Surface,
+    /// It stops where it is (a walker sinks back to the bed first).
+    InPlace,
+    /// It stays up all night (nocturnal species).
+    Never,
+}
+
+impl RestSpot {
+    /// The rest spot of a species in `zone` that gives none.
+    #[must_use]
+    pub const fn of_zone(zone: Zone) -> Self {
+        match zone {
+            Zone::Surface => Self::Surface,
+            Zone::Mid => Self::Plants,
+            Zone::Bottom | Zone::Surfaces => Self::InPlace,
+        }
+    }
+}
+
 /// How a species gets on with others (SPEC §2.4). Schoolers follow their own kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -241,6 +273,9 @@ pub struct Species {
     /// Seconds between a bottom walker's chances to burrow into loose
     /// substrate (`None`: it never burrows; the kuhli loach does).
     pub burrow_every: Option<f32>,
+    /// Where it rests at night (`rests`; by default from its zone, see
+    /// [`RestSpot::of_zone`]).
+    pub rests: RestSpot,
     /// Real-world lifespan in days (1..=[`MAX_LIFESPAN_DAYS`]), on the life
     /// clock (SPEC §2.4, T9: a day per `LIFE_DAY_SECONDS` of world time).
     /// Each creature's own lifespan is within ±10% of it.
@@ -459,6 +494,8 @@ struct SpeciesDef {
     swim_every: Option<f32>,
     #[serde(default)]
     burrow_every: Option<f32>,
+    #[serde(default)]
+    rests: Option<RestSpot>,
     lifespan_days: u32,
     maturity_days: u32,
     #[serde(default)]
@@ -896,6 +933,7 @@ fn validate(
         hop_every: d.hop_every,
         swim_every: d.swim_every,
         burrow_every: d.burrow_every,
+        rests: d.rests.unwrap_or(RestSpot::of_zone(d.zone)),
         lifespan_days: d.lifespan_days,
         maturity_days: d.maturity_days,
         waste_every: d.waste_every,

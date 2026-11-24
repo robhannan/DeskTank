@@ -161,7 +161,9 @@
       migrating version 4 creatures without one; each creature's name in
       version 6, T9 part 3, migrating version 5 creatures unnamed; each
       creature's quarry, pursuit counter and fright in version 9, hunting
-      and territory, migrating version 8 creatures calm);
+      and territory, migrating version 8 creatures calm; whether each
+      creature is asleep for the night and how long it stays up after
+      being woken in version 15, migrating version 14 creatures awake);
     - each floater's raft, its motion as a buoyant body (offset,
       velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
       tank had no floaters and migrates with none);

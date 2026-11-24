@@ -397,7 +397,9 @@ impl World {
     ) -> Option<DeathCause> {
         let k = self.kind(c.species)?;
         let lifespan = self.lifespan_of(k, c.id);
+        let energy = c.energy;
         self.age_and_grow(c, k, lifespan, 1, redraw);
+        self.sleep_refund(k, c, energy);
         if let Some(cause) = self.age_or_hunger_death(c, lifespan) {
             return Some(cause);
         }
