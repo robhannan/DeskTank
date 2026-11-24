@@ -273,3 +273,40 @@ fn a_day_tank_hashes_as_if_there_were_no_night() {
     assert_eq!(a.state_hash(), b.state_hash());
     assert!(a.creatures().iter().all(|c| !c.asleep() && c.woken() == 0));
 }
+
+#[test]
+fn a_hunting_predator_wakes_sleeping_prey_and_a_sleeping_one_hunts_nothing() {
+    // Outside easy mode, so the betta hunts. It is a surface fish that
+    // rests at the top, so its shrimp prey sleeps on the bed below.
+    let mut w = world(31);
+    w.set_easy_mode(false);
+    let shrimp = add(&mut w, "cherry_shrimp", 100, 68);
+    let betta = add(&mut w, "betta", 100, 10);
+    w.set_creature_energy(betta, 1_000);
+    w.set_time_of_day(MIDNIGHT);
+    run(&mut w, 10);
+    assert!(asleep(&w, betta) && asleep(&w, shrimp));
+    assert!(
+        w.creature(betta).unwrap().quarry().is_none(),
+        "asleep, it hunts nothing"
+    );
+    // Wake the betta right over the shrimp: the shrimp takes fright and wakes.
+    let (x, y) = w.creature(shrimp).unwrap().cell();
+    assert!(w.move_creature(betta, x, y - 8));
+    w.release_creature(betta);
+    assert!(w.hold_creature(betta), "the net wakes the betta");
+    w.release_creature(betta);
+    let mut woke = false;
+    for _ in 0..TICKS_PER_SECOND {
+        w.tick();
+        let Some(s) = w.creature(shrimp) else {
+            woke = true; // eaten: it was awake enough to be hunted
+            break;
+        };
+        if !s.asleep() {
+            woke = true;
+            break;
+        }
+    }
+    assert!(woke, "a predator overhead wakes the shrimp");
+}

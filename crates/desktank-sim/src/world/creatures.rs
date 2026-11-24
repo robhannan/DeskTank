@@ -1446,7 +1446,11 @@ impl World {
         self.creatures.school.clear();
         let mut scared = false;
         for c in &list {
-            if self.kind(c.species).is_some_and(|k| k.schooling) && c.held_until < self.tick {
+            // A sleeper doesn't lead or join the school (see `night`).
+            if self.kind(c.species).is_some_and(|k| k.schooling)
+                && c.held_until < self.tick
+                && !c.asleep
+            {
                 scared |= c.fear > pursuit::STARTLE_HOP;
                 self.creatures.school.push(Schoolmate {
                     id: c.id,

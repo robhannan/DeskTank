@@ -236,7 +236,8 @@ impl World {
         } else {
             k.prey_mm > 0 && !self.creatures.easy && c.growth >= k.maturity
         };
-        able && c.hungry() && c.held_until < self.tick
+        // Asleep, it hunts nothing (see `night`).
+        able && c.hungry() && c.held_until < self.tick && !c.asleep
     }
 
     /// Whether `n` is prey to `c`, a creature of kind `k`: live food it
@@ -376,7 +377,7 @@ impl World {
 
     /// On a sensing tick: takes fright at the nearest hunter that could eat
     /// `c`, or chaser of it, within [`FLEE_SENSE`], and picks where to run.
-    fn take_fright(&self, k: &Kind, c: &mut Creature) {
+    pub(super) fn take_fright(&self, k: &Kind, c: &mut Creature) {
         if self.creatures.near.is_empty() {
             return;
         }

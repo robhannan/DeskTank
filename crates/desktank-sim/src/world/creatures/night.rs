@@ -28,6 +28,7 @@
 //! Sleep and the woken counter are saved (format version 15) and hashed
 //! only while set, so a tank by day hashes as before.
 
+use super::pursuit::SENSE_EVERY;
 use super::quirks::salt;
 use super::{
     Creature, Kind, Move, ONE, REACHED, TICKS_PER_SECOND, World, Zone, centre_of, dist, steer,
@@ -92,6 +93,8 @@ impl World {
     /// (and so only rests: see [`World::rest_step`]).
     pub(super) fn sleeps(&self, k: &Kind, c: &mut Creature) -> bool {
         if k.live || k.rests == RestSpot::Never {
+            c.wake();
+            c.woken = 0;
             return false;
         }
         if !self.night_for(c) {
@@ -102,6 +105,11 @@ impl World {
         if c.woken > 0 {
             c.woken -= 1;
             return false;
+        }
+        // A sleeper still senses threats on its sensing tick, as awake
+        // creatures do in `pursue`, so a predator or chaser wakes it.
+        if c.asleep && (self.tick + u64::from(c.id.0)).is_multiple_of(SENSE_EVERY) {
+            self.take_fright(k, c);
         }
         let disturbed = c.fear > 0 || self.cursor_near(k, c);
         if disturbed {
@@ -297,8 +305,18 @@ impl World {
                 self.creatures.list.len()
             )));
         }
-        for (c, r) in self.creatures.list.iter_mut().zip(saved) {
-            if r.woken > WOKEN_TICKS || (r.asleep && r.woken > 0) {
+        let never: Vec<bool> = self
+            .creatures
+            .list
+            .iter()
+            .map(|c| {
+                self.kind(c.species)
+                    .is_none_or(|k| k.live || k.rests == RestSpot::Never)
+            })
+            .collect();
+        for ((c, r), never) in self.creatures.list.iter_mut().zip(saved).zip(never) {
+            let rested = r.asleep || r.woken > 0;
+            if r.woken > WOKEN_TICKS || (r.asleep && r.woken > 0) || (never && rested) {
                 return Err(SaveError::Invalid(format!(
                     "creature {}: rest out of range",
                     c.id.0
