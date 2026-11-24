@@ -98,7 +98,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, sway: false, swayOnBattery: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -169,6 +169,7 @@ let adapter = "";
 let rafId = 0;
 let timerId = 0;
 let hidden = document.hidden;
+let hiddenAt: number | null = null; // when the current owned tank went hidden
 let batteryFps = FPS_AC;
 let onBattery = false;
 let restoring = false; // a graphics open is in flight
@@ -237,6 +238,7 @@ const hooks: Hooks = {
   writes: 0, // saves this tab wrote
   saving: Promise.resolve(false), // the latest write
   loaded: null, // { hash, tick, width, height } of the save opened, if any
+  lastCatchUp: null,
   released: null, // { hash, tick } when this tab handed the tank over
   ownedAt: 0, // performance.now() when this tab was granted the lock
   stole: false,
@@ -269,6 +271,7 @@ function loadSettings(): Settings {
     field: typeof saved.field === "string" && FIELDS.includes(saved.field) ? saved.field : DEFAULTS.field,
     avoidCursor: saved.avoidCursor === true,
     easyMode: saved.easyMode === true,
+    catchUp: saved.catchUp === true,
     sway: saved.sway === true,
     swayOnBattery: saved.swayOnBattery === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
@@ -298,6 +301,7 @@ function showSettings() {
   $<HTMLSelectElement>("set-field").value = settings.field;
   $<HTMLInputElement>("set-avoid-cursor").checked = settings.avoidCursor;
   $<HTMLInputElement>("set-easy-mode").checked = settings.easyMode;
+  $<HTMLInputElement>("set-catch-up").checked = settings.catchUp;
   $<HTMLInputElement>("set-sway").checked = settings.sway;
   $<HTMLInputElement>("set-sway-on-battery").checked = settings.swayOnBattery;
   $<HTMLInputElement>("set-stats").checked = settings.stats;
@@ -398,6 +402,7 @@ function replaceTank(next: WebTank) {
   }
   tank?.free();
   tank = next;
+  hiddenAt = owner && !handingOver && hidden ? Date.now() : null;
   tank.select(selected);
   tank.setZoom(zoom);
   showSettings();
@@ -526,11 +531,25 @@ function askPersist() {
   );
 }
 
+function catchUp(next: WebTank, since: number) {
+  if (!owner || handingOver || !settings.catchUp || !Number.isFinite(since)) return;
+  // Clamp to the wasm argument range before converting. The tank applies
+  // the catch-up floor and cap shared with the desktop window.
+  const elapsed = Math.max(0, Math.min(0xffffffff, Math.floor((Date.now() - since) / 1000)));
+  const [seconds, births, deaths] = next.catchUp(elapsed);
+  if (seconds === 0) return;
+  hooks.lastCatchUp = { seconds, births, deaths };
+  const minutes = Math.floor(seconds / 60);
+  const time = minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  console.info(`desktank web: caught up ${time} (${births} birth${births === 1 ? "" : "s"}, ${deaths} death${deaths === 1 ? "" : "s"})`);
+}
+
 // The newest save that opens, as a tank for the current canvas, or null.
 // Saves that don't open are logged and skipped, never deleted (one may be
 // from a newer build); pruning drops them once newer saves replace them.
 async function loadNewest(keep = () => true): Promise<WebTank | null> {
   if (!db) return null;
+  const ownedAtLoad = owner;
   let saves: Save[] = [];
   try {
     saves = await readSaves(db, TANK);
@@ -541,14 +560,22 @@ async function loadNewest(keep = () => true): Promise<WebTank | null> {
   if (!keep()) return null;
   const [w, h] = sizeCanvas();
   for (const save of saves) {
+    let next: WebTank;
     try {
-      const next = WebTank.fromSave(save.bytes, w, h);
-      lastSaved = save.savedAt ?? 0;
-      hooks.loaded = { hash: next.stateHash(), tick: next.tickCount(), width: next.width(), height: next.height() };
-      return next;
+      next = WebTank.fromSave(save.bytes, w, h);
     } catch (err) {
       console.warn(`desktank: a save doesn't open (${err}); skipped`);
+      continue;
     }
+    lastSaved = save.savedAt ?? 0;
+    hooks.loaded = { hash: next.stateHash(), tick: next.tickCount(), width: next.width(), height: next.height() };
+    // If the lock arrived during a viewer's read, the owning read will
+    // open the latest save again.
+    if (ownedAtLoad) {
+      next.setEasyMode(settings.easyMode);
+      catchUp(next, save.savedAt);
+    }
+    return next;
   }
   return null;
 }
@@ -583,6 +610,7 @@ async function resumeOwnership() {
   const next = await loadNewest(() => owner);
   if (next) await showTank(next);
   if (owner) {
+    if (hidden && hiddenAt === null) hiddenAt = Date.now();
     setRunning(true);
     nextAutosave = performance.now() + AUTOSAVE_MS;
   }
@@ -591,6 +619,7 @@ async function resumeOwnership() {
 // Another tab owns the tank: this one shows it paused and never writes.
 function becomeViewer() {
   owner = false;
+  hiddenAt = null;
   epoch = null;
   handingOver = false;
   showOwnership();
@@ -611,9 +640,12 @@ async function handOver() {
     setRunning(false);
     if (drewFirst) stopLoop();
   }
-  const forced = saveFailed;
-  await persist("hand-over");
-  if (!(await hooks.saving) && (forced || tank?.saveNeeded())) {
+  // A visible owner rewrites the save even when clean, so its savedAt says
+  // the tank was live until now and the next owner doesn't catch up. A
+  // hidden owner keeps the savedAt from when it stopped, so the next owner
+  // catches up for the hidden time.
+  await persist("hand-over", !hidden);
+  if (!(await hooks.saving) && (saveFailed || tank?.saveNeeded())) {
     notice("Couldn't save before handing over: the other tab opened the last save.");
   }
   if (tank) hooks.released = { hash: tank.stateHash(), tick: tank.tickCount() };
@@ -1746,6 +1778,7 @@ function wireSettings(resetTank: () => void) {
   $("set-field").addEventListener("change", (e) => update({ field: valueOf(e) }));
   $("set-avoid-cursor").addEventListener("change", (e) => update({ avoidCursor: checkedOf(e) }));
   $("set-easy-mode").addEventListener("change", (e) => update({ easyMode: checkedOf(e) }));
+  $("set-catch-up").addEventListener("change", (e) => update({ catchUp: checkedOf(e) }));
   $("set-sway").addEventListener("change", (e) => update({ sway: checkedOf(e) }));
   $("set-sway-on-battery").addEventListener("change", (e) => update({ swayOnBattery: checkedOf(e) }));
   $("set-stats").addEventListener("change", (e) => {
@@ -1800,19 +1833,26 @@ function wireSettings(resetTank: () => void) {
 function wireLifecycle() {
   // Hidden tabs pause: no ticks, no frames, and world time stops.
   // A hidden page is also the last reliable moment to save (SPEC §3.5).
-  document.addEventListener("visibilitychange", () => {
+  const onVisibility = () => {
+    if (hidden === document.hidden) return;
     hidden = document.hidden;
     tank?.setHidden(hidden);
     if (hidden) {
+      hiddenAt = owner && !handingOver ? Date.now() : null;
       tank?.pause();
       stopLoop();
       persist("hidden");
       if (!drewFirst) startStep("hidden: waiting for the page to be shown", debug);
     } else {
+      const since = hiddenAt;
+      hiddenAt = null;
+      if (since !== null && tank) catchUp(tank, since);
       if (!drewFirst) startStep("waiting for the first frame");
       kick();
     }
-  });
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  onVisibility();
   // Best effort: usually already saved by visibilitychange.
   window.addEventListener("pagehide", () => persist("pagehide"));
 
@@ -1890,6 +1930,7 @@ async function main() {
     startStep("reading the saves");
     const saved = await loadNewest();
     startStep("creating the tank");
+    hidden = document.hidden;
     replaceTank(saved ?? newTank());
     if (!owner) setRunning(false);
     const look = `${splitGrid ? ", split grid" : ""}${srgbCanvas ? "" : ", non-sRGB"}`;

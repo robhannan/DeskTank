@@ -82,8 +82,8 @@ use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_CATCH_UP_SECONDS, MAX_NAME_CHARS, MaterialTable, Mount,
-    RinseKind, World, WorldConfig,
+    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, RinseKind, World,
+    WorldConfig,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -1052,12 +1052,7 @@ fn apply_life(world: &mut World, life: Life, previous: Life) {
 /// Bounds a wall-clock gap and skips short absences or a clock that went back.
 fn catch_up_seconds(since: SystemTime, now: SystemTime) -> u32 {
     let elapsed = now.duration_since(since).unwrap_or_default().as_secs();
-    if elapsed < 60 {
-        return 0;
-    }
-    u32::try_from(elapsed)
-        .unwrap_or(u32::MAX)
-        .min(MAX_CATCH_UP_SECONDS)
+    desktank_sim::catch_up_seconds(elapsed)
 }
 
 fn catch_up(tank: &mut Tank, since: SystemTime) {
@@ -1615,7 +1610,7 @@ mod tests {
         let since = SystemTime::UNIX_EPOCH;
         assert_eq!(
             catch_up_seconds(since, since + Duration::from_hours(72)),
-            MAX_CATCH_UP_SECONDS
+            desktank_sim::MAX_CATCH_UP_SECONDS
         );
     }
 

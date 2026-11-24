@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
-import { boxOf, cellPoint, choose, framesDrawn, gridSize, open, stateHash, watchErrors } from "./support.ts";
+import { boxOf, cellPoint, choose, framesDrawn, gridSize, open, setHidden, stateHash, watchErrors } from "./support.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 // Written by the native app (desktank-sim's T8 fixture: 200×120 cells, tick
@@ -26,15 +26,6 @@ const TICK_MS = 50;
 const ticks = (page: Page) => page.evaluate(() => window.desktank.tank.tickCount());
 const owner = (page: Page) => page.evaluate(() => window.desktank.owner);
 const writes = (page: Page) => page.evaluate(() => window.desktank.writes);
-
-// Makes the page hidden as a background tab or a minimised window would.
-async function setHidden(page: Page, hidden: boolean) {
-  await page.evaluate((hidden) => {
-    Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
-    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
-    document.dispatchEvent(new Event("visibilitychange"));
-  }, hidden);
-}
 
 async function pour(page: Page) {
   const box = await boxOf(page.locator("#tank"));

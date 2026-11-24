@@ -134,9 +134,10 @@
   summarised step. Creatures
   age, eat from what's available and may breed or die. Plants grow, and
   detritus decays. This is a coarse, cheap model, not a per-cell replay.
-  Gaps under a minute are skipped, and only the host that owns the saved
-  tank catches up (never a read-only viewer). The window measures a closed
-  tank from its save's modification time.
+  A gap under a minute or a clock that went backwards is skipped. Only
+  the host that owns the saved tank catches up. The window measures closed
+  time from the save's modification time and the web uses its IndexedDB
+  save timestamp (`savedAt`).
 - **Day and night** follow local time.
 - **Persistence.** Each tank (one per display, or one spanning tank) is
   saved to the platform data dir every 5 minutes and on exit.
