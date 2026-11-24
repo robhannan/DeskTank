@@ -1052,13 +1052,26 @@ impl ApplicationHandler<Wake> for App {
         {
             let settings = config::merge(config, self.cli);
             if let Some(s) = &mut self.state {
-                s.tank.set_sway(settings.plants.sway);
-                s.tank
-                    .set_allow_sway_on_battery(settings.plants.sway_on_battery);
+                // Only changed keys apply, so an unrelated edit keeps the
+                // sway the keyboard toggles chose.
+                let (new, old) = (settings.plants, self.settings.plants);
+                if new.sway != old.sway {
+                    s.tank.set_sway(new.sway);
+                }
+                if new.sway_on_battery != old.sway_on_battery {
+                    s.tank.set_allow_sway_on_battery(new.sway_on_battery);
+                }
                 apply_life(s.tank.world_mut(), settings.life, self.settings.life);
             }
             self.settings = settings;
-            eprintln!("desktank window: reloaded config {}", path.display());
+            if path.exists() {
+                eprintln!("desktank window: reloaded config {}", path.display());
+            } else {
+                eprintln!(
+                    "desktank window: config {} removed, using defaults",
+                    path.display()
+                );
+            }
         }
     }
 
