@@ -57,10 +57,11 @@ impl Devices {
         })
     }
 
-    /// Whether floor devices `a` and `b` touch edge to edge.
+    /// Whether floor devices `a` and `b` touch edge to edge on the same floor row.
     fn floor_adjacent(&self, a: &Device, b: &Device) -> bool {
-        let (wa, wb) = (self.kinds.get(a.kind).size.0, self.kinds.get(b.kind).size.0);
-        a.x + wa == b.x || b.x + wb == a.x
+        let (art_a, art_b) = (self.kinds.get(a.kind), self.kinds.get(b.kind));
+        let (wa, wb) = (art_a.size.0, art_b.size.0);
+        (a.x + wa == b.x || b.x + wb == a.x) && a.y + a.span(art_a) == b.y + b.span(art_b)
     }
 
     /// The under-gravel filter each floor panel is connected to, by panel id.
@@ -1089,6 +1090,7 @@ impl World {
             if s.id == 0
                 || d.x + art.size.0 > self.width
                 || d.y + art.size.1 > self.height
+                || (art.mount.is_floor() && d.y + d.span(art) != self.height)
                 || table.insert(s.id, d).is_some()
             {
                 return Err(SaveError::Invalid(format!("device {} out of place", s.id)));

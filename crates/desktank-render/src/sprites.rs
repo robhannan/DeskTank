@@ -37,13 +37,16 @@ use desktank_sim::{
 /// the stack within WebGL2's guaranteed 2048 texels tall now that species
 /// carry several colour morphs of large art (the axolotl alone has three).
 pub const ATLAS_WIDTH: usize = 512;
+/// Maximum sprite slices reserved per device (and for the placement ghost),
+/// covering telescoping tubes even in tall `HiDPI` tanks without displacing
+/// creatures or corpses.
+const MAX_DEVICE_SLICES: usize = 64;
 /// Instance buffer capacity for creatures, food, corpses, devices and
-/// the placement ghost. Telescoping devices can use several slots each.
+/// the placement ghost.
 pub const MAX_SPRITES: usize = desktank_sim::MAX_CREATURE_CAP
     + desktank_sim::MAX_LIVE_FOOD
     + desktank_sim::MAX_CORPSES
-    + desktank_sim::MAX_DEVICES * 2
-    + 1;
+    + (desktank_sim::MAX_DEVICES + 1) * MAX_DEVICE_SLICES;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
