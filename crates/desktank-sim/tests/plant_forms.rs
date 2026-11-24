@@ -151,6 +151,29 @@ fn a_rosette_grows_a_crown_on_the_substrate_with_blades_above_and_roots_below() 
 }
 
 #[test]
+fn amazon_sword_roots_in_clown_vomit_gravel() {
+    let mut w = bedded(3);
+    let gravel = id(&w, "clown_vomit_gravel");
+    w.fill_rect(rect(0, SURFACE, WIDTH, HEIGHT), gravel, Brush::Replace)
+        .unwrap();
+    let tab = id(&w, "root_tab");
+    w.paint(82, (SURFACE + 4) as i64, 1, tab, Brush::Replace)
+        .unwrap();
+    plant(&mut w, "amazon_sword", 80);
+    run(&mut w, 2 * MINUTE);
+
+    let sword_species = species(&w, "amazon_sword");
+    let sword = w
+        .plants()
+        .find(|p| p.species == sword_species)
+        .expect("Amazon sword did not root");
+    assert_eq!(sword.base.1, SURFACE - 1);
+    let root = w.cell(sword.base.0, SURFACE).unwrap();
+    assert_eq!(root.material, id(&w, "root"));
+    assert_eq!(root.state, sword.id.0);
+}
+
+#[test]
 fn runners_creep_through_the_top_of_the_bed_and_root_child_plants() {
     let mut w = bedded(5);
     plant(&mut w, "vallisneria", 80);

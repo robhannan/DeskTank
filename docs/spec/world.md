@@ -261,7 +261,7 @@ matter, aren't offered):
 
 | Palette category | Materials |
 |---|---|
-| Build › Substrate | sand, gravel, aquasoil (holds nutrients) |
+| Build › Substrate | sand, gravel, aquasoil (holds nutrients), clown vomit gravel (neon pebbles, same physics as gravel) |
 | Build › Hardscape | rock (rigid), driftwood (rigid, starts lighter than water; waterlogs per cell, darkening and sinking over time, and dries in air) |
 | Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
 | Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders); live foods (live bloodworms) are creatures offered from Food › Live (§2.4 *Live food*, D25) |
@@ -316,8 +316,8 @@ target computes the same bits.
   Each species has tolerances for these values.
 - *T6 (simple mode):*
   - **Plants.** A seed (slow, mean 50 s) or cutting (2 s) resting on
-    sand, gravel or aquasoil roots into it and becomes a stem base while
-    nutrient > 0.1 and light > 0.1. Stems grow up to 48 cells, leaves a
+    sand, gravel, aquasoil or clown vomit gravel roots into it and becomes a
+    stem base while nutrient > 0.1 and light > 0.1. Stems grow up to 48 cells, leaves a
     row apart up to 3 cells sideways, roots up to 10 cells through the
     substrate; each new cell takes 0.01 nutrient. Stems and leaves wilt
     into dead plant matter at 1% per second while nutrient ≤ 0.02 or

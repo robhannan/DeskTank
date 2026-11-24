@@ -13,7 +13,7 @@ height = 40
 internode = 2
 leaf_length = 2
 root_depth = 10
-substrates = ["sand", "gravel", "aquasoil"]
+substrates = ["sand", "gravel", "aquasoil", "clown_vomit_gravel"]
 
 [prefer]
 light = { min = 0.03, optimum = 0.5, max = 2.0 }

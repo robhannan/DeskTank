@@ -14,7 +14,7 @@
 //! - **Burrowing.** A walker with `burrow_every` (the kuhli loach) gets a
 //!   window of [`BURROW_TICKS`] in each `burrow_every`, again at one chance
 //!   in [`BURROW_ODDS`]. In one, resting on loose substrate (a powder from
-//!   the substrate palette: sand, gravel, aquasoil; never rock, wood or glass)
+//!   the substrate palette: sand, gravel, aquasoil, clown vomit gravel)
 //!   under at least half its body and nothing else under it (a poured
 //!   bed's top is ragged), it digs straight down at [`DIG_SPEED`]. The
 //!   substrate really moves: each loose cell its body digs into is swapped
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn loaches_burrow_into_loose_substrate_and_come_back_out() {
-        for bed in ["sand", "gravel", "aquasoil"] {
+        for bed in ["sand", "gravel", "aquasoil", "clown_vomit_gravel"] {
             let mut w = tank(3, bed, None);
             let loach = add(&mut w, "kuhli_loach", 80);
             let k = *w.kind(species(&w, "kuhli_loach")).unwrap();

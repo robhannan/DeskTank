@@ -259,6 +259,41 @@ fn sand_pile_slope_is_35_degrees() {
 }
 
 #[test]
+fn clown_vomit_gravel_falls_piles_and_sleeps_like_gravel() {
+    let pile = |name| {
+        let mut w = world(128, 64, 5, 0.95);
+        let material = id(&w, name);
+        let repose = w.materials().get(material).unwrap().repose;
+        assert!((repose - 40.0).abs() < f32::EPSILON);
+
+        w.paint(64, 0, 0, material, Brush::Pour).unwrap();
+        let variant = w.cell(64, 0).unwrap().variant;
+        w.tick();
+        let grains = positions(&w, material);
+        assert_eq!(grains.len(), 1);
+        let (x, y) = grains[0];
+        assert!(y > 0, "{name} did not fall");
+        assert_eq!(w.cell(x, y).unwrap().variant, variant);
+
+        for _ in 0..400 {
+            w.paint(64, 0, 1, material, Brush::Pour).unwrap();
+            w.tick();
+        }
+        settle(&mut w, 2000);
+        let settled = positions(&w, material);
+        assert!(settled.contains(&(64, 63)));
+        assert!(settled.iter().any(|&(x, y)| x.abs_diff(64) > 10 && y == 63));
+        assert!(settled.iter().any(|&(_, y)| y < 53));
+        w.tick();
+        assert_eq!(w.awake_chunks(), 0);
+        assert_eq!(w.dirty_rects().count(), 0);
+        assert_eq!(positions(&w, material), settled);
+        settled
+    };
+    assert_eq!(pile("clown_vomit_gravel"), pile("gravel"));
+}
+
+#[test]
 fn flake_floats_for_its_float_time_then_sinks() {
     let mut w = world(64, 64, 9, 0.5);
     let flake = id(&w, "flake_food");
