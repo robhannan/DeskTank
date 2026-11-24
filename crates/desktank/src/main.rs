@@ -116,6 +116,9 @@ struct SwayArgs {
 
 #[derive(Debug, Args)]
 struct BenchArgs {
+    /// Compare 24 hours of catch-up against full simulation without a GPU.
+    #[arg(long, conflicts_with_all = ["seconds", "fish", "plants", "sway"])]
+    catch_up: bool,
     /// Length of the run in seconds of wall time.
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(1..=3600))]
     seconds: u64,
@@ -226,6 +229,7 @@ fn main() -> ExitCode {
             args.plant_sway.sway,
             args.plant_sway.sway_on_battery,
         ),
+        Command::Bench(args) if args.catch_up => bench::run_catch_up(),
         Command::Bench(args) => {
             bench::run(args.seconds, usize::from(args.fish), args.plants, args.sway)
         }
@@ -320,6 +324,7 @@ mod tests {
                 "capture",
             ),
             (&["bench"], "bench"),
+            (&["bench", "--catch-up"], "bench"),
             (&["bench", "--seconds", "5", "--plants", "--sway"], "bench"),
             (&["import", "tank.dtank"], "import"),
             (&["export", "tank.dtank"], "export"),

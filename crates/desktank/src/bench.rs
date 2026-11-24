@@ -15,7 +15,10 @@ use std::time::{Duration, Instant};
 
 use desktank_platform::{ProcessStats, process_stats};
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
-use desktank_sim::{Brush, MaterialTable, Propagule, Rect, TICKS_PER_SECOND, World, WorldConfig};
+use desktank_sim::{
+    Brush, FieldKind, LifeStage, MAX_CATCH_UP_SECONDS, MaterialTable, Propagule, Rect,
+    TICKS_PER_SECOND, World, WorldConfig,
+};
 
 use desktank_sim::scene;
 
@@ -26,6 +29,146 @@ const SEED: u64 = 7;
 /// Simulation ticks of pouring (5 s of world time).
 const POUR_TICKS: u64 = 100;
 const POUR_RADIUS: u32 = 4;
+
+/// Compares the catch-up approximation with an ordinary 24-hour run.
+pub fn run_catch_up() -> anyhow::Result<()> {
+    const SEEDS: [u64; 3] = [7, 19, 43];
+    const LIMIT: Duration = Duration::from_millis(200);
+    const TOLERANCE: f64 = 25.0;
+    let mut slowest_median = Duration::ZERO;
+    let (mut coarse_sum, mut full_sum) = ([0.0; 4], [0.0; 4]);
+    println!("24 h catch-up against {CATCH_UP_TICKS} ticks on a 160×90 tank, no GPU");
+    for seed in SEEDS {
+        let (median, coarse, full) = measure_catch_up(seed)?;
+        slowest_median = slowest_median.max(median);
+        for (total, value) in coarse_sum.iter_mut().zip(coarse) {
+            *total += value;
+        }
+        for (total, value) in full_sum.iter_mut().zip(full) {
+            *total += value;
+        }
+    }
+
+    println!("Metric (mean of three seeds)     Catch-up         Full    Difference");
+    let mut accurate = true;
+    for (i, (label, required)) in [
+        ("Creatures", true),
+        ("Plant cells", true),
+        ("Mean nutrient field", true),
+        ("Births", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (coarse, full) = (coarse_sum[i] / 3.0, full_sum[i] / 3.0);
+        let difference = if coarse == 0.0 && full == 0.0 {
+            0.0
+        } else {
+            100.0 * (coarse - full) / full
+        };
+        let passes = difference.abs() <= TOLERANCE;
+        let status = if required {
+            accurate &= passes;
+            verdict(passes)
+        } else {
+            "(informational)"
+        };
+        println!("{label:28} {coarse:12.5} {full:12.5} {difference:+10.2}%  {status}");
+    }
+    let fast = slowest_median <= LIMIT;
+    println!(
+        "Time ≤ 200 ms: {}. Each required metric within ±25%: {}.",
+        verdict(fast),
+        verdict(accurate),
+    );
+    anyhow::ensure!(fast && accurate, "catch-up missed its acceptance criteria");
+    Ok(())
+}
+
+const CATCH_UP_TICKS: u32 = MAX_CATCH_UP_SECONDS * TICKS_PER_SECOND;
+
+fn measure_catch_up(seed: u64) -> anyhow::Result<(Duration, [f64; 4], [f64; 4])> {
+    let reference = scene::catch_up_reference(seed, MaterialTable::builtin()?)?;
+    let initial = reference.creatures().len();
+    print_catch_up_state(seed, "Start", &reference, 0, 0);
+
+    let mut coarse = reference.clone();
+    let mut times = [Duration::ZERO; 3];
+    let mut report = desktank_sim::CatchUp::default();
+    for time in &mut times {
+        coarse.clone_from(&reference);
+        let start = Instant::now();
+        report = coarse.catch_up(MAX_CATCH_UP_SECONDS);
+        *time = start.elapsed();
+    }
+    times.sort_unstable();
+    let median = times[1];
+
+    let mut full = reference;
+    // The list is in spawn order. IDs advance only on a successful spawn,
+    // and newborns are added after this tick's deaths and predation.
+    let last_id = |world: &World| world.creatures().last().map_or(0, |c| c.id().0);
+    let initial_id = last_id(&full);
+    let mut newest = initial_id;
+    let start = Instant::now();
+    for _ in 0..CATCH_UP_TICKS {
+        full.tick();
+        newest = newest.max(last_id(&full));
+    }
+    let full_time = start.elapsed().as_secs_f64();
+    let full_births = (newest - initial_id) as usize;
+    let full_deaths = initial + full_births - full.creatures().len();
+    let ms = median.as_secs_f64() * 1000.0;
+    println!("Seed {seed}: {ms:.2} ms catch-up (median of 3), {full_time:.2} s full simulation");
+    print_catch_up_state(
+        seed,
+        "Catch-up",
+        &coarse,
+        report.births,
+        report.old_age_deaths + report.starvation_deaths + report.poor_water_deaths,
+    );
+    print_catch_up_state(seed, "Full", &full, full_births, full_deaths);
+    Ok((
+        median,
+        catch_up_metrics(&coarse, report.births),
+        catch_up_metrics(&full, full_births),
+    ))
+}
+
+fn print_catch_up_state(seed: u64, label: &str, world: &World, births: usize, deaths: usize) {
+    let fry = world
+        .creatures()
+        .iter()
+        .filter(|c| world.life_stage(c) == LifeStage::Fry)
+        .count();
+    println!(
+        "  Seed {seed} {label:8}  {:2} creatures ({fry:2} fry), {:4} plant cells, \
+         {:.5} mean nutrient, {births:2} births, {deaths:2} deaths",
+        world.creatures().len(),
+        world.plant_cells(),
+        mean_nutrient(world),
+    );
+}
+
+fn verdict(passes: bool) -> &'static str {
+    if passes { "PASS" } else { "FAIL" }
+}
+
+#[allow(clippy::cast_precision_loss)] // populations and field sizes are small
+fn catch_up_metrics(world: &World, births: usize) -> [f64; 4] {
+    [
+        world.creatures().len() as f64,
+        world.plant_cells() as f64,
+        mean_nutrient(world),
+        births as f64,
+    ]
+}
+
+#[allow(clippy::cast_precision_loss)] // field sizes are small
+fn mean_nutrient(world: &World) -> f64 {
+    let nutrient = world.field(FieldKind::Nutrient);
+    nutrient.total() / nutrient.values().len() as f64
+}
 
 /// Runs the scenario for `seconds` of wall time and prints the report.
 ///
