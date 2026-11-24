@@ -1,11 +1,11 @@
-//! Where the grid sits in a target: even integer scale, centred.
+//! Where the grid sits in a target: even integer scale, centred or bottom-aligned.
 //!
 //! Creature sprites have two texels per cell side, so an even scale gives
 //! every texel the same whole number of pixels. Scale 1 is the fallback
 //! when 2 doesn't fit: each pixel then shows one texel of its 2×2 block.
 
 /// Placement of a `grid` of cells in a target of `target` pixels: the largest
-/// even integer scale that fits, or 1 if 2 doesn't, centred, with the rest
+/// even integer scale that fits, or 1 if 2 doesn't, with the rest
 /// letterboxed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -31,6 +31,14 @@ impl Layout {
             offset: (centre(target.0, grid.0), centre(target.1, grid.1)),
             grid,
         }
+    }
+
+    /// Fits the grid horizontally centred with its bottom edge flush to the target.
+    #[must_use]
+    pub fn fit_bottom(grid: (u32, u32), target: (u32, u32)) -> Self {
+        let mut layout = Self::fit(grid, target);
+        layout.offset.1 = i64::from(target.1) - i64::from(grid.1) * i64::from(layout.scale);
+        layout
     }
 
     /// The cell under target pixel `(px, py)`. Signed and unclipped: a
@@ -82,6 +90,19 @@ mod tests {
         let l = Layout::fit((640, 360), (320, 180));
         assert_eq!(l.scale, 1);
         assert_eq!(l.offset, (-160, -90));
+    }
+
+    #[test]
+    fn bottom_alignment_keeps_the_floor_visible() {
+        let l = Layout::fit_bottom((640, 360), (2000, 1500));
+        assert_eq!(l.scale, 2);
+        assert_eq!(l.offset, (360, 780));
+        assert_eq!(l.cell_at(360.0, 1499.0), (0, 359));
+
+        let cropped = Layout::fit_bottom((640, 360), (320, 180));
+        assert_eq!(cropped.scale, 1);
+        assert_eq!(cropped.offset, (-160, -180));
+        assert_eq!(cropped.cell_at(0.0, 179.0), (160, 359));
     }
 
     #[test]

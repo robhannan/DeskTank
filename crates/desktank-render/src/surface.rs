@@ -50,8 +50,34 @@ impl TankSurface {
     pub fn with_srgb(
         gpu: &Gpu,
         surface: wgpu::Surface<'static>,
+        size: (u32, u32),
+        srgb: bool,
+    ) -> Result<Self, SurfaceError> {
+        Self::configure(gpu, surface, size, srgb, false)
+    }
+
+    /// Configures a vsynced overlay surface, preferring premultiplied alpha,
+    /// then postmultiplied alpha, then automatic selection. Prefers a non-sRGB
+    /// attachment so blending and presentation both use encoded RGB values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the adapter can't present to the surface.
+    pub fn new_transparent(
+        gpu: &Gpu,
+        surface: wgpu::Surface<'static>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, SurfaceError> {
+        Self::configure(gpu, surface, (width, height), false, true)
+    }
+
+    fn configure(
+        gpu: &Gpu,
+        surface: wgpu::Surface<'static>,
         (width, height): (u32, u32),
         srgb: bool,
+        transparent: bool,
     ) -> Result<Self, SurfaceError> {
         let caps = surface.get_capabilities(&gpu.adapter);
         let format = caps
@@ -61,7 +87,15 @@ impl TankSurface {
             .find(|f| f.is_srgb() == srgb)
             .or_else(|| caps.formats.first().copied())
             .ok_or(SurfaceError::Unsupported)?;
-        let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+        let alpha_mode = if transparent {
+            [
+                wgpu::CompositeAlphaMode::PreMultiplied,
+                wgpu::CompositeAlphaMode::PostMultiplied,
+            ]
+            .into_iter()
+            .find(|mode| caps.alpha_modes.contains(mode))
+            .unwrap_or(wgpu::CompositeAlphaMode::Auto)
+        } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
             wgpu::CompositeAlphaMode::Opaque
         } else {
             caps.alpha_modes
