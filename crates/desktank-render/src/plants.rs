@@ -6,7 +6,9 @@
 //! T6d: red holds the plant's health and green its colouration, each at
 //! [`desktank_sim::TINT_STEPS`] steps, from which the shader tints the
 //! whole plant (pale, yellowing, then brown and translucent as it dies)
-//! and shifts it towards its species' colouration colour; blue is spare
+//! and shifts it towards its species' colouration colour; blue holds a
+//! ball's roll angle ([`desktank_sim::PlantInfo::roll`], `0..=255` for
+//! `0..2π` clockwise, 0 for other plants), which turns the marimo velvet,
 //! and alpha holds the species id. It is rebuilt from
 //! the plant table when [`desktank_sim::World::plants_version`] changes,
 //! and only the rows that changed are uploaded, so a plant's look changes
@@ -98,7 +100,7 @@ impl PlantTints {
             fresh[at..at + 4].copy_from_slice(&[
                 texel_byte(plant.health),
                 texel_byte(plant.colour),
-                0,
+                plant.roll,
                 plant.species.0,
             ]);
         }
@@ -246,6 +248,67 @@ mod tests {
             assert!(b >= last, "{k}");
             last = b;
         }
+    }
+
+    #[test]
+    fn a_rolling_balls_angle_is_the_blue_byte() {
+        use desktank_sim::{Brush, MaterialTable, Rect, WorldConfig};
+        const W: usize = 160;
+        const H: usize = 90;
+        const FLOOR: usize = H - 8;
+        let rect = |x0, y0, x1, y1| Rect { x0, y0, x1, y1 };
+        let mut w = World::new(
+            WorldConfig {
+                width: W,
+                height: H,
+                seed: 2,
+                water_level: 0.95,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let soil = w.materials().id("aquasoil").unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        let water = w.materials().id("water").unwrap();
+        w.fill_rect(rect(0, FLOOR, W, H), soil, Brush::Replace)
+            .unwrap();
+        // A ball resting on a ledge, with the bed then dropping away to its
+        // right (a 1:1 slope) so it rolls down it.
+        let (start, top) = (64, FLOOR - 12);
+        let end = start + (FLOOR - top);
+        w.fill_rect(rect(0, top, end, FLOOR), rock, Brush::Replace)
+            .unwrap();
+        let s = w.plant_species().id("marimo").unwrap();
+        let fragment = w.plant_species().get(s).unwrap().default_propagule();
+        w.paint_plant(64, i64::try_from(top).unwrap() - 1, 0, s, fragment)
+            .unwrap();
+        for _ in 0..6 * 1200 {
+            w.tick();
+        }
+        let id = w.plants().find(|p| p.species == s).unwrap().id;
+        let mut tints = PlantTints::default();
+        let blue = |tints: &PlantTints| tints.image()[usize::from(id.0) * 4 + 2];
+        tints.update(&w, |_, _| {});
+        assert_eq!((w.plant(id).unwrap().roll, blue(&tints)), (0, 0));
+        for x in start + 1..end {
+            let y = top + (x - start);
+            w.fill_rect(rect(x, top, x + 1, y), water, Brush::Replace)
+                .unwrap();
+        }
+        for _ in 0..10 {
+            for _ in 0..1200 {
+                w.tick();
+            }
+            let roll = w.plant(id).unwrap().roll;
+            if roll != 0 {
+                let mut uploaded = Vec::new();
+                tints.update(&w, |row, _| uploaded.push(row));
+                assert_eq!(blue(&tints), roll);
+                assert_eq!(uploaded, [usize::from(id.0) >> 8]);
+                return;
+            }
+        }
+        panic!("the ball never rolled");
     }
 
     #[test]

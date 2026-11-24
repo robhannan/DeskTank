@@ -501,7 +501,8 @@ fn a_version_7_fixture_loads() {
     // Its outlet loads as an internal filter (D27), and the decoded state
     // stays pinned across platforms.
     assert_eq!(w.devices().count(), 1);
-    assert_eq!(w.state_hash(), 0xdb7c_6ec9_60ea_96d9);
+    // The hash includes the zero-initialised roll angles on its rafts.
+    assert_eq!(w.state_hash(), 0xccaf_3aca_661e_df01);
     let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(w.state_hash(), fresh.state_hash());
     let floaters = |w: &World| {
@@ -751,7 +752,7 @@ fn a_version_12_fixture_loads() {
     );
     let (nx, ny) = d.nozzle(art).unwrap();
     assert!(w.current_at(nx - 20, ny)[0] < -1.0);
-    // Round-tripping into v13 carries on identically.
+    // Round-tripping into v14 carries on identically.
     let mut again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(w.state_hash(), again.state_hash());
     for _ in 0..200 {
