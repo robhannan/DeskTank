@@ -15,7 +15,7 @@ use crate::device::{
     Device, DeviceId, DeviceKind, DeviceKinds, DeviceStatus, MAX_DEVICES, Mount, RinseKind,
 };
 use crate::hash::Fnv64;
-use crate::material::{MaterialId, MaterialTable};
+use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::save::{SaveError, v12, v13};
 
 /// The world's devices.
@@ -55,6 +55,11 @@ impl Devices {
 
     pub(super) fn kinds(&self) -> &DeviceKinds {
         &self.kinds
+    }
+
+    /// The material footprint cells are made of, if the table has it.
+    pub(super) fn material(&self) -> Option<MaterialId> {
+        self.material
     }
 
     /// The device a cell of `material` with `state` belongs to, if any.
@@ -116,6 +121,12 @@ impl World {
     ///   (`y = 0`), partly above the water line (`flip` mirrors left/right),
     ///   requiring every footprint cell to be fluid (air or water) and every
     ///   intake cell to reach under the water line.
+    /// - [`Mount::Floor`]: horizontally centred on `x` and laid flush with the
+    ///   tank floor, under any powder substrate already there (`flip` mirrors
+    ///   left/right). Every footprint cell must be fluid or powder, the nozzle
+    ///   cell fluid (the spray bar not buried), and every powder cell it
+    ///   displaces must find room in the water above or beside it
+    ///   ([`World::floor_placement_plan`]).
     ///
     /// The returned device's id is 0.
     #[must_use]
@@ -145,7 +156,7 @@ impl World {
                 let x0 = usize::try_from((x - w_i / 2).clamp(0, max_x)).unwrap_or(0);
                 (x0, false)
             }
-            Mount::Rim => {
+            Mount::Rim | Mount::Floor => {
                 let max_x = i64::try_from(self.width.saturating_sub(w)).unwrap_or(0);
                 let x0 = usize::try_from((x - w_i / 2).clamp(0, max_x)).unwrap_or(0);
                 (x0, flip)
@@ -167,6 +178,15 @@ impl World {
                 && h <= self.height
                 && self.device_fits(&dev)
                 && dev.intakes(art).all(|(_, iy)| iy >= self.surface_row);
+            return (dev, ok);
+        }
+        if art.mount == Mount::Floor {
+            let y0 = self.height.saturating_sub(h);
+            let dev = at(i64::try_from(y0).unwrap_or(0));
+            let ok = w <= self.width
+                && h <= self.height
+                && y0 >= self.surface_row
+                && self.floor_placement_plan(&dev).is_some();
             return (dev, ok);
         }
         if w <= self.width && bottom >= top {
@@ -200,7 +220,7 @@ impl World {
                         return (at(y0), true);
                     }
                 }
-                Mount::Rim => unreachable!("handled above"),
+                Mount::Rim | Mount::Floor => unreachable!("handled above"),
             }
         }
         (at(want), false)
@@ -215,6 +235,107 @@ impl World {
                 let m = self.cells[y * self.width + x].material;
                 self.is_fluid(m)
             })
+    }
+
+    /// Whether a floor-mounted `d` (an under-gravel filter) can be laid at its
+    /// position, and where each powder cell it displaces goes: `(cx, cy, tx, ty)`
+    /// moves the powder cell at `(cx, cy)` in its footprint to `(tx, ty)`.
+    ///
+    /// Every footprint cell must be fluid or powder and the nozzle cell
+    /// (the spray bar) must be fluid. Each displaced powder cell takes the
+    /// lowest free fluid cell above it in its own column (the bed rises by the
+    /// plate's thickness) or, in a column the device fills right up (the
+    /// uplift tube), the lowest free fluid cell in the nearest other column
+    /// of the device's width. A cell is free if it is fluid, under the water
+    /// line, outside the footprint, unclaimed, and the substrate would come
+    /// to rest there: on the bed, the floor or the plate, never on top of a
+    /// tube. `None` if any powder cell has nowhere to go.
+    pub(super) fn floor_placement_plan(
+        &self,
+        d: &Device,
+    ) -> Option<Vec<(usize, usize, usize, usize)>> {
+        let art = self.devices.kinds.get(d.kind);
+        let (w, h) = art.size;
+        if d.x + w > self.width || d.y + h > self.height {
+            return None;
+        }
+        let mut displaced = Vec::new();
+        for (cx, cy) in d.cells(art) {
+            let m = self.cells[cy * self.width + cx].material;
+            if self.is_powder(m) {
+                displaced.push((cx, cy));
+            } else if !self.is_fluid(m) {
+                return None;
+            }
+        }
+        let (nx, ny) = d.nozzle(art)?;
+        if !self.is_fluid(self.cells[ny * self.width + nx].material) {
+            return None;
+        }
+        // Substrate may rest on the plate (its top row is the intake row)
+        // but not on the tubes above it.
+        let plate_top = d.y + art.intakes.iter().map(|&(_, iy)| iy).min().unwrap_or(h);
+        let free = |claimed: &BTreeSet<(usize, usize)>, tx: usize, ty: usize| {
+            if ty < self.surface_row
+                || !self.is_fluid(self.cells[ty * self.width + tx].material)
+                || d.covers(art, tx, ty)
+                || claimed.contains(&(tx, ty))
+            {
+                return false;
+            }
+            for sy in ty + 1..self.height {
+                if d.covers(art, tx, sy) {
+                    return sy >= plate_top;
+                }
+                if !self.is_fluid(self.cells[sy * self.width + tx].material) {
+                    return true;
+                }
+            }
+            true
+        };
+        let mut claimed = BTreeSet::new();
+        let mut plan = Vec::with_capacity(displaced.len());
+        for (cx, cy) in displaced {
+            let above = (self.surface_row..cy)
+                .rev()
+                .find(|&ty| free(&claimed, cx, ty));
+            let to = above.map(|ty| (cx, ty)).or_else(|| {
+                (1..w).find_map(|dx| {
+                    [cx.checked_sub(dx), cx.checked_add(dx)]
+                        .into_iter()
+                        .flatten()
+                        .filter(|tx| (d.x..d.x + w).contains(tx))
+                        .find_map(|tx| {
+                            (self.surface_row..self.height)
+                                .rev()
+                                .find(|&ty| free(&claimed, tx, ty))
+                                .map(|ty| (tx, ty))
+                        })
+                })
+            });
+            let (tx, ty) = to?;
+            claimed.insert((tx, ty));
+            plan.push((cx, cy, tx, ty));
+        }
+        Some(plan)
+    }
+
+    /// Whether cells of `material` are powder (substrate).
+    fn is_powder(&self, material: MaterialId) -> bool {
+        self.props[usize::from(material.0)].class == MovementClass::Powder
+    }
+
+    /// Whether `(x, y)` is above the plate of a floor-mounted filter (an
+    /// under-gravel filter): some such device covers the floor cell
+    /// `(x, height - 1)` of that column and `y` is above the floor row.
+    pub(super) fn is_over_floor_filter(&self, x: usize, y: usize) -> bool {
+        if self.devices.is_empty() || y + 1 >= self.height {
+            return false;
+        }
+        self.devices.values().any(|d| {
+            let art = self.devices.kinds.get(d.kind);
+            art.mount == Mount::Floor && d.covers(art, x, self.height - 1)
+        })
     }
 
     /// Adds a `kind` at its placement for cell `(x, y)`
@@ -245,6 +366,19 @@ impl World {
         d.id = DeviceId(id);
         let art = self.devices.kinds.get(kind);
         let cells: Vec<_> = d.cells(art).collect();
+        if art.mount == Mount::Floor {
+            // Lift the substrate the plate displaces onto the bed above it,
+            // keeping each cell exactly (material, variant and state).
+            let plan = self.floor_placement_plan(&d).unwrap_or_default();
+            let moved: Vec<_> = plan
+                .iter()
+                .map(|&(cx, cy, _, _)| self.cells[cy * self.width + cx])
+                .collect();
+            for (cell, &(_, _, tx, ty)) in moved.into_iter().zip(&plan) {
+                self.write_cell(tx, ty, cell.material, &mut None);
+                self.cells[ty * self.width + tx] = cell;
+            }
+        }
         for (cx, cy) in cells {
             self.write_cell(cx, cy, material, &mut None);
             self.cells[cy * self.width + cx].state = id;
@@ -543,6 +677,22 @@ impl World {
             for d in self.devices.table.values() {
                 let art = self.devices.kinds.get(d.kind);
                 for (ix, iy) in d.intakes(art) {
+                    // An under-gravel filter draws through the bed: its
+                    // intakes capture at the top of the substrate above them
+                    // (debris resting there is a neighbour of the last
+                    // substrate cell, not part of the bed).
+                    let iy = if art.mount == Mount::Floor {
+                        let mut y = iy;
+                        while y > self.surface_row && {
+                            let m = self.cells[(y - 1) * self.width + ix].material;
+                            self.is_powder(m) && !cfg.capture.contains(m)
+                        } {
+                            y -= 1;
+                        }
+                        y
+                    } else {
+                        iy
+                    };
                     for (dx, dy) in RING {
                         checks += 1;
                         if let Some(j) = self.at(ix, iy, dx, dy)
@@ -591,14 +741,16 @@ impl World {
     }
 
     /// Each jet-driving device's nozzle (position and unit direction), its
-    /// intake cells with outward open-water directions, and its scaled flow
-    /// factor (`flow_scale * flow_factor`), for the 2D current field.
+    /// intake cells with outward open-water directions (and whether the intake
+    /// draws down through a substrate bed, as a floor-mounted plate's do), and
+    /// its scaled flow factor (`flow_scale * flow_factor`), for the 2D current
+    /// field.
     #[allow(clippy::type_complexity)] // internal tuple for recompute_current
     pub(super) fn device_flows(
         &self,
     ) -> Vec<(
         ((usize, usize), [f32; 2]),
-        Vec<((usize, usize), [f32; 2])>,
+        Vec<((usize, usize), [f32; 2], bool)>,
         f32,
     )> {
         let floor = self.life.eco.filtration.clog_floor;
@@ -613,7 +765,13 @@ impl World {
                 Some((
                     (nozzle, d.nozzle_dir(art)),
                     d.intakes(art)
-                        .map(|(ix, iy)| ((ix, iy), d.intake_outward(art, ix, iy)))
+                        .map(|(ix, iy)| {
+                            (
+                                (ix, iy),
+                                d.intake_outward(art, ix, iy),
+                                art.mount == Mount::Floor,
+                            )
+                        })
                         .collect(),
                     art.flow_scale * d.flow_factor_with(floor),
                 ))

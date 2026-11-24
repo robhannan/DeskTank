@@ -1082,6 +1082,37 @@ fn magnify_tool_controls_lens_without_dirtying_world() {
 }
 
 #[test]
+fn under_gravel_filter_placement_flips_the_tube_and_inspects_as_fry_safe() {
+    let mut t = paused();
+    t.select(slot(&t, "device under_gravel_filter"));
+    assert!(t.can_flip_device());
+    assert!(!t.device_flipped());
+    down(&mut t, PRIMARY, 32, 36);
+    t.pointer_up(PRIMARY);
+    assert!(t.flip_device());
+    down(&mut t, PRIMARY, 96, 36);
+    t.pointer_up(PRIMARY);
+
+    // At this height the upright tube is on one side of the footprint.
+    let world = t.tank().world();
+    assert_eq!(world.devices().count(), 2);
+    assert_eq!(world.device_at(20, 54), Some(DeviceId(1)));
+    assert_eq!(world.device_at(43, 54), None);
+    assert_eq!(world.device_at(84, 54), None);
+    assert_eq!(world.device_at(107, 54), Some(DeviceId(2)));
+
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 107, 54);
+    t.pointer_up(PRIMARY);
+    let line = t.take_inspection();
+    assert!(
+        line.starts_with("device under_gravel_filter 2 floor ")
+            && line.ends_with(" off yes 107 54"),
+        "unexpected under-gravel filter inspect line: {line}"
+    );
+}
+
+#[test]
 fn flip_device_only_applies_to_flippable_device_tools() {
     let mut t = paused();
     // Default tool (sand) and non-flippable tools/devices cannot flip.

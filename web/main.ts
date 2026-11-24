@@ -67,6 +67,7 @@ const INSPECT_SHOW_MS = 5000;
 // Display labels for palette entries (the entries come from the sim; an
 // unlisted name falls back to its humanised form).
 const LABELS: Record<string, string> = {
+  under_gravel_filter: "Under-gravel filter",
   air_bubble: "Bubbles",
   flake_food: "Flakes",
   sinking_pellet: "Pellets",
@@ -1178,7 +1179,9 @@ function closeDeviceActions() {
 function showDeviceLine(rest: string[], preserveCell = false) {
   const [name, id, place] = rest;
   const placeText =
-    place === "bed" ? "on the bed" : place === "rim" ? "on the rim" : `on the ${place} glass`;
+    place === "bed" || place === "rim" || place === "floor"
+      ? `on the ${place}`
+      : `on the ${place} glass`;
   if (rest[3] === "air") {
     const [, , , , rawX, rawY] = rest;
     const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];

@@ -1304,33 +1304,90 @@ impl World {
         let cfg = life.eco.current;
         let (fw, fh) = (life.light.width(), life.light.height());
         let blocked = &life.blocked;
+        // Whether a blocked field block is mostly substrate or device (which
+        // water seeps through) rather than hard rock, wood or glass.
+        let (cells, props, device_material, width, height) = (
+            &self.cells,
+            &self.props,
+            self.devices.material(),
+            self.width,
+            self.height,
+        );
+        let flags = &life.flags;
+        let permeable = |bx: usize, by: usize| {
+            let (x0, y0) = (bx * FIELD_SCALE, by * FIELD_SCALE);
+            let (x1, y1) = (
+                (x0 + FIELD_SCALE).min(width),
+                (y0 + FIELD_SCALE).min(height),
+            );
+            let (mut soft, mut hard) = (0usize, 0usize);
+            for y in y0..y1 {
+                for c in &cells[y * width + x0..y * width + x1] {
+                    if flags[usize::from(c.material.0)] & SOLID_BLOCKING == 0 {
+                        continue;
+                    }
+                    if props[usize::from(c.material.0)].class == MovementClass::Powder
+                        || Some(c.material) == device_material
+                    {
+                        soft += 1;
+                    } else {
+                        hard += 1;
+                    }
+                }
+            }
+            soft > hard
+        };
 
         // Directed outlets and paired per-device intakes, then any legacy
         // outlet cells.
         let mut jet_sources: Vec<(usize, usize, [f32; 2], f32)> = Vec::new();
         let mut intake_sources: Vec<(usize, usize, [f32; 2], f32)> = Vec::new();
+        // Down-flow through each substrate bed over a floor plate: `(block, share)`.
+        let mut seepage: Vec<(usize, f32)> = Vec::new();
         let mut paired_flows = Vec::new();
         for (((nx, ny), dir), intakes, scale) in device_flows {
             let open_nozzle = find_open(blocked, fw, fh, nx / FIELD_SCALE, ny / FIELD_SCALE, dir);
             if let Some((ox, oy)) = open_nozzle {
                 jet_sources.push((ox, oy, dir, scale));
             }
-            let mut open_intakes: Vec<((usize, usize), [f32; 2])> =
+            // `(open block, inward direction, plate block row)`; the last is set
+            // for an intake that draws down through a substrate bed.
+            #[allow(clippy::type_complexity)] // local tuple of intake bookkeeping
+            let mut open_intakes: Vec<((usize, usize), [f32; 2], Option<usize>)> =
                 Vec::with_capacity(intakes.len());
-            for ((ix, iy), outward) in intakes {
-                if let Some((ox, oy)) =
-                    find_open(blocked, fw, fh, ix / FIELD_SCALE, iy / FIELD_SCALE, outward)
-                {
-                    open_intakes.push(((ox, oy), [-outward[0], -outward[1]]));
+            for ((ix, iy), outward, through_bed) in intakes {
+                let (fx, fy) = (ix / FIELD_SCALE, iy / FIELD_SCALE);
+                if through_bed {
+                    // Walk up through the permeable bed to the open water
+                    // above it, which is drawn back down into the bed.
+                    let mut oy = fy;
+                    let open = loop {
+                        if !blocked[oy * fw + fx] {
+                            break true;
+                        }
+                        if oy == 0 || !permeable(fx, oy) {
+                            break false;
+                        }
+                        oy -= 1;
+                    };
+                    if open {
+                        open_intakes.push(((fx, oy), [0.0, 1.0], Some(fy)));
+                    }
+                } else if let Some((ox, oy)) = find_open(blocked, fw, fh, fx, fy, outward) {
+                    open_intakes.push(((ox, oy), [-outward[0], -outward[1]], None));
                 }
             }
             if !open_intakes.is_empty() {
                 #[allow(clippy::cast_precision_loss)] // small intake count
                 let per_intake = scale / open_intakes.len() as f32;
+                let down = (cfg.intake_speed * per_intake).min(cfg.speed);
                 let mut cells = Vec::with_capacity(open_intakes.len());
-                for ((ox, oy), inward) in open_intakes {
+                for ((ox, oy), inward, plate) in open_intakes {
                     intake_sources.push((ox, oy, inward, per_intake));
                     cells.push((ox, oy));
+                    if let Some(fy) = plate {
+                        seepage.extend(((oy + 1)..=fy).map(|by| (by * fw + ox, down)));
+                    }
                 }
                 if let Some(nozzle_cell) = open_nozzle {
                     paired_flows.push((nozzle_cell, cells, scale));
@@ -1471,6 +1528,14 @@ impl World {
                     life.current_blocks.push(b);
                 }
             }
+        }
+        // Seepage down through the substrate bed over a floor plate: the
+        // permeable blocks the projection left at rest carry the down-flow, so
+        // the field and the Flow overlay show it into the plate (these blocks
+        // hold only settled substrate, so they stay out of `current_blocks`
+        // and cost nothing per tick).
+        for (b, down) in seepage {
+            life.current[b][1] = (life.current[b][1] + down).min(cfg.speed);
         }
         // Surface agitation from strong current at the water-air boundary
         // (zero when the tank is brim-full or completely dry).

@@ -1318,7 +1318,7 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
 }
 
-/// The inspect line for device `id` under cell `(x, y)` (D27, DV3–DV7).
+/// The inspect line for device `id` under cell `(x, y)`, including its mount (D27, DV3–DV7).
 fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let status = world.device_status(id)?;
     let art = world.device_kinds().get(status.kind);
@@ -1333,6 +1333,7 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
         }
         Mount::Bed => "on the bed",
         Mount::Rim => "on the rim",
+        Mount::Floor => "on the floor",
     };
     if !status.is_filter {
         return Some(format!(

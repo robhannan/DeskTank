@@ -1401,7 +1401,8 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
 /// - Filter: `device <kind> <id> <place> <flow> <load_pct> <maturity_pct> <guard> <fry_safe> <x> <y>`
 /// - Air diffuser (e.g. bubbler): `device <kind> <id> <place> air <x> <y>`
 ///
-/// `<place>` is `"left"`, `"right"` (side-glass mounts), `"bed"` (bed mounts) or `"rim"` (rim mounts).
+/// `<place>` is `"left"` or `"right"` for side-glass mounts, `"bed"` for bed mounts,
+/// `"rim"` for rim mounts, and `"floor"` for floor mounts.
 fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
     let s = world.device_status(id)?;
     let place = match world.device_kinds().get(s.kind).mount {
@@ -1414,6 +1415,7 @@ fn device_inspect_line(world: &World, id: DeviceId, x: usize, y: usize) -> Optio
         }
         Mount::Bed => "bed",
         Mount::Rim => "rim",
+        Mount::Floor => "floor",
     };
     if !s.is_filter {
         return Some(format!(

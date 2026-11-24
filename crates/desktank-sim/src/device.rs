@@ -20,6 +20,10 @@
 //! - **HOB filter** (DV5): rim-mounted (hangs on the top edge partly above the
 //!   water line), pours a waterfall into the surface that ripples it, and drops
 //!   its intake tube in the back depth band so fish pass in front of it.
+//! - **Under-gravel filter** (DV6): floor-mounted (a slotted plate under the
+//!   substrate, flush with the tank floor), draws water down through the gravel
+//!   bed into its plate and up an air-driven uplift tube in the back corner;
+//!   intrinsically fry-safe, and rooted plants over its plate decline.
 
 use serde::Deserialize;
 
@@ -63,15 +67,18 @@ pub enum DeviceKind {
     SpongeFilter,
     /// A rim-mounted hang-on-back waterfall filter (DV5).
     HobFilter,
+    /// A floor-mounted slotted plate under the substrate with an uplift tube (DV6).
+    UnderGravelFilter,
 }
 
 impl DeviceKind {
     /// Every kind, in palette order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Bubbler,
         Self::InternalFilter,
         Self::SpongeFilter,
         Self::HobFilter,
+        Self::UnderGravelFilter,
     ];
 
     /// Its name in saves, scripts and `assets/devices/`.
@@ -82,6 +89,7 @@ impl DeviceKind {
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
             Self::HobFilter => "hob_filter",
+            Self::UnderGravelFilter => "under_gravel_filter",
         }
     }
 
@@ -97,6 +105,7 @@ impl DeviceKind {
             Self::InternalFilter => 1,
             Self::SpongeFilter => 2,
             Self::HobFilter => 3,
+            Self::UnderGravelFilter => 4,
         }
     }
 }
@@ -115,6 +124,9 @@ pub enum Mount {
     /// line with its intake submerged (also allowed at `surface_row == 0` when
     /// filled to the brim); mirrors left/right when flipped.
     Rim,
+    /// A plate flush with the tank floor, laid under any substrate already
+    /// there (which rests on top of it); mirrors left/right when flipped.
+    Floor,
 }
 
 impl Mount {
@@ -122,7 +134,7 @@ impl Mount {
     #[must_use]
     pub const fn flippable(self) -> bool {
         match self {
-            Self::SideGlass | Self::Rim => true,
+            Self::SideGlass | Self::Rim | Self::Floor => true,
             Self::Bed => false,
         }
     }
@@ -250,6 +262,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/devices/internal_filter.toml"),
     include_str!("../../../assets/devices/sponge_filter.toml"),
     include_str!("../../../assets/devices/hob_filter.toml"),
+    include_str!("../../../assets/devices/under_gravel_filter.toml"),
 ];
 
 impl DeviceKinds {
@@ -527,6 +540,8 @@ impl Device {
     #[must_use]
     pub fn intake_outward(&self, art: &DeviceArt, ix: usize, _iy: usize) -> [f32; 2] {
         match art.mount {
+            // Straight up through the gravel bed.
+            Mount::Floor => [0.0, -1.0],
             Mount::SideGlass => self.nozzle_dir(art),
             Mount::Bed => {
                 let lx = ix.saturating_sub(self.x);
@@ -729,5 +744,59 @@ mod tests {
         assert_eq!(unflipped.back_band_row(art), Some(10));
         assert!(unflipped.nozzle_dir(art)[0] < 0.0);
         assert!(flipped.nozzle_dir(art)[0] > 0.0);
+    }
+
+    #[test]
+    fn the_under_gravel_filter_is_a_floor_plate_with_a_corner_uplift_tube() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let art = kinds.get(DeviceKind::UnderGravelFilter);
+        assert_eq!(DeviceKind::ALL.len(), 5);
+        assert_eq!(art.size, (28, 28));
+        assert_eq!(art.mount, Mount::Floor);
+        assert!(art.mount.flippable());
+        assert!(art.is_filter());
+        assert!(art.fry_safe);
+        assert_eq!(art.nozzle, Some((6, 2)));
+        assert_eq!(art.nozzle_dir, [1.0, 0.0]);
+        assert!((art.flow_scale - 0.65).abs() < f32::EPSILON);
+        assert_eq!(art.intakes.len(), 5);
+        assert_eq!(art.graze_rows, None);
+        assert_eq!(art.back_band_from, None);
+        assert_eq!(art.spillway, None);
+        let at = |x: usize, y: usize| art.footprint[y * 28 + x];
+        // The slotted plate spans the whole width of the bottom three rows.
+        for y in 25..28 {
+            assert!((0..28).all(|x| at(x, y)), "plate row {y} is solid");
+        }
+        // The uplift tube rises in the back-left corner to the spout; the rest is open.
+        assert!(at(2, 10) && at(2, 2) && at(5, 2) && at(6, 2));
+        assert!(!at(10, 10) && !at(20, 2) && !at(2, 0) && !at(10, 24));
+        // Every intake is on the plate's top row, clear of the tube and collar.
+        for &(ix, iy) in &art.intakes {
+            assert_eq!(iy, 25);
+            assert!(ix >= 6 && at(ix, iy) && !at(ix, iy - 1));
+        }
+        // Bubble outlets have open water directly above them.
+        assert!(!art.bubble_outlets.is_empty() && art.bubble_rate > 0.0);
+        for &(bx, by) in &art.bubble_outlets {
+            assert!(at(bx, by) && (by == 0 || !at(bx, by - 1)));
+        }
+        let d = |facing_left| Device {
+            id: DeviceId(1),
+            kind: DeviceKind::UnderGravelFilter,
+            x: 10,
+            y: 20,
+            facing_left,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
+        };
+        // Mirrored, the tube and spout are on the right and the spout jets left.
+        assert_eq!(d(false).nozzle(art), Some((16, 22)));
+        assert_eq!(d(true).nozzle(art), Some((31, 22)));
+        assert!(d(false).nozzle_dir(art)[0] > 0.0 && d(true).nozzle_dir(art)[0] < 0.0);
+        assert_eq!(d(true).cells(art).count(), art.cells);
+        // Water is drawn straight up through the gravel to the intakes.
+        assert_eq!(d(false).intake_outward(art, 18, 45), [0.0, -1.0]);
     }
 }

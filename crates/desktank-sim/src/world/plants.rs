@@ -1395,6 +1395,12 @@ impl World {
             }
         });
         let (response, limit) = s.prefer.response(means);
+        // Roots over an under-gravel filter's plate are starved and drowned in
+        // the water it pulls down through the bed (DV6): such a plant is under
+        // stress however good its light, nutrients and CO₂, and doesn't grow.
+        let rooted = matches!(s.form, Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_));
+        let hurt_by_ugf = rooted && self.is_over_floor_filter(bx, by);
+        let response = if hurt_by_ugf { 0.0 } else { response };
         #[allow(clippy::cast_precision_loss)] // ≤ 2^32 ticks
         let dt = elapsed as f32 / super::TICKS_PER_SECOND as f32;
         #[allow(clippy::cast_precision_loss)] // exact below 2^53 ticks

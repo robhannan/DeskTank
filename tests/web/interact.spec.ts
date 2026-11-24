@@ -88,6 +88,22 @@ test.describe("mouse", () => {
     );
     await expect(page.locator("#device-actions")).toBeHidden();
 
+    // DV6: the under-gravel filter can be flipped and mounts flush with the floor.
+    await choose(page, "Under-gravel filter");
+    const filterX = Math.round(w * 0.7);
+    await page.locator("#flip").click();
+    await expect(page.locator("#flip")).toHaveAttribute("aria-pressed", "true");
+    p = await cellPoint(page, filterX, y);
+    await page.mouse.click(p.x, p.y);
+    await choose(page, "Inspect");
+    p = await cellPoint(page, filterX, h - 1);
+    await page.mouse.click(p.x, p.y);
+    await expect(page.locator("#inspect")).toHaveText(
+      /^Under-gravel filter #\d+ · on the floor · flow [\d.]+ cells\/s · load 0% · maturity 0% · fry-safe · cell /,
+    );
+    await expect(page.locator("#device-actions")).toBeVisible();
+    await expect(page.locator("#device-guard-label")).toBeHidden();
+
     // Inspect shows the cell; inspect and net change nothing.
     const hash = await stateHash(page);
     p = await cellPoint(page, Math.round(w * 0.8), y);
@@ -378,9 +394,9 @@ test("the palette follows the sim's category tree and navigates with the keyboar
       expect(liveFoods, e).toContain(name);
       expect(path(i), `${e} is in Food › Live`).toBe("food/live");
     } else if (kind === "plant") expect(path(i), e).toMatch(/^plants\//);
-    // Devices are named by kind (D27): the bubbler is still a material; the
-    // internal, sponge and HOB filters are prefab devices.
-    else if (kind === "device") expect(["bubbler", "internal_filter", "sponge_filter", "hob_filter"], e).toContain(name);
+    // The prefab bubbler and four filters are listed by device kind (D27).
+    else if (kind === "device")
+      expect(["bubbler", "internal_filter", "sponge_filter", "hob_filter", "under_gravel_filter"], e).toContain(name);
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);

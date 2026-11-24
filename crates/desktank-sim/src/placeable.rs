@@ -13,6 +13,10 @@
 //! - The **HOB filter** (DV5) is a rim-mounted prefab device: it hangs on the
 //!   top edge partly above the water line, pours a waterfall into the surface,
 //!   and drops its intake tube in the back depth band so fish swim in front.
+//! - The **under-gravel filter** (DV6) is a floor-mounted prefab device: it lies
+//!   on the tank floor under any substrate already there (which settles on top
+//!   of it), draws water down through the gravel and up its corner uplift tube,
+//!   and is intrinsically fry-safe, but rooted plants over its plate decline.
 
 use crate::device::DeviceKind;
 use crate::{World, WorldError};
@@ -28,15 +32,18 @@ pub enum Placeable {
     SpongeFilter,
     /// A rim-mounted hang-on-back waterfall filter: ripples the surface, back-band intake.
     HobFilter,
+    /// A floor-mounted under-gravel filter: slotted plate under the substrate, uplift tube.
+    UnderGravelFilter,
 }
 
 impl Placeable {
     /// Every placeable, in palette order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Bubbler,
         Self::InternalFilter,
         Self::SpongeFilter,
         Self::HobFilter,
+        Self::UnderGravelFilter,
     ];
 
     /// The material its cells are made of.
@@ -53,6 +60,7 @@ impl Placeable {
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
             Self::HobFilter => "hob_filter",
+            Self::UnderGravelFilter => "under_gravel_filter",
         }
     }
 
@@ -74,6 +82,7 @@ impl Placeable {
             Self::InternalFilter => DeviceKind::InternalFilter,
             Self::SpongeFilter => DeviceKind::SpongeFilter,
             Self::HobFilter => DeviceKind::HobFilter,
+            Self::UnderGravelFilter => DeviceKind::UnderGravelFilter,
         })
     }
 }

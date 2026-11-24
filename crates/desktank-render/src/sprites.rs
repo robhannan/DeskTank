@@ -1008,9 +1008,12 @@ mod tests {
         w.add_device(DeviceKind::HobFilter, 90, 0, false)
             .unwrap()
             .unwrap();
+        w.add_device(DeviceKind::UnderGravelFilter, 100, 40, false)
+            .unwrap()
+            .unwrap();
         let mut out = Vec::new();
-        // Bubbler (1) + Internal (1) + Sponge (1) + HOB split into body & back-band tube (2) = 5.
-        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 5);
+        // Five devices, with an extra instance for the HOB's back-band tube.
+        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 6);
         for d in w.devices() {
             let art = w.device_kinds().get(d.kind);
             let (cw, ch) = art.size;

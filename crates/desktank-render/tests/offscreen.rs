@@ -664,6 +664,68 @@ fn a_device_and_its_ghost_are_drawn() {
     assert_eq!(render(gpu, &mut with, format), b);
 }
 
+#[test]
+fn under_gravel_filter_draws_the_plate_below_the_bed_and_the_tube_above_it() {
+    let Some(gpu) = gpu() else { return };
+    let config = WorldConfig {
+        width: W as usize,
+        height: H as usize,
+        seed: 7,
+        water_level: 1.0,
+    };
+    let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+    let gravel = world.materials().id("gravel").unwrap();
+    world
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: 0,
+                y0: H as usize - 6,
+                x1: W as usize,
+                y1: H as usize,
+            },
+            gravel,
+            Brush::Replace,
+        )
+        .unwrap();
+    let id = world
+        .add_device(desktank_sim::DeviceKind::UnderGravelFilter, 40, 16, false)
+        .unwrap()
+        .unwrap();
+    let device = *world.device(id).unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    // Four pixels per cell sample the fine sprite at texel centres.
+    let width = W * 4;
+    let frame = render_sized(
+        gpu,
+        &mut tank,
+        wgpu::TextureFormat::Rgba8Unorm,
+        (width, H * 4),
+    );
+    let sample = |x, y| {
+        let index = ((device.y * 4 + y) * width as usize + device.x * 4 + x) * 4;
+        [frame[index], frame[index + 1], frame[index + 2]]
+    };
+
+    let slot = sample(32, 106);
+    let bevel = sample(34, 106);
+    let floor_edge = sample(34, 111);
+    assert!(
+        floor_edge[0] <= slot[0] && slot[0] < bevel[0] && bevel[0] < bevel[2],
+        "charcoal plate with dark slots at the floor: {floor_edge:?}, {slot:?}, {bevel:?}"
+    );
+    let [red, _, blue] = sample(34, 99);
+    assert!(red > blue && red > bevel[0], "gravel just above the plate");
+
+    let tube = sample(9, 40);
+    let water = sample(17, 40);
+    let stone = sample(10, 76);
+    assert!(tube[0] > water[0], "clear tube highlight above the bed");
+    assert!(
+        stone[2] > stone[0].saturating_add(50) && stone[0] < tube[0],
+        "blue air stone inside the tube: {stone:?}"
+    );
+}
+
 /// The magnifier zooms a single rock cell and a creature sprite inside the
 /// lens rect, draws a border around it, leaves pixels outside untouched, and
 /// works identically on both single-pass and split-grid (`webOS`) pipelines.
