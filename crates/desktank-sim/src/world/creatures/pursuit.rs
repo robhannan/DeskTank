@@ -27,7 +27,7 @@
 //!   size, at least its cruising speed, so fry are slow.
 //! - **Startle.** A schooler that is calm and within one and a half of its
 //!   species' full-grown lengths of a frightened schoolmate catches the fright
-//!   (see [`World::startle`]): it takes [`STARTLE_HOP`] ticks less than that
+//!   (see `World::startle`): it takes `STARTLE_HOP` ticks less than that
 //!   mate has left, so the wave fades as it passes through the school, and
 //!   it runs the way the mate is heading. Each fish looks only every 3–8
 //!   ticks (its own reaction time), so the fright ripples outward from the
