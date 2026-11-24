@@ -146,6 +146,20 @@ impl World {
         }
     }
 
+    /// Takes a breath if there is air just above `c`'s body (the next is
+    /// due in its own time between breaths). Returns whether it did.
+    pub(super) fn breathe(&self, c: &mut Creature) -> bool {
+        let b = self.creature_body(c);
+        let at_air = b.y0 > 0
+            && (b.x0..b.x1)
+                .any(|x| self.cells[(b.y0 - 1) * self.width + x].material == self.creatures.air);
+        if at_air {
+            let between = self.quirks(c).scale(salt::BREATH, 80, 125, BETWEEN_BREATHS);
+            c.next_breath = self.tick + between;
+        }
+        at_air
+    }
+
     /// Takes a breath if one is due and there is air above `c`; otherwise,
     /// while searching, where to swim for one. Just after a breath, it
     /// skims the surface for floating food.
@@ -155,18 +169,12 @@ impl World {
         let q = self.quirks(c);
         let between = q.scale(salt::BREATH, 80, 125, BETWEEN_BREATHS);
         let skim = q.scale(salt::SKIM, 67, 133, SKIM);
-        if self.tick >= c.next_breath {
-            let b = self.creature_body(c);
-            if b.y0 > 0
-                && (b.x0..b.x1)
-                    .any(|x| self.cells[(b.y0 - 1) * self.width + x].material == self.creatures.air)
-            {
-                c.next_breath = self.tick + between;
-            } else if self.seeking_air(k, c) {
-                return self.gap_target(k, c);
+        if self.tick >= c.next_breath && !self.breathe(c) {
+            return if self.seeking_air(k, c) {
+                self.gap_target(k, c)
             } else {
-                return None;
-            }
+                None
+            };
         }
         // A skim is optional: a chase (an intruder to drive off, prey)
         // breaks it off.

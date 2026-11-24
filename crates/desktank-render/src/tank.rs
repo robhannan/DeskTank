@@ -234,9 +234,11 @@ impl Tank {
     /// Sets the local time of day (minutes after midnight) the tank is lit
     /// for (SPEC §2.6: day and night follow local time; the host injects
     /// it). Asks for a frame only if the tint changes, so a host can call
-    /// this every minute. Default: noon.
+    /// this every minute. Default: noon. The world gets it too: creatures
+    /// rest at night ([`World::set_time_of_day`]).
     pub fn set_time_of_day(&mut self, minute: u16) {
         let minute = minute % daylight::MINUTES_PER_DAY;
+        self.world.set_time_of_day(minute);
         let bits = |m: u16| daylight::tint(m).map(f32::to_bits);
         if bits(minute) != bits(self.time_of_day) {
             self.needs_frame = true;

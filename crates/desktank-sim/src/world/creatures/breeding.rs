@@ -618,6 +618,7 @@ impl World {
                 || p.growth < k.maturity
                 || !p.hungry()
                 || p.held_until >= self.tick
+                || p.asleep
             {
                 continue;
             }

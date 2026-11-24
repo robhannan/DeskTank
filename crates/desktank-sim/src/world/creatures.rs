@@ -72,6 +72,7 @@ mod habits;
 mod lifecycle;
 mod live;
 mod naming;
+pub mod night;
 pub mod pursuit;
 mod quirks;
 use quirks::salt;
@@ -91,7 +92,7 @@ use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::plants::Part;
 use crate::rng::chunk_stream;
 use crate::save::{SaveError, v6, v9};
-use crate::species::{SpeciesId, SpeciesTable, Temperament, Zone};
+use crate::species::{RestSpot, SpeciesId, SpeciesTable, Temperament, Zone};
 pub use breeding::{
     BREED_CHECK_SECONDS, CONCEIVE_ODDS, Clutch, MAX_CLUTCHES, MUTATION_PER_MILLE, PREY_ENERGY,
     REVERSION_PER_MILLE, SETTLE_TICKS, STRIKE_ODDS,
@@ -280,6 +281,10 @@ pub struct Creature {
     pursuit: u16,
     /// Ticks of fright left: it flees to cover or away while above 0.
     fear: u16,
+    /// Asleep for the night (see [`night`]).
+    asleep: bool,
+    /// Ticks it stays up after being woken at night (see [`night`]).
+    woken: u16,
 }
 
 /// What a creature added by a host, a script or a test is like (see
@@ -523,6 +528,8 @@ struct Kind {
     /// Shrimp species (`*_shrimp`): graze sponge filters (DV4) and vulnerable
     /// to unguarded intakes when small (DV3).
     is_shrimp: bool,
+    /// Where it rests at night (see [`night`]).
+    rests: RestSpot,
 }
 
 /// The creatures in a world and the per-species and per-material lookups
@@ -533,6 +540,9 @@ pub(super) struct Creatures {
     list: Vec<Creature>,
     /// Cell-space input from a host with avoidance enabled.
     cursor: Option<(i32, i32)>,
+    /// Local time of day from the host, minutes after midnight (see
+    /// [`night`]).
+    minute: u16,
     /// Reused start-of-tick snapshots for schooling, in creature id order.
     school: Vec<Schoolmate>,
     /// Whether a schooler is frightened enough this tick to startle its
@@ -676,12 +686,14 @@ impl Creatures {
                 live_prey,
                 eats_live: live_prey != [0; 4],
                 is_shrimp: s.name.ends_with("_shrimp"),
+                rests: s.rests,
             });
         }
         Self {
             species,
             list: Vec::new(),
             cursor: None,
+            minute: crate::daylight::NOON,
             school: Vec::new(),
             scared: false,
             gaps: Vec::new(),
@@ -928,6 +940,8 @@ impl World {
             quarry: None,
             pursuit: 0,
             fear: 0,
+            asleep: false,
+            woken: 0,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -967,7 +981,14 @@ impl World {
     pub fn hold_creature(&mut self, id: CreatureId) -> bool {
         let until = self.tick + HOLD_TICKS;
         self.creature_mut(id)
-            .map(|c| c.held_until = until)
+            .map(|c| {
+                c.held_until = until;
+                // Netting wakes a sleeper (see `night`).
+                if c.asleep {
+                    c.wake();
+                    c.woken = night::WOKEN_TICKS;
+                }
+            })
             .is_some()
     }
 
@@ -1243,6 +1264,8 @@ impl World {
                 quarry: quarry.map(CreatureId),
                 pursuit,
                 fear,
+                asleep: false,
+                woken: 0,
             });
         }
         let corpses = self.load_corpses(saved.corpses)?;
@@ -1358,6 +1381,12 @@ impl World {
                 h.write(&c.quarry.map_or(u64::MAX, |q| u64::from(q.0)).to_le_bytes());
                 h.write(&c.pursuit.to_le_bytes());
                 h.write(&c.fear.to_le_bytes());
+            }
+            // Only sleeping or woken creatures hash their rest, so a tank by
+            // day hashes as before version 15.
+            if c.asleep || c.woken > 0 {
+                h.write(&[0x73, u8::from(c.asleep)]);
+                h.write(&c.woken.to_le_bytes());
             }
         }
         self.hash_corpses(h);
@@ -1552,6 +1581,10 @@ impl World {
                 c.retarget = 0;
             }
             return (c.x, c.y) != (before.0, before.1);
+        }
+        // Asleep it only rests (see `night`).
+        if self.sleeps(&k, c) {
+            return self.rest_step(&k, c);
         }
         let mut rng = chunk_stream(self.seed, self.tick, CREATURE_STREAM + u64::from(c.id.0));
         c.satiety = c.satiety.saturating_sub(1);

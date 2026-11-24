@@ -25,7 +25,7 @@
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Five species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Six species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp), `swim_every` (seconds between a
@@ -34,8 +34,9 @@
   can't), `burrow_every` (seconds between a bottom walker's chances to
   burrow into loose substrate, never rock: the kuhli loach; digging
   moves the grains it displaces onto spoil heaps beside it and draws them
-  back over its body, conserving the substrate) and `bands` (the depth bands it
-  keeps to, front and back, D21; every band by default). Every species also gives its
+  back over its body, conserving the substrate), `bands` (the depth bands it
+  keeps to, front and back, D21; every band by default) and `rests` (where
+  it rests at night, *Night* below). Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
@@ -61,7 +62,7 @@
   - finding and eating food cells, and grazing algae and detritus (the
     clean-up crew);
   - avoiding the cursor (optional, D8);
-  - resting at night;
+  - resting at night (*Night* below);
   - hunting for predators, fleeing to plant cover for their prey, and
     holding a territory for territorial species (*Hunting and
     territory* below).
@@ -271,6 +272,39 @@
     rest ticks without a quarry) and fright are saved (format version 9,
     migrating version 8 creatures calm) and hashed only when set; the
     territory is the creature's `home`.
+
+- *Night* (`desktank_sim::night`, #195): creatures rest by the local
+  time of day, which the host injects with the tank's lighting
+  (`World::set_time_of_day`; noon by default, not saved).
+  - **Bedtime.** Each creature settles at a bedtime of its own between
+    21:00 and 22:00 and wakes at its own time between 06:00 and 07:00,
+    both fixed for life by a hash of the seed and its id, so a tank
+    drops off and wakes over an hour rather than as one.
+  - **Where.** A species key `rests` says where: `bottom` (it settles on
+    the bed below it: goldfish, the African dwarf frog), `plants` (it
+    drifts to the nearest stem or leaf cell within 48 cells, or the lower
+    part of its zone with none: the default for mid-water fish),
+    `surface` (its body's top in the water's top row, where it can
+    breathe: the default for surface fish), `in_place` (a walker sinks
+    back to the bed, a crawler stops on the face it holds: the default
+    for bottom and surfaces zones) or `never` (nocturnal: the kuhli loach
+    and bristlenose pleco). Live food never rests. A swimmer drifts to
+    its spot at a third of its cruising speed and holds still where it
+    arrives or something stops it.
+  - **Asleep** it skips steering, eating, habits and hunting, so once
+    still it neither moves nor redraws: resting costs less than swimming.
+    It burns energy at a quarter of the rate, so a well-fed creature lasts
+    the night, and an air-breather needs a breath four times less often; a
+    surface fish breathes where it rests, any other wakes, goes up and
+    settles again once it has breathed.
+  - **Waking.** It wakes at its wake time, or when disturbed: the net
+    holds it, it takes fright, the avoided cursor comes within three body
+    lengths, or the keeper pours something within 12 cells of it; and
+    pouring food it eats anywhere wakes it (feeding). Woken at night it
+    stays up for two minutes, long enough to eat, then settles again.
+  - **State.** Asleep and the woken counter are saved (format version 15,
+    migrating version 14 creatures awake) and hashed only when set, so a
+    tank by day hashes as before.
 
 - *Live food* (D25; `desktank_sim::world::creatures::live`): some foods
   are alive. A species with `live_food = "<material>"` is live food: a

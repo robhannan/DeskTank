@@ -3,6 +3,8 @@ name = "fancy_goldfish"
 palette = "fish/coldwater"
 zone = "mid"
 depth = [0.18, 0.85]
+# At night it settles low, hanging just above the bed.
+rests = "bottom"
 min_depth = 26
 length_cm = 9.0
 lifespan_days = 3650
