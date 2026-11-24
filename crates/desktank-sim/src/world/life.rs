@@ -35,6 +35,8 @@ use crate::save::{SaveError, v1};
 
 /// Living cells visited per tick by default (SPEC §2.1: 256 per display).
 pub const RANDOM_TICK_BUDGET: usize = 256;
+/// Most columns that can attempt to spawn algae in one coarse step.
+const CATCH_UP_SPAWN_COLUMNS: usize = 256;
 
 /// Stream id for the life RNG: above any chunk id.
 const LIFE_STREAM: u64 = u64::MAX;
@@ -759,6 +761,35 @@ impl World {
         }
     }
 
+    /// Indexes coarse writes for the next interval while preserving their
+    /// upload rectangles and the work queued for ordinary cell physics.
+    pub(super) fn catch_up_refresh(&mut self) {
+        for ci in 0..self.chunks.len() {
+            let c = &mut self.chunks[ci];
+            let r = mem::take(&mut c.changed_next);
+            if !r.is_empty() {
+                c.changed = c.changed.union(r);
+                self.refresh_registries(ci, r);
+                self.last_change_tick = self.tick;
+            }
+        }
+        if self.life.any_opacity_dirty {
+            self.update_light();
+        }
+    }
+
+    pub(super) fn catch_up_current(&mut self) {
+        if self.life.any_blocked_dirty {
+            self.refresh_blocked();
+        }
+        let has_flow = !self.devices.is_empty() || self.life.devices.total > 0;
+        if mem::take(&mut self.life.devices_dirty)
+            || (has_flow && mem::take(&mut self.life.blocked_flipped))
+        {
+            self.recompute_current();
+        }
+    }
+
     fn refresh_registries(&mut self, ci: usize, r: Rect) {
         if r.is_empty() {
             return;
@@ -849,8 +880,41 @@ impl World {
 
     /// Visits up to the budget of living cells (see the module docs).
     fn random_ticks(&mut self) {
+        self.visit_living(self.life.budget, 1);
+    }
+
+    pub(super) fn catch_up_cells(&mut self, start: u64) {
+        self.life.rng = chunk_stream(self.seed, self.tick, LIFE_STREAM);
+        let ticks = u32::try_from(self.tick - start).unwrap_or(u32::MAX);
+        // Use a wider sample only when the elapsed time per visit would
+        // exceed the u16 limit for the ordinary living-cell rules.
+        let min_visits =
+            (self.life.living.total as u64 * u64::from(ticks)).div_ceil(u64::from(u16::MAX));
+        let budget = self
+            .life
+            .budget
+            .max(usize::try_from(min_visits).unwrap_or(usize::MAX));
+        self.visit_living(budget, ticks);
+        let stride = self.width.div_ceil(CATCH_UP_SPAWN_COLUMNS);
+        for s in 0..self.life.eco.spawns.len() {
+            let rule = self.life.eco.spawns[s];
+            let chance = 1.0 - (1.0 - rule.per_column_tick).powf(f64::from(ticks));
+            let offset = if stride == 1 {
+                0
+            } else {
+                self.life.rng.next_u32() as usize % stride
+            };
+            for x in (offset..self.width).step_by(stride) {
+                if self.life.chance(chance) {
+                    self.try_spawn(s, x);
+                }
+            }
+        }
+    }
+
+    fn visit_living(&mut self, budget: usize, ticks: u32) {
         let total = self.life.living.total;
-        let n = self.life.budget.min(total);
+        let n = budget.min(total);
         self.life.stats = RandomTickStats {
             living: total,
             visited: n,
@@ -881,7 +945,7 @@ impl World {
             off += 1;
         }
         #[allow(clippy::cast_precision_loss)] // counts are far below 2^52
-        let dt = (total as f64 / self.life.budget as f64).max(1.0);
+        let dt = (total as f64 / budget as f64).max(1.0) * f64::from(ticks);
         for &i in &batch {
             // Whole ticks since the last visit, rounded at random.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ≥ 1, capped
@@ -1101,20 +1165,21 @@ impl World {
             }
             for _ in 0..n {
                 let x = self.life.rng.next_u32() as usize % self.width;
-                let Some(y) = (0..self.height)
-                    .find(|&y| !self.is_fluid(self.cells[y * self.width + x].material))
-                else {
-                    continue;
-                };
-                if y == 0
-                    || !sp.on.contains(self.cells[y * self.width + x].material)
-                    || Some(self.cells[(y - 1) * self.width + x].material) != self.life.water
-                    || !self.gates_open(sp.when, x, y - 1)
-                {
-                    continue;
-                }
-                self.write_cell(x, y - 1, sp.material, &mut None);
+                self.try_spawn(s, x);
             }
+        }
+    }
+
+    fn try_spawn(&mut self, rule: usize, x: usize) {
+        let sp = self.life.eco.spawns[rule];
+        if let Some(y) =
+            (0..self.height).find(|&y| !self.is_fluid(self.cells[y * self.width + x].material))
+            && y > 0
+            && sp.on.contains(self.cells[y * self.width + x].material)
+            && Some(self.cells[(y - 1) * self.width + x].material) == self.life.water
+            && self.gates_open(sp.when, x, y - 1)
+        {
+            self.write_cell(x, y - 1, sp.material, &mut None);
         }
     }
 
@@ -1656,6 +1721,33 @@ impl World {
     }
 
     fn step_fields(&mut self) {
+        self.refresh_light();
+        let life = &mut self.life;
+        let current: &[[f32; 2]] = if life.current_blocks.is_empty() {
+            &[]
+        } else {
+            &life.current
+        };
+        let (n, c) = (life.eco.nutrient, life.eco.co2);
+        let a = life.nutrient.step(n.diffusion, n.decay, current);
+        let b = life.co2.step(c.diffusion, c.decay, current);
+        if a || b {
+            life.version += 1;
+        }
+    }
+
+    pub(super) fn catch_up_fields(&mut self, start: u64) {
+        let steps = u32::try_from(self.tick / FIELD_EVERY - start / FIELD_EVERY).unwrap_or(0);
+        let life = &mut self.life;
+        let (n, c) = (life.eco.nutrient, life.eco.co2);
+        let a = life.nutrient.catch_up(n.diffusion, n.decay, steps);
+        let b = life.co2.catch_up(c.diffusion, c.decay, steps);
+        if a || b {
+            life.version += 1;
+        }
+    }
+
+    fn refresh_light(&mut self) {
         // Cells changed since the registries were refreshed this tick
         // (plants growing, spawns) are counted now too, as a tank loaded
         // from a save counts every block at its first step: otherwise a
@@ -1675,18 +1767,6 @@ impl World {
         }
         if self.life.any_opacity_dirty {
             self.update_light();
-        }
-        let life = &mut self.life;
-        let current: &[[f32; 2]] = if life.current_blocks.is_empty() {
-            &[]
-        } else {
-            &life.current
-        };
-        let (n, c) = (life.eco.nutrient, life.eco.co2);
-        let a = life.nutrient.step(n.diffusion, n.decay, current);
-        let b = life.co2.step(c.diffusion, c.decay, current);
-        if a || b {
-            life.version += 1;
         }
     }
 

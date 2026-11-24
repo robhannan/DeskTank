@@ -28,6 +28,7 @@ cargo run --release -p desktank -- window   # the tank in a window: click a tab 
 cargo run --release -p desktank -- export tank.dtank   # copy the newest save to a file (opens on the web with Import)
 cargo run --release -p desktank -- import tank.dtank   # make a save file (e.g. the web's Export) the tank's newest save; quit the app first
 cargo run --release -p desktank -- bench    # 60 s scripted pour + settle, prints CPU, tick, GPU and memory numbers
+cargo run --release -p desktank -- bench --catch-up  # Compare 24 h of catch-up with full simulation, no GPU
 cargo run --release -p desktank -- capture --script crates/desktank/tests/scenes/starter.toml --out shots   # headless PNG capture
 ```
 

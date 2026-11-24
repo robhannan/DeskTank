@@ -396,20 +396,51 @@ impl World {
     ) -> Option<DeathCause> {
         let k = self.kind(c.species)?;
         let lifespan = self.lifespan_of(k, c.id);
+        self.age_and_grow(c, k, lifespan, 1, redraw);
+        if let Some(cause) = self.age_or_hunger_death(c, lifespan) {
+            return Some(cause);
+        }
+        if self.creatures.easy {
+            return None;
+        }
+        if let Some(q) = quality {
+            let breathless = self.out_of_air(k, c);
+            if breathless {
+                c.stress = c.stress.saturating_add(k.air_stress);
+            }
+            Self::update_water_stress(c, q, 1, breathless);
+            if c.stress >= STRESS_LIMIT {
+                return Some(if breathless {
+                    DeathCause::Suffocation
+                } else {
+                    DeathCause::PoorWater
+                });
+            }
+        }
+        None
+    }
+
+    pub(super) fn age_and_grow(
+        &self,
+        c: &mut Creature,
+        k: &Kind,
+        lifespan: u32,
+        ticks: u32,
+        redraw: &mut bool,
+    ) {
         let elder = |age: u32| u64::from(age) * 100 >= u64::from(lifespan) * ELDER_PERCENT;
         let was_elder = elder(c.age);
-        c.age = c.age.saturating_add(1);
+        c.age = c.age.saturating_add(ticks);
         *redraw |= elder(c.age) != was_elder;
-        c.energy = c.energy.saturating_sub(1);
+        let energy = c.energy;
+        c.energy = c.energy.saturating_sub(ticks);
         if c.growth < k.maturity {
-            let step = if c.energy >= ENERGY_RESERVE / 2 {
-                1
-            } else {
-                u32::from(
-                    c.energy >= ENERGY_RESERVE / 8
-                        && (self.tick + u64::from(c.id.0)).is_multiple_of(2),
-                )
-            };
+            // Count post-burn ticks in the full and half growth bands.
+            let full = energy.saturating_sub(ENERGY_RESERVE / 2).min(ticks);
+            let half_end = energy.saturating_sub(ENERGY_RESERVE / 8).min(ticks);
+            let half = half_end - full;
+            let first_half = self.tick - u64::from(ticks - 1) + u64::from(full) + u64::from(c.id.0);
+            let step = full + half / 2 + u32::from(half % 2 == 1 && first_half.is_multiple_of(2));
             if step > 0 {
                 let size = |growth: u32| {
                     let percent = grown_percent(growth, k.maturity);
@@ -420,37 +451,29 @@ impl World {
                 *redraw |= c.growth == k.maturity || size(c.growth) != before;
             }
         }
+    }
+
+    pub(super) fn age_or_hunger_death(&self, c: &Creature, lifespan: u32) -> Option<DeathCause> {
         if c.age >= lifespan {
-            return Some(DeathCause::OldAge);
+            Some(DeathCause::OldAge)
+        } else if !self.creatures.easy && c.energy == 0 {
+            Some(DeathCause::Starvation)
+        } else {
+            None
         }
-        if self.creatures.easy {
-            return None;
+    }
+
+    pub(super) fn update_water_stress(c: &mut Creature, q: f32, seconds: u32, breathless: bool) {
+        if q < POOR_QUALITY {
+            // Thousandths of a second at quality 0, 1000 at most.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let add = ((POOR_QUALITY - q) / POOR_QUALITY * 1000.0).round() as u32;
+            c.stress = c.stress.saturating_add(add.saturating_mul(seconds));
+        } else if !breathless {
+            c.stress = c
+                .stress
+                .saturating_sub(STRESS_RECOVERY.saturating_mul(seconds));
         }
-        if c.energy == 0 {
-            return Some(DeathCause::Starvation);
-        }
-        if let Some(q) = quality {
-            let breathless = self.out_of_air(k, c);
-            if breathless {
-                c.stress = c.stress.saturating_add(k.air_stress);
-            }
-            if q < POOR_QUALITY {
-                // Thousandths of a second at quality 0, 1000 at most.
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let add = ((POOR_QUALITY - q) / POOR_QUALITY * 1000.0).round() as u32;
-                c.stress = c.stress.saturating_add(add);
-            } else if !breathless {
-                c.stress = c.stress.saturating_sub(STRESS_RECOVERY);
-            }
-            if c.stress >= STRESS_LIMIT {
-                return Some(if breathless {
-                    DeathCause::Suffocation
-                } else {
-                    DeathCause::PoorWater
-                });
-            }
-        }
-        None
     }
 
     /// The corpse a creature leaves, lying where it died.
@@ -513,7 +536,7 @@ impl World {
             let age = self.tick.saturating_sub(c.died);
             if age >= after && (age - after).is_multiple_of(every) {
                 if let Some(m) = detritus {
-                    self.rot_into(c, m);
+                    self.rot_into(c, m, 1);
                 }
                 c.released += 1;
                 changed = true;
@@ -524,9 +547,34 @@ impl World {
         changed
     }
 
-    /// Writes one detritus cell into the first water cell the corpse covers
-    /// (from its lowest row up), or beside it if it covers none.
-    fn rot_into(&mut self, c: &Corpse, detritus: MaterialId) {
+    pub(super) fn catch_up_corpses(&mut self) -> bool {
+        let mut corpses = core::mem::take(&mut self.creatures.corpses);
+        let mut changed = false;
+        corpses.retain_mut(|c| {
+            let age = self.tick.saturating_sub(c.died);
+            let after = u64::from(ROT_AFTER_SECONDS * TICKS_PER_SECOND);
+            let every = u64::from(ROT_EVERY_SECONDS * TICKS_PER_SECOND);
+            if age >= after {
+                let due = 1 + (age - after) / every;
+                let released = u16::try_from(due.min(u64::from(c.total))).unwrap_or(c.total);
+                let count = released.saturating_sub(c.released);
+                if count > 0 {
+                    if let Some(m) = self.creatures.detritus {
+                        self.rot_into(c, m, count);
+                    }
+                    c.released += count;
+                    changed = true;
+                }
+            }
+            c.released < c.total
+        });
+        self.creatures.corpses = corpses;
+        changed
+    }
+
+    /// Writes detritus into available water around the corpse, from its
+    /// lowest row up.
+    fn rot_into(&mut self, c: &Corpse, detritus: MaterialId, mut count: u16) {
         let water = self.creatures.water;
         let Some(b) = body_box(
             i32::from(c.w) + 2,
@@ -552,7 +600,10 @@ impl World {
             for x in b.x0..b.x1 {
                 if self.cells[y * self.width + x].material == water {
                     self.write_cell(x, y, detritus, &mut None);
-                    return;
+                    count -= 1;
+                    if count == 0 {
+                        return;
+                    }
                 }
             }
         }

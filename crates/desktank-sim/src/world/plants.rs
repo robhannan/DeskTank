@@ -1361,6 +1361,14 @@ impl World {
         }
     }
 
+    pub(super) fn catch_up_plants(&mut self) {
+        let ids: Vec<_> = self.plants.table.keys().copied().collect();
+        for id in ids {
+            self.update_plant(id);
+        }
+        self.tidy_plants();
+    }
+
     #[allow(clippy::too_many_lines)] // samples, health, seeding and growth
     fn update_plant(&mut self, id: u16) {
         let species = Arc::clone(&self.plants.species);

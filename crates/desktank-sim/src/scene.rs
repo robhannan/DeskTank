@@ -2,7 +2,10 @@
 //! `desktank capture` and the Android Dream.
 
 use crate::species::Zone;
-use crate::{Brush, MaterialId, Rect, World, WorldError};
+use crate::{
+    Brush, FieldKind, MaterialId, MaterialTable, Propagule, Rect, SETTLE_TICKS, TICKS_PER_SECOND,
+    World, WorldConfig, WorldError,
+};
 
 /// A built-in material's ID. The built-in table always has these.
 ///
@@ -102,11 +105,78 @@ fn rect(x0: usize, y0: usize, x1: usize, y1: usize) -> Rect {
     Rect { x0, y0, x1, y1 }
 }
 
+/// Small reference tank for a day of unobserved simulation. Young rotala
+/// cuttings grow in nutrient-rich water. Flakes supplement the algae that
+/// feeds the breeding cherry shrimp, corydoras and nerites.
+///
+/// # Errors
+///
+/// Returns an error if the world lacks the scene's materials or species,
+/// or cannot place its contents.
+pub fn catch_up_reference(seed: u64, materials: MaterialTable) -> Result<World, WorldError> {
+    const WIDTH: usize = 160;
+    const HEIGHT: usize = 90;
+    const BED: usize = 83;
+    let mut world = World::new(
+        WorldConfig {
+            width: WIDTH,
+            height: HEIGHT,
+            seed,
+            ..WorldConfig::default()
+        },
+        materials,
+    )?;
+    let sand = material(&world, "sand")?;
+    let flake = material(&world, "flake_food")?;
+    world.fill_rect(rect(0, BED, WIDTH, HEIGHT), sand, Brush::Replace)?;
+    let field_scale = crate::field::FIELD_SCALE;
+    for y in (0..HEIGHT).step_by(field_scale) {
+        for x in (0..WIDTH).step_by(field_scale) {
+            world.add_to_field(FieldKind::Nutrient, x, y, 0.92);
+        }
+    }
+    let rotala = world
+        .plant_species()
+        .id("rotala")
+        .ok_or_else(|| WorldError::PlantSpecies("missing rotala".into()))?;
+    for x in [24, 80, 132] {
+        world.paint_plant(x, 82, 0, rotala, Propagule::Cuttings)?;
+    }
+    for x in (2..WIDTH).step_by(2) {
+        world.set_cell(x, BED - 2, flake)?;
+    }
+    for _ in 0..600 {
+        world.tick();
+    }
+    world.set_creature_cap(96);
+    let species = |name| {
+        world
+            .species()
+            .id(name)
+            .ok_or_else(|| WorldError::Species(format!("missing {name}")))
+    };
+    let shrimp = species("cherry_shrimp")?;
+    let cory = species("corydoras")?;
+    let nerite = species("nerite")?;
+    for x in [16, 52, 96, 143] {
+        world.add_creature(shrimp, x, 76)?;
+    }
+    world.add_creature(cory, 16, 72)?;
+    world.add_creature(nerite, 16, 77)?;
+    let elder = world.add_creature(nerite, 52, 77)?;
+    if let Some(creature) = world.creature(elder) {
+        // Leave one natural age death in the day, even with abundant food.
+        let remaining = 18 * 3600 * TICKS_PER_SECOND;
+        let age = world.creature_lifespan(creature).saturating_sub(remaining);
+        world.set_creature_age(elder, age);
+    }
+    world.skip_breeding_time(SETTLE_TICKS);
+    Ok(world)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MaterialTable, WorldConfig};
-
     #[test]
     fn starter_scene_settles() {
         let config = WorldConfig {

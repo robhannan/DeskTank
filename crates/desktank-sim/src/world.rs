@@ -21,6 +21,7 @@ use crate::species::SpeciesId;
 use bodies::Body;
 pub use bodies::{BodyId, BodyInfo, DRIFTWOOD_AIR_DROP, DRIFTWOOD_DRY_DIV, DRIFTWOOD_SOAK_EVERY};
 
+mod catch_up;
 mod creatures;
 mod devices;
 mod hardscape;
@@ -28,6 +29,7 @@ mod life;
 mod persist;
 mod plants;
 
+pub use catch_up::{CatchUp, MAX_CATCH_UP_SECONDS};
 use creatures::Creatures;
 pub(crate) use creatures::default_band;
 pub use creatures::{

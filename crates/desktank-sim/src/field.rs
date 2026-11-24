@@ -197,6 +197,28 @@ impl Field {
         self.values[i] = v;
     }
 
+    /// Diffuses for a bounded number of stable stencil updates, then
+    /// applies the normal per-update decay over the whole elapsed time.
+    pub(crate) fn catch_up(&mut self, diffusion: f32, decay: f32, steps: u32) -> bool {
+        if steps == 0 {
+            return false;
+        }
+        let mut changed = false;
+        for _ in 0..steps.min(16) {
+            if !self.step(diffusion, 0.0, &[]) {
+                break;
+            }
+            changed = true;
+        }
+        if decay > 0.0 {
+            let keep = (1.0 - decay * FIELD_DT).max(0.0);
+            // One coarse interval contains at most 1500 field updates.
+            self.scale(keep.powi(i32::try_from(steps).unwrap_or(i32::MAX)));
+            changed = true;
+        }
+        changed
+    }
+
     /// One update: diffusion with constant `diffusion` (cells²/s), 2D
     /// advection by `current` (`[vx, vy]` cells/s per field cell, `+x` right,
     /// `+y` down; empty for none), then exponential `decay` (per second),
