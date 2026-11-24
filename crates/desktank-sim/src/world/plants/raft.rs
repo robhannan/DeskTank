@@ -57,6 +57,8 @@ const GRIP: i64 = 24;
 const BALL_GRIP: i64 = 8;
 /// A ball rolls at most at this share of the current's speed, in 1/256.
 const BALL_DRIFT: i64 = 64;
+/// Target downhill speed on a 1:1 slope, in 1/256 cell per tick.
+const BALL_SLOPE_SPEED: i64 = 24;
 /// Most cells a raft looks along a row, past other plants, for the fluid
 /// around it.
 const REACH: usize = super::super::LEVEL_REACH;
@@ -90,6 +92,8 @@ pub(in crate::world) struct Raft {
     vel: (i64, i64),
     /// Ticks it has been at rest.
     still: u16,
+    /// Clockwise ball rotation, in 1/65536 turns.
+    pub(super) roll: u16,
     /// Stepped every tick, not only when something near it changed.
     awake: bool,
 }
@@ -101,6 +105,7 @@ impl Raft {
             off: (0, 0),
             vel: (0, 0),
             still: 0,
+            roll: 0,
             awake: true,
         }
     }
@@ -175,6 +180,7 @@ impl World {
             .species
             .get(p.species)
             .is_some_and(|s| s.form.ball().is_some());
+        let diameter = p.bounds.x1 - p.bounds.x0;
         let mut members = self.plant_members(id, self.clip_to_grid(p.bounds));
         if members.is_empty() {
             return false;
@@ -192,7 +198,7 @@ impl World {
         // the raft rests against something that way.
         let grip = if ball { BALL_GRIP } else { GRIP };
         // A ball on the bottom only rolls along at a share of it.
-        let target = if ball {
+        let mut target = if ball {
             (target.0 * BALL_DRIFT / 256, target.1 * BALL_DRIFT / 256)
         } else {
             target
@@ -215,8 +221,22 @@ impl World {
             raft.vel.1 += fy;
         }
         raft.vel.1 = damp(raft.vel.1, DAMP * mean, water * 256);
+        let slope = if ball && fy > 0 && !self.raft_free(&members, id, 0, 1) {
+            self.ball_slope(&members, id, diameter)
+        } else {
+            None
+        };
+        if let Some((dir, run)) = slope {
+            target.0 += dir * (BALL_SLOPE_SPEED / run);
+        }
         let pull = target.0 - raft.vel.0;
-        let dvx = pull - damp(pull, grip * mean, water * 256);
+        let dvx = match slope {
+            Some((_, run)) if mean == 0 => {
+                let force = (GRAVITY / (run + 1)).max(1);
+                pull.clamp(-force, force)
+            }
+            _ => pull - damp(pull, grip * mean, water * 256),
+        };
         if dvx != 0 && raft.vel.0 == 0 && !self.raft_free(&members, id, dvx.signum(), 0) {
             raft.off.0 = if dvx > 0 {
                 raft.off.0.min(0)
@@ -244,6 +264,19 @@ impl World {
                         raft.off.1 -= d * ONE;
                     } else {
                         raft.off.0 -= d * ONE;
+                        if ball {
+                            let old = raft.roll;
+                            // 10,430 units per radian; one cell rolls through 2/d radians.
+                            let step = 20_860 / u16::try_from(diameter.max(2)).unwrap_or(u16::MAX);
+                            raft.roll = if d > 0 {
+                                old.wrapping_add(step)
+                            } else {
+                                old.wrapping_sub(step)
+                            };
+                            if old >> 8 != raft.roll >> 8 {
+                                self.plants.version += 1;
+                            }
+                        }
                     }
                 } else {
                     if axis == 1 {
@@ -258,7 +291,8 @@ impl World {
             }
         }
 
-        let drifting = (target.0 != 0 && self.raft_free(&members, id, target.0.signum(), 0))
+        let drifting = slope.is_some()
+            || (target.0 != 0 && self.raft_free(&members, id, target.0.signum(), 0))
             || (target.1 != 0 && self.raft_free(&members, id, 0, target.1.signum()));
         let slow = !drifting && raft.vel.0.abs() <= REST_SPEED && raft.vel.1.abs() <= REST_SPEED;
         raft.still = if !moved && slow {
@@ -395,7 +429,10 @@ impl World {
     /// Whether floater `id`'s cells `members` could all move by `(dx, dy)`:
     /// into its own cells, fluid or floating cells, inside the grid.
     fn raft_free(&self, members: &[usize], id: u16, dx: i64, dy: i64) -> bool {
-        let (dx, dy) = (unit(dx), unit(dy));
+        self.raft_free_offset(members, id, unit(dx), unit(dy))
+    }
+
+    fn raft_free_offset(&self, members: &[usize], id: u16, dx: isize, dy: isize) -> bool {
         members.iter().all(|&i| {
             let Some(j) = self.at(i % self.width, i / self.width, dx, dy) else {
                 return false;
@@ -407,6 +444,27 @@ impl World {
                     MovementClass::Liquid | MovementClass::Buoyant | MovementClass::Floating
                 )
         })
+    }
+
+    /// Direction and horizontal run to the nearest reachable step down.
+    fn ball_slope(&self, members: &[usize], id: u16, diameter: usize) -> Option<(i64, i64)> {
+        let reach = [1isize, 2, 3];
+        let run = |dir| {
+            reach[..diameter.clamp(1, 3)]
+                .iter()
+                .copied()
+                .take_while(|&step| self.raft_free_offset(members, id, step * dir, 0))
+                .find(|&step| self.raft_free_offset(members, id, step * dir, 1))
+                .and_then(|step| i64::try_from(step).ok())
+        };
+        match (run(-1), run(1)) {
+            (Some(left), Some(right)) if left < right => Some((-1, left)),
+            (Some(left), Some(right)) if right < left => Some((1, right)),
+            (Some(1), Some(1)) => Some((if id & 1 == 0 { 1 } else { -1 }, 1)),
+            (Some(left), None) => Some((-1, left)),
+            (None, Some(right)) => Some((1, right)),
+            _ => None,
+        }
     }
 
     /// Moves floater `id`'s cells `members` one cell along `(dx, dy)` if it
@@ -484,6 +542,7 @@ impl World {
                     off: r.off,
                     vel: r.vel,
                     still: r.still,
+                    roll: 0,
                     awake: r.awake,
                 },
             );
@@ -500,6 +559,18 @@ impl World {
         Ok(())
     }
 
+    pub(in crate::world) fn save_raft_rolls(&self) -> Vec<u16> {
+        self.plants.rafts.values().map(|r| r.roll).collect()
+    }
+
+    pub(in crate::world) fn load_raft_rolls(&mut self, rolls: Vec<(u16, u16)>) {
+        for (id, roll) in rolls {
+            if let Some(raft) = self.plants.rafts.get_mut(&id) {
+                raft.roll = roll;
+            }
+        }
+    }
+
     pub(in crate::world) fn hash_rafts(&self, h: &mut Fnv64) {
         for (&id, r) in &self.plants.rafts {
             h.write(&id.to_le_bytes());
@@ -507,6 +578,7 @@ impl World {
                 h.write(&v.to_le_bytes());
             }
             h.write(&r.still.to_le_bytes());
+            h.write(&r.roll.to_le_bytes());
             h.write(&[u8::from(r.awake)]);
         }
     }

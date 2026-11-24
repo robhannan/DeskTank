@@ -42,7 +42,7 @@ mod raft;
 
 pub(super) use raft::Raft;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use rand_core::Rng as _;
@@ -175,6 +175,8 @@ pub struct PlantInfo {
     /// it moves towards what the light and nutrient at its updates call
     /// for, at [`COLOUR_PER_SECOND`].
     pub colour: f32,
+    /// Clockwise ball rotation, in 1/256 turns. Zero for other forms.
+    pub roll: u8,
 }
 
 impl PlantInfo {
@@ -616,6 +618,13 @@ impl World {
             generation: p.generation,
             limit: p.limit,
             colour: p.colour,
+            roll: self
+                .plants
+                .species
+                .get(p.species)
+                .filter(|s| s.form.ball().is_some())
+                .and_then(|_| self.plants.rafts.get(&id))
+                .map_or(0, |r| (r.roll >> 8) as u8),
         }
     }
 
@@ -1239,12 +1248,31 @@ impl World {
         if !ready || self.response_at(s, x, y).0 <= 0.0 {
             return true;
         }
+        let mut clustered = false;
+        if let Form::Ball(form) = &s.form
+            && Some(cell.material) == self.plants.cutting
+        {
+            if self.coalesce_ball_fragment(i, s, form) {
+                return true;
+            }
+            // Cuttings in a falling pile can support each other. Only
+            // its bottom layer can start a new ball.
+            if below.is_some_and(|j| Some(self.cells[j].material) == self.plants.cutting) {
+                return true;
+            }
+            clustered = DIRS.into_iter().any(|(dx, dy)| {
+                self.at(x, y, dx, dy).is_some_and(|j| {
+                    self.cells[j].material == cell.material && self.cells[j].state == cell.state
+                })
+            });
+        }
         let keep = if Some(cell.material) == self.plants.seed {
             self.plants.keep_seed
         } else {
             self.plants.keep_cutting
         };
-        if !self.life.chance(1.0 - powu(keep, k)) {
+        // A resting cluster roots on contact before its grains spread.
+        if !clustered && !self.life.chance(1.0 - powu(keep, k)) {
             return true;
         }
         let id = self.new_plant(s.id, i, None);
@@ -1266,11 +1294,113 @@ impl World {
                     self.put_part(j, Part::Root, id, 1);
                 }
             }
-            Form::Mat(_) | Form::Ball(_) => self.put_part(i, Part::Stem, id, 0),
+            Form::Mat(_) => self.put_part(i, Part::Stem, id, 0),
+            Form::Ball(form) => {
+                self.put_part(i, Part::Stem, id, 0);
+                if clustered {
+                    self.collect_ball_fragments(i, id, s, form);
+                }
+            }
             Form::Floater(_) => self.put_part(i, Part::Float, id, 0),
             Form::Epiphyte(_) => self.put_part(i, Part::Rhizome, id, 1),
         }
         true
+    }
+
+    /// Joins a neighbouring ball or waits for it to reach this fragment
+    /// through the connected cuttings. Returns false if a new ball can root.
+    fn coalesce_ball_fragment(
+        &mut self,
+        i: usize,
+        species: &PlantSpecies,
+        form: &BallForm,
+    ) -> bool {
+        let span = 2 * usize::from(form.radius) + 1;
+        let neighbours = |i| DIRS.map(|(dx, dy)| self.at(i % self.width, i / self.width, dx, dy));
+        let accepting_ball = |j: usize| {
+            let cell = self.cells[j];
+            (self.plants.part(cell.material) == Some(Part::Stem))
+                .then(|| self.ball_fragment_position(cell.state, i, species, form))
+                .flatten()
+                .map(|pos| (cell.state, pos))
+        };
+        if let Some((id, pos)) = neighbours(i).into_iter().flatten().find_map(accepting_ball) {
+            self.put_part(i, Part::Stem, id, pos);
+            return true;
+        }
+
+        let cutting = |j| self.is_ball_fragment(j, species.id);
+        if !neighbours(i).into_iter().flatten().any(cutting) {
+            return false;
+        }
+        let mut seen = BTreeSet::from([i]);
+        let mut queue = VecDeque::from([i]);
+        while let Some(j) = queue.pop_front() {
+            for k in neighbours(j).into_iter().flatten() {
+                if accepting_ball(k).is_some() {
+                    return true;
+                }
+                if seen.len() < span * span && cutting(k) && seen.insert(k) {
+                    queue.push_back(k);
+                }
+            }
+        }
+        false
+    }
+
+    fn is_ball_fragment(&self, i: usize, species: PlantSpeciesId) -> bool {
+        let c = self.cells[i];
+        Some(c.material) == self.plants.cutting && c.state == u16::from(species.0)
+    }
+
+    fn ball_fragment_position(
+        &self,
+        id: u16,
+        i: usize,
+        species: &PlantSpecies,
+        form: &BallForm,
+    ) -> Option<u8> {
+        let p = self.plants.table.get(&id)?;
+        let (x, y) = (i % self.width, i / self.width);
+        let span = 2 * usize::from(form.radius) + 1;
+        let bounds = p.bounds.union(point(x, y));
+        if p.species != species.id
+            || p.parts.iter().sum::<u32>() >= species.growth.size
+            || bounds.x1 - bounds.x0 > span
+            || bounds.y1 - bounds.y0 > span
+        {
+            return None;
+        }
+        let dx = x.abs_diff(usize::midpoint(p.bounds.x0, p.bounds.x1 - 1));
+        let dy = y.abs_diff(usize::midpoint(p.bounds.y0, p.bounds.y1 - 1));
+        let distance_sq = dx * dx + dy * dy;
+        let distance = distance_sq.isqrt();
+        let rounded = distance + usize::from(distance_sq - distance * distance > distance);
+        Some(u8::try_from(rounded).unwrap_or(u8::MAX).min(form.radius))
+    }
+
+    /// Capture connected fragments before powder motion scatters them
+    /// across the bed. Each added cell stays within the ball's size limits.
+    fn collect_ball_fragments(
+        &mut self,
+        i: usize,
+        id: u16,
+        species: &PlantSpecies,
+        form: &BallForm,
+    ) {
+        let mut queue = VecDeque::from([i]);
+        while let Some(j) = queue.pop_front() {
+            let (x, y) = (j % self.width, j / self.width);
+            for (dx, dy) in DIRS {
+                if let Some(k) = self.at(x, y, dx, dy)
+                    && self.is_ball_fragment(k, species.id)
+                    && let Some(position) = self.ball_fragment_position(id, k, species, form)
+                {
+                    self.put_part(k, Part::Stem, id, position);
+                    queue.push_back(k);
+                }
+            }
+        }
     }
 
     /// The species' response to the fields at `(x, y)`.
