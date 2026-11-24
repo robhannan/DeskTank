@@ -1355,3 +1355,76 @@ fn a_tank_reusing_a_transferred_renderer_matches_a_fresh_tank() {
         previous = reused;
     }
 }
+
+#[test]
+fn overlay_aligns_to_the_floor_and_composites_water_and_sprites() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let size = (W, 40);
+    let rgba = |img: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * W + x) * 4) as usize;
+        img[i..i + 4].try_into().unwrap()
+    };
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let materials = MaterialTable::builtin().unwrap();
+        let sand = materials.id("sand").unwrap();
+        let mut world = World::new(
+            WorldConfig {
+                width: 16,
+                height: 8,
+                seed: 1,
+                water_level: 0.75,
+            },
+            materials,
+        )
+        .unwrap();
+        world.set_cell(3, 7, sand).unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        assert_eq!(tank.overlay_water_alpha(), None);
+        assert_eq!(tank.layout(size).offset, (8, 4));
+        let opaque = render_sized(gpu, &mut tank, format, size);
+        assert!(opaque.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+
+        for (alpha, expected) in [(0.0, 0), (0.25, 64)] {
+            tank.set_overlay_water_alpha(Some(alpha));
+            assert_eq!(tank.layout(size).offset, (8, 8));
+            let overlay = render_sized(gpu, &mut tank, format, size);
+            for (x, y) in [(0, 24), (12, 7), (12, 9)] {
+                assert_eq!(rgba(&overlay, x, y), [0; 4], "clear at ({x}, {y})");
+            }
+            // Open water and the water visible at the top corner of the sand cell.
+            for (x, y) in [(12, 26), (20, 36)] {
+                let got = rgba(&overlay, x, y);
+                assert_eq!(got[3], expected, "water at ({x}, {y})");
+                let before = rgba(&opaque, x, y - 4);
+                for (value, base) in got[..3].iter().zip(before) {
+                    assert!((f32::from(*value) - f32::from(base) * alpha).abs() <= 1.0);
+                }
+                if alpha == 0.0 {
+                    assert_eq!(got, [0; 4]);
+                }
+            }
+            assert_eq!(rgba(&overlay, 21, 39), rgba(&opaque, 21, 35));
+
+            let fish = tank.world_mut().add_creature(tetra, 11, 5).unwrap();
+            let with_fish = render_sized(gpu, &mut tank, format, size);
+            let sprite_texels = overlay
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(with_fish.as_chunks::<4>().0)
+                .filter(|(before, after)| before[3] == expected && after[3] == 255)
+                .count();
+            assert!(sprite_texels > 0, "split={split_grid}, alpha={alpha}");
+            tank.world_mut().remove_creature(fish);
+        }
+        tank.set_overlay_water_alpha(None);
+        assert_eq!(opaque, render_sized(gpu, &mut tank, format, size));
+    }
+}

@@ -111,6 +111,7 @@ pub struct Tank {
     field_overlay: Option<crate::FieldOverlay>,
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
+    overlay_water_alpha: Option<f32>,
     /// Current-rebuild counter last drawn (for surface-current ripples).
     flow_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
@@ -143,6 +144,7 @@ impl Tank {
             magnifier: None,
             field_overlay: None,
             fields_drawn: 0,
+            overlay_water_alpha: None,
             flow_drawn: 0,
             time_of_day: daylight::NOON,
             creatures_drawn: None,
@@ -321,14 +323,33 @@ impl Tank {
         ))
     }
 
+    /// Sets overlay water opacity and bottom-aligns the grid when given a value.
+    /// The opacity is clamped to 0–1, with NaN treated as zero. A value of
+    /// `None` restores the opaque, centred tank.
+    pub fn set_overlay_water_alpha(&mut self, alpha: Option<f32>) {
+        let alpha = alpha.map(|a| if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) });
+        if self.overlay_water_alpha != alpha {
+            self.overlay_water_alpha = alpha;
+            self.invalidate();
+        }
+    }
+
+    /// The current overlay water opacity, if overlay rendering is enabled.
+    #[must_use]
+    pub fn overlay_water_alpha(&self) -> Option<f32> {
+        self.overlay_water_alpha
+    }
+
     /// Where the grid is drawn in a `target`-pixel surface.
     #[must_use]
     pub fn layout(&self, target: (u32, u32)) -> Layout {
         let side = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-        Layout::fit(
-            (side(self.world.width()), side(self.world.height())),
-            target,
-        )
+        let grid = (side(self.world.width()), side(self.world.height()));
+        if self.overlay_water_alpha.is_some() {
+            Layout::fit_bottom(grid, target)
+        } else {
+            Layout::fit(grid, target)
+        }
     }
 
     /// The world.
@@ -528,6 +549,7 @@ impl Tank {
             self.dirty.mark_all();
             self.palette_dirty = true;
         }
+        let layout = self.layout(size);
         let palette = self.palette_layout(size);
         let sway_on = self.sway_active();
         let ripples = self.world.surface_ripples();
@@ -583,6 +605,8 @@ impl Tank {
             &mut encoder,
             target,
             size,
+            layout,
+            self.overlay_water_alpha,
             self.world.surface_row(),
             daylight::tint(self.time_of_day),
             phase,
@@ -848,6 +872,25 @@ mod tests {
         tank.set_sway(true);
         assert!(!tank.sway_active());
         assert_eq!(count_frames(&mut tank, Duration::ZERO, 5), 0);
+    }
+
+    #[test]
+    fn overlay_alpha_is_sanitized_and_changes_request_a_frame() {
+        let mut tank = settled_planted_tank();
+        for (input, expected) in [
+            (Some(f32::NAN), Some(0.0)),
+            (Some(f32::INFINITY), Some(1.0)),
+            (Some(-0.25), Some(0.0)),
+            (None, None),
+        ] {
+            tank.mark_drawn();
+            tank.set_overlay_water_alpha(input);
+            assert_eq!(tank.overlay_water_alpha(), expected);
+            assert!(tank.frame_wanted());
+            tank.mark_drawn();
+            tank.set_overlay_water_alpha(input);
+            assert!(!tank.frame_wanted());
+        }
     }
 
     #[test]
