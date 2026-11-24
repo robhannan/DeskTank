@@ -78,6 +78,8 @@ impl Default for PowerPolicy {
 /// Why rendering and world time are paused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PauseReason {
+    /// The user paused the app.
+    User,
     /// The surface is occluded, minimised, zero-sized, or covered by a
     /// full-screen app.
     Hidden,
@@ -94,6 +96,7 @@ pub enum PauseReason {
 impl fmt::Display for PauseReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::User => f.write_str("paused"),
             Self::Hidden => f.write_str("hidden"),
             Self::DisplayAsleep => f.write_str("display asleep"),
             Self::SessionLocked => f.write_str("session locked"),
@@ -362,6 +365,7 @@ mod tests {
 
     #[test]
     fn pause_reasons_format_cleanly() {
+        assert_eq!(PauseReason::User.to_string(), "paused");
         assert_eq!(PauseReason::Hidden.to_string(), "hidden");
         assert_eq!(PauseReason::DisplayAsleep.to_string(), "display asleep");
         assert_eq!(PauseReason::SessionLocked.to_string(), "session locked");

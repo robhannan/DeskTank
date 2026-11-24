@@ -21,7 +21,7 @@ mod windows;
 
 pub use power::{PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSignals, PowerSource};
 pub use stats::{ProcessStats, process_stats};
-pub use store::{KEEP, Loaded, SaveStore, config_dir, data_dir};
+pub use store::{KEEP, Loaded, SaveStore, config_dir, data_dir, runtime_dir};
 
 // Dependency edge from SPEC §4.1, kept ahead of first use.
 use desktank_render as _;

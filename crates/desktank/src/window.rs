@@ -58,14 +58,20 @@
 //! every 5 minutes while visible, when hidden and on close. `--fresh`
 //! starts a new tank (saved as the newest, the older saves kept);
 //! `--no-save` neither loads nor saves. Optional catch-up applies elapsed
-//! wall-clock time after reopening a save or resuming from a power pause.
+//! wall-clock time after reopening a save or resuming from a power pause
+//! (not from `desktank pause`, which stops the tank's time).
+//!
+//! IPC (SPEC §4.3) is served by the first window holding the instance lock.
+//! Commands wake the event loop, which owns and edits the tank.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc::Sender};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context as _;
-use desktank_platform::{PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats};
+use desktank_platform::{
+    PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats,
+};
 use desktank_render::{
     BrushPreview, Gpu, GpuOptions, Magnifier, Palette, PaletteHit, Tank, TankConfig, TankSurface,
     wgpu,
@@ -86,7 +92,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::InteractState;
 use crate::config::{self, CliOverrides, Config, Life};
+use crate::ipc::{self, Reply, Request};
 use crate::persist::Persistence;
 use desktank_sim::scene;
 
@@ -104,6 +112,7 @@ const SEED: u64 = 7;
 enum Wake {
     Power,
     Config,
+    Ipc(Request, Sender<Reply>),
 }
 
 /// Which tank the window opens, and whether it saves it.
@@ -165,6 +174,20 @@ pub fn run(
             }
         }
     });
+    let proxy = event_loop.create_proxy();
+    let ipc = match ipc::Instance::start(move |request, reply| {
+        proxy.send_event(Wake::Ipc(request, reply)).is_ok()
+    }) {
+        Ok(Some(instance)) => Some(instance),
+        Ok(None) => {
+            eprintln!("desktank window: another DeskTank is running; IPC is off for this window");
+            None
+        }
+        Err(error) => {
+            eprintln!("desktank window: IPC unavailable: {error:#}");
+            None
+        }
+    };
     let settings = config_path
         .as_deref()
         .and_then(|path| read_config(path).ok());
@@ -179,6 +202,9 @@ pub fn run(
         config_path,
         settings: config::merge(settings.unwrap_or_default(), cli),
         power,
+        ipc,
+        user_paused: false,
+        interact: false,
         state: None,
         error: None,
         persist,
@@ -205,6 +231,9 @@ struct App {
     config_path: Option<PathBuf>,
     settings: Config,
     power: PowerMonitor,
+    ipc: Option<ipc::Instance>,
+    user_paused: bool,
+    interact: bool,
     state: Option<Running>,
     error: Option<anyhow::Error>,
     /// The saved tank, unless saving is off.
@@ -427,8 +456,17 @@ impl Running {
         !h.occluded && !h.zero_size && !h.minimised
     }
 
-    fn decision(&self, policy: &PowerPolicy, power: &PowerMonitor) -> PowerDecision {
-        policy.evaluate(power.signals(), !self.surface_visible())
+    fn decision(
+        &self,
+        policy: &PowerPolicy,
+        power: &PowerMonitor,
+        user_paused: bool,
+    ) -> PowerDecision {
+        if user_paused {
+            PowerDecision::Pause(PauseReason::User)
+        } else {
+            policy.evaluate(power.signals(), !self.surface_visible())
+        }
     }
 
     fn resized(&mut self, size: PhysicalSize<u32>) {
@@ -1045,6 +1083,51 @@ fn catch_up(tank: &mut Tank, since: SystemTime) {
     );
 }
 
+impl App {
+    fn handle_ipc(&mut self, request: Request) -> Reply {
+        let s = self.state.as_mut().ok_or("starting up")?;
+        let message = match request {
+            Request::Feed(food) => {
+                let changed = cheats::feed_with(s.tank.world_mut(), food);
+                if changed > 0 {
+                    s.tank.cells_edited();
+                }
+                if self.user_paused {
+                    format!("fed {changed} cells (shown when resumed)")
+                } else {
+                    format!("fed {changed} cells")
+                }
+            }
+            Request::Pause => {
+                self.user_paused = !self.user_paused;
+                format!("paused={}", self.user_paused)
+            }
+            Request::Interact(state) => {
+                self.interact = match state {
+                    InteractState::On => true,
+                    InteractState::Off => false,
+                    InteractState::Toggle => !self.interact,
+                };
+                let state = if self.interact { "on" } else { "off" };
+                format!("interact={state} (the window is always interactive)")
+            }
+            Request::Status => {
+                let (paused, fps) =
+                    match s.decision(&self.settings.power, &self.power, self.user_paused) {
+                        PowerDecision::Pause(_) => (true, 0),
+                        PowerDecision::Run { max_fps } => (false, max_fps),
+                    };
+                let creatures = s.tank.world().creatures().len();
+                format!(
+                    "paused={paused} interact={} fps={fps} creatures={creatures}",
+                    self.interact
+                )
+            }
+        };
+        Ok(message)
+    }
+}
+
 impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
@@ -1094,6 +1177,10 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn user_event(&mut self, _: &ActiveEventLoop, wake: Wake) {
+        if let Wake::Ipc(request, reply) = wake {
+            let _ = reply.send(self.handle_ipc(request));
+            return;
+        }
         // Power wakes and config changes both go through the existing power
         // decision and frame-cap update in about_to_wait.
         if let Wake::Config = wake
@@ -1133,7 +1220,7 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::Resized(size) => {
                 s.resized(size);
                 if matches!(
-                    s.decision(&self.settings.power, &self.power),
+                    s.decision(&self.settings.power, &self.power, self.user_paused),
                     PowerDecision::Run { .. }
                 ) {
                     s.window.request_redraw();
@@ -1142,7 +1229,7 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::Occluded(occluded) => {
                 s.hidden.occluded = occluded;
                 if matches!(
-                    s.decision(&self.settings.power, &self.power),
+                    s.decision(&self.settings.power, &self.power, self.user_paused),
                     PowerDecision::Run { .. }
                 ) {
                     s.tank.invalidate();
@@ -1153,7 +1240,7 @@ impl ApplicationHandler<Wake> for App {
                 // The transition in about_to_wait catches up before drawing again.
                 if s.paused_at.is_none()
                     && matches!(
-                        s.decision(&self.settings.power, &self.power),
+                        s.decision(&self.settings.power, &self.power, self.user_paused),
                         PowerDecision::Run { .. }
                     )
                     && let Err(e) = s.tank.draw(&s.gpu, &s.surface)
@@ -1330,6 +1417,8 @@ impl ApplicationHandler<Wake> for App {
         if let (Some(p), Some(s)) = (&mut self.persist, &self.state) {
             p.save(s.tank.world(), "saved on exit");
         }
+        // Released after the save, so a new instance starts once it's done.
+        self.ipc.take();
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -1338,29 +1427,50 @@ impl ApplicationHandler<Wake> for App {
         s.hidden.minimised = s.window.is_minimized() == Some(true);
         let on_battery = matches!(self.power.signals().source, PowerSource::Battery { .. });
         s.tank.set_on_battery(on_battery);
-        let decision = s.decision(&self.settings.power, &self.power);
+        let decision = s.decision(&self.settings.power, &self.power, self.user_paused);
         s.tank
             .set_hidden(matches!(decision, PowerDecision::Pause(_)));
         if decision != s.last_decision {
             match (s.last_decision, decision) {
-                (PowerDecision::Run { .. }, PowerDecision::Pause(reason)) => {
-                    s.paused_at = Some(SystemTime::now());
-                    eprintln!("desktank window: {reason}, paused");
-                    if let Some(p) = &mut self.persist {
+                (previous, PowerDecision::Pause(reason)) => {
+                    if reason == PauseReason::User {
+                        eprintln!("desktank window: paused");
+                    } else {
+                        eprintln!("desktank window: {reason}, paused");
+                    }
+                    // Catch-up counts from here, so time under a user pause
+                    // (which stops the tank) is never caught up.
+                    if matches!(
+                        previous,
+                        PowerDecision::Run { .. } | PowerDecision::Pause(PauseReason::User)
+                    ) {
+                        s.paused_at = Some(SystemTime::now());
+                    }
+                    if matches!(previous, PowerDecision::Run { .. })
+                        && let Some(p) = &mut self.persist
+                    {
                         // Paused from here on, so nothing changes until it runs
                         // again.
                         p.save(s.tank.world(), "saved while paused");
                     }
                 }
-                (PowerDecision::Pause(_), PowerDecision::Run { max_fps }) => {
+                (PowerDecision::Pause(reason), PowerDecision::Run { max_fps }) => {
                     let paused_at = s.paused_at.take();
-                    if self.settings.life.catch_up
+                    // `desktank pause` stops the tank's time, so leaving it
+                    // doesn't catch up.
+                    if reason != PauseReason::User
+                        && self.settings.life.catch_up
                         && self.persist.as_ref().is_some_and(Persistence::owns)
                         && let Some(paused_at) = paused_at
                     {
                         catch_up(&mut s.tank, paused_at);
                     }
-                    eprintln!("desktank window: visible ({max_fps} fps)");
+                    let how = if reason == PauseReason::User {
+                        "resumed"
+                    } else {
+                        "visible"
+                    };
+                    eprintln!("desktank window: {how} ({max_fps} fps)");
                     s.tank.set_max_fps(max_fps);
                     s.tank.invalidate();
                 }
@@ -1368,14 +1478,11 @@ impl ApplicationHandler<Wake> for App {
                     eprintln!("desktank window: frame cap {max_fps} fps");
                     s.tank.set_max_fps(max_fps);
                 }
-                (PowerDecision::Pause(_), PowerDecision::Pause(reason)) => {
-                    eprintln!("desktank window: {reason}, paused");
-                }
             }
             s.last_decision = decision;
         }
         if matches!(decision, PowerDecision::Pause(_)) {
-            // Paused: world time stops and nothing wakes us but OS events.
+            // Paused: world time stops and only events wake the loop.
             s.tank.pause();
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
