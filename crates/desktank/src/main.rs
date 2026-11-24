@@ -8,6 +8,7 @@ mod bench;
 mod capture;
 mod config;
 mod ipc;
+mod overlay;
 mod persist;
 mod window;
 
@@ -219,6 +220,11 @@ impl Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match &cli.command {
+        Command::Run(args) if args.wallpaper || args.idle => Err(anyhow::anyhow!(
+            "--wallpaper and --idle are not yet implemented"
+        )),
+        Command::Run(args) if args.overlay => overlay::run(),
+        Command::Run(_) => Err(anyhow::anyhow!("specify --overlay")),
         Command::Window(args) => window::run(
             args.demo_pour,
             args.time,

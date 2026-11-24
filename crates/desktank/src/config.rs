@@ -1,4 +1,4 @@
-//! Versioned settings for the desktop window.
+//! Versioned settings for desktop display modes.
 
 use std::fs;
 use std::io;
@@ -15,7 +15,7 @@ pub const FILE_NAME: &str = "config.toml";
 const VERSION: u32 = 1;
 const DEBOUNCE: Duration = Duration::from_millis(200);
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     version: u32,
@@ -23,6 +23,7 @@ pub struct Config {
     pub power: PowerPolicy,
     pub plants: Plants,
     pub life: Life,
+    pub overlay: Overlay,
 }
 
 impl Default for Config {
@@ -32,6 +33,7 @@ impl Default for Config {
             power: PowerPolicy::default(),
             plants: Plants::default(),
             life: Life::default(),
+            overlay: Overlay::default(),
         }
     }
 }
@@ -64,6 +66,22 @@ pub struct Life {
     pub easy_mode: Option<bool>,
     pub population_cap: Option<u16>,
     pub catch_up: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Overlay {
+    pub tint: f32,
+    pub exclude_from_capture: bool,
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self {
+            tint: 0.0,
+            exclude_from_capture: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -121,6 +139,9 @@ pub fn parse(text: &str) -> Result<Config, ConfigError> {
     {
         return Err(ConfigError::Value("life.population_cap must be in 1..=128"));
     }
+    if !(config.overlay.tint.is_finite() && (0.0..=1.0).contains(&config.overlay.tint)) {
+        return Err(ConfigError::Value("overlay.tint must be in 0.0..=1.0"));
+    }
     Ok(config)
 }
 
@@ -152,7 +173,7 @@ pub fn watch(
                 let _ = tx.send(());
             }
             Ok(_) => {}
-            Err(error) => eprintln!("desktank window: config watcher error: {error}"),
+            Err(error) => eprintln!("desktank: config watcher error: {error}"),
         },
         notify::Config::default(),
     )?;
@@ -186,6 +207,12 @@ mod tests {
         assert_eq!(defaults.plants, Plants::default());
         assert_eq!(defaults.life, Life::default());
         assert!(!defaults.life.catch_up);
+        let overlay = Overlay {
+            tint: 0.0,
+            exclude_from_capture: true,
+        };
+        assert_eq!(defaults.overlay, overlay);
+        assert_eq!(parse("[overlay]").unwrap().overlay, overlay);
         assert_eq!(
             parse("[power]\nac_fps = 60").unwrap().power.battery_fps,
             defaults.power.battery_fps
@@ -210,6 +237,9 @@ mod tests {
             easy_mode = true
             population_cap = 42
             catch_up = true
+            [overlay]
+            tint = 0.25
+            exclude_from_capture = false
         ",
         )
         .unwrap();
@@ -238,6 +268,13 @@ mod tests {
                 catch_up: true,
             }
         );
+        assert_eq!(
+            config.overlay,
+            Overlay {
+                tint: 0.25,
+                exclude_from_capture: false,
+            }
+        );
     }
 
     #[test]
@@ -248,6 +285,7 @@ mod tests {
             "[power]\nextra = 1",
             "[plants]\nextra = 1",
             "[life]\nextra = 1",
+            "[overlay]\nextra = 1",
         ] {
             assert!(matches!(parse(text), Err(ConfigError::Toml(_))), "{text}");
         }
@@ -271,6 +309,20 @@ mod tests {
         ] {
             assert!(matches!(parse(text), Err(ConfigError::Value(_))), "{text}");
         }
+    }
+
+    #[test]
+    fn rejects_invalid_overlay_tint() {
+        for tint in ["-0.1", "1.1", "nan", "inf", "-inf"] {
+            assert!(
+                matches!(
+                    parse(&format!("[overlay]\ntint = {tint}")),
+                    Err(ConfigError::Value("overlay.tint must be in 0.0..=1.0"))
+                ),
+                "{tint}"
+            );
+        }
+        assert!(parse("[overlay]\ntint = 1.0").is_ok());
     }
 
     #[test]

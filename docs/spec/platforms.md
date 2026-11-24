@@ -53,9 +53,12 @@ The overlay is transparent, click-through, always on top, takes no focus
 and has no taskbar or Dock entry. By default it is excluded from screen
 capture on a best-effort basis, using `NSWindow.sharingType = .none` on
 macOS and `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` on Windows.
-🔍 Newer macOS capture paths may ignore `sharingType`; O1-Mac verifies
-this and documents what is actually excluded. This is
-configurable, because some people want to show their tank off.
+*O1-Mac:* verified on arm64 macOS 27 (26B131): `NSWindow.sharingType = .none`
+excludes the overlay from `screencapture`, and switching to `.readOnly` via
+`[overlay] exclude_from_capture = false` includes it again live;
+third-party ScreenCaptureKit recorders that ignore `sharingType` remain
+best-effort. This is configurable, because some people want to show their
+tank off.
 
 - **macOS**: transparent `NSWindow` at the floating window level, with
   `ignoresMouseEvents` and `canJoinAllSpaces | stationary`. It does
@@ -78,7 +81,10 @@ configurable, because some people want to show their tank off.
 - **Linux Wayland**: a layer-shell `overlay` layer with an empty input
   region.
 - **Full-screen apps**: the overlay and wallpaper pause and hide while a
-  full-screen app is in front (§6.2 has detection details).
+  full-screen app is in front (§6.2 has detection details). *O1-Mac:* any
+  active display covered by another process's window at `layer >= 0` hides
+  and pauses the overlay; with both menu bar and Dock set to auto-hide, a
+  display-sized maximised window can also match.
 - **Interact input** (§2.5). Entering interact mode makes the
   overlay-type window accept mouse input. In toggle mode it also takes
   key focus for Esc and for typing creature names. It shows that window

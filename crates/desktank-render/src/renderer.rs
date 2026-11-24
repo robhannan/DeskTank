@@ -478,6 +478,7 @@ impl Renderer {
         cursor: Option<BrushPreview>,
         field_mode: f32,
         lens: [f32; 4],
+        overlay_water_alpha: Option<f32>,
     ) -> Vec<u8> {
         let hud = palette.map_or(
             [
@@ -528,7 +529,7 @@ impl Renderer {
             if self.format.is_srgb() { 1.0 } else { 0.0 },
         ]
         .into_iter()
-        .chain(backdrop())
+        .chain(backdrop(overlay_water_alpha))
         .chain(hud)
         .chain(cursor)
         .chain(daylight)
@@ -551,6 +552,8 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         size: (u32, u32),
+        layout: Layout,
+        overlay_water_alpha: Option<f32>,
         surface_row: usize,
         daylight: [f32; 3],
         phase: f32,
@@ -565,7 +568,6 @@ impl Renderer {
         ),
         timer: Option<&GpuTimer>,
     ) {
-        let layout = Layout::fit(self.grid, size);
         let (palette, cursor, magnifier, field) = overlay;
         // 0 = none; 1, 2, 3 = nutrient, CO₂, light (the texture's channels).
         let field_mode = match field {
@@ -589,6 +591,7 @@ impl Renderer {
             cursor,
             field_mode,
             [0.0; 4],
+            overlay_water_alpha,
         );
         if bytes != self.view {
             gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
@@ -618,6 +621,7 @@ impl Renderer {
                 None,
                 field_mode,
                 lens_info,
+                overlay_water_alpha,
             );
             if lens_bytes != self.lens_view {
                 gpu.queue
@@ -1040,21 +1044,6 @@ const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
 /// the pixels over one kind of plant part.
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
 const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
-/// The split grid's plant passes blend their colour over the ground's and
-/// keep its alpha.
-const BLEND_OVER: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::SrcAlpha,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::Zero,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
 /// The grid and sprite pipelines with and without four-texel plant art,
 /// plus the magnifier lens frame pipeline, drawing into `format`, one pass
 /// each or split ([`Gpu::split_grid`]).
@@ -1135,7 +1124,7 @@ fn create_pipelines(
                 .iter()
                 .enumerate()
                 .map(|(i, entry)| {
-                    let blend = (i > 0).then_some(BLEND_OVER);
+                    let blend = (i > 0).then_some(wgpu::BlendState::ALPHA_BLENDING);
                     pipeline(&format!("tank {entry}{suffix}"), entry, blend, constants)
                 })
                 .collect(),
@@ -1150,14 +1139,19 @@ fn create_pipelines(
                 .collect(),
         }
     };
-    let lens_frame = pipeline("lens frame", "fs_lens_frame", Some(BLEND_OVER), &[]);
+    let lens_frame = pipeline(
+        "lens frame",
+        "fs_lens_frame",
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        &[],
+    );
     ([level(true), level(false)], lens_frame)
 }
 
-/// The backdrop, sRGB-encoded (the shader encodes for sRGB targets).
-fn backdrop() -> [f32; 4] {
+/// The sRGB-encoded backdrop and the overlay water opacity (-1 for opaque mode).
+fn backdrop(overlay_water_alpha: Option<f32>) -> [f32; 4] {
     let [r, g, b] = BACKDROP.map(|c| f32::from(c) / 255.0);
-    [r, g, b, 1.0]
+    [r, g, b, overlay_water_alpha.unwrap_or(-1.0)]
 }
 
 /// A grid or texture side as `u32`. Sides are at most
