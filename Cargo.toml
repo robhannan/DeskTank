@@ -27,6 +27,13 @@ missing_docs = "warn"
 # Warn here; CI turns warnings into errors with `-D warnings`.
 pedantic = { level = "warn", priority = -1 }
 
+[profile.dev]
+# packed: one .dSYM/.dwp per binary, so rustc deletes the per-codegen-unit .o
+# files after linking. macOS defaults to unpacked, where debug binaries point
+# at those .o files and every incremental rebuild leaves a new set behind
+# (it had grown target/ past 13 GB).
+split-debuginfo = "packed"
+
 [profile.release]
 # Small, lean binaries (SPEC §6.1: ≤ 20 MB, low idle CPU). opt-level stays at 3:
 # CPU per tick matters more than the last few hundred KB.
