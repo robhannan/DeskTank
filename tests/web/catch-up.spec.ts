@@ -123,3 +123,29 @@ test("a viewer skips catch-up, including when it takes over a paused tank", asyn
   expect(errors).toEqual([]);
   expect(viewerErrors).toEqual([]);
 });
+
+test("taking over a hidden owner catches up for the time it was hidden", async ({ context, page }) => {
+  const errors = watchErrors(page);
+  await page.clock.setFixedTime(SAVED_AT);
+  await openPaused(page);
+  await (await catchUpSetting(page)).check();
+  await callTank(page, "step");
+  const savedTick = await saveWhileHidden(page);
+
+  const seconds = 3600;
+  const transferAt = SAVED_AT + seconds * 1000;
+  await page.clock.setFixedTime(transferAt);
+  const viewer = await context.newPage();
+  const viewerErrors = watchErrors(viewer);
+  await viewer.clock.setFixedTime(transferAt);
+  await open(viewer, "?backend=webgl2");
+  expect(await viewer.evaluate(() => window.desktank.owner)).toBe(false);
+  await viewer.getByRole("button", { name: "Take over" }).click();
+  await expect(viewer.locator("body")).toHaveAttribute("data-owner", "true");
+  await viewer.evaluate(() => window.desktank.claiming);
+  expect(await viewer.evaluate(() => window.desktank.loaded?.tick)).toBe(savedTick);
+  expect(await lastCatchUp(viewer)).toMatchObject({ seconds });
+  expect(await ticks(viewer)).toBeGreaterThanOrEqual(savedTick + seconds * TICKS_PER_SECOND);
+  expect(errors).toEqual([]);
+  expect(viewerErrors).toEqual([]);
+});

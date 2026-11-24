@@ -640,8 +640,11 @@ async function handOver() {
     setRunning(false);
     if (drewFirst) stopLoop();
   }
-  // Refresh savedAt even if clean so the next owner treats this as a live transfer.
-  await persist("hand-over", true);
+  // A visible owner rewrites the save even when clean, so its savedAt says
+  // the tank was live until now and the next owner doesn't catch up. A
+  // hidden owner keeps the savedAt from when it stopped, so the next owner
+  // catches up for the hidden time.
+  await persist("hand-over", !hidden);
   if (!(await hooks.saving) && (saveFailed || tank?.saveNeeded())) {
     notice("Couldn't save before handing over: the other tab opened the last save.");
   }
