@@ -57,11 +57,12 @@
 //! saved size, letterboxed) or, with none, a new starter scene. It saves
 //! every 5 minutes while visible, when hidden and on close. `--fresh`
 //! starts a new tank (saved as the newest, the older saves kept);
-//! `--no-save` neither loads nor saves.
+//! `--no-save` neither loads nor saves. Optional catch-up applies elapsed
+//! wall-clock time after reopening a save or resuming from a power pause.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context as _;
 use desktank_platform::{PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats};
@@ -75,8 +76,8 @@ use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, RinseKind, World,
-    WorldConfig,
+    CreatureId, DeviceId, FieldKind, MAX_CATCH_UP_SECONDS, MAX_NAME_CHARS, MaterialTable, Mount,
+    RinseKind, World, WorldConfig,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -208,8 +209,8 @@ struct App {
     error: Option<anyhow::Error>,
     /// The saved tank, unless saving is off.
     persist: Option<Persistence>,
-    /// The tank loaded from the last save, until the window opens.
-    saved: Option<World>,
+    /// The loaded tank and its save path, until the window opens.
+    saved: Option<(World, PathBuf)>,
     demo: Option<Demo>,
 }
 
@@ -278,6 +279,8 @@ struct Running {
     hidden: Hidden,
     /// Power/visibility decision as of the last `about_to_wait`.
     last_decision: PowerDecision,
+    /// Start of the current power pause, on a clock that includes system sleep.
+    paused_at: Option<SystemTime>,
     /// Pointer position in physical pixels.
     cursor: Option<(f64, f64)>,
     avoid_cursor: bool,
@@ -397,6 +400,7 @@ impl Running {
             last_decision: PowerDecision::Run {
                 max_fps: TankConfig::default().max_fps,
             },
+            paused_at: None,
             cursor: None,
             avoid_cursor: false,
             tools,
@@ -1007,12 +1011,46 @@ fn apply_life(world: &mut World, life: Life, previous: Life) {
     }
 }
 
+/// Bounds a wall-clock gap and skips short absences or a clock that went back.
+fn catch_up_seconds(since: SystemTime, now: SystemTime) -> u32 {
+    let elapsed = now.duration_since(since).unwrap_or_default().as_secs();
+    if elapsed < 60 {
+        return 0;
+    }
+    u32::try_from(elapsed)
+        .unwrap_or(u32::MAX)
+        .min(MAX_CATCH_UP_SECONDS)
+}
+
+fn catch_up(tank: &mut Tank, since: SystemTime) {
+    let seconds = catch_up_seconds(since, SystemTime::now());
+    if seconds == 0 {
+        return;
+    }
+    // Catch-up advances the world tick, which persistence uses to detect changes.
+    let report = tank.world_mut().catch_up(seconds);
+    tank.cells_edited();
+    let minutes = report.seconds / 60;
+    let elapsed = if minutes < 60 {
+        format!("{minutes}m")
+    } else {
+        format!("{}h {}m", minutes / 60, minutes % 60)
+    };
+    let births = report.births;
+    let deaths = report.old_age_deaths + report.starvation_deaths + report.poor_water_deaths;
+    let birth_suffix = if births == 1 { "" } else { "s" };
+    let death_suffix = if deaths == 1 { "" } else { "s" };
+    eprintln!(
+        "desktank window: caught up {elapsed} ({births} birth{birth_suffix}, {deaths} death{death_suffix})"
+    );
+}
+
 impl ApplicationHandler<Wake> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;
         }
-        let saved = self.saved.take();
+        let (saved, path) = self.saved.take().unzip();
         let fresh = saved.is_none();
         match Running::new(&self.instance, event_loop, saved) {
             Ok(mut s) => {
@@ -1027,6 +1065,18 @@ impl ApplicationHandler<Wake> for App {
                     PowerSource::Battery { .. }
                 ));
                 apply_life(s.tank.world_mut(), self.settings.life, Life::default());
+                if self.settings.life.catch_up
+                    && self.persist.as_ref().is_some_and(Persistence::owns)
+                    && let Some(path) = path
+                {
+                    match path.metadata().and_then(|metadata| metadata.modified()) {
+                        Ok(modified) => catch_up(&mut s.tank, modified),
+                        Err(e) => eprintln!(
+                            "desktank window: no catch-up, can't read when {} was saved: {e}",
+                            path.display()
+                        ),
+                    }
+                }
                 // A loaded tank keeps the creatures it had.
                 let fish = if fresh { self.fish } else { 0 };
                 if let Err(e) = scene::stock(s.tank.world_mut(), fish, SEED) {
@@ -1100,10 +1150,13 @@ impl ApplicationHandler<Wake> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if matches!(
-                    s.decision(&self.settings.power, &self.power),
-                    PowerDecision::Run { .. }
-                ) && let Err(e) = s.tank.draw(&s.gpu, &s.surface)
+                // The transition in about_to_wait catches up before drawing again.
+                if s.paused_at.is_none()
+                    && matches!(
+                        s.decision(&self.settings.power, &self.power),
+                        PowerDecision::Run { .. }
+                    )
+                    && let Err(e) = s.tank.draw(&s.gpu, &s.surface)
                 {
                     self.error = Some(e.into());
                     event_loop.exit();
@@ -1291,6 +1344,7 @@ impl ApplicationHandler<Wake> for App {
         if decision != s.last_decision {
             match (s.last_decision, decision) {
                 (PowerDecision::Run { .. }, PowerDecision::Pause(reason)) => {
+                    s.paused_at = Some(SystemTime::now());
                     eprintln!("desktank window: {reason}, paused");
                     if let Some(p) = &mut self.persist {
                         // Paused from here on, so nothing changes until it runs
@@ -1299,6 +1353,13 @@ impl ApplicationHandler<Wake> for App {
                     }
                 }
                 (PowerDecision::Pause(_), PowerDecision::Run { max_fps }) => {
+                    let paused_at = s.paused_at.take();
+                    if self.settings.life.catch_up
+                        && self.persist.as_ref().is_some_and(Persistence::owns)
+                        && let Some(paused_at) = paused_at
+                    {
+                        catch_up(&mut s.tank, paused_at);
+                    }
                     eprintln!("desktank window: visible ({max_fps} fps)");
                     s.tank.set_max_fps(max_fps);
                     s.tank.invalidate();
@@ -1429,6 +1490,27 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
 mod tests {
     use super::*;
     use desktank_sim::{DeviceKind, MaterialTable, WorldConfig};
+
+    #[test]
+    fn catch_up_ignores_short_gaps_and_backward_clocks() {
+        let since = SystemTime::UNIX_EPOCH + Duration::from_hours(1);
+        assert_eq!(catch_up_seconds(since, SystemTime::UNIX_EPOCH), 0);
+        assert_eq!(
+            catch_up_seconds(since, since + Duration::from_millis(59_999)),
+            0
+        );
+        assert_eq!(catch_up_seconds(since, since + Duration::from_mins(1)), 60);
+        assert_eq!(catch_up_seconds(since, since + Duration::from_secs(87)), 87);
+    }
+
+    #[test]
+    fn catch_up_caps_long_gaps_at_24_hours() {
+        let since = SystemTime::UNIX_EPOCH;
+        assert_eq!(
+            catch_up_seconds(since, since + Duration::from_hours(72)),
+            MAX_CATCH_UP_SECONDS
+        );
+    }
 
     #[test]
     fn device_line_omits_filter_fields_for_bubbler() {

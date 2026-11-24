@@ -122,8 +122,9 @@ directory for custom materials and species is a stretch goal.
 
   *(O2: `desktank window` reads `version` and the `[power]`, `[plants]`
   and `[life]` tables from `config.toml` in the per-user config
-  directory or `DESKTANK_CONFIG_DIR`. See the
-  [config paths and example](../config.md).)*
+  directory or `DESKTANK_CONFIG_DIR`. Set `catch_up` in `[life]` to
+  enable catch-up on reopen and after power or visibility pauses (§2.6).
+  See the [config paths and example](../config.md).)*
 - **Tray / menu-bar icon** offers:
   - toggling each mode;
   - Interact;

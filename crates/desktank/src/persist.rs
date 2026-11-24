@@ -54,9 +54,9 @@ impl Persistence {
         })
     }
 
-    /// The newest save that loads, if any. Saves that don't load are
+    /// The newest save that loads and its path, if any. Saves that don't load are
     /// logged, and moved aside if this process owns the tank.
-    pub fn load(&mut self) -> Option<World> {
+    pub fn load(&mut self) -> Option<(World, PathBuf)> {
         let loaded = match self.store.load(decode) {
             Ok(loaded) => loaded,
             Err(e) => {
@@ -85,7 +85,12 @@ impl Persistence {
             world.tick_count()
         );
         self.saved_tick = Some(world.tick_count());
-        Some(world)
+        Some((world, path))
+    }
+
+    /// Whether this process owns the tank.
+    pub fn owns(&self) -> bool {
+        self.store.owns()
     }
 
     /// Saves if the autosave is due and the world moved on.
@@ -233,7 +238,23 @@ mod tests {
         assert_eq!(count(), 3);
         drop(p);
         let mut p = Persistence::open(Some(dir.clone())).unwrap();
-        assert_eq!(p.load().unwrap().state_hash(), w.state_hash());
+        assert_eq!(p.load().unwrap().0.state_hash(), w.state_hash());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_catch_up_without_a_normal_tick() {
+        let dir = temp("catch-up");
+        let mut p = Persistence::open(Some(dir.clone())).unwrap();
+        p.save(&world(1), "test");
+
+        let (mut w, original) = p.load().unwrap();
+        w.catch_up(60);
+        p.save(&w, "test");
+
+        let (loaded, latest) = p.load().unwrap();
+        assert_ne!(latest, original);
+        assert_eq!(loaded.tick_count(), w.tick_count());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -271,11 +292,13 @@ mod tests {
         w.tick();
         owner.save(&w, "test");
         let mut viewer = Persistence::open(Some(dir.clone())).unwrap();
-        let mut seen = viewer.load().unwrap();
+        assert!(owner.owns());
+        assert!(!viewer.owns());
+        let (mut seen, _) = viewer.load().unwrap();
         seen.tick();
         viewer.save(&seen, "test");
         // Still only the owner's save.
-        assert_eq!(viewer.load().unwrap().tick_count(), 1);
+        assert_eq!(viewer.load().unwrap().0.tick_count(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -294,7 +317,7 @@ mod tests {
         export(Some(from.clone()), &file).unwrap();
         import(Some(to.clone()), &file).unwrap();
         let mut q = Persistence::open(Some(to.clone())).unwrap();
-        assert_eq!(q.load().unwrap().state_hash(), w.state_hash());
+        assert_eq!(q.load().unwrap().0.state_hash(), w.state_hash());
         // Not a save: rejected, nothing written.
         std::fs::write(&file, b"not a save").unwrap();
         drop(q);
