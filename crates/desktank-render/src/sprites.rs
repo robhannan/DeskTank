@@ -37,14 +37,16 @@ use desktank_sim::{
 /// the stack within WebGL2's guaranteed 2048 texels tall now that species
 /// carry several colour morphs of large art (the axolotl alone has three).
 pub const ATLAS_WIDTH: usize = 512;
-/// Most sprites drawn in a frame: every creature the cap allows, live
-/// food, corpses, devices (up to two depth-split layers each, e.g. a HOB
-/// body + back-band intake tube) and a placement ghost.
+/// Maximum sprite slices reserved per device (and for the placement ghost),
+/// covering telescoping tubes even in tall `HiDPI` tanks without displacing
+/// creatures or corpses.
+const MAX_DEVICE_SLICES: usize = 64;
+/// Instance buffer capacity for creatures, food, corpses, devices and
+/// the placement ghost.
 pub const MAX_SPRITES: usize = desktank_sim::MAX_CREATURE_CAP
     + desktank_sim::MAX_LIVE_FOOD
     + desktank_sim::MAX_CORPSES
-    + desktank_sim::MAX_DEVICES * 2
-    + 1;
+    + (desktank_sim::MAX_DEVICES + 1) * MAX_DEVICE_SLICES;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
@@ -245,7 +247,7 @@ impl Atlas {
         self.instances_with(world, None, sprites, out)
     }
 
-    /// [`Atlas::instances`], then one per device (at [`DEVICE_DEPTH`]) and
+    /// [`Atlas::instances`], then slices for each device and
     /// the placement `ghost` if any (whether it fits), drawn last.
     pub fn instances_with(
         &self,
@@ -256,6 +258,12 @@ impl Atlas {
     ) -> u32 {
         out.clear();
         sprites.clear();
+        // Give the ghost enough room for all its slices, then move it to
+        // the end after sorting the placed sprites.
+        if let Some((d, fits)) = ghost {
+            self.push_device(world, &d, Some(fits), sprites);
+        }
+        let ghost_count = sprites.len();
         let tick = world.tick_count();
         for c in world.creatures() {
             let Some(e) = self.entry(world, c.species(), world.creature_morph(c), c.female())
@@ -326,13 +334,12 @@ impl Atlas {
                 burrower: false,
             });
         }
-        self.push_devices(world, sprites);
-        // Stable, so equal depths keep the world's order.
-        sprites.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        if let Some((d, fits)) = ghost.filter(|_| sprites.len() < MAX_SPRITES) {
-            let look = [LOOK_GHOST, if fits { 0.0 } else { 1.0 }];
-            sprites.push(self.device_sprite(world, &d, look, 0.0));
+        for d in world.devices() {
+            self.push_device(world, d, None, sprites);
         }
+        // Stable, so equal depths keep the world's order.
+        sprites[ghost_count..].sort_by(|a, b| b.depth.total_cmp(&a.depth));
+        sprites.rotate_left(ghost_count);
         for s in sprites.iter() {
             s.push(out);
         }
@@ -341,59 +348,64 @@ impl Atlas {
 }
 
 impl Atlas {
-    /// Pushes one sprite per device (or two depth-split slices when the device
-    /// has a back-band section such as a HOB intake tube, DV5), leaving one
-    /// slot free for the placement ghost.
-    fn push_devices(&self, world: &World, sprites: &mut Vec<Sprite>) {
-        for d in world.devices() {
-            let art = world.device_kinds().get(d.kind);
-            if let Some(split) = art.back_band_from
-                && split > 0
-                && split < art.size.1
-            {
-                if sprites.len() + 2 >= MAX_SPRITES {
-                    break;
-                }
-                sprites.push(self.device_sprite_slice(
-                    world,
-                    d,
-                    0,
-                    split,
-                    [LOOK_ALIVE, 0.0],
-                    DEVICE_DEPTH,
-                ));
-                sprites.push(self.device_sprite_slice(
-                    world,
-                    d,
-                    split,
-                    art.size.1,
-                    [LOOK_ALIVE, 0.0],
-                    f32::from(desktank_sim::DEPTH_BANDS - 1),
-                ));
-            } else {
-                if sprites.len() + 1 >= MAX_SPRITES {
-                    break;
-                }
-                sprites.push(self.device_sprite(world, d, [LOOK_ALIVE, 0.0], DEVICE_DEPTH));
+    fn push_device(
+        &self,
+        world: &World,
+        d: &Device,
+        ghost: Option<bool>,
+        sprites: &mut Vec<Sprite>,
+    ) {
+        let art = world.device_kinds().get(d.kind);
+        let height = art.size.1;
+        let span = d.span(art);
+        let (look, depth) = match ghost {
+            Some(fits) => ([LOOK_GHOST, if fits { 0.0 } else { 1.0 }], 0.0),
+            None => ([LOOK_ALIVE, 0.0], DEVICE_DEPTH),
+        };
+        let available = MAX_SPRITES - sprites.len();
+        let mut push = |rows, world_y, depth| {
+            sprites.push(self.device_sprite_slice(world, d, rows, world_y, look, depth));
+        };
+        if let Some((top_end, bottom_start)) = art.tube_stretch
+            && span > height
+        {
+            let tile_height = bottom_start - top_end;
+            let middle_height = span - height + tile_height;
+            if middle_height.div_ceil(tile_height) + 2 > available {
+                return;
             }
+            push(0..top_end, d.y, depth);
+            let bottom_y = d.y + span - (height - bottom_start);
+            for y in (d.y + top_end..bottom_y).step_by(tile_height) {
+                let rows = tile_height.min(bottom_y - y);
+                push(top_end..top_end + rows, y, depth);
+            }
+            push(bottom_start..height, bottom_y, depth);
+        } else if let Some(split) = art.back_band_from
+            && ghost.is_none()
+            && split > 0
+            && split < height
+        {
+            if available >= 2 {
+                push(0..split, d.y, depth);
+                push(
+                    split..height,
+                    d.y + split,
+                    f32::from(desktank_sim::DEPTH_BANDS - 1),
+                );
+            }
+        } else if available > 0 {
+            push(0..height, d.y, depth);
         }
     }
 
-    /// A device's sprite: its art's box, mirrored when `facing_left`.
-    fn device_sprite(&self, world: &World, d: &Device, look: [f32; 2], depth: f32) -> Sprite {
-        let h = world.device_kinds().get(d.kind).size.1;
-        self.device_sprite_slice(world, d, 0, h, look, depth)
-    }
-
-    /// A vertical cell-aligned slice `row0..row1` of device `d`'s sprite,
-    /// allowing devices with a back-band section (e.g. a HOB's intake tube,
-    /// DV5) to depth-sort independently while sharing one atlas entry.
+    /// A vertical cell-aligned slice, with its top at an explicit world row.
     fn device_sprite_slice(
         &self,
         world: &World,
         d: &Device,
-        row0: usize,
-        row1: usize,
+        rows: std::ops::Range<usize>,
+        world_y: usize,
         look: [f32; 2],
         depth: f32,
     ) -> Sprite {
@@ -405,15 +417,12 @@ impl Atlas {
         let entry = self.devices[k];
         let (base_origin, base_fine) = Self::origins(&entry, 0);
         let w = art.size.0;
-        let h = row1 - row0;
-        let dy_coarse = row0 * TEXELS_PER_CELL;
+        let h = rows.len();
+        let dy_coarse = rows.start * TEXELS_PER_CELL;
         let dy_fine = dy_coarse * 2;
         // Device boxes are small: exact in f32.
         #[allow(clippy::cast_precision_loss)]
-        let centre = (
-            (d.x * 2 + w) as f32 / 2.0,
-            ((d.y + row0) * 2 + h) as f32 / 2.0,
-        );
+        let centre = ((d.x * 2 + w) as f32 / 2.0, (world_y * 2 + h) as f32 / 2.0);
         Sprite {
             centre,
             size: (w, h),
@@ -982,7 +991,7 @@ mod tests {
     fn devices_pack_within_webgl2_limits_at_their_instance_origins() {
         let mut w = World::new(
             WorldConfig {
-                width: 120,
+                width: 160,
                 height: 80,
                 seed: 1,
                 water_level: 1.0,
@@ -996,39 +1005,60 @@ mod tests {
             "atlas exceeds WebGL2 limit: {:?}",
             atlas.size
         );
-        w.add_device(DeviceKind::Bubbler, 30, 40, false)
-            .unwrap()
-            .unwrap();
-        w.add_device(DeviceKind::InternalFilter, 4, 40, false)
-            .unwrap()
-            .unwrap();
-        w.add_device(DeviceKind::SpongeFilter, 60, 40, false)
-            .unwrap()
-            .unwrap();
-        w.add_device(DeviceKind::HobFilter, 90, 0, false)
-            .unwrap()
-            .unwrap();
+        for (kind, x, y) in [
+            (DeviceKind::Bubbler, 30, 40),
+            (DeviceKind::InternalFilter, 4, 40),
+            (DeviceKind::SpongeFilter, 60, 40),
+            (DeviceKind::HobFilter, 74, 0),
+            (DeviceKind::UnderGravelFilter, 135, 40),
+            (DeviceKind::UnderGravelPanel, 108, 76),
+        ] {
+            assert!(
+                w.add_device(kind, x, y, false).unwrap().is_some(),
+                "{kind:?}"
+            );
+        }
+        assert_eq!(w.devices().count(), DeviceKind::ALL.len());
         let mut out = Vec::new();
-        // Bubbler (1) + Internal (1) + Sponge (1) + HOB split into body & back-band tube (2) = 5.
-        assert_eq!(atlas.instances(&w, &mut Vec::new(), &mut out), 5);
+        let mut sprites = Vec::new();
+        // Six devices, one extra HOB slice and seven extra telescoping slices.
+        assert_eq!(atlas.instances(&w, &mut sprites, &mut out), 14);
         for d in w.devices() {
             let art = w.device_kinds().get(d.kind);
             let (cw, ch) = art.size;
-            let slices: Vec<(usize, usize, f32)> = match art.back_band_from {
-                Some(split) => vec![
-                    (0, split, DEVICE_DEPTH),
-                    (split, ch, f32::from(desktank_sim::DEPTH_BANDS - 1)),
-                ],
-                None => vec![(0, ch, DEVICE_DEPTH)],
+            let slices = if d.kind == DeviceKind::UnderGravelFilter {
+                assert_eq!(d.y, w.surface_row() + 1);
+                assert_eq!(d.y + d.span(art), w.height());
+                vec![
+                    (0, 5, d.y, DEVICE_DEPTH),
+                    (5, 17, 6, DEVICE_DEPTH),
+                    (5, 17, 18, DEVICE_DEPTH),
+                    (5, 17, 30, DEVICE_DEPTH),
+                    (5, 17, 42, DEVICE_DEPTH),
+                    (5, 17, 54, DEVICE_DEPTH),
+                    (5, 8, 66, DEVICE_DEPTH),
+                    (17, 28, 69, DEVICE_DEPTH),
+                ]
+            } else if let Some(split) = art.back_band_from {
+                vec![
+                    (0, split, d.y, DEVICE_DEPTH),
+                    (
+                        split,
+                        ch,
+                        d.y + split,
+                        f32::from(desktank_sim::DEPTH_BANDS - 1),
+                    ),
+                ]
+            } else {
+                vec![(0, ch, d.y, DEVICE_DEPTH)]
             };
-            for (row0, row1, expected_depth) in slices {
+            for (row0, row1, world_y, expected_depth) in slices {
                 let sh = row1 - row0;
                 #[allow(clippy::cast_precision_loss)]
-                let centre = (
-                    (d.x * 2 + cw) as f32 / 2.0,
-                    ((d.y + row0) * 2 + sh) as f32 / 2.0,
-                );
+                let centre = ((d.x * 2 + cw) as f32 / 2.0, (world_y * 2 + sh) as f32 / 2.0);
                 let inst = instance_at(&out, centre);
+                assert_eq!((inst[2] as usize, inst[3] as usize), (cw, sh));
+                assert_eq!(inst[9] as usize, sh * TEXELS_PER_CELL);
                 assert_eq!(inst[14], expected_depth);
                 let (ox, oy) = (inst[4] as usize, inst[5] as usize);
                 let (fx, fy) = (inst[12] as usize, inst[13] as usize);
@@ -1054,6 +1084,35 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn telescoping_placement_ghost_matches_the_placed_filter() {
+        let mut w = world();
+        let atlas = Atlas::build(w.species(), w.device_kinds());
+        let kind = DeviceKind::UnderGravelFilter;
+        let (ghost, fits) = w.device_placement(kind, 32, 40, true);
+        assert!(fits);
+        assert!(ghost.span(w.device_kinds().get(kind)) > 28);
+        w.add_device(kind, 32, 40, true).unwrap().unwrap();
+
+        let mut sprites = Vec::new();
+        let mut out = Vec::new();
+        let count = atlas.instances(&w, &mut sprites, &mut out);
+        assert!(count > 2);
+        assert_eq!(
+            atlas.instances_with(&w, Some((ghost, false)), &mut sprites, &mut out),
+            count * 2
+        );
+        let (instances, remainder) = out.as_chunks::<INSTANCE_FLOATS>();
+        assert_eq!(remainder, []);
+        let (placed, ghosts) = instances.split_at(count as usize);
+        for (real, ghost) in placed.iter().zip(ghosts) {
+            assert_eq!(&ghost[..10], &real[..10]);
+            assert_eq!(&ghost[10..12], &[LOOK_GHOST, 1.0]);
+            assert_eq!(&ghost[12..14], &real[12..14]);
+            assert_eq!(ghost[14], 0.0);
         }
     }
 }

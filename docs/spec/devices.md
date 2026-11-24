@@ -39,13 +39,14 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   - *rim:* hanging on the top edge, partly above the water line (HOB);
   - *bed:* dropped onto what is below, like the bubbler (sponge filter,
     prefab bubbler);
-  - *floor:* a plate under the substrate with tubes at the back
+  - *floor:* a plate under the substrate with an uplift tube in a back corner
     (under-gravel filter).
 
-  Placement is whole or nothing: a placement whose footprint isn't all
-  fluid cells (in the grid, under the water line for side-glass mounts)
-  tries the nearest heights within the device's own height, then
-  refuses.
+  Devices are placed whole. Side-glass and bed mounts try nearby heights
+  if the footprint is blocked. Floor mounts can shift powder substrate
+  into free space above or beside the footprint. Placement is refused if
+  the tank is too shallow, the nozzle is buried, hardscape blocks the
+  footprint, or displaced substrate has nowhere to go.
 - **The four filters** (reference photos supplied by the owner; not
   committed, as one is a copyrighted product advert):
 
@@ -54,7 +55,7 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   | Internal | Suction-cupped to the side glass at any height | Intake slots at the bottom, nozzle jet at the top | Closest to the old outlet |
   | HOB (hang-on-back) | Hangs on the rim, partly above the water line | Intake tube down into the tank, waterfall outlet at the surface | Ripples the surface |
   | Sponge | Sits on the bed and drops like the bubbler | Air-driven uplift: bubbles rise from its tube, gentle flow | Fry-safe; shrimp graze the sponge |
-  | Under-gravel | Plate under the substrate, uplift tubes at the back | Pulls water down through the gravel and up the tubes | Interacts with substrate and roots (UGFs hurt rooted plants) |
+  | Under-gravel | Plates under the substrate, with an uplift tube in a back corner | Pulls water down through the gravel and up the tube | Fry-safe; rooted plants decline over the plate |
 
   The references, by appearance:
   - *Internal:* a tall black vertical box, about three to four times as
@@ -67,10 +68,10 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
     strainer.
   - *Sponge:* a black ribbed cylindrical sponge on a round weighted base,
     with a clear uplift tube on top and bubbles rising out of it.
-  - *Under-gravel:* slotted grey plates covering the floor under the
-    gravel, and a vertical uplift tube in a back corner rising to the
-    surface, bending over into a horizontal spray bar held by suction
-    cups.
+  - *Under-gravel:* interlocking dark-charcoal slotted plates under the
+    gravel. A frosted-white collar in a back corner holds a clear uplift
+    tube with a blue air stone inside. Bubbles rise through the tube,
+    which bends into a clear horizontal deflector spout.
 - **The prefab bubbler** (DV7): a low charcoal air-stone puck
   sitting on the bed (`Mount::Bed`, dropped onto substrate, hardscape or the
   floor, placed and removed whole), with a porous grey stone seen side-on above the narrow
@@ -107,28 +108,39 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   maturity back. The real ammonia/nitrite/nitrate chemistry stays in E1 (#136),
   which takes over maturity as its bacteria colony.
 - **Fry and shrimp.** Intakes suck in fry and small shrimp unless the
-  filter's **intake guard** is on; the sponge filter (DV4) is always
-  fry-safe, and hungry shrimp seek out and graze biofilm from its foam
-  body (gently trimming mechanical media load without erasing device cells).
+  filter's **intake guard** is on. The sponge (DV4) and under-gravel
+  (DV6) filters are always fry-safe. Hungry shrimp graze biofilm from the
+  sponge's foam body (gently trimming mechanical media load without erasing
+  device cells).
 - **Depth and collision** (D21). A HOB's intake tube is in the back
   depth band, so fish pass in front of it. Internal, sponge and
   under-gravel bodies and tubes are solid in every band.
 - **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the
   prefab bubbler and the filters as each lands (DV7: prefab bubbler; DV1:
-  internal filter; DV4: sponge filter; DV5: HOB filter). Side-glass facing is chosen automatically from
+  internal filter; DV4: sponge filter; DV5: HOB filter; DV6: under-gravel
+  filter and modular panels). Side-glass facing is chosen automatically from
   the nearer wall (with a **flip** key `X` or button to mirror onto the
   other glass); bed-mounted devices drop straight down onto substrate,
   hardscape or the floor (symmetric, ignoring flip); rim-mounted devices
   (HOB, DV5) hang on the top rim partly above the water line, mirror
   left/right with flip, and ripple the water surface beneath their
-  spillway in the renderer (at zero idle cost). The placement preview
+  spillway in the renderer (at zero idle cost). The under-gravel filter
+  mounts flush with the floor under existing substrate. Its telescoping
+  uplift tube reaches just beneath the water surface when placed. Flip
+  mirrors the tube and spout left/right. Modular under-gravel panels
+  (`UnderGravelPanel`) snap flush beside the filter or another panel to
+  expand its floor footprint. A panel draws water through the gravel only
+  while connected edge-to-edge to the main filter, directly or through
+  other panels. Rooted plants decline over the active plates.
+  Removing the filter preserves the substrate. The placement preview
   is a see-through **ghost** of the footprint at the pointer (tinted red
   where it doesn't fit). The inspect card (the one creatures use) shows a
   filter's status: mount position, flow, media load, maturity, Rinse
   (gentle, hard, replace), and the intake-guard toggle (hidden for
-  intrinsically fry-safe filters, which show `fry-safe`, DV3–DV4); for a
+  intrinsically fry-safe filters, which show `fry-safe`); for a
   pure air diffuser (the prefab bubbler, DV7) it shows its mount position
-  and `air diffuser` with no filtration actions.
+  and `air diffuser`. A panel shows its floor mount and `connected` or
+  `disconnected`. The diffuser and panels have no filtration actions.
   Drag-to-move (keeping state) and flow/air dials come
   later. Non-interactive hosts (screensaver, lock screen) just run the
   devices.

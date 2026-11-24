@@ -20,6 +20,14 @@
 //! - **HOB filter** (DV5): rim-mounted (hangs on the top edge partly above the
 //!   water line), pours a waterfall into the surface that ripples it, and drops
 //!   its intake tube in the back depth band so fish pass in front of it.
+//! - **Under-gravel filter** (DV6): floor-mounted (a slotted plate under the
+//!   substrate, flush with the tank floor), draws water down through the gravel
+//!   bed into its plate and up an air-driven telescoping uplift tube in the back
+//!   corner that reaches the top of the tank; intrinsically fry-safe, and rooted
+//!   plants over its plate decline.
+//! - **Under-gravel panel** (DV6): a modular floor plate that extends an
+//!   under-gravel filter's footprint when connected edge-to-edge to it (directly
+//!   or through other panels). Passive: no tube or media of its own.
 
 use serde::Deserialize;
 
@@ -63,15 +71,21 @@ pub enum DeviceKind {
     SpongeFilter,
     /// A rim-mounted hang-on-back waterfall filter (DV5).
     HobFilter,
+    /// A floor-mounted slotted plate under the substrate with an uplift tube (DV6).
+    UnderGravelFilter,
+    /// A modular floor plate that widens an under-gravel filter's footprint (DV6).
+    UnderGravelPanel,
 }
 
 impl DeviceKind {
     /// Every kind, in palette order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Bubbler,
         Self::InternalFilter,
         Self::SpongeFilter,
         Self::HobFilter,
+        Self::UnderGravelFilter,
+        Self::UnderGravelPanel,
     ];
 
     /// Its name in saves, scripts and `assets/devices/`.
@@ -82,6 +96,8 @@ impl DeviceKind {
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
             Self::HobFilter => "hob_filter",
+            Self::UnderGravelFilter => "under_gravel_filter",
+            Self::UnderGravelPanel => "under_gravel_panel",
         }
     }
 
@@ -97,6 +113,8 @@ impl DeviceKind {
             Self::InternalFilter => 1,
             Self::SpongeFilter => 2,
             Self::HobFilter => 3,
+            Self::UnderGravelFilter => 4,
+            Self::UnderGravelPanel => 5,
         }
     }
 }
@@ -115,6 +133,13 @@ pub enum Mount {
     /// line with its intake submerged (also allowed at `surface_row == 0` when
     /// filled to the brim); mirrors left/right when flipped.
     Rim,
+    /// A plate flush with the tank floor, laid under any substrate already
+    /// there (which rests on top of it); mirrors left/right when flipped.
+    Floor,
+    /// A symmetric plate flush with the tank floor like [`Mount::Floor`] (laid
+    /// under any substrate already there), that snaps flush beside other floor
+    /// devices and only works connected edge-to-edge to an under-gravel filter.
+    FloorPanel,
 }
 
 impl Mount {
@@ -122,9 +147,15 @@ impl Mount {
     #[must_use]
     pub const fn flippable(self) -> bool {
         match self {
-            Self::SideGlass | Self::Rim => true,
-            Self::Bed => false,
+            Self::SideGlass | Self::Rim | Self::Floor => true,
+            Self::Bed | Self::FloorPanel => false,
         }
+    }
+
+    /// Whether this mount lies on the tank floor under the substrate.
+    #[must_use]
+    pub const fn is_floor(self) -> bool {
+        matches!(self, Self::Floor | Self::FloorPanel)
     }
 }
 
@@ -176,6 +207,12 @@ pub struct DeviceArt {
     /// Waterfall spillway span `(x0, x1, y)` in local cells (inclusive columns
     /// `x0..=x1` at lip row `y`, facing right) that drives surface ripples.
     pub spillway: Option<(usize, usize, usize)>,
+    /// Telescoping tube `(top_end, bottom_start)`: art cell rows `0..top_end`
+    /// stay at the top of the device, rows `bottom_start..size.1` stay at the
+    /// bottom, and the rows between repeat to fill the device's runtime
+    /// height ([`Device::height`]). The nozzle and bubble outlets lie in the
+    /// top rows and the intakes in the bottom rows.
+    pub tube_stretch: Option<(usize, usize)>,
     /// The art, facing right (mounted on the left glass).
     pub sprite: Sprite,
 }
@@ -185,7 +222,7 @@ impl DeviceArt {
     /// particles, clog media, mature biologically, and can be rinsed).
     #[must_use]
     pub fn is_filter(&self) -> bool {
-        !self.intakes.is_empty()
+        !self.intakes.is_empty() && self.mount != Mount::FloorPanel
     }
 }
 
@@ -228,6 +265,8 @@ struct ArtDef {
     back_band_from: Option<usize>,
     #[serde(default)]
     spillway: Option<[usize; 3]>,
+    #[serde(default)]
+    tube_stretch: Option<[usize; 2]>,
     sprite: SpriteDef,
 }
 
@@ -250,6 +289,8 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/devices/internal_filter.toml"),
     include_str!("../../../assets/devices/sponge_filter.toml"),
     include_str!("../../../assets/devices/hob_filter.toml"),
+    include_str!("../../../assets/devices/under_gravel_filter.toml"),
+    include_str!("../../../assets/devices/under_gravel_panel.toml"),
 ];
 
 impl DeviceKinds {
@@ -343,6 +384,30 @@ impl DeviceKinds {
                 "bubble_rate must be finite and non-negative".to_owned(),
             ));
         }
+        let tube_stretch = match def.tube_stretch {
+            Some([top_end, bottom_start])
+                if 0 < top_end && top_end < bottom_start && bottom_start < size.1 =>
+            {
+                let top_ok = def.nozzle.is_none_or(|[_, y]| y < top_end)
+                    && def.bubble_outlets.iter().all(|&[_, y]| y < top_end);
+                if !top_ok || !def.intakes.iter().all(|&[_, y]| y >= bottom_start) {
+                    return Err(bad(
+                        &def.name,
+                        "with tube_stretch the nozzle and bubble outlets must lie above top_end and the intakes at or below bottom_start"
+                            .to_owned(),
+                    ));
+                }
+                Some((top_end, bottom_start))
+            }
+            Some(_) => {
+                return Err(bad(
+                    &def.name,
+                    "tube_stretch must be [top_end, bottom_start] with 0 < top_end < bottom_start < sprite height"
+                        .to_owned(),
+                ));
+            }
+            None => None,
+        };
         let mut bubble_outlets = Vec::with_capacity(def.bubble_outlets.len());
         for [bx, by] in def.bubble_outlets {
             if !in_footprint(bx, by) {
@@ -418,6 +483,7 @@ impl DeviceKinds {
             graze_rows,
             back_band_from,
             spillway,
+            tube_stretch,
             sprite: art,
         })
     }
@@ -445,6 +511,10 @@ pub struct Device {
     pub x: usize,
     /// Top-left row of its art's box.
     pub y: usize,
+    /// Rows its box spans in the world: its art's height, or more for an
+    /// art with a telescoping tube ([`DeviceArt::tube_stretch`]), which fills
+    /// the space down to the tank floor.
+    pub height: usize,
     /// Mirrored: on the right glass, jetting left.
     pub facing_left: bool,
     /// Mechanical media load in `[0.0, 1.0]` (0 = clean, 1 = clogged).
@@ -472,22 +542,58 @@ impl Device {
         self.flow_factor_with(CLOG_FLOW_FLOOR)
     }
 
+    /// Rows its box spans in the world: at least its art's height.
+    #[must_use]
+    pub fn span(&self, art: &DeviceArt) -> usize {
+        self.height.max(art.size.1)
+    }
+
+    /// The art cell row drawn at world row `self.y + ry` (`ry < span`): the
+    /// row itself, or for a telescoping tube the top rows, then the clear
+    /// middle rows repeating, then the bottom rows flush with the box's end.
+    #[must_use]
+    pub fn art_row(&self, art: &DeviceArt, ry: usize) -> usize {
+        let Some((top_end, bottom_start)) = art.tube_stretch else {
+            return ry;
+        };
+        let bottom_from = self.span(art) - (art.size.1 - bottom_start);
+        if ry < top_end {
+            ry
+        } else if ry >= bottom_from {
+            bottom_start + (ry - bottom_from)
+        } else {
+            top_end + (ry - top_end) % (bottom_start - top_end)
+        }
+    }
+
+    /// The world row of art row `ly` of a row that stays at the top
+    /// (`ly < top_end`) or the bottom (`ly >= bottom_start`) of a telescoping
+    /// device; any row of one that doesn't stretch.
+    fn world_row(&self, art: &DeviceArt, ly: usize) -> usize {
+        match art.tube_stretch {
+            Some((_, bottom_start)) if ly >= bottom_start => {
+                self.y + self.span(art) - (art.size.1 - ly)
+            }
+            _ => self.y + ly,
+        }
+    }
+
     /// Whether world cell `(x, y)` is one of its footprint cells.
     #[must_use]
     pub fn covers(&self, art: &DeviceArt, x: usize, y: usize) -> bool {
-        let (w, h) = art.size;
-        if x < self.x || y < self.y || x >= self.x + w || y >= self.y + h {
+        let w = art.size.0;
+        if x < self.x || y < self.y || x >= self.x + w || y >= self.y + self.span(art) {
             return false;
         }
         let lx = x - self.x;
         let lx = if self.facing_left { w - 1 - lx } else { lx };
-        art.footprint[(y - self.y) * w + lx]
+        art.footprint[self.art_row(art, y - self.y) * w + lx]
     }
 
     /// Its footprint cells in the world, row-major.
     pub fn cells<'a>(&'a self, art: &'a DeviceArt) -> impl Iterator<Item = (usize, usize)> + 'a {
-        let (w, h) = art.size;
-        (0..w * h)
+        let w = art.size.0;
+        (0..w * self.span(art))
             .map(move |c| (self.x + c % w, self.y + c / w))
             .filter(move |&(x, y)| self.covers(art, x, y))
     }
@@ -501,7 +607,7 @@ impl Device {
         } else {
             nx
         };
-        Some((self.x + nx, self.y + ny))
+        Some((self.x + nx, self.world_row(art, ny)))
     }
 
     /// Unit direction the nozzle jets in the world (`+x` right, `+y` down).
@@ -519,7 +625,7 @@ impl Device {
             } else {
                 ix
             };
-            (self.x + ix, self.y + iy)
+            (self.x + ix, self.world_row(art, iy))
         })
     }
 
@@ -527,6 +633,8 @@ impl Device {
     #[must_use]
     pub fn intake_outward(&self, art: &DeviceArt, ix: usize, _iy: usize) -> [f32; 2] {
         match art.mount {
+            // Straight up through the gravel bed.
+            Mount::Floor | Mount::FloorPanel => [0.0, -1.0],
             Mount::SideGlass => self.nozzle_dir(art),
             Mount::Bed => {
                 let lx = ix.saturating_sub(self.x);
@@ -579,7 +687,7 @@ impl Device {
             } else {
                 bx
             };
-            (self.x + bx, self.y + by)
+            (self.x + bx, self.world_row(art, by))
         })
     }
 
@@ -612,6 +720,10 @@ pub struct DeviceStatus {
     pub intake_guard: bool,
     /// Whether this kind is intrinsically fry-safe (no guard needed).
     pub fry_safe: bool,
+    /// Whether the device is working: always true, except for a floor panel
+    /// that isn't connected edge-to-edge (directly or through other panels)
+    /// to an under-gravel filter.
+    pub connected: bool,
 }
 
 #[cfg(test)]
@@ -634,6 +746,7 @@ mod tests {
             kind: DeviceKind::InternalFilter,
             x: 100,
             y: 50,
+            height: 30,
             facing_left,
             media_load: 0.0,
             maturity: 0.0,
@@ -715,6 +828,7 @@ mod tests {
             kind: DeviceKind::HobFilter,
             x: 40,
             y: 0,
+            height: 32,
             facing_left: false,
             media_load: 0.0,
             maturity: 0.0,
@@ -729,5 +843,126 @@ mod tests {
         assert_eq!(unflipped.back_band_row(art), Some(10));
         assert!(unflipped.nozzle_dir(art)[0] < 0.0);
         assert!(flipped.nozzle_dir(art)[0] > 0.0);
+    }
+
+    #[test]
+    fn the_under_gravel_filter_is_a_floor_plate_with_a_telescoping_corner_uplift_tube() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let art = kinds.get(DeviceKind::UnderGravelFilter);
+        assert_eq!(DeviceKind::ALL.len(), 6);
+        assert_eq!(art.size, (28, 28));
+        assert_eq!(art.mount, Mount::Floor);
+        assert!(art.mount.flippable());
+        assert!(art.is_filter());
+        assert!(art.fry_safe);
+        assert_eq!(art.nozzle, Some((6, 2)));
+        assert_eq!(art.nozzle_dir, [1.0, 0.0]);
+        assert!((art.flow_scale - 0.65).abs() < f32::EPSILON);
+        assert_eq!(art.intakes.len(), 5);
+        assert_eq!(art.graze_rows, None);
+        assert_eq!(art.back_band_from, None);
+        assert_eq!(art.spillway, None);
+        assert_eq!(art.tube_stretch, Some((5, 17)));
+        let at = |x: usize, y: usize| art.footprint[y * 28 + x];
+        // The slotted plate spans the whole width of the bottom three rows.
+        for y in 25..28 {
+            assert!((0..28).all(|x| at(x, y)), "plate row {y} is solid");
+        }
+        // The uplift tube rises in the back-left corner to the spout; the rest is open.
+        assert!(at(2, 10) && at(2, 2) && at(5, 2) && at(6, 2));
+        assert!(!at(10, 10) && !at(20, 2) && !at(2, 0) && !at(10, 24));
+        // Every intake is on the plate's top row, clear of the tube and collar.
+        for &(ix, iy) in &art.intakes {
+            assert_eq!(iy, 25);
+            assert!(ix >= 6 && at(ix, iy) && !at(ix, iy - 1));
+        }
+        // Bubble outlets have open water directly above them.
+        assert!(!art.bubble_outlets.is_empty() && art.bubble_rate > 0.0);
+        for &(bx, by) in &art.bubble_outlets {
+            assert!(at(bx, by) && (by == 0 || !at(bx, by - 1)));
+        }
+        let d = |facing_left, height| Device {
+            id: DeviceId(1),
+            kind: DeviceKind::UnderGravelFilter,
+            x: 10,
+            y: 20,
+            height,
+            facing_left,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
+        };
+        // At the art's own height nothing stretches.
+        assert_eq!(d(false, 28).span(art), 28);
+        assert_eq!(d(true, 28).cells(art).count(), art.cells);
+        for ry in 0..28 {
+            assert_eq!(d(false, 28).art_row(art, ry), ry);
+        }
+        // Mirrored, the tube and spout are on the right and the spout jets left.
+        assert_eq!(d(false, 28).nozzle(art), Some((16, 22)));
+        assert_eq!(d(true, 28).nozzle(art), Some((31, 22)));
+        assert!(d(false, 28).nozzle_dir(art)[0] > 0.0 && d(true, 28).nozzle_dir(art)[0] < 0.0);
+        // Water is drawn straight up through the gravel to the intakes.
+        assert_eq!(d(false, 28).intake_outward(art, 18, 45), [0.0, -1.0]);
+
+        // Telescoped to 60 rows: the spout and bubble outlets stay at the top,
+        // the plate, collar and intakes at the bottom, and the clear middle
+        // rows repeat between them.
+        let tall = d(false, 60);
+        assert_eq!(tall.span(art), 60);
+        assert_eq!(tall.nozzle(art), Some((16, 22)));
+        assert_eq!(
+            tall.bubble_outlets(art).collect::<Vec<_>>(),
+            [(15, 21), (16, 21)]
+        );
+        assert!(tall.intakes(art).all(|(_, y)| y == 20 + 60 - 3));
+        assert_eq!(d(true, 60).nozzle(art), Some((31, 22)));
+        assert!(d(true, 60).intakes(art).all(|(_, y)| y == 77));
+        let rows: Vec<_> = (0..60).map(|ry| tall.art_row(art, ry)).collect();
+        assert_eq!(rows[..5], [0, 1, 2, 3, 4]);
+        assert_eq!(rows[5..17], [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(rows[17..29], [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(rows[49..60], [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+        let tube_row = (0..28).filter(|&x| at(x, 5)).count();
+        assert_eq!(tall.cells(art).count(), art.cells + 32 * tube_row);
+        assert_eq!(d(true, 60).cells(art).count(), tall.cells(art).count());
+        // The tube is solid all the way down and the plate sits on the floor.
+        assert!(tall.covers(art, 12, 20 + 30) && !tall.covers(art, 22, 20 + 30));
+        assert!(tall.covers(art, 22, 79) && !tall.covers(art, 22, 80));
+        assert!(!tall.covers(art, 22, 76));
+        assert!(d(true, 60).covers(art, 35, 50) && !d(true, 60).covers(art, 12, 50));
+    }
+
+    #[test]
+    fn the_under_gravel_panel_is_a_passive_floor_plate() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let art = kinds.get(DeviceKind::UnderGravelPanel);
+        assert_eq!(art.size, (24, 3));
+        assert_eq!(art.mount, Mount::FloorPanel);
+        assert!(!art.mount.flippable() && art.mount.is_floor());
+        assert!(!art.is_filter(), "a panel has no media of its own");
+        assert!(art.fry_safe);
+        assert_eq!(art.nozzle, None);
+        assert_eq!(art.flow_scale, 0.0);
+        assert_eq!(art.bubble_rate, 0.0);
+        assert_eq!(art.bubble_outlets.len(), 0);
+        assert_eq!(art.tube_stretch, None);
+        assert_eq!(art.intakes, [(3, 0), (8, 0), (13, 0), (18, 0), (21, 0)]);
+        assert_eq!(art.cells, 24 * 3, "the plate is solid");
+        assert_eq!(DeviceKind::from_name("under_gravel_panel"), Some(art.kind));
+        let d = Device {
+            id: DeviceId(2),
+            kind: DeviceKind::UnderGravelPanel,
+            x: 40,
+            y: 77,
+            height: 3,
+            facing_left: false,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
+        };
+        assert!(d.intakes(art).all(|(_, y)| y == 77));
+        assert_eq!(d.intake_outward(art, 43, 77), [0.0, -1.0]);
+        assert_eq!(d.cells(art).count(), art.cells);
     }
 }

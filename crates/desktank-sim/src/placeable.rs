@@ -13,6 +13,14 @@
 //! - The **HOB filter** (DV5) is a rim-mounted prefab device: it hangs on the
 //!   top edge partly above the water line, pours a waterfall into the surface,
 //!   and drops its intake tube in the back depth band so fish swim in front.
+//! - The **under-gravel filter** (DV6) is a floor-mounted prefab device: it lies
+//!   on the tank floor under any substrate already there (which settles on top
+//!   of it), draws water down through the gravel and up its corner uplift tube
+//!   (which telescopes to reach the top of the tank), and is intrinsically
+//!   fry-safe, but rooted plants over its plate decline.
+//! - The **under-gravel panel** (DV6) is a modular floor plate: it snaps flush
+//!   beside an under-gravel filter (or a panel chained to one) and extends the
+//!   filter's floor footprint; on its own it does nothing.
 
 use crate::device::DeviceKind;
 use crate::{World, WorldError};
@@ -28,15 +36,21 @@ pub enum Placeable {
     SpongeFilter,
     /// A rim-mounted hang-on-back waterfall filter: ripples the surface, back-band intake.
     HobFilter,
+    /// A floor-mounted under-gravel filter: slotted plate under the substrate, uplift tube.
+    UnderGravelFilter,
+    /// A modular floor plate that extends an under-gravel filter when laid edge-to-edge with it.
+    UnderGravelPanel,
 }
 
 impl Placeable {
     /// Every placeable, in palette order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Bubbler,
         Self::InternalFilter,
         Self::SpongeFilter,
         Self::HobFilter,
+        Self::UnderGravelFilter,
+        Self::UnderGravelPanel,
     ];
 
     /// The material its cells are made of.
@@ -53,6 +67,8 @@ impl Placeable {
             Self::InternalFilter => "internal_filter",
             Self::SpongeFilter => "sponge_filter",
             Self::HobFilter => "hob_filter",
+            Self::UnderGravelFilter => "under_gravel_filter",
+            Self::UnderGravelPanel => "under_gravel_panel",
         }
     }
 
@@ -74,6 +90,8 @@ impl Placeable {
             Self::InternalFilter => DeviceKind::InternalFilter,
             Self::SpongeFilter => DeviceKind::SpongeFilter,
             Self::HobFilter => DeviceKind::HobFilter,
+            Self::UnderGravelFilter => DeviceKind::UnderGravelFilter,
+            Self::UnderGravelPanel => DeviceKind::UnderGravelPanel,
         })
     }
 }
@@ -106,7 +124,10 @@ impl World {
             return Ok(0);
         };
         Ok(match self.add_device(kind, x, y, flip)? {
-            Some(_) => self.device_kinds().get(kind).cells,
+            // A telescoping device's footprint depends on where it went.
+            Some(id) => self
+                .device(id)
+                .map_or(0, |d| d.cells(self.device_kinds().get(kind)).count()),
             None => 0,
         })
     }
