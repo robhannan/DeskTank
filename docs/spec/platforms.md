@@ -306,8 +306,13 @@ over the keyguard while charging).
   (`libdesktank_android.so`):
   - `surfaceCreated` / `surfaceChanged` / `surfaceDestroyed`, plus
     `onDreamingStarted` / `onDreamingStopped`, the Activity's
-    `onResume` / `onPause` and the wallpaper's `onVisibilityChanged`;
-  - touch events in the app (as §3.5's touch mapping).
+    `onResume` / `onPause` and the wallpaper's `onVisibilityChanged`.
+    Dream start/stop and Activity resume/pause map to shared started/stopped
+    events. Tokens from one increasing counter let the newest drawable host
+    take over and scope each surface callback to its own host.
+  - The full-screen landscape Activity forwards touch actions with pointer IDs,
+    surface pixel coordinates and monotonic event times. Rust applies §3.5's
+    gestures using an 8 dp slop and a 500 ms long-press deadline.
 
   `desktank-android` turns the `Surface` into an `ANativeWindow`
   (`ndk::NativeWindow::from_surface`), makes a wgpu surface from its
@@ -342,12 +347,13 @@ over the keyguard while charging).
 - **Grid and scale**: an even scale from 2 to 8 (§2.1, D19), chosen from
   the display's size: at 1080p the default 4× (D1) gives 480×270 cells,
   and at 4K the same tank is drawn at 8×, so a tank looks the same on any
-  TV. Phones use the web's
-  rule (§3.5). A tank keeps its grid size when the display changes; it is
-  drawn at the largest even scale that fits, letterboxed. The grid and
-  scale come from the Dream's surface, not the panel: *A0:* both TV
-  devices tried have 4K panels but, with their UI at 1080p as found, give
-  the Dream a 1920×1080 surface.
+  TV. Kotlin passes the device's TV status at initialization. Phones use
+  the web's width rule (§3.5), with sides clamped to 16–2048 cells. A new
+  tank takes its grid from the first drawable surface and keeps it across
+  display changes and host handoffs, letterboxed at the largest even scale
+  that fits, or at 1× when needed.
+  *A0:* both 4K TVs tried give the Dream a 1920×1080 surface when their UI
+  runs at 1080p.
 - **Screensaver** (the Dream):
   - full screen, non-interactive (`isInteractive = false`), so any key or
     touch ends it, as a screensaver should; no tools, inspect card or

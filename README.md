@@ -88,6 +88,27 @@ you return to a hidden tab or reopen a saved tank.
 
 Pushes to `main` deploy it to GitHub Pages (`.github/workflows/pages.yml`).
 
+## Android
+
+Install the debug APK and open **DeskTank** from the launcher on a phone or
+Android TV. The app and the DeskTank screensaver share one saved tank. Tap to
+pour sand once, drag to pour, drag with two fingers to scoop and hold for half
+a second to inspect a cell, plant, device or creature in logcat.
+
+With JDK 17+, the Android SDK and pinned NDK, `cargo-ndk` and the Rust
+Android targets installed, build and install with:
+
+```sh
+(cd android && ./gradlew assembleDebug)
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -W -n io.github.robhannan.desktank/.DeskTankActivity
+```
+
+Run `pnpm test:android` on a test device or emulator after building the APK
+and installing the Node dependencies. Tapsmith clears DeskTank's app data at
+suite startup, then exercises the Activity and the Dream. Set `ANDROID_SERIAL`
+if several devices are connected.
+
 ## License
 
 Licensed under either of

@@ -1,4 +1,4 @@
-//! The Dream's shared tank (SPEC §3.6), using the desktop save store and format.
+//! The Android hosts' shared tank (SPEC §3.6), using the desktop save store and format.
 
 use std::io;
 use std::path::Path;
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use desktank_platform::SaveStore;
 use desktank_sim::{MaterialTable, World, save};
 
-use crate::{NewWorldError, TvGrid, new_world};
+use crate::{Grid, NewWorldError, new_world};
 
 /// Time between autosaves while a tank is drawing.
 pub const AUTOSAVE: Duration = Duration::from_mins(5);
@@ -63,14 +63,19 @@ impl Persistence {
         Some(world)
     }
 
-    /// Saves if the autosave is due and the world has advanced.
+    /// A tool edited the world without advancing the simulation tick.
+    pub fn mark_edited(&mut self) {
+        self.saved_tick = None;
+    }
+
+    /// Saves if the autosave is due and the world has changed.
     pub fn autosave(&mut self, world: &World, now: Duration) {
         if now >= self.next_autosave {
             self.save(world, "autosave", now);
         }
     }
 
-    /// Saves a new tick if this process owns the tank, and resets the deadline.
+    /// Saves a changed world if this process owns the tank, and resets the deadline.
     pub fn save(&mut self, world: &World, why: &str, now: Duration) {
         self.next_autosave = now + AUTOSAVE;
         if !self.store.owns() || self.saved_tick == Some(world.tick_count()) {
@@ -103,10 +108,7 @@ fn decode(bytes: &[u8]) -> Result<World, String> {
 /// # Errors
 ///
 /// Returns an error if a new world is needed and cannot be created.
-pub fn start_world(
-    persist: Option<&mut Persistence>,
-    grid: TvGrid,
-) -> Result<World, NewWorldError> {
+pub fn start_world(persist: Option<&mut Persistence>, grid: Grid) -> Result<World, NewWorldError> {
     if let Some(world) = persist.and_then(Persistence::load) {
         log::info!(
             "loaded tank {}x{} cells, tick {}",
@@ -200,6 +202,26 @@ mod tests {
         assert_eq!(loaded.state_hash(), world.state_hash());
         persist.save(&loaded, "unchanged after loading", Duration::ZERO);
         assert!(!dir.0.join("tanks/main-0000000004.dtank").exists());
+    }
+
+    #[test]
+    fn saves_tool_edits_even_when_the_tick_has_not_advanced() {
+        use desktank_sim::tools::{Button, Outcome, Tools};
+
+        let dir = TempDir::new("edited");
+        let mut persist = Persistence::open(&dir.0, Duration::ZERO).unwrap();
+        let mut world = new_world(tv_grid(640, 360)).unwrap();
+        persist.save(&world, "before editing", Duration::ZERO);
+        let mut tools = Tools::new(scene::material(&world, "sand").unwrap());
+        let tick = world.tick_count();
+        let changed = tools.press(&mut world, Button::Primary, (160, 60));
+        assert!(matches!(changed, Outcome::Painted(n) if n > 0));
+        tools.release(&mut world, Button::Primary);
+        assert_eq!(world.tick_count(), tick);
+
+        persist.mark_edited();
+        persist.save(&world, "stopped after editing", Duration::ZERO);
+        assert_eq!(persist.load().unwrap().state_hash(), world.state_hash());
     }
 
     #[test]

@@ -1,16 +1,31 @@
-//! When the Dream draws: the surface and dreaming state the shim reports for
-//! each Dream, reduced to "which surface draws now, at what size".
-//! OS-agnostic, so it is tested on the desktop.
-//!
-//! Every callback carries its Dream's token (a number the shim gives each
-//! `DreamService` instance, increasing), so a stopping Dream's late
-//! `surfaceDestroyed` can't drop the next Dream's surface.
+//! The surface and running state of each Android host, reduced to which
+//! surface draws now. Every callback carries its host's token, so a late
+//! `surfaceDestroyed` can only drop the surface it came from.
 
 use std::collections::BTreeMap;
 
-/// The token the shim gives each Dream instance; later Dreams get larger
-/// tokens.
-pub type DreamId = i64;
+/// The token the shim gives each host instance, increasing across both kinds.
+pub type HostId = i64;
+
+/// An Android host of the shared tank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKind {
+    /// The non-interactive screensaver.
+    Dream,
+    /// The launcher Activity, with touch input.
+    App,
+}
+
+/// A running host with a drawable surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Drawable {
+    /// The host's token.
+    pub id: HostId,
+    /// Which kind of host is drawing.
+    pub kind: HostKind,
+    /// Surface size in pixels.
+    pub size: (u32, u32),
+}
 
 /// A callback the Kotlin shim forwards over JNI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,18 +41,18 @@ pub enum Event {
     },
     /// `SurfaceHolder.Callback.surfaceDestroyed`.
     SurfaceDestroyed,
-    /// `DreamService.onDreamingStarted`.
-    DreamingStarted,
-    /// `DreamService.onDreamingStopped`.
-    DreamingStopped,
+    /// `DreamService.onDreamingStarted` or `Activity.onResume`.
+    Started(HostKind),
+    /// `DreamService.onDreamingStopped` or `Activity.onPause`.
+    Stopped,
 }
 
-/// One Dream's surface and dreaming state.
+/// One host's surface and running state.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Lifecycle {
     /// The surface exists; its size once known (zero until `surfaceChanged`).
     surface: Option<(u32, u32)>,
-    dreaming: bool,
+    running: Option<HostKind>,
 }
 
 impl Lifecycle {
@@ -47,8 +62,8 @@ impl Lifecycle {
             Event::SurfaceCreated => self.surface = Some((0, 0)),
             Event::SurfaceChanged { width, height } => self.surface = Some((width, height)),
             Event::SurfaceDestroyed => self.surface = None,
-            Event::DreamingStarted => self.dreaming = true,
-            Event::DreamingStopped => self.dreaming = false,
+            Event::Started(kind) => self.running = Some(kind),
+            Event::Stopped => self.running = None,
         }
     }
 
@@ -59,53 +74,56 @@ impl Lifecycle {
         self.surface.is_some()
     }
 
-    /// Whether the Dream is dreaming.
+    /// Whether the host is running.
     #[must_use]
-    pub fn dreaming(&self) -> bool {
-        self.dreaming
+    pub fn running(&self) -> bool {
+        self.running.is_some()
     }
 
-    /// The surface size, if it should draw: dreaming, with a surface whose
-    /// size is known and not zero. Nothing runs otherwise (SPEC §3.6).
-    #[must_use]
-    pub fn drawable(&self) -> Option<(u32, u32)> {
-        self.surface
-            .filter(|&(w, h)| self.dreaming && w > 0 && h > 0)
+    /// Draws only while running with a surface of nonzero size (SPEC §3.6).
+    fn drawable(&self, id: HostId) -> Option<Drawable> {
+        let kind = self.running?;
+        let size = self.surface.filter(|&(w, h)| w > 0 && h > 0)?;
+        Some(Drawable { id, kind, size })
     }
 }
 
-/// Every Dream the shim has told us about that still has a surface or is
-/// dreaming. A Dream is forgotten once it has neither.
+/// The shim's hosts with a surface or running state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Dreams {
-    dreams: BTreeMap<DreamId, Lifecycle>,
+pub struct Hosts {
+    hosts: BTreeMap<HostId, Lifecycle>,
 }
 
-impl Dreams {
-    /// Applies `event` for Dream `id`.
-    pub fn handle(&mut self, id: DreamId, event: Event) {
-        let state = self.dreams.entry(id).or_default();
+impl Hosts {
+    /// Applies `event` for host `id`.
+    pub fn handle(&mut self, id: HostId, event: Event) {
+        let state = self.hosts.entry(id).or_default();
         state.handle(event);
-        if !state.has_surface() && !state.dreaming() {
-            self.dreams.remove(&id);
+        if !state.has_surface() && !state.running() {
+            self.hosts.remove(&id);
         }
     }
 
-    /// The Dream that draws now and its surface size: the newest one that
-    /// can draw. Normally there is at most one; while one Dream hands over
-    /// to the next, the newer wins.
+    /// The newest host that can draw.
     #[must_use]
-    pub fn active(&self) -> Option<(DreamId, (u32, u32))> {
-        self.dreams
-            .iter()
-            .rev()
-            .find_map(|(&id, l)| l.drawable().map(|size| (id, size)))
+    pub fn active(&self) -> Option<Drawable> {
+        self.active_with_surface(|_| true)
     }
 
-    /// Dream `id`'s state, if it has a surface or is dreaming.
+    pub(crate) fn active_with_surface(
+        &self,
+        has_surface: impl Fn(HostId) -> bool,
+    ) -> Option<Drawable> {
+        self.hosts
+            .iter()
+            .rev()
+            .find_map(|(&id, lifecycle)| lifecycle.drawable(id).filter(|_| has_surface(id)))
+    }
+
+    /// Host `id`'s state, if it has a surface or is running.
     #[must_use]
-    pub fn get(&self, id: DreamId) -> Option<&Lifecycle> {
-        self.dreams.get(&id)
+    pub fn get(&self, id: HostId) -> Option<&Lifecycle> {
+        self.hosts.get(&id)
     }
 }
 
@@ -119,30 +137,41 @@ mod tests {
         height: HD.1,
     };
 
+    const DREAM_STARTED: Event = Event::Started(HostKind::Dream);
+    const APP_STARTED: Event = Event::Started(HostKind::App);
+
+    fn dream(id: HostId, size: (u32, u32)) -> Drawable {
+        Drawable {
+            id,
+            kind: HostKind::Dream,
+            size,
+        }
+    }
+
     #[test]
     fn draws_once_surface_and_dream_are_both_ready() {
         // Surface first, then the Dream starts (the usual order).
-        let mut d = Dreams::default();
+        let mut d = Hosts::default();
         d.handle(1, Event::SurfaceCreated);
         d.handle(1, SIZE);
         assert_eq!(d.active(), None);
-        d.handle(1, Event::DreamingStarted);
-        assert_eq!(d.active(), Some((1, HD)));
+        d.handle(1, DREAM_STARTED);
+        assert_eq!(d.active(), Some(dream(1, HD)));
 
         // Dream first, then the surface.
-        let mut d = Dreams::default();
-        d.handle(1, Event::DreamingStarted);
+        let mut d = Hosts::default();
+        d.handle(1, DREAM_STARTED);
         d.handle(1, Event::SurfaceCreated);
         assert_eq!(d.active(), None, "no size yet");
         d.handle(1, SIZE);
-        assert_eq!(d.active(), Some((1, HD)));
+        assert_eq!(d.active(), Some(dream(1, HD)));
     }
 
     #[test]
     fn follows_resizes_and_ignores_empty_sizes() {
-        let mut d = Dreams::default();
+        let mut d = Hosts::default();
         d.handle(1, Event::SurfaceCreated);
-        d.handle(1, Event::DreamingStarted);
+        d.handle(1, DREAM_STARTED);
         d.handle(
             1,
             Event::SurfaceChanged {
@@ -158,16 +187,16 @@ mod tests {
                 height: 2160,
             },
         );
-        assert_eq!(d.active(), Some((1, (3840, 2160))));
+        assert_eq!(d.active(), Some(dream(1, (3840, 2160))));
     }
 
     #[test]
     fn stops_drawing_when_dreaming_stops_or_the_surface_goes() {
-        let mut d = Dreams::default();
+        let mut d = Hosts::default();
         d.handle(1, Event::SurfaceCreated);
         d.handle(1, SIZE);
-        d.handle(1, Event::DreamingStarted);
-        d.handle(1, Event::DreamingStopped);
+        d.handle(1, DREAM_STARTED);
+        d.handle(1, Event::Stopped);
         assert_eq!(d.active(), None);
         assert!(d.get(1).is_some_and(Lifecycle::has_surface));
         d.handle(1, Event::SurfaceDestroyed);
@@ -175,39 +204,61 @@ mod tests {
 
         d.handle(2, Event::SurfaceCreated);
         d.handle(2, SIZE);
-        d.handle(2, Event::DreamingStarted);
+        d.handle(2, DREAM_STARTED);
         d.handle(2, Event::SurfaceDestroyed);
         assert_eq!(d.active(), None, "no surface");
-        assert!(d.get(2).is_some_and(Lifecycle::dreaming));
+        assert!(d.get(2).is_some_and(Lifecycle::running));
     }
 
     #[test]
     fn a_late_destroy_from_the_old_dream_keeps_the_new_surface() {
         // PR #53 review: Dream 1 stops, Dream 2 starts and gets its surface,
         // then Dream 1's surfaceDestroyed arrives.
-        let mut d = Dreams::default();
-        for e in [Event::SurfaceCreated, SIZE, Event::DreamingStarted] {
+        let mut d = Hosts::default();
+        for e in [Event::SurfaceCreated, SIZE, DREAM_STARTED] {
             d.handle(1, e);
         }
-        d.handle(1, Event::DreamingStopped);
-        for e in [Event::SurfaceCreated, SIZE, Event::DreamingStarted] {
+        d.handle(1, Event::Stopped);
+        for e in [Event::SurfaceCreated, SIZE, DREAM_STARTED] {
             d.handle(2, e);
         }
         d.handle(1, Event::SurfaceDestroyed);
-        assert_eq!(d.active(), Some((2, HD)));
+        assert_eq!(d.active(), Some(dream(2, HD)));
         assert_eq!(d.get(1), None);
     }
 
     #[test]
-    fn the_newest_dream_wins_while_two_can_draw() {
-        let mut d = Dreams::default();
-        for id in [1, 2] {
-            for e in [Event::SurfaceCreated, SIZE, Event::DreamingStarted] {
-                d.handle(id, e);
-            }
+    fn the_newest_drawable_host_wins_across_kinds() {
+        let mut d = Hosts::default();
+        for e in [Event::SurfaceCreated, SIZE, DREAM_STARTED] {
+            d.handle(1, e);
         }
-        assert_eq!(d.active(), Some((2, HD)));
-        d.handle(2, Event::DreamingStopped);
-        assert_eq!(d.active(), Some((1, HD)));
+        d.handle(2, APP_STARTED);
+        d.handle(2, Event::SurfaceCreated);
+        assert_eq!(d.active(), Some(dream(1, HD)), "app has no size yet");
+        d.handle(2, SIZE);
+        let app = Drawable {
+            id: 2,
+            kind: HostKind::App,
+            size: HD,
+        };
+        assert_eq!(d.active(), Some(app));
+        assert_eq!(
+            d.active_with_surface(|id| id != 2),
+            Some(dream(1, HD)),
+            "fall back while the app has no native surface"
+        );
+        for e in [Event::SurfaceCreated, SIZE, DREAM_STARTED] {
+            d.handle(3, e);
+        }
+        assert_eq!(d.active(), Some(dream(3, HD)));
+        d.handle(3, Event::Stopped);
+        assert_eq!(d.active(), Some(app));
+        d.handle(3, Event::SurfaceDestroyed);
+        assert_eq!(d.active(), Some(app), "late destroy from the Dream");
+        d.handle(2, Event::Stopped);
+        assert_eq!(d.active(), Some(dream(1, HD)));
+        d.handle(2, APP_STARTED);
+        assert_eq!(d.active(), Some(app), "resume with the existing surface");
     }
 }
