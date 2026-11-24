@@ -35,6 +35,8 @@ export interface Hooks {
   loaded: { hash: string; tick: number; width: number; height: number } | null; // the save opened, if any
   released: { hash: string; tick: number } | null; // when this tab handed the tank over
   ownedAt: number; // performance.now() when this tab last became the owner
+  stole: boolean;
+  claiming: Promise<void>; // the current claim and its state restore
   takeOverAt: number; // performance.now() of the last Take over click
   persisted?: boolean; // navigator.storage.persist()'s answer
   // Startup steps and errors, "<ms> ms <what>" (main.ts; on screen with ?debug=1).
