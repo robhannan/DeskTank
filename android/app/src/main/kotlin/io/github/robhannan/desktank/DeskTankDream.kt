@@ -3,7 +3,6 @@ package io.github.robhannan.desktank
 import android.service.dreams.DreamService
 import android.view.SurfaceHolder
 import android.view.SurfaceView
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The screensaver (a Dream): one full-screen [SurfaceView] whose surface and
@@ -11,14 +10,14 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Non-interactive, so any key or touch ends it, as a screensaver should.
  * Surface and dreaming callbacks carry this instance's [token], so Rust can
- * tell a stopping Dream's late callbacks from the next Dream's.
+ * tell a stopping Dream's late callbacks from those of the next host.
  */
 class DeskTankDream : DreamService(), SurfaceHolder.Callback {
-    private val token = nextToken.incrementAndGet()
+    private val token = Native.nextToken()
 
     override fun onCreate() {
         super.onCreate()
-        Native.setFilesDir(filesDir.absolutePath)
+        Native.initialize(this)
     }
 
     override fun onAttachedToWindow() {
@@ -32,11 +31,11 @@ class DeskTankDream : DreamService(), SurfaceHolder.Callback {
 
     override fun onDreamingStarted() {
         super.onDreamingStarted()
-        Native.dreamingStarted(token)
+        Native.started(token, app = false)
     }
 
     override fun onDreamingStopped() {
-        Native.dreamingStopped(token)
+        Native.stopped(token)
         super.onDreamingStopped()
     }
 
@@ -46,9 +45,4 @@ class DeskTankDream : DreamService(), SurfaceHolder.Callback {
         Native.surfaceChanged(token, width, height)
 
     override fun surfaceDestroyed(holder: SurfaceHolder) = Native.surfaceDestroyed(token)
-
-    private companion object {
-        /** Increasing, so a later Dream always has a larger token. */
-        val nextToken = AtomicLong()
-    }
 }
