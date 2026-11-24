@@ -292,7 +292,13 @@ stays a material film, not individuals.
     enable flag, keeping the 160-byte `View` uniform unchanged), gently
     displacing leaves and upper stems (`pos >= 4`, keeping roots, runners,
     rhizomes, floaters, crowns and mats anchored) in a smooth wave across
-    water cells and matching sprite occlusion (`hidden_by_plant`). It is
+    water cells and matching sprite occlusion (`hidden_by_plant`). The
+    horizontal current leans swaying parts downstream by up to 1¼ cells
+    past the wave, and stronger lean halves the wave. The lean is built up
+    from the floor through each field row's current and fades slowly above
+    it, so a plant's top above a jet stays bent (`sway_lean`, uploaded
+    with the flow texture when the current is rebuilt). Still water keeps
+    the plain wave. It is
     off by default (`Tank::set_sway`, `--sway` / `S` in `desktank window`,
     `--sway` in `desktank capture` and `desktank bench`, and **Plant sway**
     in web Settings) and capped at 10 fps (`SWAY_MAX_FPS`). When the host
