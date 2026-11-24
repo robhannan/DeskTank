@@ -438,7 +438,7 @@ impl World {
         if !(self.tick + u64::from(c.id.0)).is_multiple_of(delay) {
             return;
         }
-        let grown = self.kind(c.species).map_or(k.w, |g| g.w);
+        let grown = self.kind(c.species).map_or(k.w, |g| g.size_of(c.female).0);
         let reach = i64::from(STARTLE_REACH * grown * ONE / 2);
         let mut loudest: Option<&super::Schoolmate> = None;
         for m in &self.creatures.school {

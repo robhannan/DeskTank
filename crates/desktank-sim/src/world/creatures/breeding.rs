@@ -325,12 +325,15 @@ impl World {
 
     /// One tick of a living creature's breeding: its rest and pregnancy
     /// count down, a carrying female gives birth when hers is over, and a
-    /// ready female may conceive on a check tick.
-    pub(super) fn breed(&self, c: &mut Creature, t: &mut BreedTick) {
-        self.breed_over(c, t, 1);
-    }
-
-    pub(super) fn breed_over(&self, c: &mut Creature, t: &mut BreedTick, ticks: u32) {
+    /// ready female may conceive on a check tick. Entering or leaving the
+    /// carrying state may change her drawn look.
+    pub(super) fn breed_over(
+        &self,
+        c: &mut Creature,
+        t: &mut BreedTick,
+        ticks: u32,
+        redraw: &mut bool,
+    ) {
         let Some(k) = self.kind(c.species) else {
             return;
         };
@@ -342,6 +345,7 @@ impl World {
             let since_birth = ticks.saturating_sub(c.carrying);
             c.carrying = c.carrying.saturating_sub(ticks);
             if c.carrying == 0 {
+                *redraw = true;
                 let mut rng = self.breed_rng(c);
                 for _ in 0..brood_size(b.brood, &mut rng) {
                     let female = rng.next_u32() & 1 == 1;
@@ -402,6 +406,7 @@ impl World {
         } else {
             c.carrying = b.days.max(1);
             c.sire = sire;
+            *redraw = true;
         }
     }
 
@@ -670,7 +675,8 @@ impl World {
         self.kind(c.species).map_or(0, |k| {
             let percent = super::lifecycle::grown_percent(c.growth, k.maturity);
             // At most a few hundred mm.
-            u32::try_from(u64::from(k.length_mm) * percent / 100).unwrap_or(u32::MAX)
+            let adult = k.length_mm[usize::from(c.female)];
+            u32::try_from(u64::from(adult) * percent / 100).unwrap_or(u32::MAX)
         })
     }
 
