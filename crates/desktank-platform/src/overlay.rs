@@ -296,11 +296,13 @@ mod tests {
         fn monitor_reports_no_full_screen_app_and_never_calls_back() {
             let calls = Arc::new(AtomicUsize::new(0));
             let calls_cb = Arc::clone(&calls);
-            let monitor = FullScreenMonitor::new(move || {
-                calls_cb.fetch_add(1, Ordering::Relaxed);
-            });
-            assert!(!monitor.is_fullscreen_app_active());
-            drop(monitor);
+            {
+                let monitor = FullScreenMonitor::new(move || {
+                    calls_cb.fetch_add(1, Ordering::Relaxed);
+                });
+                assert!(!monitor.is_fullscreen_app_active());
+                assert!(!monitor.refresh());
+            }
             assert_eq!(calls.load(Ordering::Relaxed), 0);
         }
     }

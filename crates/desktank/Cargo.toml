@@ -14,6 +14,7 @@ clap.workspace = true
 desktank-platform.workspace = true
 desktank-render.workspace = true
 desktank-sim.workspace = true
+interprocess = { version = "2.4.9", default-features = false }
 notify = { version = "9", default-features = false }
 png = "0.18.1"
 pollster = "1.0.2"

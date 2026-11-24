@@ -7,6 +7,7 @@ use std::process::ExitCode;
 mod bench;
 mod capture;
 mod config;
+mod ipc;
 mod overlay;
 mod persist;
 mod window;
@@ -39,6 +40,8 @@ enum Command {
     },
     /// Pause or resume the running app.
     Pause,
+    /// Report the running app's pause state, interact flag, frame cap and creature count.
+    Status,
     /// Render frames headlessly to image files.
     Capture(CaptureArgs),
     /// Run a scripted scenario and print performance numbers.
@@ -199,6 +202,7 @@ impl Command {
             Self::Interact { .. } => "interact",
             Self::Feed { .. } => "feed",
             Self::Pause => "pause",
+            Self::Status => "status",
             Self::Capture(_) => "capture",
             Self::Bench(_) => "bench",
             Self::Import { .. } => "import",
@@ -243,6 +247,24 @@ fn main() -> ExitCode {
             },
         ),
         Command::Bench(args) if args.catch_up => bench::run_catch_up(),
+        Command::Interact { state } => send_ipc(&format!(
+            "interact {}",
+            match state {
+                InteractState::On => "on",
+                InteractState::Off => "off",
+                InteractState::Toggle => "toggle",
+            }
+        )),
+        Command::Feed { food: None } => send_ipc("feed"),
+        Command::Feed { food: Some(food) } => {
+            if food.is_empty() || food.bytes().any(|b| b.is_ascii_whitespace()) {
+                Err(ipc::ClientError::InvalidRequest.into())
+            } else {
+                send_ipc(&format!("feed {food}"))
+            }
+        }
+        Command::Pause => send_ipc("pause"),
+        Command::Status => send_ipc("status"),
         Command::Bench(args) => {
             bench::run(args.seconds, usize::from(args.fish), args.plants, args.sway)
         }
@@ -271,6 +293,11 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn send_ipc(request: &str) -> anyhow::Result<()> {
+    println!("{}", ipc::send(request)?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -314,8 +341,9 @@ mod tests {
             ),
             (&["interact", "toggle"], "interact"),
             (&["feed"], "feed"),
-            (&["feed", "pellets"], "feed"),
+            (&["feed", "sinking_pellet"], "feed"),
             (&["pause"], "pause"),
+            (&["status"], "status"),
             (
                 &[
                     "capture",
