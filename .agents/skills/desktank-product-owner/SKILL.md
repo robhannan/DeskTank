@@ -22,6 +22,7 @@ The session runs in the main checkout or any worktree on `main`. It changes GitH
   ```
 
   Closing an issue sets Done (completed) on its own. Don't set Done, Not planned or Duplicate by hand. Those come from closing, which needs the owner's approval (see Autonomy).
+- **Splits and dependencies:** record a split with sub-issues (`addSubIssue`, with `issueId` as the parent), and a prerequisite with `addBlockedBy` (`blockingIssueId`). Use sub-issues only for parts of the parent. Something the parent waits on is a blocker, not a sub-issue.
 - **Type** is Feature, Bug or Task (`type.name`). Owner ideas are usually Features with no labels or milestone.
 - **Milestones** order the roadmap: M1 Living tank → M2 Power, overlay and control → M3 Wallpaper → M4 Screensaver → M5 Lock screen → M6 Depth → M7 Ship it, plus MA Android and MD Devices. `docs/spec/` is the source for scope and priority. The Android TV screensaver leads (`docs/spec/platforms.md` §3.6, D23), so MA work ranks alongside the lowest open core milestone.
 - **Labels:**
