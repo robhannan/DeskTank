@@ -44,6 +44,13 @@ async function pour(page: Page) {
   await page.mouse.up();
 }
 
+async function pauseAndDrainFrames(page: Page) {
+  await page.getByRole("button", { name: "Pause" }).click();
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
 async function download(page: Page, button: string) {
   // dispatchEvent: the render scene pins the canvas over the menu.
   const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: button }).dispatchEvent("click")]);
@@ -83,7 +90,7 @@ test("a hidden tab runs no ticks, and a reload restores the hidden state", async
   await open(page, "?backend=webgl2");
   expect(await owner(page)).toBe(true);
   await pour(page);
-  await expect.poll(() => ticks(page)).toBeGreaterThan(20);
+  await expect.poll(() => ticks(page), { timeout: 15_000 }).toBeGreaterThan(20);
 
   await setHidden(page, true);
   const hiddenAt = await ticks(page);
@@ -151,7 +158,7 @@ test("a compositor that holds animation frames back doesn't hold world time back
   // No pour: it would wake chunks, and `tank.frame` would then run full
   // SwiftShader draws from inside the tick loop even with rAF held.
   await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
-  await expect.poll(() => ticks(page)).toBeGreaterThan(20);
+  await expect.poll(() => ticks(page), { timeout: 15_000 }).toBeGreaterThan(20);
   await setHidden(page, true);
   const hiddenAt = await ticks(page);
   await page.evaluate(() => (document.documentElement.dataset.holdFrames = "1"));
@@ -167,6 +174,9 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await expect.poll(() => framesDrawn(a)).toBeGreaterThan(0);
   await pour(a);
   expect(await owner(a)).toBe(true);
+  await expect.poll(() => ticks(a), { timeout: 15_000 }).toBeGreaterThan(20);
+  // Drain pending SwiftShader draws before the viewer opens on the same GPU process.
+  await pauseAndDrainFrames(a);
 
   const b = await context.newPage();
   errors.push(...watchErrors(b));
@@ -177,23 +187,29 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await expect(b.getByText("open in another tab")).toBeVisible();
   await expect(b.getByRole("button", { name: "Take over" })).toBeVisible();
 
-  // The viewer runs nothing and never writes, hidden, on pagehide or shown.
+  // The viewer runs nothing and never writes, hidden, on pagehide or shown,
+  // while the owner keeps ticking beside it.
+  const aTicksBeforeViewer = await ticks(a);
+  await a.getByRole("button", { name: "Play" }).click();
   const bTicks = await ticks(b);
   await b.waitForTimeout(500);
   expect(await ticks(b), "a viewer doesn't tick").toBe(bTicks);
   await setHidden(b, true);
   await b.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await setHidden(b, false);
+  await b.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   expect(await writes(b), "a viewer never writes").toBe(0);
   expect(await b.locator("nav.menu").evaluate((el) => (el as HTMLElement).inert)).toBe(true);
+  await expect.poll(() => ticks(a), { timeout: 15_000 }).toBeGreaterThan(aTicksBeforeViewer);
 
-  // Pause the owner so it isn't mid-SwiftShader-frame on the shared thread
-  // during the hand-over.
-  await expect.poll(() => ticks(a)).toBeGreaterThan(20);
-  await a.getByRole("button", { name: "Pause" }).click();
+  // Pause and drain the owner so no SwiftShader draw is still in flight
+  // during the 1 s hand-over budget.
+  await pauseAndDrainFrames(a);
   const aWrites = await writes(a);
   await b.getByRole("button", { name: "Take over" }).click();
   await expect.poll(() => owner(b), { timeout: 5000 }).toBe(true);
+  await b.evaluate(() => window.desktank.claiming);
+  expect(await b.evaluate(() => window.desktank.stole)).toBe(false);
   const took = await b.evaluate(() => window.desktank.ownedAt - window.desktank.takeOverAt);
   expect(took, "an owner that answers hands over fast").toBeLessThan(1000);
 
@@ -203,7 +219,7 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   expect({ hash: loaded?.hash, tick: loaded?.tick }).toEqual({ hash: released?.hash, tick: released?.tick });
   expect(await writes(a), "the old owner saved once on release").toBe(aWrites + 1);
   await expect(b.locator("#elsewhere")).toBeHidden();
-  await expect.poll(() => ticks(b)).toBeGreaterThan(released!.tick);
+  await expect.poll(() => ticks(b), { timeout: 15_000 }).toBeGreaterThan(released!.tick);
 
   // The old owner is a viewer now.
   expect(await owner(a)).toBe(false);
@@ -222,6 +238,7 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await b.close();
   await setHidden(a, false);
   await expect.poll(() => owner(a), { timeout: 5000 }).toBe(true);
+  await a.evaluate(() => window.desktank.claiming);
   expect((await a.evaluate(() => window.desktank.loaded))?.hash).toBe(last);
   expect(errors).toEqual([]);
 });
@@ -233,7 +250,7 @@ test("Take over steals the lock from an owner that doesn't answer", async ({ con
   // Neither tab's first shader compile nor background SwiftShader frames
   // may skew the steal timer: draw once, then pause.
   await expect.poll(() => framesDrawn(a)).toBeGreaterThan(0);
-  await a.getByRole("button", { name: "Pause" }).click();
+  await pauseAndDrainFrames(a);
   // A frozen owner: it never hears the request.
   await a.evaluate(() => window.desktank.ownership!.channel.close());
   const b = await context.newPage();
@@ -243,6 +260,8 @@ test("Take over steals the lock from an owner that doesn't answer", async ({ con
   expect(await owner(b)).toBe(false);
   await b.getByRole("button", { name: "Take over" }).click();
   await expect.poll(() => owner(b), { timeout: 3000 }).toBe(true);
+  await b.evaluate(() => window.desktank.claiming);
+  expect(await b.evaluate(() => window.desktank.stole)).toBe(true);
   const took = await b.evaluate(() => window.desktank.ownedAt - window.desktank.takeOverAt);
   expect(took).toBeGreaterThanOrEqual(1000);
   expect(took).toBeLessThan(2000);

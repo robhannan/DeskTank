@@ -15,7 +15,7 @@ export const HANDOVER_MS = 1000;
 // after handing over, or stolen); handOver() before releasing on request
 // (save).
 export interface OwnershipCallbacks {
-  own(): void;
+  own(stolen: boolean): void;
   view(): void;
   handOver(): Promise<void>;
 }
@@ -68,7 +68,7 @@ export class Ownership {
           const held = new Promise<void>((r) => {
             this.release = r;
           });
-          this.callbacks.own();
+          this.callbacks.own(Boolean(options.steal));
           resolve(true);
           return held;
         })
