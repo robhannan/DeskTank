@@ -73,21 +73,28 @@ export function appFatals(crash: string, main: string): string[] {
   return found;
 }
 
-export async function logcat(): Promise<{ crash: string; main: string }> {
+// Scope reads to the test's start on the device clock. Clearing logcat can
+// fail on a device and also discards logs from unrelated processes.
+export async function logcatTime(): Promise<string> {
+  return (await shell("date", "+%s.%N")).trim();
+}
+
+export async function logcat(since: string): Promise<{ crash: string; main: string }> {
   return {
-    crash: await adb("logcat", "-d", "-b", "crash", "-v", "threadtime"),
-    main: await adb("logcat", "-d", "-v", "threadtime"),
+    crash: await adb("logcat", "-d", "-T", since, "-b", "crash", "-v", "threadtime"),
+    main: await adb("logcat", "-d", "-T", since, "-v", "threadtime"),
   };
 }
 
 export async function waitForFirstFrame(
   host: "App" | "Dream",
+  since: string,
   timeoutMs: number,
 ): Promise<{ width: number; height: number }> {
   const frame = new RegExp(` I DeskTank\\s*: first frame (\\d+)x(\\d+)[^\\n]*, host ${host}\\)`);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const { crash, main } = await logcat();
+    const { crash, main } = await logcat(since);
     const fatals = appFatals(crash, main);
     if (fatals.length > 0) throw new Error(`the app crashed before its first frame:\n${fatals.join("\n")}`);
     const match = frame.exec(main);
@@ -97,8 +104,8 @@ export async function waitForFirstFrame(
   throw new Error(`no ${host} first frame within ${timeoutMs / 1000} s`);
 }
 
-export async function recordedFatals(): Promise<string[]> {
-  const { crash, main } = await logcat();
+export async function recordedFatals(since: string): Promise<string[]> {
+  const { crash, main } = await logcat(since);
   return appFatals(crash, main);
 }
 

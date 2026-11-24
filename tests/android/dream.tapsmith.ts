@@ -7,11 +7,11 @@ import { afterAll, beforeAll, expect, test } from "tapsmith";
 import {
   DREAM,
   DREAM_FULL,
-  adb,
   currentDream,
   decodePng,
   getSecure,
   logcat,
+  logcatTime,
   putSecure,
   recordedFatals,
   tankShares,
@@ -20,16 +20,17 @@ import {
 } from "./support.ts";
 
 const OUT = "tapsmith-results/dream";
+let logStart: string;
 
 const SETTINGS = ["screensaver_enabled", "screensaver_components"] as const;
 const saved = new Map<string, string | undefined>();
 
 beforeAll(async () => {
+  await mkdir(OUT, { recursive: true });
+  logStart = await logcatTime();
   for (const name of SETTINGS) saved.set(name, await getSecure(name));
   await putSecure("screensaver_enabled", "1");
   await putSecure("screensaver_components", DREAM);
-  await adb("logcat", "-b", "all", "-c");
-  await mkdir(OUT, { recursive: true });
 });
 
 afterAll(async () => {
@@ -39,7 +40,7 @@ afterAll(async () => {
   } finally {
     for (const [name, value] of saved) await putSecure(name, value);
   }
-  const { crash, main } = await logcat();
+  const { crash, main } = await logcat(logStart);
   await writeFile(`${OUT}/logcat.txt`, main);
   await writeFile(`${OUT}/logcat-crash.txt`, crash);
 });
@@ -51,7 +52,7 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
   await expect.poll(currentDream, { timeout: 30_000 }).toBe(DREAM_FULL);
   // The first draw compiles the pipelines (seconds on a device). Fail at
   // once, with the lines, if the app crashes meanwhile.
-  await waitForFirstFrame("Dream", 120_000);
+  await waitForFirstFrame("Dream", logStart, 120_000);
 
   // The tank is drawn: mostly water, with sand along the bottom. The Dream
   // window fades in over what was on screen, so poll until the frame
@@ -68,11 +69,11 @@ test("the Dream starts, draws the tank and ends on a key", async ({ device }) =>
       { timeout: 30_000, intervals: [1000] },
     )
     .toBe("drawn");
-  expect(await recordedFatals()).toEqual([]);
+  expect(await recordedFatals(logStart)).toEqual([]);
 
   // Still up (not ended on its own); non-interactive, so any key ends it.
   expect(await currentDream()).toBe(DREAM_FULL);
   await device.pressKey("DPAD_CENTER");
   await expect.poll(currentDream, { timeout: 15_000 }).toBe("");
-  expect(await recordedFatals()).toEqual([]);
+  expect(await recordedFatals(logStart)).toEqual([]);
 });

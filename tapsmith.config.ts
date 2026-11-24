@@ -7,8 +7,8 @@ import { defineConfig } from "tapsmith";
 
 export default defineConfig({
   apk: "./android/app/build/outputs/apk/debug/app-debug.apk",
-  package: "io.github.robhannan.desktank",
-  // Keep the shared tank between files. Tapsmith clears it at suite startup.
+  // The tests start their own hosts. Setting package would launch the
+  // Activity before either test, including the one that starts the Dream.
   appReset: "none",
   // Only these: Tapsmith's default would also pick up tests/web/*.spec.ts.
   testMatch: ["tests/android/**/*.tapsmith.ts"],
