@@ -1333,11 +1333,16 @@ fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String
         }
         Mount::Bed => "on the bed",
         Mount::Rim => "on the rim",
-        Mount::Floor => "on the floor",
+        Mount::Floor | Mount::FloorPanel => "on the floor",
     };
     if !status.is_filter {
+        let detail = match (art.mount, status.connected) {
+            (Mount::FloorPanel, true) => "connected",
+            (Mount::FloorPanel, false) => "disconnected",
+            _ => "air diffuser",
+        };
         return Some(format!(
-            "{label} #{} · {place} · air diffuser · at ({x}, {y})",
+            "{label} #{} · {place} · {detail} · at ({x}, {y})",
             id.0
         ));
     }

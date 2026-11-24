@@ -68,6 +68,7 @@ const INSPECT_SHOW_MS = 5000;
 // unlisted name falls back to its humanised form).
 const LABELS: Record<string, string> = {
   under_gravel_filter: "Under-gravel filter",
+  under_gravel_panel: "Under-gravel panel",
   air_bubble: "Bubbles",
   flake_food: "Flakes",
   sinking_pellet: "Pellets",
@@ -1182,14 +1183,15 @@ function showDeviceLine(rest: string[], preserveCell = false) {
     place === "bed" || place === "rim" || place === "floor"
       ? `on the ${place}`
       : `on the ${place} glass`;
-  if (rest[3] === "air") {
+  const status = rest[3];
+  if (status === "air" || status === "connected" || status === "disconnected") {
     const [, , , , rawX, rawY] = rest;
     const [x, y] = preserveCell && inspectedDeviceCell ? inspectedDeviceCell : [rawX, rawY];
     inspectedDeviceCell = [x, y];
     inspected = null;
     closeName();
     closeDeviceActions();
-    flash(`${label(name)} #${id} · ${placeText} · air diffuser · cell ${x}, ${y}`);
+    flash(`${label(name)} #${id} · ${placeText} · ${status === "air" ? "air diffuser" : status} · cell ${x}, ${y}`);
     return;
   }
   const [, , , flow, load, maturity, guard, frySafe, rawX, rawY] = rest;

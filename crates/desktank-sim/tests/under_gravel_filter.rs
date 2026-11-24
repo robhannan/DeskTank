@@ -1,11 +1,13 @@
 //! Under-gravel filter (UGF) integration tests (D27, DV6, #162): floor mount
 //! under existing substrate (every displaced cell kept, the bed resting on
-//! the plate), left/right flip, refusal when blocked or too shallow,
+//! the plate), a telescoping uplift tube whose spout sits just under the
+//! water line, left/right flip, refusal when blocked or too shallow,
 //! substrate-preserving removal, down-flow through the gravel and the spray
 //! bar's jet, rooted plants declining over the plate while floaters, ball
 //! plants and rooted plants beside it stay healthy, filtration at the top of
 //! the bed, clogging and rinsing, fry safety, zero idle cost and save/load
-//! determinism.
+//! determinism; plus the modular under-gravel panels (snapping flush,
+//! chaining, connecting to the main filter, disconnecting).
 
 use std::collections::BTreeMap;
 
@@ -15,6 +17,7 @@ use desktank_sim::{
 };
 
 const KIND: DeviceKind = DeviceKind::UnderGravelFilter;
+const PANEL: DeviceKind = DeviceKind::UnderGravelPanel;
 /// Ticks in a simulated minute.
 const MINUTE: u32 = 1200;
 
@@ -97,11 +100,13 @@ fn floor_mount_lays_flush_on_the_floor_flips_and_refuses_when_blocked_or_shallow
     assert_eq!(art.mount, Mount::Floor);
     assert_eq!(art.size, (28, 28));
 
-    // Whatever the pointer height, the plate lies flush with the floor,
-    // centred on x and clamped into the tank.
+    // Whatever the pointer height, the tube starts just under the water line
+    // (row 8 here), the plate lies flush with the floor, centred on x and
+    // clamped into the tank.
     let (ghost, ok) = w.device_placement(KIND, 60, 10, false);
     assert!(ok);
-    assert_eq!((ghost.x, ghost.y), (60 - 14, 80 - 28));
+    assert_eq!((ghost.x, ghost.y), (60 - 14, w.surface_row() + 1));
+    assert_eq!(ghost.y + ghost.height, 80);
     assert!(!ghost.facing_left);
     assert_eq!(w.device_placement(KIND, -30, 70, false).0.x, 0);
     assert_eq!(w.device_placement(KIND, 500, 70, false).0.x, 120 - 28);
@@ -109,12 +114,14 @@ fn floor_mount_lays_flush_on_the_floor_flips_and_refuses_when_blocked_or_shallow
     assert!(ok && flipped.facing_left);
 
     // Placing writes the whole footprint as device cells.
+    let cells = ghost.cells(&art).count();
+    assert!(cells > art.cells, "the tube stretched: {cells}");
     assert_eq!(
         w.place(Placeable::UnderGravelFilter, 60, 10).unwrap(),
-        art.cells
+        cells
     );
     let device = id(&w, "device");
-    assert_eq!(count(&w, "device"), art.cells);
+    assert_eq!(count(&w, "device"), cells);
     let (dev, d) = (w.devices().next().unwrap().id, *w.devices().next().unwrap());
     assert_eq!(w.cell(60, 79).unwrap().material, device);
     assert_eq!(w.device_at(60, 79), Some(dev));
@@ -156,11 +163,19 @@ fn floor_mount_lays_flush_on_the_floor_flips_and_refuses_when_blocked_or_shallow
     assert_eq!(w.place(Placeable::UnderGravelFilter, 60, 40).unwrap(), 0);
     assert_eq!(w.devices().count(), 0);
 
-    // A second filter can't overlap the first.
+    // A second filter can't overlap the first: dropped on it, it snaps flush
+    // to its nearer side instead, or is refused if there's no room.
     let mut w = bedded(2, "gravel", 0);
-    add(&mut w, 40, false);
-    assert_eq!(w.add_device(KIND, 50, 40, false).unwrap(), None);
-    assert!(w.add_device(KIND, 90, 40, false).unwrap().is_some());
+    let (_, first) = add(&mut w, 40, false);
+    assert_eq!(first.x, 26);
+    let (_, second) = add(&mut w, 50, false);
+    assert_eq!(second.x, 54, "snapped flush against the first's right edge");
+    assert!(w.add_device(KIND, 100, 40, false).unwrap().is_some());
+    let mut narrow = world(60, 80, 2, 0.9);
+    add(&mut narrow, 14, false);
+    add(&mut narrow, 42, false);
+    assert_eq!(narrow.add_device(KIND, 30, 40, false).unwrap(), None);
+    assert_eq!(narrow.devices().count(), 2, "a refusal places nothing");
 
     // Too shallow: the water line is below the top of the box's spray bar.
     let mut shallow = world(100, 60, 3, 0.3); // surface row 42 > 60 - 28
@@ -178,12 +193,13 @@ fn floor_mount_lays_flush_on_the_floor_flips_and_refuses_when_blocked_or_shallow
 
 #[test]
 fn a_buried_spray_bar_or_an_unplaceable_substrate_cell_refuses_the_placement() {
-    // A bed so deep that the spray bar would be buried.
-    let mut deep = bedded(5, "gravel", 27);
+    // A bed so deep that the spray bar (just under the water line) would be
+    // buried.
+    let mut deep = bedded(5, "gravel", 70);
     let (_, ok) = deep.device_placement(KIND, 60, 40, false);
     assert!(!ok, "the spray bar can't be buried in the bed");
     assert_eq!(deep.place(Placeable::UnderGravelFilter, 60, 40).unwrap(), 0);
-    assert_eq!(count(&deep, "gravel"), 120 * 27, "a refusal moves nothing");
+    assert_eq!(count(&deep, "gravel"), 120 * 70, "a refusal moves nothing");
 
     // A bed a little below the spray bar fits, and the tube column's
     // displaced gravel goes somewhere in the plate's width.
@@ -220,7 +236,7 @@ fn under_a_gravel_bed_every_cell_is_kept_and_the_bed_rests_on_the_plate_then_fli
             gravel_before,
             "every gravel cell is kept"
         );
-        assert_eq!(count(&w, "device"), art.cells);
+        assert_eq!(count(&w, "device"), d.cells(&art).count());
         // Nothing was lost to the plate and nothing lies inside it.
         for (x, y) in d.cells(&art) {
             assert_eq!(w.device_at(x, y), Some(dev));
@@ -231,7 +247,7 @@ fn under_a_gravel_bed_every_cell_is_kept_and_the_bed_rests_on_the_plate_then_fli
         // The plate is the floor of the bed: gravel rests right on its top
         // row in every column the plate covers (apart from the tube's), with
         // the bed above it unbroken.
-        let plate_top = d.y + 25;
+        let plate_top = d.y + d.height - 3;
         let far = if flip {
             d.x..d.x + 20
         } else {
@@ -264,15 +280,27 @@ fn under_a_gravel_bed_every_cell_is_kept_and_the_bed_rests_on_the_plate_then_fli
         let uplift = if flip { d.x + 25 } else { d.x + 2 };
         assert!((d.x..d.x + 28).contains(&uplift));
         assert_eq!(w.cell(uplift, d.y + 10).unwrap().material, id(&w, "device"));
+        assert_eq!(
+            w.cell(uplift, plate_top - 8).unwrap().material,
+            id(&w, "device")
+        );
 
         // Over a bare floor the gravel poured afterwards rests on the plate.
         let mut bare = bedded(8, "gravel", 0);
         let (_, bd) = add(&mut bare, 60, flip);
         let gravel = id(&bare, "gravel");
-        bare.fill_rect(rect(bd.x + 8, 40, bd.x + 28, 44), gravel, Brush::Replace)
+        let (px0, px1) = if flip {
+            (bd.x, bd.x + 20)
+        } else {
+            (bd.x + 8, bd.x + 28)
+        };
+        bare.fill_rect(rect(px0, 40, px1, 44), gravel, Brush::Replace)
             .unwrap();
         settle(&mut bare);
-        assert_eq!(top_of_bed(&bare, bd.x + 14, "gravel"), bd.y + 25 - 4);
+        assert_eq!(
+            top_of_bed(&bare, bd.x + 14, "gravel"),
+            bd.y + bd.height - 3 - 4
+        );
     }
 }
 
@@ -314,7 +342,7 @@ fn displaced_aquasoil_keeps_its_cells_exactly_and_a_thin_bed_rests_on_the_plate(
     assert_eq!(count(&thin, "sand"), 120 * 2);
     for x in td.x + 8..td.x + 28 {
         assert_eq!(
-            thin.cell(x, td.y + 24).unwrap().material,
+            thin.cell(x, td.y + td.height - 4).unwrap().material,
             id(&thin, "sand"),
             "sand rests on the plate at {x}"
         );
@@ -377,7 +405,7 @@ fn water_is_drawn_down_through_the_gravel_and_the_spray_bar_drives_a_jet() {
             above > 0.0,
             "open water above the gravel is drawn down, got {above}"
         );
-        let [_, inside] = w.current_at(x, d.y + 22);
+        let [_, inside] = w.current_at(x, d.y + d.height - 6);
         assert!(inside > 0.0, "the gravel bed seeps downwards, got {inside}");
 
         // The spray bar jets away from the tube along the surface-facing top.
@@ -555,7 +583,7 @@ fn the_filter_captures_particles_at_the_top_of_the_bed_clogs_and_rinses() {
     assert!(art.is_filter());
     let (ix, _) = d.intakes(&art).nth(2).unwrap();
     let top = top_of_bed(&w, ix, "gravel");
-    assert!(top < d.y + 25, "intakes lie under a bed");
+    assert!(top < d.y + d.height - 3, "intakes lie under a bed");
     assert_eq!(w.device(dev).unwrap().media_load, 0.0);
     // Detritus resting on the gravel above an intake is drawn in.
     let detritus = id(&w, "detritus");
@@ -690,4 +718,476 @@ fn under_gravel_filter_save_load_round_trip_replays_identically() {
             "a loaded under-gravel tank replays bit-for-bit"
         );
     }
+}
+
+/// A 160x90 tank at 90% water (surface row 9) with a `rows`-deep gravel bed.
+fn wide(seed: u64, rows: usize) -> World {
+    let mut w = world(160, 90, seed, 0.9);
+    let gravel = id(&w, "gravel");
+    w.fill_rect(rect(0, 90 - rows, 160, 90), gravel, Brush::Replace)
+        .unwrap();
+    w
+}
+
+/// Adds a panel at pointer column `x` (it snaps to a neighbour) and returns it.
+fn add_panel(w: &mut World, x: i64) -> Device {
+    let dev = w
+        .add_device(PANEL, x, 40, false)
+        .unwrap()
+        .expect("the under-gravel panel fits");
+    *w.device(dev).unwrap()
+}
+
+#[test]
+fn the_uplift_tube_telescopes_so_the_spout_sits_just_under_the_water_line() {
+    let art = world(160, 90, 30, 0.9).device_kinds().get(KIND).clone();
+    for (level, flip) in [(0.9, false), (0.9, true), (0.6, false), (0.45, true)] {
+        let mut w = world(160, 90, 30, level);
+        let gravel = id(&w, "gravel");
+        w.fill_rect(rect(0, 78, 160, 90), gravel, Brush::Replace)
+            .unwrap();
+        let surface = w.surface_row();
+        let (dev, d) = {
+            let id = w.add_device(KIND, 60, 40, flip).unwrap().expect("fits");
+            (id, *w.device(id).unwrap())
+        };
+        // The box starts right under the water line and reaches the floor.
+        assert_eq!(d.y, surface + 1, "level {level}");
+        assert_eq!(d.y + d.height, 90);
+        assert_eq!(d.span(&art), 90 - surface - 1);
+        // The spout and its bubble outlets sit near the top of the tank...
+        let (nx, ny) = d.nozzle(&art).unwrap();
+        assert_eq!(ny, surface + 1 + 2);
+        for (_, by) in d.bubble_outlets(&art) {
+            assert_eq!(by, surface + 1 + 1);
+        }
+        // ...and the intakes on the plate on the floor.
+        for (_, iy) in d.intakes(&art) {
+            assert_eq!(iy, 90 - 3);
+        }
+        // The clear tube is solid from the spout to the collar in its column.
+        let tube_x = if flip { d.x + 25 } else { d.x + 2 };
+        for y in d.y + 5..d.y + d.height - 11 {
+            assert_eq!(
+                w.device_at(tube_x, y),
+                Some(dev),
+                "tube cell ({tube_x}, {y})"
+            );
+        }
+        assert_eq!(w.device_at(tube_x, 89), Some(dev));
+        let cells: Vec<_> = d.cells(&art).collect();
+        assert_eq!(count(&w, "device"), cells.len());
+        assert!(cells.iter().all(|&(x, y)| w.device_at(x, y) == Some(dev)));
+        // The jet leaves the spout near the surface, away from the tube.
+        run(&mut w, 10);
+        let dir = d.nozzle_dir(&art)[0];
+        let reach = if flip { nx - 10 } else { nx + 10 };
+        assert!(w.current_at(reach, ny)[0] * dir > 1.0, "level {level}");
+        // Its bubbles come out of the spout at the top of the tank (and pop
+        // at the surface a moment later).
+        let bubble = id(&w, "air_bubble");
+        let mut seen = false;
+        for _ in 0..300 {
+            w.tick();
+            seen |= (surface..surface + 12)
+                .flat_map(|y| (d.x..d.x + 28).map(move |x| (x, y)))
+                .any(|(x, y)| w.cell(x, y).unwrap().material == bubble);
+        }
+        assert!(seen, "bubbles rise from the spout at level {level}");
+        // Save/load keeps the telescoped height (rebuilt from the anchor).
+        let bytes = save::encode(&w);
+        let loaded = save::decode(&bytes, MaterialTable::builtin().unwrap()).unwrap();
+        assert_eq!(loaded.device(dev), w.device(dev));
+        assert_eq!(w.state_hash(), loaded.state_hash());
+    }
+}
+
+#[test]
+fn a_panel_snaps_flush_beside_the_filter_and_chains_under_existing_gravel() {
+    let mut w = wide(31, 12);
+    let gravel_before = count(&w, "gravel");
+    let panel_art = w.device_kinds().get(PANEL).clone();
+    assert_eq!(panel_art.size, (24, 3));
+    let (ugf_id, ugf) = add(&mut w, 50, false);
+    assert_eq!((ugf.x, ugf.x + 28), (36, 64));
+    assert_eq!(count(&w, "gravel"), gravel_before);
+
+    // Beside, on, or a few cells from the filter, it snaps to the nearer
+    // flush edge; further off it stays where the pointer puts it.
+    let place = |w: &World, x: i64| w.device_placement(PANEL, x, 10, false);
+    let (ghost, ok) = place(&w, 80);
+    assert!(ok && ghost.x == 64, "gap of 4 snaps: {}", ghost.x);
+    assert_eq!(
+        place(&w, 60).0.x,
+        64,
+        "overlapping the right half snaps right"
+    );
+    assert_eq!(
+        place(&w, 30).0.x,
+        12,
+        "overlapping the left half snaps left"
+    );
+    assert_eq!(place(&w, 90).0.x, 78, "10 cells off stays put");
+    assert_eq!(place(&w, 120).0.x, 108);
+    assert!(!place(&w, 120).0.facing_left && !panel_art.mount.flippable());
+    // Whatever the pointer height it lies flush with the floor, under the
+    // water line like any floor plate.
+    assert_eq!(ghost.y, 87);
+    assert_eq!(
+        w.device_placement(PANEL, 80, 2, true).0.x,
+        64,
+        "flip is ignored"
+    );
+
+    // Placing writes the plate's 72 cells; the gravel bed keeps every cell.
+    assert_eq!(w.place(Placeable::UnderGravelPanel, 80, 10).unwrap(), 72);
+    let first = *w.devices().find(|d| d.kind == PANEL).unwrap();
+    assert_eq!(first.x, 64);
+    assert_eq!(count(&w, "gravel"), gravel_before, "no substrate is lost");
+    // A second one chains on beside the first (not overlapping it).
+    let second = add_panel(&mut w, 95);
+    assert_eq!(second.x, 88, "flush against the first's right edge");
+    // And a third on the filter's other side.
+    let third = add_panel(&mut w, 20);
+    assert_eq!(third.x, 12, "flush against the filter's left edge");
+    // Every device cell is the right device and nothing is lost.
+    assert_eq!(
+        count(&w, "device"),
+        ugf.cells(w.device_kinds().get(KIND)).count() + 3 * 72
+    );
+    assert_eq!(count(&w, "gravel"), gravel_before);
+    settle(&mut w);
+    assert_eq!(count(&w, "gravel"), gravel_before);
+    // The bed rests on the panels' plates like the filter's.
+    for p in [first, second, third] {
+        for x in p.x..p.x + 24 {
+            assert_eq!(
+                w.cell(x, p.y - 1).unwrap().material,
+                id(&w, "gravel"),
+                "gravel rests on the panel at column {x}"
+            );
+        }
+    }
+
+    // A panel on its own pointer can't overlap a filter it has no room beside.
+    let mut crowded = world(60, 80, 32, 0.9);
+    add(&mut crowded, 14, false);
+    assert!(crowded.add_device(PANEL, 40, 40, false).unwrap().is_some());
+    assert_eq!(
+        crowded.add_device(PANEL, 40, 40, false).unwrap(),
+        None,
+        "no room left for another"
+    );
+
+    // Removing any device leaves every substrate cell, which settles back.
+    for id in [first.id, second.id, third.id, ugf_id] {
+        assert!(w.remove_device(id));
+        assert_eq!(count(&w, "gravel"), gravel_before, "removal keeps the bed");
+    }
+    assert_eq!(count(&w, "device"), 0);
+    settle(&mut w);
+    assert_eq!(count(&w, "gravel"), gravel_before);
+    for x in 0..160 {
+        let top = top_of_bed(&w, x, "gravel");
+        for y in top..90 {
+            assert_eq!(
+                w.cell(x, y).unwrap().material,
+                id(&w, "gravel"),
+                "({x}, {y})"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_panel_with_no_filter_beside_it_does_nothing() {
+    let mut w = wide(33, 12);
+    let (ugf_id, ugf) = add(&mut w, 40, false); // 26..54
+    let panel = add_panel(&mut w, 130); // far away: 118..142
+    assert!(panel.x > ugf.x + 28 + 4);
+    run(&mut w, 40);
+    let status = w.device_status(panel.id).unwrap();
+    assert!(!status.connected, "no filter is connected to it");
+    assert!(!status.is_filter && status.fry_safe && status.flow == 0.0);
+    assert!(w.device_status(ugf_id).unwrap().connected);
+
+    // The filter's own down-flow is there, the panel's is not.
+    let top = top_of_bed(&w, ugf.x + 16, "gravel");
+    assert!(w.current_at(ugf.x + 16, top - 3)[1] > 0.0);
+    for x in [panel.x + 3, panel.x + 12, panel.x + 21] {
+        let top = top_of_bed(&w, x, "gravel");
+        assert_eq!(w.current_at(x, top - 3), [0.0, 0.0], "no down-flow at {x}");
+        assert_eq!(w.current_at(x, 85), [0.0, 0.0]);
+    }
+
+    // It captures nothing: detritus on the bed above its intakes stays put,
+    // and its intakes aren't even checked.
+    let detritus = id(&w, "detritus");
+    let art = w.device_kinds().get(PANEL).clone();
+    let (ix, _) = panel.intakes(&art).nth(2).unwrap();
+    let top = top_of_bed(&w, ix, "gravel");
+    w.set_cell(ix, top - 1, detritus).unwrap();
+    let before = w.intake_cell_checks();
+    w.tick();
+    assert_eq!(w.device(ugf_id).unwrap().media_load, 0.0);
+    assert_eq!(w.device(panel.id).unwrap().media_load, 0.0);
+    let ugf_intakes = w.device_kinds().get(KIND).intakes.len() as u64;
+    assert_eq!(w.intake_cell_checks() - before, 8 * ugf_intakes);
+}
+
+#[test]
+fn a_connected_panel_extends_the_downflow_filtration_and_plant_decline_to_its_footprint() {
+    let mut w = wide(34, 12);
+    let (ugf_id, ugf) = add(&mut w, 40, false); // 26..54
+    let direct = add_panel(&mut w, 70); // snaps to 54..78
+    assert_eq!(direct.x, 54);
+    let chained = add_panel(&mut w, 90); // snaps to 78..102
+    assert_eq!(chained.x, 78);
+    let far = add_panel(&mut w, 130); // off on its own: not connected
+    assert!(far.x > 106);
+    settle(&mut w);
+    run(&mut w, 10);
+    let art = w.device_kinds().get(PANEL).clone();
+    for p in [direct, chained] {
+        assert!(w.device_status(p.id).unwrap().connected, "panel at {}", p.x);
+        // Down-flow through the gravel extends over the panel...
+        let x = p.x + 12;
+        let top = top_of_bed(&w, x, "gravel");
+        let [_, above] = w.current_at(x, top - 3);
+        assert!(
+            above > 0.0,
+            "open water over the panel is drawn down: {above}"
+        );
+        let [_, inside] = w.current_at(x, 85);
+        assert!(
+            inside > 0.0,
+            "the gravel over the panel seeps down: {inside}"
+        );
+        // ...and debris resting on the bed above it is captured into the
+        // main filter's media.
+        let detritus = id(&w, "detritus");
+        let (ix, _) = p.intakes(&art).nth(1).unwrap();
+        let top = top_of_bed(&w, ix, "gravel");
+        let load = w.device(ugf_id).unwrap().media_load;
+        w.set_cell(ix, top - 1, detritus).unwrap();
+        w.tick();
+        assert_eq!(w.cell(ix, top - 1).unwrap().material, id(&w, "water"));
+        assert!(
+            w.device(ugf_id).unwrap().media_load > load,
+            "the main filter's media took the panel's catch"
+        );
+        assert_eq!(w.device(p.id).unwrap().media_load, 0.0);
+    }
+    assert!(!w.device_status(far.id).unwrap().connected);
+    assert_eq!(w.current_at(far.x + 12, 85), [0.0, 0.0]);
+    assert_eq!(w.device(ugf_id).unwrap().x, ugf.x);
+    // Panels are plain plates: no media to rinse, no maturity, no bio capacity.
+    assert!(!w.rinse_device(direct.id, RinseKind::Gentle));
+    assert!(w.set_device_maturity(direct.id, 1.0));
+    assert!(w.filter_bio_capacity() < 0.01);
+    assert_eq!(w.toggle_device_intake_guard(direct.id), Some(false));
+
+    // The filter draws less per intake the more panels share its flow, and
+    // clogging it slows the panels' down-flow too.
+    let x = direct.x + 12;
+    let top = top_of_bed(&w, x, "gravel");
+    let clean = w.current_at(x, top - 3)[1];
+    assert!(w.set_device_media_load(ugf_id, 1.0));
+    run(&mut w, 5);
+    let clogged = w.current_at(x, top - 3)[1];
+    assert!(clogged < clean, "clogged {clogged} < clean {clean}");
+}
+
+#[test]
+fn between_two_filters_a_panel_belongs_to_the_one_with_the_lower_id() {
+    let mut w = wide(35, 12);
+    let (a, da) = add(&mut w, 14, false); // 0..28
+    let (b, db) = add(&mut w, 66, false); // 52..80
+    assert_eq!((da.x, db.x), (0, 52));
+    let mid = add_panel(&mut w, 40); // 28..52 touches both
+    assert_eq!(mid.x, 28);
+    let art = w.device_kinds().get(PANEL).clone();
+    settle(&mut w);
+    let (ix, _) = mid.intakes(&art).nth(2).unwrap();
+    let top = top_of_bed(&w, ix, "gravel");
+    w.set_cell(ix, top - 1, id(&w, "detritus")).unwrap();
+    w.tick();
+    assert!(
+        w.device(a).unwrap().media_load > 0.0,
+        "the lower id takes it"
+    );
+    assert_eq!(w.device(b).unwrap().media_load, 0.0);
+}
+
+#[test]
+fn rooted_plants_over_a_connected_panel_decline_and_over_a_disconnected_one_stay_healthy() {
+    let mut w = world(240, 100, 36, 0.95);
+    let soil = id(&w, "aquasoil");
+    w.fill_rect(rect(0, 88, 240, 100), soil, Brush::Replace)
+        .unwrap();
+    let filter = w.add_device(KIND, 40, 60, false).unwrap().expect("fits"); // 26..54
+    let linked = add_panel(&mut w, 70); // 54..78
+    let apart = add_panel(&mut w, 170); // 158..182, not touching anything
+    assert_eq!(linked.x, 54);
+    assert!(apart.x > 100);
+    let off = |p: &Device| i64::try_from(p.x).unwrap() + 12;
+    let names = ["rotala", "vallisneria", "dwarf_hairgrass"];
+    for (k, name) in names.into_iter().enumerate() {
+        let shift = i64::try_from(k).unwrap() * 3;
+        plant(&mut w, name, off(&linked) + shift - 3);
+        plant(&mut w, name, off(&apart) + shift - 3);
+        plant(&mut w, name, 210 + shift);
+    }
+    run(&mut w, MINUTE);
+    for name in names {
+        let over = health_of(&w, name, linked.x..linked.x + 24);
+        assert!(!over.is_empty(), "{name} over the connected panel is alive");
+        assert!(
+            over.iter().all(|&h| h < 0.85),
+            "{name} over the connected panel declines: {over:?}"
+        );
+        for (label, range) in [
+            ("disconnected panel", apart.x..apart.x + 24),
+            ("open bed", 200..240),
+        ] {
+            let healthy = health_of(&w, name, range);
+            assert!(!healthy.is_empty(), "{name} over the {label} is alive");
+            assert!(
+                healthy.iter().all(|&h| h >= 0.99),
+                "{name} over the {label} stays healthy: {healthy:?}"
+            );
+        }
+    }
+    assert!(w.device_status(filter).unwrap().connected);
+}
+
+#[test]
+fn removing_the_filter_or_a_bridging_panel_disconnects_what_it_linked() {
+    // A filter with two panels chained beside it; remove the bridge.
+    let mut w = world(240, 100, 37, 0.95);
+    let soil = id(&w, "aquasoil");
+    w.fill_rect(rect(0, 88, 240, 100), soil, Brush::Replace)
+        .unwrap();
+    let filter = w.add_device(KIND, 40, 60, false).unwrap().expect("fits");
+    let bridge = add_panel(&mut w, 70); // 54..78
+    let tail = add_panel(&mut w, 90); // 78..102
+    assert_eq!((bridge.x, tail.x), (54, 78));
+    plant(&mut w, "vallisneria", i64::try_from(tail.x).unwrap() + 12);
+    run(&mut w, MINUTE * 3 / 4);
+    assert!(
+        w.device_status(tail.id).unwrap().connected,
+        "chained through the bridge"
+    );
+    let stressed = health_of(&w, "vallisneria", tail.x..tail.x + 24);
+    assert!(
+        !stressed.is_empty() && stressed.iter().all(|&h| h < 0.95),
+        "the plant over the chained panel is stressed: {stressed:?}"
+    );
+    assert!(
+        w.current_at(tail.x + 12, 92)[1] > 0.0,
+        "down-flow over the tail"
+    );
+
+    // (A plant's roots take a soil cell or two, so count just before.)
+    let soil_before = count(&w, "aquasoil");
+    assert!(w.remove_device(bridge.id));
+    assert_eq!(count(&w, "aquasoil"), soil_before, "removal keeps the bed");
+    assert!(!w.device_status(tail.id).unwrap().connected);
+    assert!(w.device_status(filter).unwrap().connected);
+    run(&mut w, 6 * MINUTE);
+    assert_eq!(
+        w.current_at(tail.x + 12, 92),
+        [0.0, 0.0],
+        "down-flow stopped"
+    );
+    let recovered = health_of(&w, "vallisneria", 0..240);
+    assert!(!recovered.is_empty(), "the plant survived");
+    assert!(
+        recovered.iter().all(|&h| h >= 0.99),
+        "the plant recovers once its panel is cut off: {recovered:?}"
+    );
+
+    // Removing the filter itself disconnects every panel.
+    let (mut w, filter) = {
+        let mut w = wide(38, 12);
+        let (f, _) = add(&mut w, 40, false);
+        (w, f)
+    };
+    let p = add_panel(&mut w, 70);
+    assert!(w.device_status(p.id).unwrap().connected);
+    run(&mut w, 10);
+    let top = top_of_bed(&w, p.x + 12, "gravel");
+    assert!(w.current_at(p.x + 12, top - 3)[1] > 0.0);
+    let gravel = count(&w, "gravel");
+    assert!(w.remove_device(filter));
+    assert!(!w.device_status(p.id).unwrap().connected);
+    run(&mut w, 10);
+    assert_eq!(w.current_at(p.x + 12, top - 3), [0.0, 0.0]);
+    assert_eq!(count(&w, "gravel"), gravel, "substrate stays intact");
+}
+
+#[test]
+fn settled_connected_panels_stay_o1_and_disconnected_ones_cost_nothing() {
+    // The water line is off an 8-cell field-block boundary (see the settled
+    // filter test above).
+    let mut w = world(160, 90, 39, 0.88);
+    assert_ne!(w.surface_row() % 8, 0);
+    let gravel = id(&w, "gravel");
+    w.fill_rect(rect(0, 78, 160, 90), gravel, Brush::Replace)
+        .unwrap();
+    add(&mut w, 40, false);
+    add_panel(&mut w, 70);
+    add_panel(&mut w, 90);
+    let far = add_panel(&mut w, 150);
+    assert!(!w.device_status(far.id).unwrap().connected);
+    settle(&mut w);
+    let rebuilds = w.device_rebuilds();
+    let scans = w.current_block_scans();
+    let checks = w.intake_cell_checks();
+    let per_tick = (w.device_kinds().get(KIND).intakes.len()
+        + 2 * w.device_kinds().get(PANEL).intakes.len()) as u64;
+    run(&mut w, 400);
+    assert_eq!(
+        w.device_rebuilds(),
+        rebuilds,
+        "no current rebuilds while idle"
+    );
+    assert_eq!(
+        w.current_block_scans(),
+        scans,
+        "the settled bed scans nothing"
+    );
+    assert_eq!(
+        w.intake_cell_checks() - checks,
+        400 * 8 * per_tick,
+        "connected panels' floor intakes are cached and O(1) per tick; \
+         a disconnected panel's aren't checked at all"
+    );
+}
+
+#[test]
+fn panels_save_and_load_and_replay_identically() {
+    let mut w = wide(40, 12);
+    let (f, _) = add(&mut w, 40, true);
+    let p1 = add_panel(&mut w, 18);
+    let p2 = add_panel(&mut w, 120);
+    assert!(w.set_device_media_load(f, 0.4));
+    run(&mut w, 40);
+    let bytes = save::encode(&w);
+    let mut loaded = save::decode(&bytes, MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(w.state_hash(), loaded.state_hash());
+    for id in [f, p1.id, p2.id] {
+        assert_eq!(loaded.device(id), w.device(id));
+        assert_eq!(loaded.device_status(id), w.device_status(id));
+    }
+    assert_eq!(
+        loaded.current(),
+        w.current(),
+        "the current is rebuilt identically"
+    );
+    for _ in 0..160 {
+        w.tick();
+        loaded.tick();
+    }
+    assert_eq!(w.state_hash(), loaded.state_hash());
 }

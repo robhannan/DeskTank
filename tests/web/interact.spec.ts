@@ -118,6 +118,34 @@ test.describe("mouse", () => {
     expect(errors).toEqual([]);
   });
 
+  test("under-gravel panel connects to a nearby filter", async ({ page }) => {
+    await openPaused(page);
+    const [w, h] = await gridSize(page);
+    const x = Math.round(w / 3);
+    const clickCell = async (x: number, y: number) => {
+      const point = await cellPoint(page, x, y);
+      await page.mouse.click(point.x, point.y);
+    };
+    const inspect = page.locator("#inspect");
+    const actions = page.locator("#device-actions");
+
+    await choose(page, "Under-gravel panel");
+    await clickCell(x, Math.round(h / 2));
+    await choose(page, "Inspect");
+    await clickCell(x, h - 1);
+    await expect(inspect).toHaveText(/^Under-gravel panel #\d+ · on the floor · disconnected · cell /);
+    await expect(actions).toBeHidden();
+
+    await choose(page, "Under-gravel filter");
+    await clickCell(x + 24, Math.round(h / 2));
+    await choose(page, "Inspect");
+    await clickCell(x + 26, h - 1);
+    await expect(actions).toBeVisible();
+    await clickCell(x, h - 1);
+    await expect(inspect).toHaveText(/^Under-gravel panel #\d+ · on the floor · connected · cell /);
+    await expect(actions).toBeHidden();
+  });
+
   test("creatures: add, inspect, net and lift out", async ({ page }) => {
     const errors = watchErrors(page);
     await openPaused(page);
@@ -396,7 +424,7 @@ test("the palette follows the sim's category tree and navigates with the keyboar
     } else if (kind === "plant") expect(path(i), e).toMatch(/^plants\//);
     // The prefab bubbler and four filters are listed by device kind (D27).
     else if (kind === "device")
-      expect(["bubbler", "internal_filter", "sponge_filter", "hob_filter", "under_gravel_filter"], e).toContain(name);
+      expect(["bubbler", "internal_filter", "sponge_filter", "hob_filter", "under_gravel_filter", "under_gravel_panel"], e).toContain(name);
     else if (kind !== "tool") expect(materials, e).toContain(name);
   }
   expect(entries.filter((e) => e.startsWith("creature ")).length).toBe(species.length);
@@ -838,7 +866,7 @@ test("flip device button only appears for flippable device tools and X ignores o
   await expect(flipBtn).toBeHidden();
   expect(await flipped()).toBe(false);
 
-  // Stays hidden for non-device tools and non-flippable devices (Bubbler, Sponge filter).
+  // Stays hidden for non-device tools and non-flippable devices.
   for (const name of [
     "Scoop",
     "Inspect",
@@ -847,6 +875,7 @@ test("flip device button only appears for flippable device tools and X ignores o
     "Neon tetra",
     "Bubbler",
     "Sponge filter",
+    "Under-gravel panel",
   ]) {
     await choose(page, name);
     await expect(flipBtn, `${name} should keep Flip device hidden`).toBeHidden();

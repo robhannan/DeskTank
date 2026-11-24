@@ -133,6 +133,10 @@ fn palette_categories_follow_the_sim() {
     assert_eq!(cat("tool net"), "tools\tTools\tTools");
     assert_eq!(cat("device bubbler"), "build/devices\tBuild\tDevices");
     assert_eq!(
+        cat("device under_gravel_panel"),
+        "build/devices\tBuild\tDevices"
+    );
+    assert_eq!(
         cat("plant java_moss"),
         "plants/moss\tPlants\tMoss & epiphytes"
     );
@@ -1113,6 +1117,34 @@ fn under_gravel_filter_placement_flips_the_tube_and_inspects_as_fry_safe() {
 }
 
 #[test]
+fn under_gravel_panel_inspects_connection_to_the_main_filter() {
+    let mut t = paused();
+    t.select(slot(&t, "device under_gravel_panel"));
+    down(&mut t, PRIMARY, 32, 71);
+    t.pointer_up(PRIMARY);
+
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 32, 71);
+    t.pointer_up(PRIMARY);
+    assert_eq!(
+        t.take_inspection(),
+        "device under_gravel_panel 1 floor disconnected 32 71"
+    );
+
+    t.select(slot(&t, "device under_gravel_filter"));
+    down(&mut t, PRIMARY, 56, 71);
+    t.pointer_up(PRIMARY);
+
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 32, 71);
+    t.pointer_up(PRIMARY);
+    assert_eq!(
+        t.take_inspection(),
+        "device under_gravel_panel 1 floor connected 32 71"
+    );
+}
+
+#[test]
 fn flip_device_only_applies_to_flippable_device_tools() {
     let mut t = paused();
     // Default tool (sand) and non-flippable tools/devices cannot flip.
@@ -1127,6 +1159,7 @@ fn flip_device_only_applies_to_flippable_device_tools() {
         "tool magnify",
         "device bubbler",
         "device sponge_filter",
+        "device under_gravel_panel",
         "plant java_moss",
         "creature neon_tetra",
     ] {

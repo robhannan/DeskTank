@@ -34,7 +34,14 @@ pub(super) struct Devices {
     /// Cached bed-top row for each `Mount::Floor` intake `(device_id, ix)`,
     /// invalidated when cells change at or below `top - 1` in column `ix`.
     floor_intake_tops: BTreeMap<(u16, usize), usize>,
+    /// The under-gravel filter each connected floor panel works for, by
+    /// panel id; a panel not connected edge-to-edge to a filter is absent.
+    /// Refreshed whenever the table changes.
+    floor_owners: BTreeMap<u16, DeviceId>,
 }
+
+/// Closest a floor device may be dropped to another before it snaps flush to it.
+const FLOOR_SNAP_CELLS: usize = 4;
 
 impl Devices {
     pub(super) fn new(materials: &MaterialTable) -> Result<Self, WorldError> {
@@ -46,7 +53,64 @@ impl Devices {
             rebuilds: 0,
             intake_checks: 0,
             floor_intake_tops: BTreeMap::new(),
+            floor_owners: BTreeMap::new(),
         })
+    }
+
+    /// Whether floor devices `a` and `b` touch edge to edge.
+    fn floor_adjacent(&self, a: &Device, b: &Device) -> bool {
+        let (wa, wb) = (self.kinds.get(a.kind).size.0, self.kinds.get(b.kind).size.0);
+        a.x + wa == b.x || b.x + wb == a.x
+    }
+
+    /// The under-gravel filter each floor panel is connected to, by panel id.
+    ///
+    /// Floor devices (`Mount::Floor` and `Mount::FloorPanel`) are connected
+    /// when they touch edge to edge. Each panel reachable from a filter
+    /// through a chain of touching floor devices maps to the nearest filter
+    /// (fewest links; the lowest id on a tie). Panels with no such chain are
+    /// absent.
+    pub(super) fn connected_floor_owners(&self) -> BTreeMap<u16, DeviceId> {
+        let mount = |d: &Device| self.kinds.get(d.kind).mount;
+        let mut owners: BTreeMap<u16, DeviceId> = BTreeMap::new();
+        let mut frontier: Vec<(&Device, DeviceId)> = self
+            .table
+            .values()
+            .filter(|d| mount(d) == Mount::Floor)
+            .map(|d| (d, d.id))
+            .collect();
+        while !frontier.is_empty() {
+            let mut next: BTreeMap<u16, DeviceId> = BTreeMap::new();
+            for &(from, owner) in &frontier {
+                for panel in self.table.values() {
+                    if mount(panel) == Mount::FloorPanel
+                        && !owners.contains_key(&panel.id.0)
+                        && self.floor_adjacent(from, panel)
+                    {
+                        next.entry(panel.id.0)
+                            .and_modify(|o| *o = (*o).min(owner))
+                            .or_insert(owner);
+                    }
+                }
+            }
+            frontier = next
+                .iter()
+                .filter_map(|(id, &owner)| self.table.get(id).map(|d| (d, owner)))
+                .collect();
+            owners.extend(next);
+        }
+        owners
+    }
+
+    /// Recomputes the cached panel owners after the table changed.
+    pub(super) fn refresh_floor_owners(&mut self) {
+        self.floor_owners = self.connected_floor_owners();
+    }
+
+    /// Whether `d` is working: any device but a floor panel not connected to
+    /// an under-gravel filter.
+    pub(super) fn is_connected(&self, d: &Device) -> bool {
+        self.kinds.get(d.kind).mount != Mount::FloorPanel || self.floor_owners.contains_key(&d.id.0)
     }
 
     /// Invalidates cached bed-top rows for any floor intake column whose
@@ -142,7 +206,14 @@ impl World {
     ///   tank floor, under any powder substrate already there (`flip` mirrors
     ///   left/right). Every footprint cell must be fluid or powder, the nozzle
     ///   cell fluid (the spray bar not buried), and every powder cell it
-    ///   displaces must find room in the water above or beside it.
+    ///   displaces must find room in the water above or beside it. A device
+    ///   with a telescoping tube (the under-gravel filter) starts just under
+    ///   the water line and reaches down to the floor.
+    /// - [`Mount::FloorPanel`]: as a floor mount (symmetric, ignoring `flip`,
+    ///   with no nozzle to keep clear).
+    ///
+    /// A floor mount dropped on, or within a few cells of, another floor
+    /// device snaps flush against its nearer side when it fits there.
     ///
     /// The returned device's id is 0.
     #[must_use]
@@ -167,7 +238,7 @@ impl World {
                 };
                 (x0, facing_left)
             }
-            Mount::Bed => {
+            Mount::Bed | Mount::FloorPanel => {
                 let max_x = i64::try_from(self.width.saturating_sub(w)).unwrap_or(0);
                 let x0 = usize::try_from((x - w_i / 2).clamp(0, max_x)).unwrap_or(0);
                 (x0, false)
@@ -179,14 +250,8 @@ impl World {
             }
         };
         let at = |y0: i64| Device {
-            id: DeviceId(0),
-            kind,
-            x: x0,
             y: usize::try_from(y0).unwrap_or(0),
-            facing_left,
-            media_load: 0.0,
-            maturity: 0.0,
-            intake_guard: false,
+            ..Self::blank_device(kind, x0, h, facing_left)
         };
         if art.mount == Mount::Rim {
             let dev = at(0);
@@ -196,14 +261,8 @@ impl World {
                 && dev.intakes(art).all(|(_, iy)| iy >= self.surface_row);
             return (dev, ok);
         }
-        if art.mount == Mount::Floor {
-            let y0 = self.height.saturating_sub(h);
-            let dev = at(i64::try_from(y0).unwrap_or(0));
-            let ok = w <= self.width
-                && h <= self.height
-                && y0 >= self.surface_row
-                && self.floor_placement_plan(&dev).is_some();
-            return (dev, ok);
+        if art.mount.is_floor() {
+            return self.floor_device_placement(kind, x0, facing_left);
         }
         if w <= self.width && bottom >= top {
             match art.mount {
@@ -236,29 +295,113 @@ impl World {
                         return (at(y0), true);
                     }
                 }
-                Mount::Rim | Mount::Floor => unreachable!("handled above"),
+                Mount::Rim | Mount::Floor | Mount::FloorPanel => unreachable!("handled above"),
             }
         }
         (at(want), false)
+    }
+
+    /// A device of `kind` at column `x` with no id, load or maturity, and
+    /// a box `height` rows tall (its anchor row is set by the caller).
+    fn blank_device(kind: DeviceKind, x: usize, height: usize, facing_left: bool) -> Device {
+        Device {
+            id: DeviceId(0),
+            kind,
+            x,
+            y: 0,
+            height,
+            facing_left,
+            media_load: 0.0,
+            maturity: 0.0,
+            intake_guard: false,
+        }
+    }
+
+    /// Where a floor-mounted `kind` whose pointer column puts its left edge
+    /// at `x0` goes, and whether it fits there (see `World::device_placement`).
+    fn floor_device_placement(
+        &self,
+        kind: DeviceKind,
+        x0: usize,
+        facing_left: bool,
+    ) -> (Device, bool) {
+        let art = self.devices.kinds.get(kind);
+        let (w, h) = art.size;
+        // A telescoping tube starts just under the water line (or as low as
+        // the box allows) and reaches the floor; any other floor mount is
+        // its art's height, flush with the floor.
+        let (y0, span) = if art.tube_stretch.is_some() {
+            let y0 = (self.surface_row + 1).min(self.height.saturating_sub(h));
+            (y0, self.height.saturating_sub(y0))
+        } else {
+            (self.height.saturating_sub(h), h)
+        };
+        let make = |x: usize| Device {
+            y: y0,
+            ..Self::blank_device(kind, x, span, facing_left)
+        };
+        let fits = |dev: &Device| {
+            w <= self.width
+                && h <= self.height
+                && y0 >= self.surface_row
+                && self.floor_placement_plan(dev).is_some()
+        };
+        // Snap flush against a floor device the pointer is on or beside.
+        let snapped = self
+            .floor_snap_columns(x0, w)
+            .into_iter()
+            .map(make)
+            .find(fits);
+        if let Some(dev) = snapped {
+            return (dev, true);
+        }
+        let dev = make(x0);
+        let ok = fits(&dev);
+        (dev, ok)
+    }
+
+    /// Left columns, nearest `x0` first, that lay a floor device `w` wide
+    /// flush against the left or right edge of each floor device that `x0`
+    /// overlaps or lies within `FLOOR_SNAP_CELLS` of.
+    fn floor_snap_columns(&self, x0: usize, w: usize) -> Vec<usize> {
+        let mut snaps: Vec<usize> = Vec::new();
+        for o in self.devices.values() {
+            let oa = self.devices.kinds.get(o.kind);
+            if !oa.mount.is_floor() {
+                continue;
+            }
+            let (ox, ow) = (o.x, oa.size.0);
+            if x0 <= ox + ow + FLOOR_SNAP_CELLS && ox <= x0 + w + FLOOR_SNAP_CELLS {
+                if ox + ow + w <= self.width {
+                    snaps.push(ox + ow);
+                }
+                if ox >= w {
+                    snaps.push(ox - w);
+                }
+            }
+        }
+        snaps.sort_by_key(|&c| (c.abs_diff(x0), c));
+        snaps.dedup();
+        snaps
     }
 
     /// Whether every footprint cell of `d` is in the grid and fluid.
     fn device_fits(&self, d: &Device) -> bool {
         let art = self.devices.kinds.get(d.kind);
         d.x + art.size.0 <= self.width
-            && d.y + art.size.1 <= self.height
+            && d.y + d.span(art) <= self.height
             && d.cells(art).all(|(x, y)| {
                 let m = self.cells[y * self.width + x].material;
                 self.is_fluid(m)
             })
     }
 
-    /// Whether a floor-mounted `d` (an under-gravel filter) can be laid at its
+    /// Whether a floor-mounted `d` (an under-gravel filter or panel) can be laid at its
     /// position, and where each powder cell it displaces goes: `(cx, cy, tx, ty)`
     /// moves the powder cell at `(cx, cy)` in its footprint to `(tx, ty)`.
     ///
     /// Every footprint cell must be fluid or powder and the nozzle cell
-    /// (the spray bar) must be fluid. Each displaced powder cell takes the
+    /// (the spray bar), if it has one, must be fluid. Each displaced powder cell takes the
     /// lowest free fluid cell above it in its own column (the bed rises by the
     /// plate's thickness) or, in a column the device fills right up (the
     /// uplift tube), the lowest free fluid cell in the nearest other column
@@ -271,8 +414,8 @@ impl World {
         d: &Device,
     ) -> Option<Vec<(usize, usize, usize, usize)>> {
         let art = self.devices.kinds.get(d.kind);
-        let (w, h) = art.size;
-        if d.x + w > self.width || d.y + h > self.height {
+        let w = art.size.0;
+        if d.x + w > self.width || d.y + d.span(art) > self.height {
             return None;
         }
         let mut displaced = Vec::new();
@@ -284,13 +427,18 @@ impl World {
                 return None;
             }
         }
-        let (nx, ny) = d.nozzle(art)?;
-        if !self.is_fluid(self.cells[ny * self.width + nx].material) {
+        if let Some((nx, ny)) = d.nozzle(art)
+            && !self.is_fluid(self.cells[ny * self.width + nx].material)
+        {
             return None;
         }
         // Substrate may rest on the plate (its top row is the intake row)
         // but not on the tubes above it.
-        let plate_top = d.y + art.intakes.iter().map(|&(_, iy)| iy).min().unwrap_or(h);
+        let plate_top = d
+            .intakes(art)
+            .map(|(_, iy)| iy)
+            .min()
+            .unwrap_or(d.y + d.span(art));
         let free = |claimed: &BTreeSet<(usize, usize)>, tx: usize, ty: usize| {
             if ty < self.surface_row
                 || !self.is_fluid(self.cells[ty * self.width + tx].material)
@@ -342,15 +490,18 @@ impl World {
     }
 
     /// Whether `(x, y)` is above the plate of a floor-mounted filter (an
-    /// under-gravel filter): some such device covers the floor cell
-    /// `(x, height - 1)` of that column and `y` is above the floor row.
+    /// under-gravel filter, or a floor panel connected to one): some such
+    /// device covers the floor cell `(x, height - 1)` of that column and `y`
+    /// is above the floor row. A panel with no filter connected does nothing.
     pub(super) fn is_over_floor_filter(&self, x: usize, y: usize) -> bool {
         if self.devices.is_empty() || y + 1 >= self.height {
             return false;
         }
         self.devices.values().any(|d| {
             let art = self.devices.kinds.get(d.kind);
-            art.mount == Mount::Floor && d.covers(art, x, self.height - 1)
+            art.mount.is_floor()
+                && self.devices.is_connected(d)
+                && d.covers(art, x, self.height - 1)
         })
     }
 
@@ -382,7 +533,7 @@ impl World {
         d.id = DeviceId(id);
         let art = self.devices.kinds.get(kind);
         let cells: Vec<_> = d.cells(art).collect();
-        if art.mount == Mount::Floor {
+        if art.mount.is_floor() {
             // Lift the substrate the plate displaces onto the bed above it,
             // keeping each cell exactly (material, variant and state).
             let plan = self.floor_placement_plan(&d).unwrap_or_default();
@@ -400,6 +551,7 @@ impl World {
             self.cells[cy * self.width + cx].state = id;
         }
         self.devices.table.insert(id, d);
+        self.devices.refresh_floor_owners();
         self.devices.clear_floor_intake_tops();
         self.mark_devices_dirty();
         Ok(Some(d.id))
@@ -423,6 +575,7 @@ impl World {
         let Some(d) = self.devices.table.remove(&id.0) else {
             return false;
         };
+        self.devices.refresh_floor_owners();
         self.devices.clear_floor_intake_tops();
         let (Some(water), Some(air)) = (self.materials.id("water"), self.materials.id("air"))
         else {
@@ -468,6 +621,7 @@ impl World {
             maturity: d.maturity,
             intake_guard: d.intake_guard,
             fry_safe: art.fry_safe,
+            connected: self.devices.is_connected(d),
         })
     }
 
@@ -695,6 +849,16 @@ impl World {
             let mut checks = 0u64;
             for d in self.devices.table.values() {
                 let art = self.devices.kinds.get(d.kind);
+                // A floor panel filters for the under-gravel filter it is
+                // connected to (and does nothing, at no cost, if none is).
+                let credit = if art.mount == Mount::FloorPanel {
+                    let Some(&owner) = self.devices.floor_owners.get(&d.id.0) else {
+                        continue;
+                    };
+                    owner.0
+                } else {
+                    d.id.0
+                };
                 for (ix, iy) in d.intakes(art) {
                     // An under-gravel filter draws through the bed: its
                     // intakes capture at the top of the substrate above them
@@ -703,7 +867,7 @@ impl World {
                     // is cached per intake column and invalidated only when
                     // cells change at or below `top - 1` in that column, so
                     // an idle bed stays O(1) per tick.
-                    let iy = if art.mount == Mount::Floor {
+                    let iy = if art.mount.is_floor() {
                         if let Some(&cached) = self.devices.floor_intake_tops.get(&(d.id.0, ix)) {
                             cached.max(self.surface_row)
                         } else {
@@ -728,7 +892,7 @@ impl World {
                         if let Some(j) = self.at(ix, iy, dx, dy)
                             && cfg.capture.contains(self.cells[j].material)
                         {
-                            captured.push((d.id.0, j));
+                            captured.push((credit, j));
                         }
                     }
                 }
@@ -795,17 +959,30 @@ impl World {
                 if art.flow_scale <= 0.0 {
                     return None;
                 }
+                let mut intakes: Vec<_> = d
+                    .intakes(art)
+                    .map(|(ix, iy)| {
+                        (
+                            (ix, iy),
+                            d.intake_outward(art, ix, iy),
+                            art.mount.is_floor(),
+                        )
+                    })
+                    .collect();
+                // Panels connected to this filter draw water down through the
+                // gravel over them too.
+                for (&panel_id, &owner) in &self.devices.floor_owners {
+                    if owner != d.id {
+                        continue;
+                    }
+                    if let Some(p) = self.devices.table.get(&panel_id) {
+                        let pa = self.devices.kinds.get(p.kind);
+                        intakes.extend(p.intakes(pa).map(|(ix, iy)| ((ix, iy), [0.0, -1.0], true)));
+                    }
+                }
                 Some((
                     (nozzle, d.nozzle_dir(art)),
-                    d.intakes(art)
-                        .map(|(ix, iy)| {
-                            (
-                                (ix, iy),
-                                d.intake_outward(art, ix, iy),
-                                art.mount == Mount::Floor,
-                            )
-                        })
-                        .collect(),
+                    intakes,
                     art.flow_scale * d.flow_factor_with(floor),
                 ))
             })
@@ -890,17 +1067,25 @@ impl World {
             } else {
                 (0.0, 0.0, false)
             };
+            let art = self.devices.kinds.get(kind);
+            let (x, y) = (s.x as usize, s.y as usize);
             let d = Device {
                 id: DeviceId(s.id),
                 kind,
-                x: s.x as usize,
-                y: s.y as usize,
+                x,
+                y,
+                // A telescoping tube reaches the floor from wherever it
+                // starts, so the saved anchor is all that fixes its height.
+                height: if art.tube_stretch.is_some() {
+                    self.height.saturating_sub(y)
+                } else {
+                    art.size.1
+                },
                 facing_left: s.facing_left,
                 media_load,
                 maturity,
                 intake_guard,
             };
-            let art = self.devices.kinds.get(kind);
             if s.id == 0
                 || d.x + art.size.0 > self.width
                 || d.y + art.size.1 > self.height
@@ -926,6 +1111,7 @@ impl World {
         }
         self.devices.table = table;
         self.devices.next = next.max(1);
+        self.devices.refresh_floor_owners();
         self.devices.clear_floor_intake_tops();
         Ok(())
     }

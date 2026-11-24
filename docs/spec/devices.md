@@ -118,16 +118,20 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
 - **Interaction** ([interaction](interaction-and-saves.md) §2.5). The palette's Build › Devices sub-tab holds the
   prefab bubbler and the filters as each lands (DV7: prefab bubbler; DV1:
   internal filter; DV4: sponge filter; DV5: HOB filter; DV6: under-gravel
-  filter). Side-glass facing is chosen automatically from
+  filter and modular panels). Side-glass facing is chosen automatically from
   the nearer wall (with a **flip** key `X` or button to mirror onto the
   other glass); bed-mounted devices drop straight down onto substrate,
   hardscape or the floor (symmetric, ignoring flip); rim-mounted devices
   (HOB, DV5) hang on the top rim partly above the water line, mirror
   left/right with flip, and ripple the water surface beneath their
   spillway in the renderer (at zero idle cost). The under-gravel filter
-  mounts flush with the floor under existing substrate. Flip mirrors
-  its uplift tube and spout left/right. The air lift draws water down
-  through the gravel, and rooted plants decline over the plate.
+  mounts flush with the floor under existing substrate. Its telescoping
+  uplift tube reaches just beneath the water surface when placed. Flip
+  mirrors the tube and spout left/right. Modular under-gravel panels
+  (`UnderGravelPanel`) snap flush beside the filter or another panel to
+  expand its floor footprint. A panel draws water through the gravel only
+  while connected edge-to-edge to the main filter, directly or through
+  other panels. Rooted plants decline over the active plates.
   Removing the filter preserves the substrate. The placement preview
   is a see-through **ghost** of the footprint at the pointer (tinted red
   where it doesn't fit). The inspect card (the one creatures use) shows a
@@ -135,7 +139,8 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   (gentle, hard, replace), and the intake-guard toggle (hidden for
   intrinsically fry-safe filters, which show `fry-safe`); for a
   pure air diffuser (the prefab bubbler, DV7) it shows its mount position
-  and `air diffuser` with no filtration actions.
+  and `air diffuser`. A panel shows its floor mount and `connected` or
+  `disconnected`. The diffuser and panels have no filtration actions.
   Drag-to-move (keeping state) and flow/air dials come
   later. Non-interactive hosts (screensaver, lock screen) just run the
   devices.

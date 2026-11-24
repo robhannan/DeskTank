@@ -5,11 +5,18 @@
 # in the lower tube, and a short flared clear spout bending over the top.
 # Floor-mounted (goes under the gravel bed), drives gentle air-lift flow that
 # pulls water down through the gravel and up the tube, and is intrinsically
-# fry-safe.
+# fry-safe. The uplift tube telescopes: it stretches (repeating its clear
+# middle rows) so the spout always sits just under the water line however deep
+# the tank, while the air stone, collar and plate stay on the floor.
 name = "under_gravel_filter"
 label = "Under-gravel filter"
 # Where it may go: a plate on the tank floor, under any substrate already there.
 mount = "floor"
+# The telescoping tube: art cell rows 0..5 (spout, nozzle and bubble outlets)
+# stay at the top, rows 17..28 (air stone, collar and plate, with the intakes)
+# stay on the floor, and the 12 clear tube rows 5..17 between repeat to fill
+# the gap.
+tube_stretch = [5, 17]
 # The spout tip, in cells from the art's top-left, jetting sideways (right).
 nozzle = [6, 2]
 nozzle_dir = [1.0, 0.0]
@@ -20,7 +27,8 @@ flow_scale = 0.65
 bubble_outlets = [[5, 1], [6, 1]]
 bubble_rate = 0.9
 # Intake cells spaced along the top row of the slotted plate (clear of the
-# uplift tube and collar), drawing water down through the gravel.
+# uplift tube and collar), drawing water down through the gravel. Rows here
+# are art rows: they stay on the plate whatever the tube's length.
 intakes = [[8, 25], [12, 25], [16, 25], [20, 25], [25, 25]]
 # Always safe for fry and small shrimp without an intake guard.
 fry_safe = true

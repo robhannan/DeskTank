@@ -1245,6 +1245,7 @@ mod tests {
                     "Place(SpongeFilter)",
                     "Place(HobFilter)",
                     "Place(UnderGravelFilter)",
+                    "Place(UnderGravelPanel)",
                 ],
             ),
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
@@ -1442,6 +1443,11 @@ mod tests {
         assert!(t.can_flip(&w), "rim-mounted HOB filter flips");
         t.select(PaletteItem::Tool(Tool::Place(Placeable::UnderGravelFilter)));
         assert!(t.can_flip(&w), "floor-mounted under-gravel filter flips");
+        t.select(PaletteItem::Tool(Tool::Place(Placeable::UnderGravelPanel)));
+        assert!(
+            !t.can_flip(&w),
+            "the symmetric under-gravel panel does not flip"
+        );
         t.select(PaletteItem::Tool(Tool::Place(Placeable::InternalFilter)));
         assert!(t.can_flip(&w), "side-glass internal filter flips");
         assert_eq!(t.preview(), None);
