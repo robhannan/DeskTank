@@ -87,7 +87,7 @@ pub const MAX_CLUTCHES: usize = 64;
 /// Cells around her body a female lays her eggs in.
 const EGG_REACH: usize = 6;
 /// Ticks between breeding checks.
-const BREED_CHECK_TICKS: u64 = BREED_CHECK_SECONDS as u64 * TICKS_PER_SECOND as u64;
+pub(super) const BREED_CHECK_TICKS: u64 = BREED_CHECK_SECONDS as u64 * TICKS_PER_SECOND as u64;
 /// Random streams for breeding, clutches and predation: above every
 /// creature's movement stream (creature ids are below 2³²), below the life
 /// stream.
@@ -327,15 +327,20 @@ impl World {
     /// count down, a carrying female gives birth when hers is over, and a
     /// ready female may conceive on a check tick.
     pub(super) fn breed(&self, c: &mut Creature, t: &mut BreedTick) {
+        self.breed_over(c, t, 1);
+    }
+
+    pub(super) fn breed_over(&self, c: &mut Creature, t: &mut BreedTick, ticks: u32) {
         let Some(k) = self.kind(c.species) else {
             return;
         };
         let Some(b) = k.breeding else {
             return;
         };
-        c.rest = c.rest.saturating_sub(1);
+        c.rest = c.rest.saturating_sub(ticks);
         if c.carrying > 0 {
-            c.carrying -= 1;
+            let since_birth = ticks.saturating_sub(c.carrying);
+            c.carrying = c.carrying.saturating_sub(ticks);
             if c.carrying == 0 {
                 let mut rng = self.breed_rng(c);
                 for _ in 0..brood_size(b.brood, &mut rng) {
@@ -348,7 +353,7 @@ impl World {
                         alleles: inherit(c.alleles, c.sire, k.morphs, k.wild, &mut rng),
                     });
                 }
-                c.rest = b.rest;
+                c.rest = b.rest.saturating_sub(since_birth);
             }
             return;
         }
@@ -408,6 +413,10 @@ impl World {
     /// born, clutches laid and, once a second, due clutches hatch. Returns
     /// whether anything was added.
     pub(super) fn finish_breeding(&mut self, t: BreedTick) -> bool {
+        self.finish_breeding_over(t, self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND)))
+    }
+
+    pub(super) fn finish_breeding_over(&mut self, t: BreedTick, check_clutches: bool) -> bool {
         let mut changed = false;
         for b in t.births {
             changed |= self
@@ -424,9 +433,7 @@ impl World {
                 }
             }
         }
-        if self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND))
-            && !self.creatures.clutches.is_empty()
-        {
+        if check_clutches && !self.creatures.clutches.is_empty() {
             changed |= self.hatch();
         }
         changed

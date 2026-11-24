@@ -63,6 +63,7 @@
 mod bottom;
 mod breathing;
 mod breeding;
+mod catch_up;
 mod habits;
 mod lifecycle;
 mod live;
@@ -1853,25 +1854,29 @@ impl World {
         for y in reach.y0..reach.y1 {
             for x in reach.x0..reach.x1 {
                 if self.edible_cell(k, y * self.width + x) {
-                    let to = if y < self.surface_row {
-                        self.creatures.air
-                    } else {
-                        self.creatures.water
-                    };
-                    let cell = self.cells[y * self.width + x];
-                    if self.plants.part(cell.material).is_some() {
-                        self.graze_plant(cell.state);
-                    }
-                    self.write_cell(x, y, to, &mut None);
-                    c.satiety = c.satiety.saturating_add(BITE).min(FULL);
-                    c.energy = c.energy.saturating_add(BITE_ENERGY).min(ENERGY_RESERVE);
-                    c.eaten += 1;
+                    self.eat_cell(c, x, y);
                     return true;
                 }
             }
         }
         (k.eats_corpses && self.bite_corpse(reach, c))
             || (k.is_shrimp && self.graze_sponge(reach, c))
+    }
+
+    fn eat_cell(&mut self, c: &mut Creature, x: usize, y: usize) {
+        let to = if y < self.surface_row {
+            self.creatures.air
+        } else {
+            self.creatures.water
+        };
+        let cell = self.cells[y * self.width + x];
+        if self.plants.part(cell.material).is_some() {
+            self.graze_plant(cell.state);
+        }
+        self.write_cell(x, y, to, &mut None);
+        c.satiety = c.satiety.saturating_add(BITE).min(FULL);
+        c.energy = c.energy.saturating_add(BITE_ENERGY).min(ENERGY_RESERVE);
+        c.eaten += 1;
     }
 
     /// Shrimp biofilm grazing on an adjacent sponge filter's foam body (DV4):
