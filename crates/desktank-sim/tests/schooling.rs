@@ -203,3 +203,40 @@ fn a_school_never_presses_against_the_side_walls() {
         assert_eq!(pressed, 0, "seed {seed}");
     }
 }
+
+/// The longest run of ticks, per fish, each held still over `ticks` ticks.
+fn longest_stills(w: &mut World, ticks: u32) -> Vec<u32> {
+    let mut last: Vec<_> = w.creatures().iter().map(Creature::centre).collect();
+    let (mut still, mut longest) = (vec![0_u32; last.len()], vec![0_u32; last.len()]);
+    for _ in 0..ticks {
+        w.tick();
+        for (i, c) in w.creatures().iter().enumerate() {
+            if c.centre() == last[i] {
+                still[i] += 1;
+                longest[i] = longest[i].max(still[i]);
+            } else {
+                (still[i], last[i]) = (0, c.centre());
+            }
+        }
+    }
+    longest
+}
+
+/// A follower whose place lies beyond a side wall doesn't sit pinned at
+/// the wall: in a tank barely wider than a few body lengths slots reach
+/// past the glass all the time, and once the place was clamped to one
+/// column (and one row) the follower reached it and held still for
+/// hundreds of ticks until its head swam on.
+#[test]
+fn a_follower_whose_place_lies_beyond_a_wall_keeps_moving() {
+    for seed in 1..=6 {
+        let mut w = world(48, 100, seed);
+        let s = species(&w, "neon_tetra");
+        for i in 0..8 {
+            w.add_creature(s, 6 + 5 * i, 45 + (i % 3) * 6).unwrap();
+        }
+        let longest = longest_stills(&mut w, 12_000).into_iter().max().unwrap();
+        eprintln!("seed {seed}: longest still {longest} ticks");
+        assert!(longest <= 5 * TICKS_PER_SECOND, "seed {seed}: {longest}");
+    }
+}

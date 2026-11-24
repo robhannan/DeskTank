@@ -48,7 +48,9 @@
 //!   up and slows down (see [`lead_pace`]).
 //! - **Walls.** A place is clamped to the rows of the species' zone and
 //!   the columns that hold the whole body inside the side walls, as a
-//!   wander target is (see [`clamp_to_walls`]).
+//!   wander target is; a place beyond a side wall folds back off it
+//!   instead, so a fish doesn't sit pinned at the wall (see
+//!   [`fold_to_walls`]).
 //!
 //! The noise is the creature's [`Quirks`]: a few integer hashes a tick, no
 //! state, independent of update order and of any other creature.
@@ -212,13 +214,32 @@ pub(super) fn lead_pace(q: Quirks, k: &Kind) -> i32 {
     (slow + (fast - slow) * n / (2 * ONE)).max(1)
 }
 
-/// `tx` limited to the columns (1/256 cells) that hold a body `w` cells
-/// wide inside the walls of a tank `width` cells wide, as a wander target
-/// is picked: centred at least `w / 2 + 1` cells from each side.
-pub(super) fn clamp_to_walls(tx: i32, w: i32, width: usize) -> i32 {
+/// The columns (1/256 cells, `lo..=hi`) that hold a body `w` cells wide
+/// inside the walls of a tank `width` cells wide: centred at least
+/// `w / 2 + 1` cells from each side.
+fn wall_columns(w: i32, width: usize) -> (i32, i32) {
     let hw = i64::from(w / 2 + 1);
     let (lo, hi) = (hw, (super::to_i64(width) - hw - 1).max(hw));
-    tx.clamp(super::centre_of(lo), super::centre_of(hi))
+    (super::centre_of(lo), super::centre_of(hi))
+}
+
+/// A follower's place `tx` kept inside the side walls by folding it back
+/// off the wall by as far as it overshoots (then clamped, in a tank too
+/// narrow to fold into). Clamping alone pinned every place beyond a wall
+/// to one column: with the head loitering near the wall (or below the
+/// species' rows, so the row clamps too) the follower reached that point
+/// and sat still against the glass until the head swam on. Folded, the
+/// place keeps following the head and the slot's drift.
+pub(super) fn fold_to_walls(tx: i32, w: i32, width: usize) -> i32 {
+    let (lo, hi) = wall_columns(w, width);
+    let folded = if tx < lo {
+        i64::from(lo) * 2 - i64::from(tx)
+    } else if tx > hi {
+        i64::from(hi) * 2 - i64::from(tx)
+    } else {
+        i64::from(tx)
+    };
+    i32::try_from(folded.clamp(i64::from(lo), i64::from(hi))).unwrap_or(lo)
 }
 
 #[cfg(test)]
@@ -466,13 +487,34 @@ mod tests {
             50 * ONE,
             99 * ONE,
         ] {
-            let t = clamp_to_walls(tx, 7, 100);
+            let t = fold_to_walls(tx, 7, 100);
             assert!((lo..=hi).contains(&t), "{tx} -> {t}");
             assert_eq!(t == tx, (lo..=hi).contains(&tx));
         }
-        assert_eq!(clamp_to_walls(i32::MAX / 2, 7, 100), hi);
-        // A tank narrower than the fish can't panic.
-        let _ = clamp_to_walls(0, 7, 3);
+    }
+
+    #[test]
+    fn a_place_beyond_a_wall_folds_back_and_keeps_moving() {
+        let (lo, hi) = (4 * ONE + ONE / 2, (100 - 4 - 1) * ONE + ONE / 2);
+        // Inside the walls it is untouched.
+        for tx in [lo, 50 * ONE, hi] {
+            assert_eq!(fold_to_walls(tx, 7, 100), tx);
+        }
+        // Beyond one it mirrors, so a place that drifts keeps moving
+        // instead of pinning at the wall.
+        assert_eq!(fold_to_walls(lo - 3 * ONE, 7, 100), lo + 3 * ONE);
+        assert_eq!(fold_to_walls(hi + 5 * ONE, 7, 100), hi - 5 * ONE);
+        assert_ne!(
+            fold_to_walls(-2 * ONE, 7, 100),
+            fold_to_walls(-3 * ONE, 7, 100)
+        );
+        // A fold that overshoots the far wall clamps there; extremes and
+        // a tank narrower than the fish can't panic.
+        for tx in [i32::MIN, -1_000 * ONE, 1_000 * ONE, i32::MAX] {
+            let t = fold_to_walls(tx, 7, 100);
+            assert!((lo..=hi).contains(&t), "{tx} -> {t}");
+        }
+        let _ = fold_to_walls(0, 7, 3);
     }
 
     #[test]
