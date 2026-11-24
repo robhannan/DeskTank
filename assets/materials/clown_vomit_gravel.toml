@@ -1,0 +1,7 @@
+id = 15
+name = "clown_vomit_gravel"
+palette = "build/substrate"
+class = "powder"
+density = 2.4
+repose = 40.0
+colour = "#ff2a9d"

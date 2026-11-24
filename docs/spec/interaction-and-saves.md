@@ -22,8 +22,8 @@
     sub-tabs (none where a tab has only one sub-category) and the open
     sub-category's items:
     - **Tools**: scoop, net, inspect, glue, magnify;
-    - **Build**: Substrate (sand, gravel, aquasoil), Hardscape (rock,
-      driftwood), Devices (bubbler, internal filter: a see-through
+    - **Build**: Substrate (sand, gravel, aquasoil, clown vomit gravel),
+      Hardscape (rock, driftwood), Devices (bubbler, internal filter: a see-through
       placement ghost at the pointer and a flip key (X) or button for the
       other glass; see [devices](devices.md));
     - **Water**: water, air bubbles, CO₂ bubbles;

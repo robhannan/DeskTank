@@ -1183,7 +1183,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if !open_up {
             k = k * 0.96;
         }
-        return vec4<f32>(clamp(base * warm * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+        var pebble_base = base;
+        if max(base.r, max(base.g, base.b)) - min(base.r, min(base.g, base.b)) > 0.4 {
+            pebble_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
+        }
+        return vec4<f32>(clamp(pebble_base * warm * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
     }
 
     if style == STYLE_AQUASOIL {

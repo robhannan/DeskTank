@@ -14,7 +14,7 @@ blade_length = 2
 lean = 0
 root_depth = 3
 spacing = 3
-substrates = ["sand", "gravel", "aquasoil"]
+substrates = ["sand", "gravel", "aquasoil", "clown_vomit_gravel"]
 
 [prefer]
 light = { min = 0.12, optimum = 0.75, max = 2.0 }
