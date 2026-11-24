@@ -15,7 +15,7 @@ internode = 2
 leaf_length = 3
 root_depth = 8
 branching = 0.15
-substrates = ["sand", "gravel", "aquasoil"]
+substrates = ["sand", "gravel", "aquasoil", "clown_vomit_gravel"]
 
 [prefer]
 light = { min = 0.08, optimum = 0.6, max = 1.4 }

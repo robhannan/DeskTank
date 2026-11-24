@@ -75,7 +75,7 @@ impl GroundStyle {
             "air" => Self::Air,
             "liquid_fertiliser" => Self::Fertiliser,
             "sand" => Self::Sand,
-            "gravel" => Self::Gravel,
+            "gravel" | "clown_vomit_gravel" => Self::Gravel,
             "aquasoil" => Self::Aquasoil,
             "rock" => Self::Rock,
             "driftwood" => Self::Driftwood,
@@ -99,6 +99,15 @@ impl GroundStyle {
 /// cell picks one from its variant byte: mostly the base, sometimes a darker
 /// or lighter speck.
 const SHADES: [u32; 4] = [256, 240, 274, 225];
+
+const NEON_GRAVEL_COLOURS: [[u8; 3]; 6] = [
+    [0xff, 0x2a, 0x9d],
+    [0x00, 0x88, 0xff],
+    [0x52, 0xf2, 0x18],
+    [0xff, 0xde, 0x00],
+    [0x9b, 0x26, 0xff],
+    [0xff, 0x66, 0x00],
+];
 
 /// Colour of unknown material IDs: loud magenta, so a gap is obvious.
 const UNKNOWN: [u8; 3] = [0xff, 0x00, 0xff];
@@ -149,6 +158,7 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
         columns[d] = columns[w];
     }
     let mut out = vec![0; SIDE * SIDE * 4];
+    let neon_gravel = materials.id("clown_vomit_gravel");
     for (variant, row) in out.as_chunks_mut::<{ SIDE * 4 }>().0.iter_mut().enumerate() {
         #[allow(clippy::cast_possible_truncation)] // variant < 256
         let s = shade(variant as u8);
@@ -169,6 +179,12 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
             // The high bit marks rigid materials for sprite occlusion.
             let flag = styles[material] as u8 | (u8::from(rigid[material]) << 7);
             px.copy_from_slice(&[r, g, b, flag]);
+        }
+        if let Some(id) = neon_gravel {
+            // A powder cell carries its variant with it as it falls and slides.
+            let rgb = NEON_GRAVEL_COLOURS[variant % NEON_GRAVEL_COLOURS.len()];
+            let offset = usize::from(id.0) * 4;
+            row[offset..offset + 3].copy_from_slice(&rgb);
         }
     }
     out
@@ -230,6 +246,25 @@ mod tests {
     }
 
     #[test]
+    fn clown_vomit_gravel_variants_are_bright_saturated_pebbles() {
+        let mats = MaterialTable::builtin().unwrap();
+        let table = build(&mats);
+        let id = mats.id("clown_vomit_gravel").unwrap().0;
+        let mut colours = std::collections::BTreeSet::new();
+        for v in 0..=u8::MAX {
+            let [r, g, b, a] = texel(&table, id, v);
+            let rgb = [r, g, b];
+            assert_eq!(a, GroundStyle::Gravel as u8);
+            let (min, max) = (*rgb.iter().min().unwrap(), *rgb.iter().max().unwrap());
+            assert!(max >= 210 && max - min >= 180, "{rgb:?}");
+            if v < 6 {
+                colours.insert(rgb);
+            }
+        }
+        assert_eq!(colours.len(), 6);
+    }
+
+    #[test]
     fn glued_rigid_cells_get_a_tint_and_keep_their_shade() {
         let mats = MaterialTable::builtin().unwrap();
         let table = build(&mats);
@@ -274,6 +309,7 @@ mod tests {
             ("liquid_fertiliser", GroundStyle::Fertiliser),
             ("sand", GroundStyle::Sand),
             ("gravel", GroundStyle::Gravel),
+            ("clown_vomit_gravel", GroundStyle::Gravel),
             ("aquasoil", GroundStyle::Aquasoil),
             ("rock", GroundStyle::Rock),
             ("driftwood", GroundStyle::Driftwood),

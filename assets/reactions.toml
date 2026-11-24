@@ -114,7 +114,7 @@ into = "detritus"
 # nutrients fall below the same level.
 [[spawn]]
 material = "algae"
-on = ["sand", "gravel", "aquasoil", "rock", "driftwood"]
+on = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]
 rate = 0.2
 when = [{ field = "nutrient", above = 0.6 }, { field = "light", above = 0.15 }]
 
@@ -123,7 +123,7 @@ material = "algae"
 into = ["water"]
 makes = "algae"
 dirs = ["up", "down", "left", "right"]
-touching = ["sand", "gravel", "aquasoil", "rock", "driftwood"]
+touching = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]
 p = 0.03
 needs = [{ field = "nutrient", above = 0.6 }, { field = "light", above = 0.15 }]
 consume = { field = "nutrient", amount = 0.005 }
@@ -133,4 +133,4 @@ material = "algae"
 into = "water"
 p = 0.01
 unless = { field = "nutrient", above = 0.6 }
-attached = ["sand", "gravel", "aquasoil", "rock", "driftwood"]
+attached = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]

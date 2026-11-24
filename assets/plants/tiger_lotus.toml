@@ -25,7 +25,7 @@ lean = 14
 root_depth = 10
 spacing = 40
 runner_depth = 4
-substrates = ["sand", "gravel", "aquasoil"]
+substrates = ["sand", "gravel", "aquasoil", "clown_vomit_gravel"]
 pad = 4
 
 [prefer]

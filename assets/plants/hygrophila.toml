@@ -13,7 +13,7 @@ height = 48
 internode = 2
 leaf_length = 3
 root_depth = 10
-substrates = ["sand", "gravel", "aquasoil"]
+substrates = ["sand", "gravel", "aquasoil", "clown_vomit_gravel"]
 
 # Light, nutrient and CO₂ ranges (field units): 0 response outside
 # min..max, 1 at the optimum, linear between. CO₂'s min below 0 lets it

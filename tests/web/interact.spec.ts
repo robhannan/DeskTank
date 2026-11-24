@@ -444,7 +444,7 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await expect(subs).toHaveText(["Substrate", "Hardscape", "Devices"]);
   await expect(tab("Substrate")).toHaveAttribute("aria-selected", "true");
   const radios = page.locator("#palette").getByRole("radio");
-  await expect(radios).toHaveText(["Sand", "Gravel", "Aquasoil"]);
+  await expect(radios).toHaveText(["Sand", "Gravel", "Aquasoil", "Clown vomit gravel"]);
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
   // Fish are split by stocking role; invertebrates into shrimp and snails;
   // amphibians are one sub-category, with no sub-tab row.

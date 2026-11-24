@@ -1235,7 +1235,10 @@ mod tests {
             .collect();
         let want: Vec<(&str, Vec<&str>)> = vec![
             ("tools", vec!["Scoop", "Net", "Inspect", "Glue", "Magnify"]),
-            ("build/substrate", vec!["sand", "gravel", "aquasoil"]),
+            (
+                "build/substrate",
+                vec!["sand", "gravel", "aquasoil", "clown_vomit_gravel"],
+            ),
             ("build/hardscape", vec!["rock", "driftwood"]),
             (
                 "build/devices",

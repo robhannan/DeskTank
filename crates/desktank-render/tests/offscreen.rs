@@ -1428,3 +1428,76 @@ fn overlay_aligns_to_the_floor_and_composites_water_and_sprites() {
         assert_eq!(opaque, render_sized(gpu, &mut tank, format, size));
     }
 }
+
+/// Clown vomit gravel renders each pebble in its variant's saturated neon
+/// colour (more than the two low-bit variants), identically on single-pass
+/// and split-grid pipelines.
+#[test]
+fn clown_vomit_gravel_renders_multiple_saturated_pebble_colours() {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (tw, th) = (320u32, 180u32);
+    let mut single: Option<Vec<u8>> = None;
+    for split_grid in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid,
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        let materials = MaterialTable::builtin().unwrap();
+        let gravel = materials.id("clown_vomit_gravel").unwrap();
+        let mut world = World::new(
+            WorldConfig {
+                width: 80,
+                height: 45,
+                seed: 1,
+                water_level: 1.0,
+            },
+            materials,
+        )
+        .unwrap();
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: 10,
+                    y0: 36,
+                    x1: 70,
+                    y1: 45,
+                },
+                gravel,
+                Brush::Replace,
+            )
+            .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let img = render_sized(gpu, &mut tank, format, (tw, th));
+        if let Some(prev) = &single {
+            assert_eq!(&img, prev, "split-grid must match single-grid");
+        } else {
+            single = Some(img.clone());
+        }
+        let (mut has_green, mut has_yellow, mut has_pink_or_violet, mut has_blue) =
+            (false, false, false, false);
+        for y in (36 * 4)..(45 * 4) {
+            for x in (10 * 4)..(70 * 4) {
+                let i = ((y * tw + x) * 4) as usize;
+                let (r, g, b) = (img[i], img[i + 1], img[i + 2]);
+                if g > 180 && r < 140 && b < 100 {
+                    has_green = true;
+                }
+                if r > 180 && g > 160 && b < 80 {
+                    has_yellow = true;
+                }
+                if r > 150 && b > 140 && g < 100 {
+                    has_pink_or_violet = true;
+                }
+                if b > 180 && r < 80 {
+                    has_blue = true;
+                }
+            }
+        }
+        assert!(
+            has_green && has_yellow && has_pink_or_violet && has_blue,
+            "missing saturated pebble colours: green={has_green} yellow={has_yellow} pink_or_violet={has_pink_or_violet} blue={has_blue}"
+        );
+    }
+}
