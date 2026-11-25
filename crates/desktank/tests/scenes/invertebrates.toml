@@ -1,5 +1,5 @@
 # Shrimp and crabs: cherry and amano shrimp walking and hopping over an
-# aquasoil bed and grazing an algae film, and Thai micro crabs clinging to
+# aquasoil bed, and Thai micro crabs clinging to
 # the plants and rock and walking the bed. Grown for 6 minutes first.
 ticks = 7600
 
@@ -41,16 +41,6 @@ x = 146
 y = 20
 radius = 0
 plant = "rotala"
-
-# An algae film on the bed for the shrimp to graze.
-[[pour]]
-tick = 6800
-repeat = 16
-x = 70
-y = 80
-dx = 2
-radius = 1
-material = "algae"
 
 [[creature]]
 tick = 7200

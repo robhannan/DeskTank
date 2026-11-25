@@ -390,7 +390,16 @@ fn overfeeding_grows_algae_and_a_water_change_clears_it() {
     for _ in 0..30 * MINUTE {
         step(&mut w);
         if w.tick_count().is_multiple_of(u64::from(MINUTE)) {
-            worst = worst.min(w.ecosystem().quality);
+            let eco = w.ecosystem();
+            if w.tick_count().is_multiple_of(10 * u64::from(MINUTE)) {
+                eprintln!(
+                    "{} min: nutrient {:.3}, {:.1}% coat",
+                    w.tick_count() / u64::from(MINUTE),
+                    eco.mean_nutrient,
+                    eco.algae_coverage * 100.0
+                );
+            }
+            worst = worst.min(eco.quality);
         }
     }
     let before = w.ecosystem();
@@ -406,13 +415,18 @@ fn overfeeding_grows_algae_and_a_water_change_clears_it() {
     let after_change = w.ecosystem();
     assert!(after_change.quality > before.quality);
     assert!(after_change.mean_nutrient < 0.5 * before.mean_nutrient + 1e-3);
-    for _ in 0..30 * MINUTE {
+    for _ in 0..10 * MINUTE {
         step(&mut w);
     }
     let after = w.ecosystem();
+    eprintln!(
+        "10 min after the water change: nutrient {:.3}, {:.1}% coat",
+        after.mean_nutrient,
+        after.algae_coverage * 100.0
+    );
     assert!(
         after.algae_coverage < 0.01,
-        "algae still covers {:.1}% 30 minutes after the water change",
+        "algae still covers {:.1}% 10 minutes after the water change",
         after.algae_coverage * 100.0
     );
 }

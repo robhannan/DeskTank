@@ -272,8 +272,8 @@ fn climbing_scene_matches_reference() {
     check("climbing");
 }
 
-/// Shrimp and crabs: cherry and amano shrimp on an aquasoil bed grazing
-/// algae, and Thai micro crabs on the plants and rock.
+/// Shrimp and crabs: cherry and amano shrimp on an aquasoil bed, and Thai
+/// micro crabs on the plants and rock.
 #[test]
 fn invertebrates_scene_matches_reference() {
     check("invertebrates");

@@ -1332,7 +1332,7 @@ impl ApplicationHandler<Wake> for App {
                     Key::Character(c) if c.eq_ignore_ascii_case("q") => {
                         let e = s.tank.world().ecosystem();
                         s.window.set_title(&format!(
-                            "DeskTank — water quality {:.0}%, nutrients {:.2}, algae {:.1}%",
+                            "DeskTank — water quality {:.0}%, nutrients {:.2}, surface algae {:.1}%",
                             e.quality * 100.0,
                             e.mean_nutrient,
                             e.algae_coverage * 100.0

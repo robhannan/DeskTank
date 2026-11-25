@@ -31,7 +31,7 @@
       wafers), Live (live bloodworms);
     - **Care**: root tabs, liquid fertiliser, waste, detritus;
     - **Plants**: Stem, Rosette, Carpet, Floating, Moss & epiphytes
-      (one item per plant species), Algae;
+      (one item per plant species);
     - **Fish**, by stocking role: Schooling (neon tetra, harlequin
       rasbora, guppy), Centrepiece (angelfish, betta, flowerhorn, honey
       gourami, pea puffer), Coldwater (common and fancy goldfish),
@@ -179,6 +179,9 @@
     - the device table (version 12, D27; loading version 11 or older
       turns legacy filter outlet cells into internal filters, see
       [devices](devices.md) *Migration*);
+    - the surface and glass algae density planes (version 16, D28). Older
+      saves replace algae material cells with water and start with bare
+      surfaces;
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

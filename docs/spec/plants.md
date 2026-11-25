@@ -8,7 +8,7 @@ species growing into it: it has its own age, health and size, competes
 for light and nutrients, and the inspect card shows it. T6 built plants
 as materials and rules (§2.2 *T6*, §2.3 *T6*); T6b turns them into this
 model, T6c adds the growth forms and T6d the appearance effects. Algae
-stays a material film, not individuals.
+grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
 
 - **Species are data**, as creatures are (§2.4, D8). One TOML file per
   species in `assets/plants/` defines:

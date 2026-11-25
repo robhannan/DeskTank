@@ -1,10 +1,6 @@
-# A nuisance film. Spores settle on substrate, rock and wood where the water
-# holds excess nutrients and light; the film spreads over those surfaces and
-# dies back once the nutrients fall (`assets/reactions.toml`).
+# Retired material ID kept for saves written before the surface coat (v16).
 id = 76
 name = "algae"
-# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
-palette = "plants/algae"
 class = "solid"
 density = 1.05
 opacity = 0.5

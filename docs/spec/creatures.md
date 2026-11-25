@@ -8,7 +8,7 @@
   - size;
   - zone: surface, mid-water, bottom or surfaces;
   - temperament: schooling, shoaling, peaceful or territorial;
-  - diet: which food and which materials it grazes, such as algae and
+  - diet: which food it eats and surfaces or materials it grazes, such as algae film and
     detritus, and which plant species (by their palatability, §2.7);
   - lifespan and maturity age;
   - breeding: egg layer (and which egg material) or livebearer;

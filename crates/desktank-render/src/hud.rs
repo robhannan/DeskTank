@@ -617,8 +617,8 @@ mod tests {
         .unwrap();
         let tree = desktank_sim::tools::Tools::palette_tree(&w);
         let subs = tree.iter().map(|t| t.subs.len()).max().unwrap();
-        // Plants' six sub-tabs are the widest sub-tab row; Fish has four.
-        assert_eq!(subs, 6);
+        // Plants' five sub-tabs are the widest sub-tab row. Fish has four.
+        assert_eq!(subs, 5);
         assert_eq!(tree.len(), 9, "nine top tabs");
         let widest = tree
             .iter()

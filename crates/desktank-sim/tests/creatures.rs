@@ -289,8 +289,16 @@ fn ticks_to_eat(
     let fish = w.add_creature(species(&w, name), start.0, start.1).unwrap();
     // Let it settle into swimming first.
     run(&mut w, 40);
-    let f = id(&w, food);
-    w.paint(at.0, at.1, 1, f, Brush::Pour).unwrap();
+    if food == "algae" {
+        assert!(w.set_algae_coat(
+            usize::try_from(at.0).unwrap(),
+            usize::try_from(at.1 + 1).unwrap(),
+            4,
+        ));
+    } else {
+        let f = id(&w, food);
+        w.paint(at.0, at.1, 1, f, Brush::Pour).unwrap();
+    }
     for t in 1..=limit {
         w.tick();
         if w.creature(fish).unwrap().eaten() > 0 {
@@ -849,7 +857,7 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
 }
 
 #[test]
-fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
+fn grazing_removes_food_or_coat_and_updates_the_ecosystem() {
     let grazers: [(&str, &[&str]); 9] = [
         ("corydoras", &["algae", "detritus"]),
         ("nerite", &["algae", "detritus"]),
@@ -865,9 +873,15 @@ fn grazing_removes_real_cells_feeds_and_updates_the_ecosystem() {
         for &meal in meals {
             let mut w = world(128, 64, 7);
             sand_bed(&mut w, 6);
-            let food = id(&w, meal);
-            w.fill_rect(rect(34, 57, 46, 58), food, Brush::Replace)
-                .unwrap();
+            if meal == "algae" {
+                for x in 34..46 {
+                    assert!(w.set_algae_coat(x, 58, 4));
+                }
+            } else {
+                let food = id(&w, meal);
+                w.fill_rect(rect(34, 57, 46, 58), food, Brush::Replace)
+                    .unwrap();
+            }
             let grazer = w.add_creature(species(&w, name), 40, 54).unwrap();
             let mut control = w.clone();
             control.remove_creature(grazer);
@@ -1151,11 +1165,12 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     w.set_anchored(w.body_at(76, 60).unwrap(), true);
     // A film on the rock's left face and top, about 45 cells from the
     // start.
-    let algae = id(&w, "algae");
-    w.fill_rect(rect(69, 50, 70, 66), algae, Brush::Replace)
-        .unwrap();
-    w.fill_rect(rect(72, 45, 82, 46), algae, Brush::Replace)
-        .unwrap();
+    for y in 50..66 {
+        assert!(w.set_algae_coat(70, y, 4));
+    }
+    for x in 72..82 {
+        assert!(w.set_algae_coat(x, 46, 4));
+    }
     let oto = w.add_creature(species(&w, "otocinclus"), 20, 72).unwrap();
     // The same tank without it, for the algae it took.
     let mut control = w.clone();
@@ -1185,7 +1200,7 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     let eaten = w.creature(oto).unwrap().eaten();
     assert!(eaten >= 4, "grazed {eaten} cells");
     // Every bite was a cell of the film.
-    let cells = |w: &World| w.material_counts()[usize::from(algae.0)];
+    let cells = |w: &World| w.ecosystem().algae_cells;
     assert_eq!(cells(&control) - cells(&w), eaten as usize);
 }
 
