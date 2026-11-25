@@ -27,7 +27,7 @@
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Six species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Seven species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp), `swim_every` (seconds between a
@@ -37,8 +37,9 @@
   burrow into loose substrate, never rock: the kuhli loach; digging
   moves the grains it displaces onto spoil heaps beside it and draws them
   back over its body, conserving the substrate), `bands` (the depth bands it
-  keeps to, front and back, D21; every band by default) and `rests` (where
-  it rests at night, *Night* below). Every species also gives its
+  keeps to, front and back, D21; every band by default), `rests` (where
+  it rests at night, *Night* below) and `shy` (seeks cover and startles
+  easily, false by default). Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
@@ -258,8 +259,9 @@
   T9 part 2's predation, unchanged):
   - **Sensing.** Every 10 ticks (offset by its id) a creature looks round
     a start-of-tick snapshot of the tank's creatures, built only while the
-    tank holds a predator (outside easy mode) or a territorial species, so
-    the cost is at most n²/10 distance checks a tick.
+    tank holds a predator (outside easy mode), a territorial or shy creature,
+    or live food and one of its eaters. The cost is at most n²/10 distance
+    checks a tick.
   - **Hunting.** A hungry adult predator, outside easy mode, not in the
     net, not heading for food and rested picks the nearest creature it
     could eat (no longer than its `prey_cm`) within 40 cells (20 cm) that
@@ -282,6 +284,15 @@
     ticks (its own reaction time), so the fright ripples outward through
     the school, fading as it goes, rather than reaching every fish at once.
     A loose shoal doesn't pass a fright on.
+  - **Shyness.** Honey gouramis and kuhli loaches keep to the back bands
+    and draw up to three wander targets, taking the first in plant cover
+    or the last draw if none is sheltered. A calm, awake shy creature
+    startles at an approaching swimmer at least 1.5 times its grown
+    length, within three of its own grown lengths (at least 8 cells before
+    its boldness is applied). An awake shy creature also startles when
+    the keeper pours something it does not eat within 12 cells. It holds
+    still if already in cover, seeks cover, or runs away as when hunted.
+    It avoids an enabled cursor within five body lengths.
   - **Cover.** A creature is in cover with 4 plant cells within 2 bands
     of its own inside 2 cells of its body. A predator neither sees nor
     strikes prey in cover.
@@ -328,9 +339,10 @@
     settles again once it has breathed.
   - **Waking.** It wakes at its wake time, or when disturbed: the net
     holds it, it takes fright, the avoided cursor comes within three body
-    lengths, or the keeper pours something within 12 cells of it; and
-    pouring food it eats anywhere wakes it (feeding). Woken at night it
-    stays up for two minutes, long enough to eat, then settles again.
+    lengths (five for shy creatures), or the keeper pours something within
+    12 cells of it. Pouring food it eats anywhere also wakes it. Woken
+    at night it stays up for two minutes, long enough to eat, then settles
+    again.
   - **State.** Asleep and the woken counter are saved (format version 15,
     migrating version 14 creatures awake) and hashed only when set, so a
     tank by day hashes as before.

@@ -252,6 +252,8 @@ pub struct Species {
     pub air_tolerance_seconds: u32,
     /// Temperament.
     pub temperament: Temperament,
+    /// Whether it seeks cover and startles easily.
+    pub shy: bool,
     /// Cruising speed, cells per second.
     pub speed: f32,
     /// Top speed (chasing food), cells per second.
@@ -555,6 +557,7 @@ pub enum SpeciesError {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // independent species traits
 struct SpeciesDef {
     id: u8,
     name: String,
@@ -570,6 +573,8 @@ struct SpeciesDef {
     #[serde(default)]
     air_tolerance_seconds: Option<u32>,
     temperament: Temperament,
+    #[serde(default)]
+    shy: bool,
     speed: f32,
     max_speed: f32,
     diet: Vec<String>,
@@ -1021,6 +1026,7 @@ fn validate(
         breathes_air: d.breathes_air,
         air_tolerance_seconds: d.air_tolerance_seconds.unwrap_or(0),
         temperament: d.temperament,
+        shy: d.shy,
         speed: d.speed,
         max_speed: d.max_speed,
         diet,
@@ -1507,6 +1513,22 @@ mod tests {
         let species = table.iter().next().unwrap();
         assert_eq!(species.describe_requirements(), "min depth 5.5 cm");
         assert_eq!(species.describe_diet(&materials), "none");
+    }
+
+    #[test]
+    fn shy_defaults_to_false_and_requires_a_boolean() {
+        let m = materials();
+        let species = |source: &str| SpeciesTable::from_toml_sources(&[source], &m);
+        assert!(!species(OK).unwrap().get(SpeciesId(9)).unwrap().shy);
+        for (value, expected) in [("true", true), ("false", false)] {
+            let source = OK.replace("min_depth = 10", &format!("min_depth = 10\nshy = {value}"));
+            assert_eq!(
+                species(&source).unwrap().get(SpeciesId(9)).unwrap().shy,
+                expected
+            );
+        }
+        let bad = OK.replace("min_depth = 10", "min_depth = 10\nshy = 1");
+        assert!(species(&bad).is_err());
     }
 
     #[test]
@@ -2422,9 +2444,14 @@ mod tests {
                 "bands = {bad}"
             );
         }
-        // Every built-in species uses every band.
         for s in SpeciesTable::builtin_for(&m).unwrap().iter() {
-            assert_eq!(s.bands, [0, DEPTH_BANDS - 1], "{}", s.name);
+            let front = match s.name.as_str() {
+                "honey_gourami" => 3,
+                "kuhli_loach" => 2,
+                _ => 0,
+            };
+            assert_eq!(s.bands, [front, DEPTH_BANDS - 1], "{}", s.name);
+            assert_eq!(s.shy, front > 0, "{}", s.name);
         }
     }
 
