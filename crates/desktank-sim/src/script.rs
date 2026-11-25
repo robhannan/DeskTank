@@ -50,6 +50,10 @@
 //!                    # has fewer of, a male on a tie)
 //! morph = "blue"     # a colour morph of the species, both alleles (default:
 //!                    # the palette's)
+//! carrying_days = 20.0 # start a mature female of a livebearing species
+//!                    # carrying her young (a berried shrimp, a gravid guppy),
+//!                    # with this many days of her gestation left (default:
+//!                    # not carrying); an error for anything else
 //! ```
 //!
 //! Water changes, then placements, then pours, then creatures due on tick `t` are applied just
@@ -105,6 +109,15 @@ pub enum ScriptError {
         species: String,
         /// The morph name.
         morph: String,
+    },
+    /// A `[[creature]]` entry sets `carrying_days` on something other than a
+    /// mature female of a livebearing species, or to less than a tick.
+    #[error(
+        "species {species:?} can't start carrying young: needs a mature female livebearer and days > 0"
+    )]
+    CannotCarry {
+        /// The species name.
+        species: String,
     },
     /// A `[[creature]]` entry asks for more creatures than a tank holds.
     #[error("count {0} is more than a tank holds")]
@@ -268,6 +281,10 @@ pub struct AddCreatures {
     /// A colour morph name, given both alleles (`None`: the palette's).
     #[serde(default)]
     pub morph: Option<String>,
+    /// Days of gestation left for a female that starts out carrying her
+    /// young (`None`: not carrying).
+    #[serde(default)]
+    pub carrying_days: Option<f64>,
 }
 
 /// A creature's sex as written in a script.
@@ -467,9 +484,21 @@ impl Player<'_> {
                 female: c.sex.map(|s| s == Sex::Female),
                 alleles,
             };
+            // Clamped to a year of gestation, so the cast is exact.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let carrying = c
+                .carrying_days
+                .map(|d| (d.clamp(0.0, 365.0) * f64::from(crate::LIFE_DAY_TICKS)).round() as u32);
             for i in 0..i64::from(c.count) {
                 let x = c.x.saturating_add(c.dx.saturating_mul(i));
-                world.add_creature_with_traits(species, x, c.y, traits)?;
+                let id = world.add_creature_with_traits(species, x, c.y, traits)?;
+                if let Some(ticks) = carrying
+                    && !world.start_carrying(id, ticks)
+                {
+                    return Err(ScriptError::CannotCarry {
+                        species: c.species.clone(),
+                    });
+                }
             }
         }
         Ok(())
@@ -564,6 +593,47 @@ mod tests {
             Err(ScriptError::PropaguleWithoutPlant("seeds"))
         ));
         assert!(Script::parse(&pour("propagule = \"spores\"")).is_err());
+    }
+
+    #[test]
+    fn a_female_livebearer_can_start_out_carrying() {
+        let carrying = |extra: &str| {
+            format!("[[creature]]\nspecies = \"cherry_shrimp\"\nx = 20\ny = 40\n{extra}")
+        };
+        // Deterministic: the same script gives the same world, berried.
+        let s = Script::parse(&carrying("sex = \"female\"\ncarrying_days = 10.0")).unwrap();
+        let (mut a, mut b) = (world(&s, 5), world(&s, 5));
+        s.run(&mut a, 3).unwrap();
+        s.run(&mut b, 3).unwrap();
+        assert_eq!(a.state_hash(), b.state_hash());
+        let shrimp = &a.creatures()[0];
+        assert!(shrimp.female());
+        // About ten days left, less the three ticks run.
+        let left = i64::from(shrimp.carrying());
+        assert!(
+            (left - 10 * i64::from(crate::LIFE_DAY_TICKS)).abs() <= 3,
+            "{left}"
+        );
+        // Not carrying without the key.
+        let s = Script::parse(&carrying("sex = \"female\"")).unwrap();
+        let mut w = world(&s, 5);
+        s.run(&mut w, 1).unwrap();
+        assert_eq!(w.creatures()[0].carrying(), 0);
+        // Only a mature female of a livebearing species.
+        for bad in [
+            carrying("sex = \"male\"\ncarrying_days = 10.0"),
+            carrying("sex = \"female\"\ncarrying_days = 0.0"),
+            carrying("sex = \"female\"\nage_days = 1.0\ncarrying_days = 10.0"),
+            "[[creature]]\nspecies = \"betta\"\nx = 20\ny = 10\nsex = \"female\"\ncarrying_days = 1.0"
+                .to_owned(),
+        ] {
+            let s = Script::parse(&bad).unwrap();
+            let mut w = world(&s, 5);
+            assert!(
+                matches!(s.run(&mut w, 1), Err(ScriptError::CannotCarry { .. })),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

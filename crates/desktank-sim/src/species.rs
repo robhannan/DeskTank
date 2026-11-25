@@ -1683,6 +1683,33 @@ mod tests {
         assert_eq!(get("amano_shrimp").colour, [0xb3, 0xa8, 0x8c]);
     }
 
+    /// Cherry shrimp since #315: a 2 cm male, a 3 cm female and the same
+    /// female berried, whose yellow-orange eggs no morph recolours.
+    #[test]
+    fn cherry_shrimp_sexes_and_berried_eggs() {
+        const EGG: [u8; 4] = [0xf4, 0xa8, 0x30, 255];
+        let t = SpeciesTable::builtin_for(&materials()).unwrap();
+        let cherry = t.get(t.id("cherry_shrimp").unwrap()).unwrap();
+        assert!((cherry.length_cm - 2.5).abs() < f32::EPSILON);
+        assert!((cherry.length_cm_of(true) - 3.0).abs() < f32::EPSILON);
+        assert_eq!(cherry.size_of(false), (6, 2));
+        assert_eq!(cherry.size_of(true), (7, 2));
+        for morph in 0..4 {
+            let berried = &cherry.looks[cherry.look(morph, true, true)];
+            let plain = &cherry.looks[cherry.look(morph, true, false)];
+            assert_eq!(berried.size, plain.size, "morph {morph}");
+            for (eggs, plain) in [
+                (&berried.frames, &plain.frames),
+                (&berried.fine_frames, &plain.fine_frames),
+            ] {
+                assert!(eggs.iter().flatten().any(|t| *t == EGG), "morph {morph}");
+                assert!(!plain.iter().flatten().any(|t| *t == EGG), "morph {morph}");
+            }
+        }
+        let (red, blue) = (cherry.look(0, true, true), cherry.look(2, true, true));
+        assert_ne!(cherry.looks[red].frames, cherry.looks[blue].frames);
+    }
+
     /// T9 part 2: who breeds and how, who eats whom, and the colour morphs
     /// and female looks.
     #[test]
@@ -1721,18 +1748,21 @@ mod tests {
         }
         assert_eq!(prey("neon_tetra"), 0.0);
         // Cherry shrimp: the palette's red, reverting to a brown wildtype,
-        // and blue and yellow; drawn alike by sex.
+        // and blue and yellow; since #315 a smaller, slimmer male, a larger
+        // female and a berried female, in every morph.
         let cherry = get("cherry_shrimp");
         assert_eq!(cherry.morphs, ["red", "wild", "blue", "yellow"]);
         assert_eq!((cherry.palette_morph, cherry.wildtype), (0, 1));
-        assert!(!cherry.dimorphic());
-        assert_eq!(cherry.looks.len(), 4);
+        assert!(cherry.dimorphic());
+        assert_eq!(cherry.looks.len(), 12);
         assert_eq!(cherry.looks[0].frames, cherry.sprite.frames);
         assert_eq!(cherry.looks[0].fine_frames, cherry.sprite.fine_frames);
         let brown = &cherry.looks[usize::from(cherry.wildtype)];
         assert_ne!(brown.frames, cherry.sprite.frames);
         assert_ne!(brown.fine_frames, cherry.sprite.fine_frames);
-        assert_eq!(cherry.look(2, true, true), 2);
+        assert_eq!(cherry.look(2, true, true), 10);
+        assert_eq!(cherry.look(2, true, false), 6);
+        assert_eq!(cherry.look(2, false, true), 2);
         // Guppies: females have their own frames, in every strain.
         let guppy = get("guppy");
         assert_eq!(guppy.morphs, ["wild", "red", "blue"]);
@@ -2048,7 +2078,8 @@ mod tests {
     /// A morph or female colour set that recolours the sprite must also
     /// recolour the keys only its fine art uses, or a blue shrimp drawn
     /// finely would keep the red sprite's shading. Listed keys are colours
-    /// every strain shares (the guppy's pale belly and dorsal sheen).
+    /// every strain shares (the guppy's pale belly and dorsal sheen, and the
+    /// female's iris; the cherry shrimp's eggs).
     #[test]
     fn recolours_cover_the_keys_only_fine_art_uses() {
         let keys = |frames: &[Vec<String>]| -> BTreeSet<char> {
@@ -2062,8 +2093,13 @@ mod tests {
         for src in BUILTIN {
             let d: SpeciesDef = toml::from_str(src).unwrap();
             let mut fine_only = &keys(&d.sprite.fine_frames) - &keys(&d.sprite.frames);
-            if let (Some(f), Some(fine)) = (&d.sprite.female_frames, &d.sprite.female_fine_frames) {
-                fine_only.extend(&keys(fine) - &keys(f));
+            for (coarse, fine) in [
+                (&d.sprite.female_frames, &d.sprite.female_fine_frames),
+                (&d.sprite.carrying_frames, &d.sprite.carrying_fine_frames),
+            ] {
+                if let (Some(c), Some(f)) = (coarse, fine) {
+                    fine_only.extend(&keys(f) - &keys(c));
+                }
             }
             let sets = d
                 .genetics
@@ -2073,7 +2109,12 @@ mod tests {
             for colours in sets.filter(|c| !c.is_empty()) {
                 let over: BTreeSet<char> =
                     colours.keys().filter_map(|k| k.chars().next()).collect();
-                let shared: &[char] = if d.name == "guppy" { &['a', 'm'] } else { &[] };
+                let shared: &[char] = match d.name.as_str() {
+                    "guppy" => &['a', 'm', 'e', 'p', 'u', 'w', 'G', 'O'],
+                    // The berried shrimp's eggs, which no morph recolours.
+                    "cherry_shrimp" => &['y', 'u', 'z'],
+                    _ => &[],
+                };
                 let missing: Vec<_> = fine_only
                     .difference(&over)
                     .filter(|c| !shared.contains(c))

@@ -286,6 +286,31 @@ impl World {
         }
     }
 
+    /// Starts a mature livebearing female carrying her young with `ticks`
+    /// left before the birth, as a script sets up a berried shrimp or a
+    /// gravid guppy. The father is taken to share her own alleles. Returns
+    /// whether she now carries: not for a missing creature, a male, one
+    /// that isn't an adult, a species that doesn't bear live young, or no
+    /// ticks.
+    pub fn start_carrying(&mut self, id: CreatureId, ticks: u32) -> bool {
+        let Some(c) = self.creature(id) else {
+            return false;
+        };
+        let bears_young = self
+            .kind(c.species)
+            .and_then(|k| k.breeding)
+            .is_some_and(|b| !b.eggs);
+        if ticks == 0 || !c.female || !bears_young || self.life_stage(c) != LifeStage::Adult {
+            return false;
+        }
+        let Some(c) = self.creature_mut(id) else {
+            return false;
+        };
+        c.carrying = ticks;
+        c.sire = c.alleles;
+        true
+    }
+
     /// The sex a creature added to the tank takes: whichever its species
     /// has fewer of, a male on a tie.
     pub(super) fn default_sex(&self, species: SpeciesId) -> bool {
