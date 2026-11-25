@@ -86,8 +86,16 @@ directory for custom materials and species is a stretch goal.
   and carry it; an `R8` texture beside the cell texture holds each plant
   cell's depth band, and a sprite fragment over a covered texel of a
   nearer plant cell is discarded, so the plant the grid drew stays in
-  front (D21). Water
-  is opaque in wallpaper mode and transparent or tinted in overlay mode.
+  front (D21). A versioned `R8` texture holds the per-cell algae coat
+  (D28). The grid shader blends it into the substrate and hardscape
+  shading. A bilinearly filtered field-resolution `RGBA8` texture holds
+  all four glass densities. The back and sides tint the water behind the
+  contents, and the front blends over the submerged scene with at most
+  25% opacity. On opaque sRGB targets the grid and sprites apply the same
+  pane tint before conversion to linear colour, so they match the separate
+  pane draw on encoded targets. Clear panes skip the blend.
+  Water is opaque in wallpaper mode and transparent or tinted in overlay
+  mode.
 - **Frame pacing**: no continuous redraw. The loop sleeps until the next
   frame deadline at the target fps (`ControlFlow::WaitUntil`, or a
   calloop timer), and a frame is only requested when a surface is

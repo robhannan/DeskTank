@@ -65,6 +65,8 @@ struct View {
     // Circular magnifier lens in target pixels: centre (xy), inner radius (z),
     // and bezel/handle pixel-art block size (w); z = 0 outside the lens pass.
     lens: vec4<f32>,
+    // Nonempty coat (x), rear or side glass (y), and front film on opaque water (z).
+    algae: vec4<f32>,
     // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
     // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
     ripples: array<vec4<f32>, 16>,
@@ -92,6 +94,11 @@ struct View {
 // Per 8x8-cell field cell (128/255 = 0): the 2D flow vector (rg), for the
 // overlay and surface ripples, and the sway lean (b; renderer.rs `sway_lean`).
 @group(0) @binding(9) var flow: texture_2d<f32>;
+// Green film's variety (high nibble) and density (low nibble) per grid cell.
+@group(0) @binding(10) var coat: texture_2d<f32>;
+// Front, back, left and right glass film per 8x8-cell field block.
+@group(0) @binding(11) var glass: texture_2d<f32>;
+@group(0) @binding(12) var glass_sampler: sampler;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
 const BACK_BAND: f32 = 7.0;
@@ -114,7 +121,6 @@ const STYLE_AQUASOIL: i32 = 6;
 const STYLE_ROCK: i32 = 7;
 const STYLE_DRIFTWOOD: i32 = 8;
 const STYLE_BUBBLE: i32 = 9;
-const STYLE_ALGAE: i32 = 10;
 const STYLE_DETRITUS: i32 = 11;
 const STYLE_DEVICE: i32 = 12;
 
@@ -324,6 +330,10 @@ fn grid_post(rgb_in: vec3<f32>, cell: vec2<f32>) -> vec3<f32> {
     return rgb;
 }
 
+fn grid_film_post(rgb: vec3<f32>, grid_pos: vec2<f32>, cell: vec2<f32>) -> vec3<f32> {
+    return grid_post(front_over(rgb, grid_pos, vec3<f32>(1.0)), cell);
+}
+
 // True during the magnifier pass when `pos` lies outside the circular glass
 // lens (snapped to the bezel's pixel-art grid so the rim meets the glass
 // cleanly with no gaps). Always false in the main pass (`view.lens.z == 0`).
@@ -396,7 +406,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if need_ground {
         var bg: vec4<f32>;
         if water_behind {
-            bg = vec4<f32>(water_bg(at, quarter, FINE_PLANTS && fine_scale()), water_opacity());
+            let fine = FINE_PLANTS && fine_scale();
+            bg = vec4<f32>(water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine)), water_opacity());
         } else {
             bg = ground(at, ground_texel, quarter);
         }
@@ -409,7 +420,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         rgb = mix(bg.rgb, plant_rgb, plant_alpha);
         alpha = bg.a;
     }
-    return layer_out(grid_post(rgb, cell), alpha);
+    return layer_out(grid_film_post(rgb, grid_pos, cell), alpha);
 }
 
 // The split grid (`GpuOptions::split_grid`, for GPUs that can't compile
@@ -445,11 +456,13 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if nbr.x >= 0 {
             ground_texel = textureLoad(cells, nbr, 0);
         } else if src.swayed_away || overlay_enabled() {
-            return layer_out(grid_post(water_bg(at, quarter, FINE_PLANTS && fine_scale()), cell), water_opacity());
+            let fine = FINE_PLANTS && fine_scale();
+            let rgb = water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine));
+            return layer_out(grid_film_post(rgb, grid_pos, cell), water_opacity());
         }
     }
     let bg = ground(at, ground_texel, quarter);
-    return layer_out(grid_post(bg.rgb, cell), bg.a);
+    return layer_out(grid_film_post(bg.rgb, grid_pos, cell), bg.a);
 }
 
 // Passes 2 and 3: plant art in leafy parts (fs_leaves) and the others
@@ -515,7 +528,7 @@ fn plant_pass_colour(pos: vec2<f32>, src: GridSource, pt: vec4<f32>, band: f32) 
     if alpha <= 0.0 {
         discard;
     }
-    return vec4<f32>(out(grid_post(rgb, cell)).rgb, alpha);
+    return vec4<f32>(out(grid_film_post(rgb, grid_pos, cell)).rgb, alpha);
 }
 
 // Palette alpha holds the ground style in the low seven bits and rigidity in bit 7.
@@ -574,6 +587,160 @@ fn hash_grain(p: vec2<i32>, v: u32) -> u32 {
     return hash(p + vec2<i32>(ox, oy)) ^ (v * 0x9e3779b1u);
 }
 
+// Two sizes of static grain give the film uneven coverage and olive-green specks.
+fn film_mottle(p: vec2<i32>) -> vec2<f32> {
+    let grain = hash(p);
+    let cluster = hash(p / 3);
+    return vec2<f32>(
+        0.43 + f32(grain & 15u) * 0.020 + f32(cluster & 7u) * 0.039,
+        f32((grain >> 4u) & 7u) / 7.0,
+    );
+}
+
+fn film_green(speck: f32) -> vec3<f32> {
+    return mix(vec3<f32>(0.29, 0.40, 0.13), vec3<f32>(0.55, 0.64, 0.27), speck);
+}
+
+fn coat_density(at: vec2<i32>) -> f32 {
+    if !inside(at) {
+        return 0.0;
+    }
+    let packed = u32(round(textureLoad(coat, at, 0).r * 255.0));
+    // Other varieties reserve their own colours and coverage.
+    return select(0.0, f32(packed & 15u) / 15.0, (packed >> 4u) == 1u);
+}
+
+// Patchy coverage on a host: patches of clean stone, wood or grain stay open
+// where the coat is thin, and join up as its density rises.
+fn host_coat(at: vec2<i32>, p: vec2<i32>, rigid: bool, loose: bool) -> vec4<f32> {
+    if view.algae.x <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    var density = coat_density(at);
+    if loose {
+        if style_at(at + vec2<i32>(0, -1)) == style_at(at) {
+            // Thin film creeps a little into the grains beneath the surface.
+            density = max(density, 0.45 * coat_density(at + vec2<i32>(0, -1)));
+        }
+    } else if density < 1.0 {
+        // The film spreads thinly over the face of a body from its coated edge.
+        for (var i = 0; i < 4; i += 1) {
+            let d = select(vec2<i32>(0, select(-1, 1, i == 3)), vec2<i32>(select(-1, 1, i == 1), 0), i < 2);
+            density = max(density, 0.6 * coat_density(at + d));
+            density = max(density, 0.3 * coat_density(at + d * 2));
+        }
+    }
+    if density <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let grain = hash(p);
+    let blob = f32(hash(p / 5 + vec2<i32>(17, 3)) & 255u) / 255.0;
+    let clump = f32(hash(p / 2 + vec2<i32>(5, 41)) & 255u) / 255.0;
+    let noise = blob * 0.55 + clump * 0.3 + f32(grain & 255u) / 255.0 * 0.15;
+    let reach = select(density * 1.15, density * 1.5, loose);
+    let cover = smoothstep(noise - 0.08, noise + 0.08, reach);
+    let speck = f32((grain >> 8u) & 7u) / 7.0;
+    let strength = select(0.2 + 0.2 * density, 0.35 + 0.35 * density, loose);
+    let depth = select(0.0, band_at(at) - RIGID_BAND_TAG, rigid);
+    return vec4<f32>(depth_cue(film_green(speck), depth), cover * strength);
+}
+
+// A few strands reach into the outermost art texel of the adjacent water.
+// Pass a sprite's depth to put only the fringe of a nearer rigid face over it.
+fn fringe_density(at: vec2<i32>, depth: f32) -> vec2<f32> {
+    let density = coat_density(at);
+    if density <= 0.0 {
+        return vec2<f32>(0.0);
+    }
+    let t = textureLoad(cells, at, 0);
+    let rigid = (material_flags(t) & 128) != 0;
+    let band = select(0.0, band_at(at) - RIGID_BAND_TAG, rigid);
+    if depth >= 0.0 && (!rigid || depth < band - 0.5) {
+        return vec2<f32>(0.0);
+    }
+    return vec2<f32>(density, band);
+}
+
+fn coat_fringe(at: vec2<i32>, quarter: vec2<i32>, fine: bool, depth: f32) -> vec4<f32> {
+    if view.algae.x <= 0.0 || view.scale < 2.0 {
+        return vec4<f32>(0.0);
+    }
+    let q = select(quarter / 2, quarter, fine);
+    let far = select(1, 3, fine);
+    let p = at * (far + 1) + q;
+    let grain = hash(p);
+    if (grain & 3u) != 0u {
+        return vec4<f32>(0.0);
+    }
+    var film = vec2<f32>(0.0);
+    if q.x == 0 || q.x == far {
+        film = fringe_density(at + vec2<i32>(select(-1, 1, q.x == far), 0), depth);
+    }
+    if q.y == 0 || q.y == far {
+        let vertical = fringe_density(at + vec2<i32>(0, select(-1, 1, q.y == far)), depth);
+        if vertical.x > film.x {
+            film = vertical;
+        }
+    }
+    let green = film_green(f32((grain >> 2u) & 7u) / 7.0);
+    return vec4<f32>(depth_cue(green, film.y), film.x * 0.23);
+}
+
+fn glass_density(grid_pos: vec2<f32>) -> vec4<f32> {
+    // Field texels are centred on the 8x8 blocks. Clamp at the grid edges.
+    let field_size = ceil(view.grid / 8.0);
+    return textureSampleLevel(glass, glass_sampler, grid_pos / (field_size * 8.0), 0.0);
+}
+
+fn front_film_at(grid_pos: vec2<f32>) -> vec4<f32> {
+    let at = vec2<i32>(floor(grid_pos));
+    if f32(at.y) < view.surface_row || !inside(at) {
+        return vec4<f32>(0.0);
+    }
+    let density = glass_density(grid_pos).r;
+    if density <= 0.0 || round(textureLoad(cells, at, 0).r * 255.0) == view.plant_parts2.w {
+        return vec4<f32>(0.0);
+    }
+    let m = film_mottle(vec2<i32>(floor(grid_pos * 2.0)));
+    let alpha = min(density * 0.75 * m.x, 0.25);
+    let rgb = mix(vec3<f32>(0.31, 0.46, 0.26), vec3<f32>(0.55, 0.65, 0.39), m.y);
+    return vec4<f32>(rgb, alpha);
+}
+
+// The front film's colour transform commutes with compositing opaque scenes.
+// Apply it before encoding into sRGB attachments, whose hardware blending
+// would otherwise be linear. The separate pass handles encoded attachments
+// and the desktop overlay's transparent water.
+override FRONT_IN_LAYERS: bool = false;
+
+fn front_over(rgb: vec3<f32>, grid_pos: vec2<f32>, tint: vec3<f32>) -> vec3<f32> {
+    if !FRONT_IN_LAYERS || view.algae.z <= 0.0 {
+        return rgb;
+    }
+    let film = front_film_at(grid_pos);
+    return mix(rgb, film.rgb * tint, film.a);
+}
+
+fn rear_film_at(at: vec2<i32>, p: vec2<i32>, grid_pos: vec2<f32>) -> vec4<f32> {
+    if view.algae.y <= 0.0 || f32(at.y) < view.surface_row {
+        return vec4<f32>(0.0);
+    }
+    let film = glass_density(grid_pos);
+    let edge = max(
+        film.b * clamp(1.0 - grid_pos.x * 0.5, 0.0, 1.0),
+        film.a * clamp(1.0 - (view.grid.x - grid_pos.x) * 0.5, 0.0, 1.0),
+    );
+    let m = film_mottle(p);
+    let green = film_green(m.y) * depth_factor(grid_pos.y);
+    return vec4<f32>(depth_cue(green, BACK_BAND), m.x * (film.g * 0.34 + edge * 0.36));
+}
+
+fn rear_film_behind(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec4<f32> {
+    let p = select(at * 2 + quarter / 2, at * 4 + quarter, fine);
+    let grid_pos = vec2<f32>(at) + (vec2<f32>(quarter) + 0.5) * 0.25;
+    return rear_film_at(at, p, grid_pos);
+}
+
 // Depth darkening multiplier for water/fertiliser at vertical position `y`.
 fn depth_factor(y: f32) -> f32 {
     let depth = clamp((y - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
@@ -581,8 +748,8 @@ fn depth_factor(y: f32) -> f32 {
 }
 
 // Sub-cell background water colour at `(at, quarter)` (used behind bubbles,
-// algae fringes and detritus edges).
-fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
+// hardscape silhouettes and detritus edges).
+fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> vec3<f32> {
     let mat = max(i32(round(view.plant_parts.w)), 0);
     let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
     let sub = quarter / 2;
@@ -590,7 +757,8 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
     let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
     let h = hash(vec2<i32>(p.x / 2, p.y));
     let shimmer = 1.0 + (f32(h & 7u) - 3.5) * 0.006;
-    return base * depth_factor(f32(at.y) + sub_y) * shimmer;
+    let rgb = base * depth_factor(f32(at.y) + sub_y) * shimmer;
+    return mix(rgb, rear.rgb, rear.a);
 }
 
 // Sub-cell background air colour at `(at, quarter)` (used by air cells,
@@ -767,7 +935,7 @@ fn surface_ripple(
         if pos.y >= surf_y && pos.y < view.surface_row
             && style_at(vec2<i32>(at.x, i32(view.surface_row))) == STYLE_WATER
         {
-            let wcol = water_bg(at, quarter, fine);
+            let wcol = water_bg(at, quarter, fine, vec4<f32>(0.0));
             let dy = pos.y - surf_y;
             let crest_k = clamp(0.45 + 0.45 * best_impact - dy * 0.4, 0.25, 0.92);
             let tint = mix(crest_tint, foam_tint, clamp(best_impact * 1.1, 0.0, 1.0));
@@ -939,17 +1107,30 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
 // The colour of a non-plant cell: at scale 1 a flat palette lookup with
 // whole-cell depth darkening; at scale >= 2 (2x2) and fine scales (4x4),
 // sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
-// textures and refined bubbles/algae/detritus (before the daylight tint).
+// textures, bubbles, surface films and detritus (before the daylight tint).
 fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
     var mat = i32(round(t.r * 255.0));
     let v = u32(round(t.g * 255.0));
-    let raw_style = i32(round(textureLoad(palette, vec2<i32>(mat, 0), 0).a * 255.0)) & 127;
+    let flags = material_flags(t);
+    let raw_style = flags & 127;
     if raw_style == STYLE_DEVICE {
         // Draw device footprint cells as air above the water line and water at
         // or below it; the device sprite draws on top (D27, DV5).
         mat = max(i32(round(select(view.plant_parts.w, view.plant_parts2.w, f32(at.y) < view.surface_row))), 0);
     }
-    if view.scale < 2.0 {
+    let flat = view.scale < 2.0;
+    let fine = FINE_PLANTS && fine_scale();
+    let sub = quarter / 2;
+    let p = select(at * 2 + sub, at * 4 + quarter, fine);
+    let grid_pos = vec2<f32>(at) + select((vec2<f32>(quarter) + 0.5) * 0.25, vec2<f32>(0.5), flat);
+    // Share the sample with trimmed substrate, rigid outlines and bubbles.
+    let rear = rear_film_at(at, select(p, at, flat), grid_pos);
+    let rigid = (flags & 128) != 0;
+    var film = vec4<f32>(0.0);
+    if rigid || raw_style == STYLE_SAND || raw_style == STYLE_GRAVEL || raw_style == STYLE_AQUASOIL {
+        film = host_coat(at, select(p, at, flat), rigid, !rigid);
+    }
+    if flat {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
         let s = i32(round(c.a * 255.0)) & 127;
         let tinted = select(0.0, 1.0, s == STYLE_WATER || s == STYLE_FERTILISER);
@@ -958,12 +1139,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if s == STYLE_WATER || s == STYLE_AIR {
             rgb = surface_ripple(rgb, at, vec2<i32>(1, 1), false, s == STYLE_AIR);
         }
+        if s == STYLE_WATER || s == STYLE_FERTILISER {
+            rgb = mix(rgb, rear.rgb, rear.a);
+        } else {
+            rgb = mix(rgb, film.rgb, film.a);
+        }
         return vec4<f32>(rgb, ground_opacity(s));
     }
 
-    let fine = FINE_PLANTS && fine_scale();
-    let sub = quarter / 2;
-    let p = select(at * 2 + sub, at * 4 + quarter, fine);
     // Variant 0 is unglued base shade 0; variant 1 is glued base shade 0
     // (for rigid bodies, palette.rs shades odd variants amber).
     let base_v = i32(v & 1u);
@@ -1019,6 +1202,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if style == STYLE_WATER {
             rgb = surface_ripple(rgb, at, quarter, fine, false);
         }
+        rgb = mix(rgb, rear.rgb, rear.a);
+        if style == STYLE_WATER {
+            let fringe = coat_fringe(at, quarter, fine, -1.0);
+            rgb = mix(rgb, fringe.rgb, fringe.a);
+        }
         return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), ground_opacity(style));
     }
 
@@ -1034,7 +1222,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let h = hash_grain(p, v);
         let top_row = loose_top(open_up, open_l, open_r, at, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
         let r = h & 31u;
         // Multi-grain quartz palette: warm base, soft tan shadow, bright glint,
@@ -1077,7 +1265,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         } else if select(sub.x == 1, quarter.x == 3, fine) && open_r {
             k = k * 0.93;
         }
-        return vec4<f32>(clamp(base * tint * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+        let rgb = clamp(base * tint * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
     }
 
     if style == STYLE_GRAVEL {
@@ -1091,7 +1280,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         let q = select(sub, quarter, fine);
         if q.y < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
         // Cell-constant layout bits (glue bit dropped so gluing keeps the look).
         let cv = hash(vec2<i32>(i32(v >> 1u), 0x4b1d));
@@ -1187,7 +1376,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if max(base.r, max(base.g, base.b)) - min(base.r, min(base.g, base.b)) > 0.4 {
             pebble_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
         }
-        return vec4<f32>(clamp(pebble_base * warm * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+        let rgb = clamp(pebble_base * warm * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
     }
 
     if style == STYLE_AQUASOIL {
@@ -1196,7 +1386,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
         var k: f32;
         if fine {
@@ -1240,14 +1430,15 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if !open_up {
             k = k * 0.95;
         }
-        return vec4<f32>(clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+        let rgb = clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
     }
 
     if style == STYLE_ROCK {
         // Sub-cell outline: round brushes draw round stones.
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
         // World-space faceted stone strata + fine mineral grain.
         let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
@@ -1288,13 +1479,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
                 k = k * 0.90;
             }
         }
-        return vec4<f32>(clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+        let rgb = clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
     }
 
     if style == STYLE_DRIFTWOOD {
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
         // Driftwood encodes per-cell waterlogging in variant >> 1 (and glue in bit 0).
         let wood_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
@@ -1339,7 +1531,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
                 k = k * 0.90;
             }
         }
-        return vec4<f32>(clamp(wood_base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+        let rgb = clamp(wood_base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
     }
 
     if style == STYLE_BUBBLE {
@@ -1348,7 +1541,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let same_l = style_at(at + vec2<i32>(-1, 0)) == STYLE_BUBBLE;
         let same_r = style_at(at + vec2<i32>(1, 0)) == STYLE_BUBBLE;
         let isolated = !same_u && !same_d && !same_l && !same_r;
-        let bg = water_bg(at, quarter, fine);
+        let bg = water_bg(at, quarter, fine, rear);
         let wa = water_opacity();
         if isolated {
             if fine {
@@ -1416,34 +1609,13 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         return vec4<f32>(mix(bg * wa, base, 0.78) / max(a, 1e-5), a);
     }
 
-    if style == STYLE_ALGAE {
-        let d = sub * 2 - 1;
-        let wx = is_water(at + vec2<i32>(d.x, 0));
-        let wy = is_water(at + vec2<i32>(0, d.y));
-        let exposed = wx || wy;
-        let h = hash_grain(p, v);
-        if exposed {
-            let outer = select(
-                true,
-                (wx && (quarter.x == 0 || quarter.x == 3))
-                    || (wy && (quarter.y == 0 || quarter.y == 3)),
-                fine,
-            );
-            if outer && (h & 3u) == 0u {
-                return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
-            }
-        }
-        let k = 0.86 + f32((h >> 2u) & 7u) * 0.04;
-        return vec4<f32>(clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
-    }
-
     if style == STYLE_DETRITUS {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let water_up = is_water(at + vec2<i32>(0, -1));
         let h = hash_grain(p, v);
         // Detritus trims only under water (in air it is a resting heap).
         if water_up && select(sub.y, quarter.y, fine) < loose_top_at(at, mat, open_up, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
         let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);
         return vec4<f32>(clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
@@ -2652,13 +2824,13 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         if a <= 0.0 {
             discard;
         }
-        return vec4<f32>(out(v.glow.rgb).rgb, a);
+        return sprite_out(v.glow.rgb, a, v.pos.xy);
     }
     if v.look.x > 2.5 {
         // A device's placement ghost (D27): see-through over everything,
         // red where it doesn't fit.
         let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
-        return vec4<f32>(out(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint).rgb, 0.55);
+        return sprite_out(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint, 0.55, v.pos.xy);
     }
     if covered || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;
@@ -2681,7 +2853,36 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         let e = glow_weight(v.frame, p, t) * k * 1.6;
         lit = min(lit + v.glow.rgb * e * vec3<f32>(0.55, 1.0, 0.55), vec3<f32>(1.0));
     }
-    return out(lit);
+    if view.algae.x > 0.0 {
+        let grid_pos = (v.pos.xy - view.offset) / view.scale;
+        let cell = floor(grid_pos);
+        let at = vec2<i32>(cell);
+        if is_water(at) {
+            let quarter = quarter_of(grid_pos, cell);
+            let fringe = coat_fringe(at, quarter, FINE_PLANTS && fine_scale(), v.depth);
+            lit = mix(lit, fringe.rgb * view.daylight.rgb, fringe.a);
+        }
+    }
+    return sprite_out(lit, 1.0, v.pos.xy);
+}
+
+fn sprite_out(rgb: vec3<f32>, alpha: f32, pos: vec2<f32>) -> vec4<f32> {
+    let grid_pos = (pos - view.offset) / view.scale;
+    return vec4<f32>(out(front_over(rgb, grid_pos, view.daylight.rgb)).rgb, alpha);
+}
+
+// The front pane overlays submerged contents while leaving HUD and air clear.
+@fragment
+fn fs_front_film(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) {
+        discard;
+    }
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let film = front_film_at(grid_pos);
+    if film.a <= 0.0 || hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    return vec4<f32>(out(grid_post(film.rgb, floor(grid_pos))).rgb, film.a);
 }
 
 // Pixel-art magnifying glass overlay: circular metallic bezel, subtle glass
