@@ -126,9 +126,11 @@ example) to the scratchpad and adapt it. It uses `scripts/sprite-art.ts`:
   `DESKTANK_BLESS=1 cargo test -p desktank --test render breeding`, and
   crop and enlarge the creature from `breeding_x4.png` (fine frames) and
   `breeding.png` (coarse frames).
-- New sizes and shapes shift seeded runs: re-bless every render
-  reference at the end (`DESKTANK_BLESS=1 cargo test -p desktank --test
-  render`) and look at the changed images. A sim test that fails after an
+- New sizes and shapes shift seeded runs: at the end, restore the
+  references from the base, run `cargo test -p desktank --test render`,
+  and re-bless only the scenes that fail (blessing rewrites every image,
+  and most rewrites are byte noise within tolerance). Look at each
+  changed image. A sim test that fails after an
   art change is a real latent bug that the new run exposed (a stalled
   schooler, a creature stuck under sand). Investigate it and fix it in
   its own PR; never retune art or seeds to hide it.
