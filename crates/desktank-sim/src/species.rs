@@ -848,9 +848,17 @@ fn validate(
     if d.shy && d.curious {
         return Err(invalid("shy and curious cannot both be true"));
     }
-    if d.skittish && (d.zone != Zone::Bottom || d.hop_every.is_none()) {
+    // A flip is told apart by its fright and rest counters, which a
+    // hunter's or territory keeper's chases also set.
+    if d.skittish
+        && (d.zone != Zone::Bottom
+            || d.hop_every.is_none()
+            || d.shy
+            || d.prey_cm.is_some()
+            || d.territory_cm.is_some())
+    {
         return Err(invalid(
-            "only bottom walkers with hop_every can be skittish",
+            "only bottom walkers with hop_every that neither hunt, keep a territory nor are shy can be skittish",
         ));
     }
     let [top, bottom] = d.depth;
@@ -1570,6 +1578,8 @@ mod tests {
         for (zone, fields) in [
             ("mid", "hop_every = 5.0\nskittish = true"),
             ("bottom", "skittish = true"),
+            ("bottom", "hop_every = 5.0\nskittish = true\nshy = true"),
+            ("bottom", "hop_every = 5.0\nskittish = true\nprey_cm = 0.1"),
         ] {
             assert!(matches!(
                 parse(zone, fields),

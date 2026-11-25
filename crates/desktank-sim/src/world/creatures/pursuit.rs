@@ -42,7 +42,7 @@
 //!   awake. In both cases it flees to cover, or away from the disturbance.
 //! - **Skittishness.** A calm, awake bottom hopper tail-flips away from an
 //!   approaching larger swimmer within three of its grown lengths (at least
-//!   six cells before applying boldness). It kicks backwards and up at
+//!   six cells before applying boldness). It kicks away and up at
 //!   double top speed for half a second, holds its facing, then sinks and
 //!   ignores threats for 2 s.
 //! - **Cover.** A creature is in cover when [`COVER_CELLS`] plant cells
@@ -467,18 +467,29 @@ impl World {
             }
         }
         if let Some((_, x)) = flip {
-            self.flip_from(c, x);
+            self.flip_from(k, c, x);
         } else if let Some((_, fx, fy, seek_cover)) = threat {
             self.frighten(k, c, fx, fy, seek_cover);
         }
     }
 
     /// Starts a tail flip and its recovery using the saved fright and rest counters.
-    fn flip_from(&self, c: &mut Creature, threat_x: i32) {
+    fn flip_from(&self, k: &Kind, c: &mut Creature, threat_x: i32) {
         let left = c.x < threat_x || (c.x == threat_x && !c.facing_left);
         let dx = if left { -FLIP_RUN } else { FLIP_RUN };
-        c.tx = (c.x + dx * ONE).clamp(0, centre_of(to_i64(self.width) - 1));
-        c.ty = (c.y - FLIP_RISE * ONE).max(0);
+        // Inside the water and the walls, like a run (`run_from`).
+        let (hw, hh) = (k.w / 2 + 1, k.h / 2 + 1);
+        let clamp = |v: i32, lo: i64, hi: i64| v.clamp(centre_of(lo), centre_of(hi.max(lo)));
+        c.tx = clamp(
+            c.x + dx * ONE,
+            i64::from(hw),
+            to_i64(self.width) - i64::from(hw) - 1,
+        );
+        c.ty = clamp(
+            c.y - FLIP_RISE * ONE,
+            to_i64(self.surface_row) + i64::from(hh),
+            to_i64(self.height) - i64::from(hh) - 1,
+        );
         c.quarry = None;
         c.fear = FLIP_TICKS;
         c.pursuit = FLIP_TICKS + FLIP_REST;

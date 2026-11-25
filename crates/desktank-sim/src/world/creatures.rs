@@ -1677,7 +1677,7 @@ impl World {
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
         let flipping = pursuit::flipping(&k, c);
-        let moved = self.step_toward(&k, c, (tx, ty, speed), sponge.is_none() && !flipping);
+        let moved = self.step_toward(&k, c, (tx, ty, speed), sponge.is_none(), flipping);
         if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
             c.food = None;
         } else if moved != Move::Moved {
@@ -1709,9 +1709,15 @@ impl World {
         c: &mut Creature,
         target: (i32, i32, i32),
         walking: bool,
+        flipping: bool,
     ) -> Move {
         let (tx, ty, speed) = target;
-        steer(k, c, tx, ty, speed, speed > k.cruise);
+        if flipping {
+            flip_kick(c, tx, ty, speed);
+        } else {
+            steer(k, c, tx, ty, speed, speed > k.cruise);
+        }
+        let walking = walking && !flipping;
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.
         // Hoppers (shrimp) kick upwards now and then and sink back, except
@@ -2363,10 +2369,8 @@ fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool
     let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
     let d = dist(tx - c.x, ty - c.y);
     let speed = i64::from(speed);
-    let flip = speed > i64::from(k.top);
-    let arrival = if flip { speed } else { ARRIVE };
-    let want = if d < arrival {
-        speed * d / arrival
+    let want = if d < ARRIVE {
+        speed * d / ARRIVE
     } else {
         speed
     };
@@ -2375,12 +2379,6 @@ fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool
     } else {
         (dx * want / d, dy * want / d)
     };
-    if flip {
-        // A tail flip kicks at full speed immediately.
-        c.vx = i32::try_from(wx).unwrap_or(0);
-        c.vy = i32::try_from(wy).unwrap_or(0);
-        return;
-    }
     let a = i64::from(k.accel);
     let top = i64::from(k.top);
     let vx = i64::from(c.vx) + (wx - i64::from(c.vx)).clamp(-a, a);
@@ -2389,6 +2387,23 @@ fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool
     c.vx = i32::try_from(vx.clamp(-top, top)).unwrap_or(0);
     let rise = if darting { top } else { top / 2 };
     c.vy = i32::try_from(vy.clamp(-rise, rise)).unwrap_or(0);
+}
+
+/// A tail flip's kick (see [`pursuit`]): straight at `speed` (above top
+/// speed) towards the flip target, with no easing in, slowing only within
+/// a tick's travel of it.
+fn flip_kick(c: &mut Creature, tx: i32, ty: i32, speed: i32) {
+    let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
+    let d = dist(tx - c.x, ty - c.y);
+    let speed = i64::from(speed);
+    let want = speed.min(d);
+    let (wx, wy) = if d == 0 {
+        (0, 0)
+    } else {
+        (dx * want / d, dy * want / d)
+    };
+    c.vx = i32::try_from(wx).unwrap_or(0);
+    c.vy = i32::try_from(wy).unwrap_or(0);
 }
 
 /// A body's width and height in cells once turned `turn` quarter turns.
