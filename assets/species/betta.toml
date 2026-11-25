@@ -11,6 +11,8 @@ min_depth = 32
 # splendens is about 6 cm without its fins, the largest of the small
 # community fish. Its halfmoon fins take the sprite to 10 cm.
 length_cm = 6.0
+# A female is smaller: about 5 cm, with short fins (female_frames below).
+female_length_cm = 5.0
 # Lifespan and age at maturity in real days (about 3 years; mature at 3–4
 # months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
 lifespan_days = 1095
@@ -517,5 +519,159 @@ fine_frames = [
         "......................................OOO.......................................",
         "................................................................................",
         "................................................................................",
+    ],
+]
+
+# The female (dimorphic, issue #315): a Betta splendens hen about 5 cm long,
+# plumper and plainer than the male, with short fins: a rounded caudal fan,
+# a modest dorsal sweeping back over her rear half, a short anal fin and a
+# thin pelvic ray. She keeps the male's colour keys, so every morph
+# recolours her, in duller bands: faint broken horizontal stripes along her
+# flanks and the small white egg spot (ovipositor) behind the pelvic ray.
+# Silhouette traced from Wikimedia Commons "Siamese fighting fish (Betta
+# splendens) female orange.JPG" (CC BY 4.0, https://commons.wikimedia.org/wiki/File:Siamese_fighting_fish_(Betta_splendens)_female_orange.JPG),
+# with the slimmer head and body of "Betta splendens, female - 20080805.jpg"
+# in mind; shaded in the house style as the male. A 12x5-cell sprite
+# (24x10 coarse texels), 6 cm with the caudal; four frames: the fins ripple.
+female_frames = [
+    [
+        "........................",
+        "....OOOOOO..............",
+        ".OOOOnnmmnooooooooo.....",
+        "OZnOooooohhhhhHHHHhhooo.",
+        "OnNZomhrmmrrrRRRRMRrakho",
+        "Onnnomp1191rmmMRRMrraapo",
+        ".OOOOoooppprmmmrrrpoooo.",
+        "....OYYYoooopppepoo.....",
+        "......OOOOOmmooen.......",
+        "............OO..........",
+    ],
+    [
+        "........................",
+        ".....OOOOO..............",
+        "....Onnmmnooooooooo.....",
+        ".OOOooooohhhhhHHHHhhooo.",
+        "OnnZomhrmmrrrRRRRMRrakho",
+        "OnNnomp1191rmmMRRMrraapo",
+        "OZnOOoooppprmmmrrrpoooo.",
+        ".OOOYYYYoooopppepoo.....",
+        ".....OOOOOOmmooen.......",
+        "...........OOO..........",
+    ],
+    [
+        "........................",
+        "....OOOOOO..............",
+        ".OOOOnnmmnooooooooo.....",
+        "OZnOooooohhhhhHHHHhhooo.",
+        "OnNZomhrmmrrrRRRRMRrakho",
+        "Onnnomp1191rmmMRRMrraapo",
+        ".OOOOoooppprmmmrrrpoooo.",
+        "....OYYYoooopppepoo.....",
+        "......OOOOOmmooen.......",
+        "............OO..........",
+    ],
+    [
+        "........................",
+        "....OOOOOO..............",
+        ".OOOOnnmmnooooooooo.....",
+        "OZnZooooohhhhhHHHHhhooo.",
+        "OnNmomhrmmrrrRRRRMRrakho",
+        "Onnnomp1191rmmMRRMrraapo",
+        ".OOOooooppprmmmrrrpoooo.",
+        ".....OOYoooopppepoo.....",
+        ".......OOOOmmooeo.......",
+        "............OO..p.......",
+    ],
+]
+
+# Her four poses at four texels per cell side (48x20).
+female_fine_frames = [
+    [
+        "................................................",
+        "................................................",
+        "..........OOOOOOO...............................",
+        "........OOZZZZZnnOOO............................",
+        ".......OYZ8989999ZnnO...........................",
+        "..OOOO.OOn555555559oooooooooooooooooooo.........",
+        ".OZZnnOO.OYmooooooohhhhrhrhrHRHRHRHhhhhooooo....",
+        ".OZMMMnZoooohhhhrhrhrhrhrhRHRHRHRHRHRhrhrhhhoo..",
+        "OnNNNNmmorhrhrhrSrhrSrrrSRRRSRRRSRRMSRhrSaarhhoo",
+        "OZMMMMmmohmmrhrm999mmrrrrrRRRRRRRMMMRrrraekarhpo",
+        "OZNNNNnmopmmp131113111SrmmmmMMSRRRSmrrSrakkappso",
+        "OnNVMMnZospppp19999991rrrrrrrrrrrmmmrprpraaspso.",
+        ".OZZYnZOOooosp3pp1p131rrmmmmmmrrSrrmSpppsooooo..",
+        "..OOOOOOZvmmoooop3pppprprprrrrrrrprppsooo.......",
+        ".......OOZYMVMVMooooopspppSrprSrppsooo..........",
+        ".........OOYZYZVMvmvmoooospppeespoon............",
+        "...........OOOOZYZZZZZZmmooooeeoonn.............",
+        "...............OOOOOOOOnZZnnOae.pn..............",
+        ".......................OOOOO....p...............",
+        "................................................",
+    ],
+    [
+        "................................................",
+        "................................................",
+        "................................................",
+        "..........OOOOOOOOOO............................",
+        "........OOYZYZZZZZnnO...........................",
+        ".......Onn555555559oooooooooooooooooooo.........",
+        "..OOOOOOYmvmooooooohhhhrhrhrHRHRHRHhhhhooooo....",
+        ".OZZZZnZoooohhhhrhrhrhrhrhRHRHRHRHRHRhrhrhhhoo..",
+        ".OnNNNmmorhrhrhrSrhrSrrrSRRRSRRRSRRMSRhrSaarhhoo",
+        "OZMMMMmmohmmrhrm999mmrrrrrRRRRRRRMMMRrrraekarhpo",
+        "OZNNNNnmopmmp131113111SrmmmmMMSRRRSmrrSrakkappso",
+        "OnNVMMnZospppp19999991rrrrrrrrrrrmmmrprpraaspso.",
+        "OZMMVNZOOooosp3pp1p131rrmmmmmmrrSrrmSpppsooooo..",
+        ".OZnnZOOZvmmoooop3pppprprprrrrrrrprppsooo.......",
+        "..OOOO.OYMVMVMVMooooopspppSrprSrppsooo..........",
+        ".......OOYZYMVMVMvmvmoooospppeespoo.............",
+        ".........OOOYZYZYZZZZZmmmooooeeoonn.............",
+        "............OOOOOOOOOOnnZZnnOaempn..............",
+        "......................OOOOOO...pp...............",
+        "................................................",
+    ],
+    [
+        "................................................",
+        "................................................",
+        "..........OOOOOOO...............................",
+        "........OOZZZZZnnOOO............................",
+        ".......OYZ8989999ZnnO...........................",
+        "..OOOO.OOn555555559oooooooooooooooooooo.........",
+        ".OZZnnOO.OYmooooooohhhhrhrhrHRHRHRHhhhhooooo....",
+        ".OZMMMnZoooohhhhrhrhrhrhrhRHRHRHRHRHRhrhrhhhoo..",
+        "OnNNNNmmorhrhrhrSrhrSrrrSRRRSRRRSRRMSRhrSaarhhoo",
+        "OZMMMMmmohmmrhrm999mmrrrrrRRRRRRRMMMRrrraekarhpo",
+        "OZNNNNnmopmmp131113111SrmmmmMMSRRRSmrrSrakkappso",
+        "OnNVMMnZospppp19999991rrrrrrrrrrrmmmrprpraaspso.",
+        ".OZZYnZOOooosp3pp1p131rrmmmmmmrrSrrmSpppsooooo..",
+        "..OOOOOOZvmmoooop3pppprprprrrrrrrprppsooo.......",
+        ".......OOZYMVMVMooooopspppSrprSrppsooo..........",
+        ".........OOYZYZVMvmvmoooospppeespoon............",
+        "...........OOOOZYZZZZZZmmooooeeoonn.............",
+        "...............OOOOOOOOnZZnnOae.pn..............",
+        ".......................OOOOO....p...............",
+        "................................................",
+    ],
+    [
+        "................................................",
+        "................................................",
+        "........OOOOOOOOOO..............................",
+        ".......OZYZZZZZnnnOO............................",
+        "..OOO..OOZ89899999nnO...........................",
+        ".OZnnOO..On55555559oooooooooooooooooooo.........",
+        "OZMMNnZO..OZooooooohhhhrhrhrHRHRHRHhhhhooooo....",
+        "OnMMMMnZoooohhhhrhrhrhrhrhRHRHRHRHRHRhrhrhhhoo..",
+        "OnNNNNmmorhrhrhrSrhrSrrrSRRRSRRRSRRMSRhrSaarhhoo",
+        "OZMMMMmmohmmrhrm999mmrrrrrRRRRRRRMMMRrrraekarhpo",
+        ".OnNNNnmopmmp131113111SrmmmmMMSRRRSmrrSrakkappso",
+        ".OnYMZnZospppp19999991rrrrrrrrrrrmmmrprpraaspso.",
+        "..OOYOOOZooosp3pp1p131rrmmmmmmrrSrrmSpppsooooo..",
+        "....O..OOYZmoooop3pppprprprrrrrrrprppsooo.......",
+        ".........OOZYZVMooooopspppSrprSrppsooo..........",
+        "...........OOOZYZvmvmoooospppeespoon............",
+        "..............OOOZZZZZZmmooooeeoonn.............",
+        ".................OOOOOOnZZnnOae.Zp..............",
+        ".......................OOOOO....pp..............",
+        "................................................",
     ],
 ]
