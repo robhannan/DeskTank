@@ -489,6 +489,7 @@ struct Kind {
     bands: (u8, u8),
     schooling: bool,
     shoaling: bool,
+    shy: bool,
     zone: Zone,
     breathes_air: bool,
     /// Stress per second once out of air (0: it doesn't breathe air).
@@ -662,6 +663,7 @@ impl Creatures {
                 bands: (s.bands[0], s.bands[1]),
                 schooling: s.temperament == Temperament::Schooling,
                 shoaling: s.temperament == Temperament::Shoaling,
+                shy: s.shy,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
                 air_stress: breathing::air_stress(s.air_tolerance_seconds),
@@ -1229,8 +1231,10 @@ impl World {
             }
             // Older saves can hold a stray for a species that no longer schools.
             let stray = if k.schooling { c.stray } else { 0 };
-            // Within its species' bands (as every move keeps it).
-            let deep = |z: i32| (z_of(k.bands.0)..=z_of(k.bands.1)).contains(&z);
+            // A depth outside its species' bands came from older species
+            // data (shy fish moved to the back, say): bring it into range.
+            let (front, back) = (z_of(k.bands.0), z_of(k.bands.1));
+            let deep = |z: i32| (0..=z_of(DEPTH_BANDS - 1)).contains(&z);
             if !(deep(c.z)
                 && deep(c.tz)
                 && c.tz % ONE == 0
@@ -1261,12 +1265,12 @@ impl World {
                 species,
                 x: c.x,
                 y: c.y,
-                z: c.z,
+                z: c.z.clamp(front, back),
                 vx: c.vx,
                 vy: c.vy,
                 tx: c.tx,
                 ty: c.ty,
-                tz: c.tz,
+                tz: c.tz.clamp(front, back),
                 dodging: c.dodging,
                 stray,
                 retarget: c.retarget,
@@ -2064,9 +2068,25 @@ impl World {
         best.map(|(_, i)| i)
     }
 
-    /// A new random wander target inside the zone, and how long to keep it.
-    #[allow(clippy::many_single_char_names)] // cell maths
+    /// A new wander target, giving a shy creature up to three draws for cover.
     fn pick_target(&self, k: &Kind, c: &mut Creature, rng: &mut Pcg32) {
+        let previous_band = c.tz;
+        self.draw_target(k, c, rng);
+        if k.shy {
+            let (w, h) = extent(k, c.turn);
+            for _ in 0..2 {
+                if self.in_cover(w, h, c.tx, c.ty, band_of(c.tz)) {
+                    break;
+                }
+                c.tz = previous_band;
+                self.draw_target(k, c, rng);
+            }
+        }
+    }
+
+    /// A random wander target inside the zone, and how long to keep it.
+    #[allow(clippy::many_single_char_names)] // cell maths
+    fn draw_target(&self, k: &Kind, c: &mut Creature, rng: &mut Pcg32) {
         let (top, bottom) = zone(k, self.surface_row, self.height);
         let w = to_i64(self.width);
         let span = |lo: i64, hi: i64, rng: &mut Pcg32| {
@@ -2448,6 +2468,188 @@ fn to_i64(v: usize) -> i64 {
 mod tests {
     use super::*;
     use crate::{Brush, WorldConfig};
+
+    fn shy_world(shy: bool) -> World {
+        let mut world = World::new(
+            WorldConfig {
+                width: 120,
+                height: 64,
+                seed: 1,
+                water_level: 0.95,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let gourami = include_str!("../../../../assets/species/honey_gourami.toml");
+        let gourami = gourami.replace("shy = true", &format!("shy = {shy}"));
+        let goldfish = include_str!("../../../../assets/species/common_goldfish.toml");
+        let species =
+            SpeciesTable::from_toml_sources(&[&gourami, goldfish], &world.materials).unwrap();
+        world.creatures = Creatures::new(
+            species,
+            &world.materials,
+            world.creatures.water,
+            world.creatures.air,
+        );
+        world.set_easy_mode(true);
+        world
+    }
+
+    #[test]
+    fn shy_gourami_spends_more_time_in_plant_cover() {
+        let time_in_cover = |shy| {
+            let mut world = shy_world(shy);
+            let soil = world.materials().id("aquasoil").unwrap();
+            world
+                .fill_rect(
+                    crate::Rect {
+                        x0: 0,
+                        y0: 58,
+                        x1: 120,
+                        y1: 64,
+                    },
+                    soil,
+                    Brush::Replace,
+                )
+                .unwrap();
+            let kind = world.plant_species().id("hygrophila").unwrap();
+            let from = world.plant_species().get(kind).unwrap().default_propagule();
+            for x in (30..=90).step_by(6) {
+                world.paint_plant(x, 57, 0, kind, from).unwrap();
+            }
+            for _ in 0..10 * 60 * TICKS_PER_SECOND {
+                world.tick();
+            }
+            let gourami = world.species().id("honey_gourami").unwrap();
+            let id = world.add_creature(gourami, 60, 24).unwrap();
+            let mut covered = 0;
+            for tick in 0..3 * 60 * TICKS_PER_SECOND {
+                world.tick();
+                if tick.is_multiple_of(TICKS_PER_SECOND)
+                    && world.creature_in_cover(world.creature(id).unwrap())
+                {
+                    covered += 1;
+                }
+            }
+            covered
+        };
+        let (shy, peaceful) = (time_in_cover(true), time_in_cover(false));
+        assert!(
+            shy >= 6 && shy >= 2 * peaceful,
+            "seconds in cover: shy {shy}, peaceful {peaceful}"
+        );
+    }
+
+    #[test]
+    fn a_shy_awake_gourami_startles_at_an_approaching_larger_swimmer() {
+        for (shy, asleep, vx, expected) in [
+            (true, false, -ONE, true),
+            (true, false, ONE, false),
+            (true, false, 0, false),
+            (true, true, -ONE, false),
+            (false, false, -ONE, false),
+        ] {
+            let mut world = shy_world(shy);
+            // Let the gourami's prey setting activate sensing in the non-shy case.
+            world.set_easy_mode(shy);
+            let gourami = world.species().id("honey_gourami").unwrap();
+            let goldfish = world.species().id("common_goldfish").unwrap();
+            let id = world.add_creature(gourami, 40, 25).unwrap();
+            let other = world.add_creature(goldfish, 56, 25).unwrap();
+            world.tick = pursuit::SENSE_EVERY * 2 - u64::from(id.0);
+            if asleep {
+                world.set_time_of_day(0);
+                let fish = world.creature_mut(id).unwrap();
+                fish.asleep = true;
+                fish.next_breath = u64::MAX;
+            }
+            let threat = world.creature_mut(other).unwrap();
+            threat.vx = vx;
+            threat.vy = 0;
+            let list = world.creatures.list.clone();
+            world.snapshot_near(&list);
+            assert_eq!(world.creatures.near.len(), 2);
+            let mut fish = world.creature(id).unwrap().clone();
+            world.update_creature(&mut fish);
+            assert_eq!(
+                fish.fear > 0,
+                expected,
+                "shy {shy}, asleep {asleep}, vx {vx}"
+            );
+            if expected {
+                assert!(fish.tx < fish.x, "the startled gourami should run away");
+            }
+            assert_eq!(fish.asleep, asleep);
+        }
+    }
+
+    #[test]
+    fn shy_gourami_startles_at_nearby_non_food_pours_by_day() {
+        for (material, x, expected) in [
+            ("sand", 48, true),
+            ("rock", 48, true),
+            ("flake_food", 48, false),
+            ("sand", 85, false),
+        ] {
+            let mut world = shy_world(true);
+            let gourami = world.species().id("honey_gourami").unwrap();
+            let id = world.add_creature(gourami, 40, 25).unwrap();
+            let material = world.materials().id(material).unwrap();
+            assert!(world.paint(x, 25, 0, material, Brush::Replace).unwrap() > 0);
+            let fish = world.creature(id).unwrap();
+            assert_eq!(fish.fear > 0, expected);
+            if expected {
+                assert!(fish.tx < fish.x, "the startled gourami should run away");
+            }
+        }
+    }
+
+    #[test]
+    fn shy_gourami_avoids_the_cursor_from_four_body_lengths_away() {
+        for shy in [false, true] {
+            let mut world = shy_world(shy);
+            let gourami = world.species().id("honey_gourami").unwrap();
+            let id = world.add_creature(gourami, 40, 25).unwrap();
+            let mut fish = world.creature(id).unwrap().clone();
+            let kind = world.grown_kind(&fish).unwrap();
+            world.set_creature_cursor(Some((40 + i64::from(4 * kind.w), 25)));
+            (fish.tx, fish.ty, fish.retarget) = (centre_of(60), fish.y, 10);
+            let mut rng = chunk_stream(world.seed, world.tick, CREATURE_STREAM);
+            let (target, _, speed) = world.steering_target(&kind, &mut fish, None, &mut rng);
+            assert_eq!(target < fish.x && speed == kind.top, shy);
+        }
+    }
+
+    #[test]
+    fn peaceful_tank_needs_no_near_snapshot() {
+        let mut world = shy_world(false);
+        let goldfish = world.species().id("common_goldfish").unwrap();
+        world.add_creature(goldfish, 40, 30).unwrap();
+        world.set_easy_mode(false);
+        world.tick();
+        assert!(world.creatures.near.is_empty());
+        assert_eq!(world.creatures.near.capacity(), 0);
+    }
+
+    #[test]
+    fn old_saves_with_shy_species_in_front_bands_still_load() {
+        let mut world =
+            World::new(WorldConfig::default(), MaterialTable::builtin().unwrap()).unwrap();
+        for (name, y) in [("honey_gourami", 30), ("kuhli_loach", 50)] {
+            let species = world.species().id(name).unwrap();
+            world.add_creature(species, 40, y).unwrap();
+        }
+        let mut saved = world.save_creatures();
+        for fish in &mut saved.list {
+            fish.base.z = z_of(0);
+            fish.base.tz = z_of(1);
+        }
+        world.load_creatures(saved).unwrap();
+        for fish in world.creatures() {
+            let front = world.kind(fish.species).unwrap().bands.0;
+            assert_eq!((fish.band(), band_of(fish.tz)), (front, front));
+        }
+    }
 
     #[test]
     fn a_save_only_keeps_stray_ticks_for_schoolers() {

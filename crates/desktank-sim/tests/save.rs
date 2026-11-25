@@ -292,8 +292,8 @@ fn a_version_2_fixture_loads() {
     // hash of the seed and its id, so they spread over the bands.
     assert_at_rest_in_bands(&w);
     // Decoding is pure, so the decoded state is the same on every platform:
-    // pin it, and the life state behind it.
-    assert_eq!(w.state_hash(), 0xc1c3_c680_5242_721f);
+    // pin it, including the starting bands assigned from current species data.
+    assert_eq!(w.state_hash(), 0x9257_0b39_e0d4_a237);
     let life = |id: u32| {
         let c = w.creatures().iter().find(|c| c.id().0 == id).unwrap();
         (c.age(), c.growth(), c.energy(), c.stress())
@@ -389,9 +389,9 @@ fn a_version_3_fixture_loads() {
     assert_at_rest_in_bands(&w);
     assert!(w.corpses().iter().all(|c| c.band() == 0));
     // Decoding is pure, so the decoded state is the same on every platform:
-    // pin it.
+    // pin it, including the starting bands assigned from current species data.
     let hash = w.state_hash();
-    assert_eq!(hash, 0xdd02_f6f4_f1c1_5d25);
+    assert_eq!(hash, 0x3c6a_6aed_842f_629d);
     // It carries on, and round-trips mid-pregnancy tick for tick.
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
@@ -413,9 +413,10 @@ fn a_version_4_fixture_loads() {
     assert!(w.creatures().iter().all(|c| c.home().is_none()));
     // Decoding is pure, so the decoded state is the same on every platform:
     // pin it (repinned when loading dried its driftwood, version 11, and
-    // turned its filter outlet into an internal filter, D27).
+    // turned its filter outlet into an internal filter, D27). Saved depths
+    // for shy species are brought into their current band ranges.
     let hash = w.state_hash();
-    assert_eq!(hash, 0xbc13_e00a_4d1c_f84b);
+    assert_eq!(hash, 0x0027_2922_c541_ba5b);
     let again = save::decode(&save::encode(&w), table()).unwrap();
     assert_eq!(again.state_hash(), hash);
     let mut again = again;

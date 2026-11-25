@@ -3,8 +3,8 @@
 //! - **Sensing.** Every [`SENSE_EVERY`] ticks, at a tick picked from its
 //!   id, a creature looks round a start-of-tick snapshot of the tank's
 //!   creatures (`Creatures::near`, in id order). The snapshot is built only
-//!   while the tank holds a creature that hunts or keeps a territory, so a
-//!   tank without one pays nothing, and the look costs at most n² /
+//!   while the tank holds a hunter, a territorial or shy creature, or
+//!   live food and an eater of it. The look costs at most n² /
 //!   [`SENSE_EVERY`] distance checks a tick (n is at most the cap).
 //! - **Hunting.** A hungry adult predator (`prey_cm`), outside easy mode,
 //!   not in the net, not heading for food and rested picks the nearest
@@ -34,6 +34,12 @@
 //!   fish that saw the threat rather than reaching all at once. Calm tanks
 //!   pay nothing: the look is skipped unless the tick's snapshot of the
 //!   school (`Creatures::school`) holds a frightened fish.
+//! - **Shyness.** A shy creature looks for cover when picking its wander
+//!   target. A calm, awake one takes fright at an approaching swimmer at
+//!   least half again as long as itself within three of its own grown
+//!   lengths (at least eight cells before its boldness is applied).
+//!   A nearby pour of something it doesn't eat also frightens it while
+//!   awake. In both cases it flees to cover, or away from the disturbance.
 //! - **Cover.** A creature is in cover when [`COVER_CELLS`] plant cells
 //!   within [`COVER_BANDS`] of its band lie within [`COVER_REACH`] cells of
 //!   its body. A predator neither sees nor strikes prey in cover.
@@ -99,6 +105,10 @@ pub const COVER_CELLS: u32 = 4;
 pub const TERRITORY_MARGIN: i32 = 6;
 /// How far a creature flees with no cover near, in cells.
 const FLEE_RUN: i32 = 24;
+/// How many of its own grown lengths away a shy fish senses a swimmer.
+const SHY_SENSE: i32 = 3;
+/// Minimum shy sensing range in cells, before applying boldness.
+const SHY_MIN_SENSE: i32 = 8;
 /// How far a startle reaches, in halves of the species' full-grown length.
 const STARTLE_REACH: i32 = 3;
 /// Ticks of fright a startle loses with each fish it passes through.
@@ -116,6 +126,8 @@ pub(super) struct Near {
     species: crate::species::SpeciesId,
     x: i32,
     y: i32,
+    vx: i32,
+    vy: i32,
     band: u8,
     /// Its body box (grown and turned), in cells.
     w: i32,
@@ -138,7 +150,7 @@ pub(super) struct Near {
 
 impl World {
     /// Fills the sensing snapshot from `list` (the creatures in id order),
-    /// or empties it when no creature there hunts or keeps a territory.
+    /// or empties it when no creature there hunts, keeps a territory or is shy.
     pub(super) fn snapshot_near(&mut self, list: &[Creature]) {
         let mut near = core::mem::take(&mut self.creatures.near);
         near.clear();
@@ -146,7 +158,7 @@ impl World {
         let has_live = list.iter().any(|c| self.is_live(c.species));
         let active = list.iter().any(|c| {
             self.kind(c.species).is_some_and(|k| {
-                (k.prey_mm > 0 && !easy) || k.territory > 0 || (has_live && k.eats_live)
+                (k.prey_mm > 0 && !easy) || k.territory > 0 || (has_live && k.eats_live) || k.shy
             })
         });
         if active {
@@ -160,6 +172,8 @@ impl World {
                     species: c.species,
                     x: c.x,
                     y: c.y,
+                    vx: c.vx,
+                    vy: c.vy,
                     band: c.band(),
                     w,
                     h,
@@ -376,7 +390,7 @@ impl World {
     }
 
     /// On a sensing tick: takes fright at the nearest hunter that could eat
-    /// `c`, or chaser of it, within [`FLEE_SENSE`], and picks where to run.
+    /// `c`, a chaser of it, or a large swimmer approaching a shy creature.
     pub(super) fn take_fright(&self, k: &Kind, c: &mut Creature) {
         if self.creatures.near.is_empty() {
             return;
@@ -386,27 +400,44 @@ impl World {
         // off its territory it notices at the full range.
         let bold = i64::try_from(self.quirks(c).percent(salt::BOLD, 60, 100)).unwrap_or(100);
         let full = i64::from(FLEE_SENSE * ONE);
-        let bold_sense = full * (50 + bold / 2) / 100;
+        let bold_scale = 50 + bold / 2;
+        let bold_sense = full * bold_scale / 100;
+        let shy = k.shy && !c.asleep && c.fear == 0;
+        let shy_sense = i64::from((SHY_SENSE * k.w).max(SHY_MIN_SENSE) * ONE) * bold_scale / 100;
         let mut threat: Option<(i64, i32, i32, bool)> = None;
         for n in &self.creatures.near {
+            if n.id == c.id || n.held {
+                continue;
+            }
             // Live food squirms away from a chaser only, seeking no cover.
             let hunter = !k.live && n.hunts_mm >= length && n.hunts_mm > 0;
             let chaser = n.chasing == Some(c.id);
-            if n.id == c.id || n.held || !(hunter || chaser) {
+            let bigger =
+                shy && n.swimmer && !n.live && u64::from(n.length_mm) * 2 >= u64::from(length) * 3;
+            if !(hunter || chaser || bigger) {
                 continue;
             }
-            let d = dist(n.x - c.x, n.y - c.y);
-            let sense = if chaser { full } else { bold_sense };
-            if d <= sense && threat.is_none_or(|(td, ..)| d < td) {
-                threat = Some((d, n.x, n.y, hunter));
+            let (dx, dy) = (c.x - n.x, c.y - n.y);
+            let d = dist(dx, dy);
+            let approaching = bigger
+                && d <= shy_sense
+                && i64::from(n.vx) * i64::from(dx) + i64::from(n.vy) * i64::from(dy) > 0;
+            let under_threat = (hunter || chaser) && d <= if chaser { full } else { bold_sense };
+            if (approaching || under_threat) && threat.is_none_or(|(td, ..)| d < td) {
+                threat = Some((d, n.x, n.y, approaching || hunter));
             }
         }
-        let Some((_, fx, fy, hunted)) = threat else {
+        let Some((_, fx, fy, seek_cover)) = threat else {
             return;
         };
+        self.frighten(k, c, fx, fy, seek_cover);
+    }
+
+    /// Starts a fright, seeking cover if appropriate or running from its source.
+    pub(super) fn frighten(&self, k: &Kind, c: &mut Creature, fx: i32, fy: i32, seek_cover: bool) {
         // A bold one gets over it sooner.
         c.fear = self.quirks(c).ticks(salt::BOLD, 60, 100, FEAR_TICKS);
-        if hunted {
+        if seek_cover {
             let (w, h) = extent(k, c.turn);
             if self.in_cover(w, h, c.x, c.y, c.band()) {
                 (c.tx, c.ty) = (c.x, c.y);
@@ -531,8 +562,9 @@ impl World {
                 if !(run(1) && run(2)) {
                     continue;
                 }
-                let behind = p.checked_add(COVER_BANDS).filter(|&b| b <= k.bands.1);
-                let front = p.checked_sub(COVER_BANDS).filter(|&b| b >= k.bands.0);
+                let allowed = k.bands.0..=k.bands.1;
+                let behind = p.checked_add(COVER_BANDS).filter(|b| allowed.contains(b));
+                let front = p.checked_sub(COVER_BANDS).filter(|b| allowed.contains(b));
                 if let Some(band) = behind.or(front) {
                     best = Some((d, i, band));
                 }
@@ -562,7 +594,7 @@ impl World {
     /// Whether a `w × h` body at `(x, y)` in `band` is in cover (see the
     /// module docs).
     #[allow(clippy::many_single_char_names)] // cell maths
-    fn in_cover(&self, w: i32, h: i32, x: i32, y: i32, band: u8) -> bool {
+    pub(super) fn in_cover(&self, w: i32, h: i32, x: i32, y: i32, band: u8) -> bool {
         let Some(b) = body_box(w, h, x, y, self.width, self.height) else {
             return false;
         };
