@@ -88,3 +88,6 @@ seed_rate = 0.012
 creep_rate = 0.075
 growth_rate = 0.15
 die_back_rate = 0.06
+# Plants with CO₂ to work with outcompete film sooner: the plant competition
+# in a block is multiplied by 1 + co2_boost × the block's CO₂ level.
+co2_boost = 0.5

@@ -340,9 +340,17 @@ target computes the same bits.
     Aquasoil alone buffers nutrient to 0.4. Healthy plant cells slow growth
     and exclude film at the water-quality plant threshold (20 healthy
     plant cells per 1000 water cells). At that threshold existing film
-    recedes twice as fast. Growth rates and thresholds live in
-    `assets/fields.toml` (`[algae]`). Film updates sample coarse field blocks,
-    including during catch-up, and leave material chunks asleep. Coat on
+    recedes twice as fast. Plants with CO₂ to work with compete harder: in
+    each field block the plant competition is multiplied by
+    1 + `co2_boost` × the block's CO₂ level (capped at full exclusion), so
+    a CO₂-rich tank needs fewer plants to hold film back. Growth rates,
+    thresholds and `co2_boost` live in `assets/fields.toml` (`[algae]`).
+    Film updates sample coarse field blocks and leave material chunks
+    asleep. Catch-up visits at most 4096 blocks per five-minute interval,
+    in disjoint groups taken in turn, and credits each visited block with
+    the time of the groups it stands for, so long catch-ups grow film at the
+    live rate (a catch-up shorter than one cycle of groups updates only
+    some blocks). Coat on
     solid surfaces attenuates light below in proportion to its density.
     Grazers scrape density off reachable surfaces and nearby glass.
     *Coverage* is the fraction of columns with a coated top non-fluid cell.

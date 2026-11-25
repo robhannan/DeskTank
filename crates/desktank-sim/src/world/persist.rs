@@ -138,9 +138,10 @@ impl World {
             ));
         }
         for (i, v) in coat.into_iter().enumerate().filter(|&(_, v)| v != 0) {
+            // Only green film (variety 1) exists; 2-15 are reserved.
             // Exposure changes when objects move, so an otherwise eligible
             // cell may be temporarily dry or buried between field updates.
-            if v & DENSITY_MASK == 0 || v >> 4 == 0 || !world.algae_surface(world.cells[i]) {
+            if v & DENSITY_MASK == 0 || v >> 4 != 1 || !world.algae_surface(world.cells[i]) {
                 return Err(SaveError::Invalid(format!("invalid film on cell {i}")));
             }
             world.write_coat(i, v);
