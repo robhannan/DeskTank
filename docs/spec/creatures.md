@@ -175,7 +175,8 @@
     and lavender. Cherry shrimp are drawn by sex too: a small, slim, paler
     male, a larger female with a rounder belly and a berried female whose
     yellow-orange eggs (keys no morph recolours) show under her abdomen.
-    Predators: betta 2.5 cm (fry, cherry shrimp, crabs), honey gourami
+    Predators: betta 2.5 cm (fry, male and young cherry shrimp, crabs: an
+    adult female shrimp, at 3 cm, outgrows it), honey gourami
     1.2 cm (fry, shrimplets, crabs) and guppy 1.6 cm (so newborn fry of
     either sex, a female's a third of her 4.5 cm).
   - **Sexes.** Every creature is male or female. One added from the
@@ -227,7 +228,8 @@
     to). v2 saves migrate: every creature shows its palette morph, sexes
     alternate within a species in id order, none is carrying, and each
     settles for a day.
-  - **Scripts** take `sex` and `morph` in `[[creature]]`; `World` has
+  - **Scripts** take `sex`, `morph` and `carrying_days` (a mature female
+    livebearer, at most her species' gestation) in `[[creature]]`; `World` has
     `add_creature_with_traits` (age, sex, alleles) and the debug hook
     `skip_breeding_time`.
 - **Names** (D4): none by default. In interact mode, click a creature to

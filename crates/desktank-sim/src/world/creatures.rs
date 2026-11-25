@@ -1316,14 +1316,11 @@ impl World {
             };
             let cause = DeathCause::from_code(c.cause).ok_or_else(|| invalid("unknown cause"))?;
             // Keep the size at death, including females saved when they
-            // still shared the male's dimensions, and the corpses of a
-            // species since redrawn smaller (the cherry male): any size up
-            // to the largest of either sex's.
-            let (male_w, male_h) = k.size_of(false);
-            let (female_w, female_h) = k.size_of(true);
-            let (full_w, full_h) = (male_w.max(female_w), male_h.max(female_h));
+            // still shared the male's dimensions.
+            let (full_w, full_h) = k.size_of(c.female);
             let fits = |side: u8, full: i32| (1..=full).contains(&i32::from(side));
-            let size_fits = fits(c.w, full_w) && fits(c.h, full_h);
+            let size_fits = (fits(c.w, full_w) && fits(c.h, full_h))
+                || (c.female && fits(c.w, k.w) && fits(c.h, k.h));
             let total = (u16::from(c.w) * u16::from(c.h)).div_ceil(3).max(1);
             if !inside(c.x, c.y)
                 || !size_fits

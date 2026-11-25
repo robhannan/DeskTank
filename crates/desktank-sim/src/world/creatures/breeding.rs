@@ -296,11 +296,13 @@ impl World {
         let Some(c) = self.creature(id) else {
             return false;
         };
-        let bears_young = self
+        // At most the species' gestation, as a save is validated.
+        let gestation = self
             .kind(c.species)
             .and_then(|k| k.breeding)
-            .is_some_and(|b| !b.eggs);
-        if ticks == 0 || !c.female || !bears_young || self.life_stage(c) != LifeStage::Adult {
+            .filter(|b| !b.eggs)
+            .map_or(0, |b| b.days);
+        if ticks == 0 || ticks > gestation || !c.female || self.life_stage(c) != LifeStage::Adult {
             return false;
         }
         let Some(c) = self.creature_mut(id) else {

@@ -1683,7 +1683,7 @@ mod tests {
         assert_eq!(get("amano_shrimp").colour, [0xb3, 0xa8, 0x8c]);
     }
 
-    /// Cherry shrimp since #315: a 2 cm male, a 3 cm female and the same
+    /// Cherry shrimp since #315: a 2.5 cm male, a 3 cm female and the same
     /// female berried, whose yellow-orange eggs no morph recolours.
     #[test]
     fn cherry_shrimp_sexes_and_berried_eggs() {

@@ -52,8 +52,9 @@
 //!                    # the palette's)
 //! carrying_days = 20.0 # start a mature female of a livebearing species
 //!                    # carrying her young (a berried shrimp, a gravid guppy),
-//!                    # with this many days of her gestation left (default:
-//!                    # not carrying); an error for anything else
+//!                    # with this many days of her gestation left, at most
+//!                    # her species' gestation (default: not carrying); an
+//!                    # error for anything else
 //! ```
 //!
 //! Water changes, then placements, then pours, then creatures due on tick `t` are applied just
@@ -624,6 +625,9 @@ mod tests {
             carrying("sex = \"male\"\ncarrying_days = 10.0"),
             carrying("sex = \"female\"\ncarrying_days = 0.0"),
             carrying("sex = \"female\"\nage_days = 1.0\ncarrying_days = 10.0"),
+            // Longer than the cherry shrimp's 30-day gestation: a save
+            // would reject it.
+            carrying("sex = \"female\"\ncarrying_days = 35.0"),
             "[[creature]]\nspecies = \"betta\"\nx = 20\ny = 10\nsex = \"female\"\ncarrying_days = 1.0"
                 .to_owned(),
         ] {
