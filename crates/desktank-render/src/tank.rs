@@ -120,6 +120,8 @@ pub struct Tank {
     creatures_drawn: Option<u64>,
     /// Plants version last drawn (`None` before the first frame).
     plants_drawn: Option<u64>,
+    /// Algae version last drawn (`None` before the first frame).
+    algae_drawn: Option<u64>,
     /// Optional render-only plant sway state (SPEC §2.7, T6d); off by default.
     sway: Sway,
 }
@@ -149,6 +151,7 @@ impl Tank {
             time_of_day: daylight::NOON,
             creatures_drawn: None,
             plants_drawn: None,
+            algae_drawn: None,
             sway: Sway::default(),
         }
     }
@@ -439,7 +442,7 @@ impl Tank {
     }
 
     /// Whether a frame is waiting: the world changed since the last frame
-    /// (cells, a creature moved or a plant's tint changed), or the target
+    /// (cells, creatures, plant tints or algae changed), or the target
     /// was invalidated. A tank with swimming creatures wants a frame every
     /// tick (20 a second, under the frame cap) even when every chunk
     /// sleeps; a plant's tint changes at most once per plant update.
@@ -449,6 +452,7 @@ impl Tank {
             || !self.dirty.is_empty()
             || self.creatures_drawn != Some(self.world.creatures_version())
             || self.plants_drawn != Some(self.world.plants_version())
+            || self.algae_drawn != Some(self.world.algae_version())
     }
 
     /// Changes the frame-rate cap (SPEC §6.2: 15 fps on battery). The
@@ -484,6 +488,7 @@ impl Tank {
         self.needs_frame = true;
         self.creatures_drawn = None;
         self.plants_drawn = None;
+        self.algae_drawn = None;
         self.fields_drawn = 0;
         self.flow_drawn = 0;
     }
@@ -575,6 +580,8 @@ impl Tank {
         self.creatures_drawn = Some(self.world.creatures_version());
         renderer.upload_plants(gpu, &self.world);
         self.plants_drawn = Some(self.world.plants_version());
+        renderer.upload_algae(gpu, &self.world);
+        self.algae_drawn = Some(self.world.algae_version());
         if self.field_overlay.is_some() {
             renderer.upload_fields(gpu, &self.world);
             self.fields_drawn = self.world.fields_version();
@@ -635,6 +642,7 @@ impl Tank {
         self.dirty.take(|_| {});
         self.creatures_drawn = Some(self.world.creatures_version());
         self.plants_drawn = Some(self.world.plants_version());
+        self.algae_drawn = Some(self.world.algae_version());
         if self.field_overlay.is_some() {
             self.fields_drawn = self.world.fields_version();
         }
@@ -743,6 +751,17 @@ mod tests {
         assert!(!tank.sway_active());
         let frames = count_frames(&mut tank, Duration::ZERO, 10);
         assert_eq!(frames, 0, "settled tank with sway off drew {frames} frames");
+    }
+
+    #[test]
+    fn a_coat_change_requests_one_frame_with_settled_cells() {
+        let mut tank = settled_planted_tank();
+        assert!(!tank.frame_wanted());
+        assert!(tank.world_mut().set_algae_coat(0, 42, 15));
+        assert!(tank.dirty.is_empty());
+        assert!(tank.tick(Duration::from_millis(50)).redraw);
+        tank.mark_drawn();
+        assert!(!tank.frame_wanted());
     }
 
     #[test]

@@ -36,8 +36,6 @@ pub enum GroundStyle {
     Driftwood = 8,
     /// Air and CO₂ bubbles: rounded translucent droplet with specular glint.
     Bubble = 9,
-    /// Algae: fine mottled organic film that frays into water.
-    Algae = 10,
     /// Detritus, dead plant matter and waste: fine organic mulm specks.
     Detritus = 11,
     /// Prefab device footprint cell (D27): drawn as air above the water line
@@ -48,7 +46,7 @@ pub enum GroundStyle {
 impl GroundStyle {
     /// Every style with its WGSL constant name (checked by `renderer.rs`).
     #[cfg(test)]
-    pub const ALL: [(&'static str, Self); 13] = [
+    pub const ALL: [(&'static str, Self); 12] = [
         ("STYLE_DEFAULT", Self::Default),
         ("STYLE_WATER", Self::Water),
         ("STYLE_AIR", Self::Air),
@@ -59,7 +57,6 @@ impl GroundStyle {
         ("STYLE_ROCK", Self::Rock),
         ("STYLE_DRIFTWOOD", Self::Driftwood),
         ("STYLE_BUBBLE", Self::Bubble),
-        ("STYLE_ALGAE", Self::Algae),
         ("STYLE_DETRITUS", Self::Detritus),
         ("STYLE_DEVICE", Self::Device),
     ];
@@ -80,7 +77,6 @@ impl GroundStyle {
             "rock" => Self::Rock,
             "driftwood" => Self::Driftwood,
             "air_bubble" | "co2_bubble" => Self::Bubble,
-            "algae" => Self::Algae,
             "detritus" | "dead_plant" | "waste" => Self::Detritus,
             _ if m.class == MovementClass::Liquid && m.density >= DEPTH_TINT_DENSITY => Self::Water,
             _ => Self::Default,
@@ -315,7 +311,6 @@ mod tests {
             ("driftwood", GroundStyle::Driftwood),
             ("air_bubble", GroundStyle::Bubble),
             ("co2_bubble", GroundStyle::Bubble),
-            ("algae", GroundStyle::Algae),
             ("detritus", GroundStyle::Detritus),
             ("dead_plant", GroundStyle::Detritus),
             ("waste", GroundStyle::Detritus),

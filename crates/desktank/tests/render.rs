@@ -164,6 +164,12 @@ fn layers_scene_matches_reference() {
     check("layers");
 }
 
+/// D28: surface coats on sand, rock and driftwood, with glass around the fish.
+#[test]
+fn algae_film_scene_matches_reference() {
+    check_named("algae_film", "algae_film_x4", None, SIZE_X4);
+}
+
 /// Day and night (T6): the planted tank at night, dawn, midday and dusk.
 #[test]
 fn planted_scene_matches_reference_at_four_times_of_day() {

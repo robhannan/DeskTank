@@ -382,10 +382,10 @@ test.describe("touch", () => {
     await choose(page, "Neon tetra");
     await expect(page.getByRole("tab", { name: "Fish", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("tab", { name: "Schooling", exact: true })).toHaveAttribute("aria-selected", "true");
-    // The nine tabs and Plants' six sub-tabs wrap rather than scroll.
+    // The nine tabs and Plants' five sub-tabs fit the phone width.
     await expect(page.locator("#tabs").getByRole("tab")).toHaveCount(9);
     await choose(page, "Hygrophila");
-    await expect(page.locator("#subtabs").getByRole("tab")).toHaveCount(6);
+    await expect(page.locator("#subtabs").getByRole("tab")).toHaveCount(5);
     for (const id of ["#tabs", "#subtabs"]) {
       const scrolls = await page.locator(id).evaluate((el) => el.scrollWidth > el.clientWidth);
       expect(scrolls, `${id} with Plants open`).toBe(false);
