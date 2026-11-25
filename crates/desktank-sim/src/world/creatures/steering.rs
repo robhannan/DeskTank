@@ -124,7 +124,7 @@ impl World {
     /// Whether a body in `band` at `(x, y)` overlaps something it can hold:
     /// the tank glass, or a cell that blocks it other than air (a plant
     /// only in reach of its band).
-    fn supported(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
+    pub(super) fn supported(&self, k: &Kind, turn: u8, x: i32, y: i32, band: u8) -> bool {
         let Some(b) = body(k, turn, x, y, self.width, self.height) else {
             return true; // tank glass
         };

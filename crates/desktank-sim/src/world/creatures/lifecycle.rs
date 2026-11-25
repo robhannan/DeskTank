@@ -367,7 +367,7 @@ impl World {
     }
 
     /// The species' movement numbers with the body scaled to the
-    /// creature's growth.
+    /// creature's growth: its pane body while it is on a pane (#371).
     pub(super) fn grown_kind(&self, c: &Creature) -> Option<Kind> {
         let mut k = *self.kind(c.species)?;
         (k.w, k.h) = k.size_of(c.female);
@@ -375,6 +375,15 @@ impl World {
             let percent = grown_percent(c.growth, k.maturity);
             k.w = grown_side(k.w, percent);
             k.h = grown_side(k.h, percent);
+            k.pane = k
+                .pane
+                .map(|(w, h)| (grown_side(w, percent), grown_side(h, percent)));
+        }
+        k.side = (k.w, k.h);
+        if c.pane != super::Pane::Off
+            && let Some(pane) = k.pane
+        {
+            (k.w, k.h) = pane;
         }
         Some(k)
     }

@@ -27,7 +27,7 @@
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Nine species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Ten species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp), `swim_every` (seconds between a
@@ -36,7 +36,9 @@
   can't), `burrow_every` (seconds between a bottom walker's chances to
   burrow into loose substrate, never rock: the kuhli loach; digging
   moves the grains it displaces onto spoil heaps beside it and draws them
-  back over its body, conserving the substrate), `bands` (the depth bands it
+  back over its body, conserving the substrate), `top_frames` and
+  `under_frames` (with their fine frames: a crawler's look from above on
+  the back pane and from below on the front pane, #371), `bands` (the depth bands it
   keeps to, front and back, D21; every band by default), `rests` (where
   it rests at night, *Night* below), `shy` (seeks cover and startles
   easily, false by default), `curious` (investigates the cursor and
@@ -77,6 +79,18 @@
   - surface-grazing for snails on glass, rock and plants, turned in
     quarter turns so the foot rests on the face they hold (walls,
     overhangs), with the collision box turned too;
+  - pane-crawling for crawlers with pane art (#371; the nerite first): a
+    crawler also spends some of its time on the front or back glass.
+    For a minute in every two and a half (staggered by creature),
+    upright on the bed or a top face, it shifts to the nearer pane's band
+    (the front band or the back band) and takes hold of the pane. There it
+    wanders the water in four headings (quarter turns of its pane sprite,
+    which faces right like every sprite; diagonals are #194), grazing as it
+    goes. Its trip over, or frightened, it heads down and steps off onto
+    whatever stops it. On the front pane it is drawn from below (its
+    `under_frames`), on the back pane from above (its `top_frames`), at its
+    pane size (both views share one, head right). The net lifts it off;
+    asleep it holds the pane;
   - surfacing for frogs;
   - finding and eating food cells, and grazing algae and detritus (the
     clean-up crew);

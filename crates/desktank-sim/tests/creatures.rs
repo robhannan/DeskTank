@@ -5,9 +5,9 @@
 
 use desktank_sim::tools::{Button, Inspection, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
-    BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, LIFE_DAY_TICKS, MaterialId, MaterialTable,
-    MovementClass, Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World, WorldConfig,
-    WorldError,
+    BAND_REACH, Brush, Creature, DEFAULT_CREATURE_CAP, DEPTH_BANDS, LIFE_DAY_TICKS, MaterialId,
+    MaterialTable, MovementClass, Pane, Rect, Script, SpeciesId, TICKS_PER_SECOND, Traits, World,
+    WorldConfig, WorldError,
 };
 
 fn world(width: usize, height: usize, seed: u64) -> World {
@@ -803,6 +803,13 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
         let c = w.creature(snail).unwrap();
         assert_eq!(solid_under(&w, c), None, "tick {}", w.tick_count());
         assert!(w.in_zone(c), "came off at tick {}", w.tick_count());
+        // A pane trip from the sand (#371) holds the glass: the route
+        // carries on when it steps back off.
+        if c.pane() != Pane::Off {
+            held += 1;
+            last = (c.centre(), c.turn());
+            continue;
+        }
         held += u32::from(foot_held(&w, c));
         let b = w.creature_body(c);
         let size = (b.x1 - b.x0, b.y1 - b.y0);
@@ -846,6 +853,61 @@ fn nerite_climbs_a_wall_crosses_an_overhang_and_comes_back_down() {
         held * 100 >= ticks * 95,
         "foot held on {held} of {ticks} ticks"
     );
+}
+
+#[test]
+fn nerites_crawl_the_front_and_back_panes_and_come_back_off() {
+    let mut w = world(120, 80, 5);
+    sand_bed(&mut w, 6);
+    let nerite = species(&w, "nerite");
+    let ids: Vec<_> = (0..4)
+        .map(|i| w.add_creature(nerite, 20 + i * 25, 70).unwrap())
+        .collect();
+    let (mut on, mut panes, mut turns, mut off_again) = (vec![0_u32; 4], [false; 2], [false; 4], 0);
+    let mut was = [Pane::Off; 4];
+    for _ in 0..600 * TICKS_PER_SECOND {
+        w.tick();
+        for (i, &id) in ids.iter().enumerate() {
+            let c = w.creature(id).unwrap();
+            assert_eq!(solid_under(&w, c), None, "nerite {i} in a solid cell");
+            match c.pane() {
+                Pane::Off => {
+                    if was[i] != Pane::Off {
+                        off_again += 1;
+                    }
+                }
+                pane => {
+                    on[i] += 1;
+                    panes[usize::from(pane == Pane::Back)] = true;
+                    // On a pane it keeps to the pane's band.
+                    let band = if pane == Pane::Front {
+                        0
+                    } else {
+                        DEPTH_BANDS - 1
+                    };
+                    assert_eq!(c.band(), band);
+                    turns[usize::from(c.turn())] = true;
+                    let (bw, bh) = w.creature_size(c);
+                    assert_eq!(
+                        (bw, bh),
+                        w.species().get(nerite).unwrap().pane_size().unwrap()
+                    );
+                }
+            }
+            was[i] = c.pane();
+        }
+    }
+    eprintln!("ticks on a pane {on:?}, panes {panes:?}, turns {turns:?}, stepped off {off_again}");
+    assert!(
+        on.iter().all(|&t| t > 0),
+        "every nerite took a pane trip: {on:?}"
+    );
+    assert!(panes[0] && panes[1], "both panes crawled: {panes:?}");
+    assert!(
+        turns[0] && (turns[1] || turns[3]),
+        "headed along and across: {turns:?}"
+    );
+    assert!(off_again >= 4, "came back off {off_again} times");
 }
 
 #[test]
