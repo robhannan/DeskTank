@@ -164,7 +164,8 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   speed with no behaviour change.
 - Push the branch and open a PR against `main` (or against the lower PR's
   branch when stacking — prefer stacking when multiple PRs are in flight or
-  related). Fill in the sections of
+  related; confirm the lower PR is still open first, and if it has already
+  merged, rebase onto `origin/main` and target `main`). Fill in the sections of
   `.github/pull_request_template.md` (summary, screenshot or GIF, resource
   use, testing) and delete its HTML comments. Keep the body to about 300
   words and say plainly what you could not verify. End with a “🤖 Generated with” credit naming the agent used.
@@ -264,6 +265,10 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   re-code) when a push creates no run, the PR head lags the branch, or a
   job is "Abandoned" with no log. Always bound CI waits and check that
   the PR head is the commit you are waiting on.
+- Before handing off a stacked PR (base other than `main`), check whether
+  its base PR has already merged. If it has, rebase onto `origin/main`,
+  retarget the PR base to `main` (and drop any stale stacking note in the
+  body), force-push with lease, and wait for CI on the rebased head.
 - When CI is green on your latest commit and both the agent review and
   any non-Low Copilot findings are addressed, stop.
   Hand off the reviewed PR. Recommend either "merge" or "escalate to the owner" in
