@@ -1617,17 +1617,7 @@ impl World {
             c.satiety = c.satiety.saturating_sub(1);
             return (c.x, c.y) != (before.0, before.1);
         }
-        // The world moved something solid into it: shift to a free band
-        // where it is, or hop out.
-        if !self.fits(&k, c.turn, c.x, c.y, c.band()) {
-            if let Some(b) = self.free_band(&k, c.turn, c.x, c.y, c.band()) {
-                (c.z, c.tz) = (z_of(b), z_of(b));
-            } else if let Some((x, y)) =
-                self.nearest_fit(&k, c.turn, c.x, c.y, c.band(), UNSTUCK_RADIUS)
-            {
-                (c.x, c.y, c.vx, c.vy) = (x, y, 0, 0);
-                c.retarget = 0;
-            }
+        if self.unstick(&k, c) {
             return (c.x, c.y) != (before.0, before.1);
         }
         // Asleep it only rests (see `night`).
@@ -1656,7 +1646,9 @@ impl World {
         self.startle(&k, c);
         self.choose_food(&k, c, hungry);
         let sponge = self.sponge_graze_target(&k, c, hungry);
-
+        if sponge.is_none() && self.forage_climb(&k, c, hungry) {
+            return (c.x, c.y, c.facing_left, c.turn) != before;
+        }
         let (tx, ty, speed) = self.steering_target(&k, c, sponge, &mut rng);
         // Hovering at the cursor (curious): it holds station, even
         // against the current, but still eats what is under its mouth.
@@ -1752,6 +1744,23 @@ impl World {
             c.dodging = 0;
         }
         moved
+    }
+
+    /// The world moved something solid into `c`: it shifts to a free band
+    /// where it is, or hops out. Returns whether it was stuck (which takes
+    /// its tick).
+    fn unstick(&self, k: &Kind, c: &mut Creature) -> bool {
+        if self.fits(k, c.turn, c.x, c.y, c.band()) {
+            return false;
+        }
+        if let Some(b) = self.free_band(k, c.turn, c.x, c.y, c.band()) {
+            (c.z, c.tz) = (z_of(b), z_of(b));
+        } else if let Some((x, y)) = self.nearest_fit(k, c.turn, c.x, c.y, c.band(), UNSTUCK_RADIUS)
+        {
+            (c.x, c.y, c.vx, c.vy) = (x, y, 0, 0);
+            c.retarget = 0;
+        }
+        true
     }
 
     /// Whether a hopping walker is in the kick of a hop this tick. Each

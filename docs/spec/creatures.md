@@ -67,6 +67,13 @@
     substrate for kuhli loaches. During the rising half of a swim, a kuhli
     loach blocked by rock swims upward along its face and resumes its
     forward arc once its body clears the lip;
+  - face-climbing for hungry shrimp: food out of reach above the bed (a
+    film on a rock face, flakes by the glass) sends a shrimp to the face
+    that holds it, in that face's band. It takes hold turned like a
+    crawler, steps along the face towards the food (only where it gets
+    closer, giving the food up where it can't), and grazes as it goes.
+    Fed, frightened, asleep or out of food, it lets go and drifts back
+    down to the bed;
   - surface-grazing for snails on glass, rock and plants, turned in
     quarter turns so the foot rests on the face they hold (walls,
     overhangs), with the collision box turned too;
