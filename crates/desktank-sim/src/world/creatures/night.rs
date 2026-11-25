@@ -289,7 +289,7 @@ impl World {
                 let mut rng = chunk_stream(
                     self.seed,
                     self.tick,
-                    super::CREATURE_STREAM + u64::from(c.id.0),
+                    (super::CREATURE_STREAM + u64::from(c.id.0)) ^ super::steering::POUR_SALT,
                 );
                 c.retarget = self.wander_span(c, &mut rng);
             }

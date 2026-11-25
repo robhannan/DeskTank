@@ -285,8 +285,6 @@ pub struct Creature {
     pursuit: u16,
     /// Ticks of fright left: it flees to cover or away while above 0.
     fear: u16,
-    /// Transient response to the host cursor, omitted from saves like the cursor.
-    cursor_interest: steering::CursorInterest,
     /// Asleep for the night (see [`night`]).
     asleep: bool,
     /// Ticks it stays up after being woken at night (see [`night`]).
@@ -973,7 +971,6 @@ impl World {
             quarry: None,
             pursuit: 0,
             fear: 0,
-            cursor_interest: steering::CursorInterest::Idle,
             asleep: false,
             woken: 0,
         };
@@ -1105,7 +1102,7 @@ impl World {
     }
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
-    /// host's cursor and the fish's interest in it aren't saved.
+    /// host's cursor isn't saved.
     pub(super) fn save_creatures(&self) -> v9::Creatures {
         let cr = &self.creatures;
         v9::Creatures {
@@ -1302,7 +1299,6 @@ impl World {
                 quarry: quarry.map(CreatureId),
                 pursuit,
                 fear,
-                cursor_interest: steering::CursorInterest::Idle,
                 asleep: false,
                 woken: 0,
             });
@@ -1660,8 +1656,13 @@ impl World {
         let sponge = self.sponge_graze_target(&k, c, hungry);
 
         let (tx, ty, speed) = self.steering_target(&k, c, sponge, &mut rng);
+        // Hovering at the cursor (curious): it holds station, even
+        // against the current, but still eats what is under its mouth.
         if speed == 0 {
-            (c.vx, c.vy) = (0, 0);
+            (c.vx, c.vy, c.dodging) = (0, 0, 0);
+            if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
+                c.food = None;
+            }
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
         // A walker's swim takes over from wandering, not from food, sponge
@@ -2715,6 +2716,13 @@ mod tests {
             let fish = world.creature(id).unwrap();
             dist(fish.x - cursor_x, fish.y - cursor_y)
         };
+        // Start where this fish's interest begins.
+        world.tick = (1..100 * u64::from(TICKS_PER_SECOND))
+            .find(|&t| {
+                steering::interested(world.seed, id, t)
+                    && !steering::interested(world.seed, id, t - 1)
+            })
+            .unwrap();
         for _ in 0..16 * TICKS_PER_SECOND {
             world.tick();
             assert!(distance(&world) > length);
@@ -2727,6 +2735,29 @@ mod tests {
             world.tick();
         }
         assert!(distance(&world) > 2 * length);
+    }
+
+    #[test]
+    fn a_reloaded_curious_fish_watches_the_cursor_as_before() {
+        let (mut world, id) = puffer_world();
+        let kind = world.grown_kind(world.creature(id).unwrap()).unwrap();
+        let cursor = (40 + i64::from(3 * kind.w), 25);
+        world.set_creature_cursor(Some(cursor));
+        for _ in 0..10 * TICKS_PER_SECOND {
+            world.tick();
+        }
+        let mut again = crate::save::decode(
+            &crate::save::encode(&world),
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        // The host supplies its cursor again after a load.
+        again.set_creature_cursor(Some(cursor));
+        for _ in 0..60 * TICKS_PER_SECOND {
+            world.tick();
+            again.tick();
+            assert_eq!(again.state_hash(), world.state_hash());
+        }
     }
 
     #[test]

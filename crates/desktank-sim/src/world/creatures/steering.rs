@@ -25,40 +25,19 @@ const CURSOR_COOLDOWN_TICKS: u64 = 30 * TICKS_PER_SECOND as u64;
 /// The approach eases in and holds within a fraction of a cell of its target.
 const CURSOR_ARRIVAL: i64 = ONE as i64 / 8;
 
-/// Interest in this live host input is tracked independently for each fish.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CursorInterest {
-    Idle,
-    Watching {
-        position: (i32, i32),
-        since: u64,
-        last_tick: u64,
-    },
-    CoolingUntil(u64),
-}
+/// Salt for a curious fish's interest rhythm, and for its pour linger draw.
+const CURSOR_INTEREST_SALT: u64 = 0x6375_7269_6f75;
+pub(super) const POUR_SALT: u64 = 0x706f_7572;
 
-impl CursorInterest {
-    fn watch(&mut self, position: (i32, i32), tick: u64) -> bool {
-        let since = match *self {
-            Self::CoolingUntil(until) if tick < until => return false,
-            Self::Watching {
-                position: previous,
-                since,
-                last_tick,
-            } if previous == position && tick.saturating_sub(last_tick) <= 1 => since,
-            _ => tick,
-        };
-        if tick - since >= CURSOR_INTEREST_TICKS {
-            *self = Self::CoolingUntil(tick + CURSOR_COOLDOWN_TICKS);
-            return false;
-        }
-        *self = Self::Watching {
-            position,
-            since,
-            last_tick: tick,
-        };
-        true
-    }
+/// Whether a curious fish is interested in the cursor this tick: for
+/// [`CURSOR_INTEREST_TICKS`] of every interest-and-cool-down cycle, at a
+/// phase of its own. It is worked out from the tick, not kept, so a saved
+/// and reloaded tank watches and loses interest exactly as before.
+pub(super) fn interested(seed: u64, id: super::CreatureId, tick: u64) -> bool {
+    let period = CURSOR_INTEREST_TICKS + CURSOR_COOLDOWN_TICKS;
+    let phase = splitmix64(seed ^ CURSOR_INTEREST_SALT ^ u64::from(id.0).wrapping_mul(0x9e37_79b9))
+        % period;
+    (tick + phase) % period < CURSOR_INTEREST_TICKS
 }
 
 impl World {
@@ -302,12 +281,13 @@ impl World {
                 k.top,
             );
         }
+        // A chase (a betta driving off a rival) comes before the cursor.
+        if let Some(target) = self.chase_target(k, c) {
+            return target;
+        }
         if k.curious
             && let Some(target) = self.curious_cursor_target(k, c)
         {
-            return target;
-        }
-        if let Some(target) = self.chase_target(k, c) {
             return target;
         }
         if k.schooling {
@@ -331,8 +311,7 @@ impl World {
         let (dx, dy) = (c.x - px, c.y - py);
         let distance = dist(dx, dy);
         let length = i64::from(k.w * ONE);
-        if distance > CURSOR_SENSE_LENGTHS * length || !c.cursor_interest.watch((px, py), self.tick)
-        {
+        if distance > CURSOR_SENSE_LENGTHS * length || !interested(self.seed, c.id, self.tick) {
             return None;
         }
         let stop = 3 * length / 2;
@@ -456,19 +435,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_interest_restarts_when_the_cursor_moves_and_resumes_after_cooldown() {
-        let mut interest = CursorInterest::Idle;
-        for tick in 0..CURSOR_INTEREST_TICKS {
-            assert!(interest.watch((1, 1), tick));
+    fn curious_interest_lasts_twenty_seconds_in_every_fifty_at_each_fishs_own_phase() {
+        let period = CURSOR_INTEREST_TICKS + CURSOR_COOLDOWN_TICKS;
+        let mut starts = std::collections::BTreeSet::new();
+        for id in 1..20 {
+            let id = crate::world::creatures::CreatureId(id);
+            let on = (0..period).filter(|&t| interested(7, id, t)).count();
+            assert_eq!(on as u64, CURSOR_INTEREST_TICKS);
+            let start =
+                (0..period).find(|&t| interested(7, id, t) && !interested(7, id, t + period - 1));
+            starts.insert(start);
         }
-        let moved = CURSOR_INTEREST_TICKS;
-        let expires = moved + CURSOR_INTEREST_TICKS;
-        for tick in moved..expires {
-            assert!(interest.watch((2, 1), tick));
-        }
-        assert!(!interest.watch((2, 1), expires));
-        let resumes = expires + CURSOR_COOLDOWN_TICKS;
-        assert!(!interest.watch((3, 1), resumes - 1));
-        assert!(interest.watch((3, 1), resumes));
+        // The fish don't all lose interest at once.
+        assert!(starts.len() > 10, "{starts:?}");
     }
 }

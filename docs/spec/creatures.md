@@ -297,12 +297,15 @@
     It avoids an enabled cursor within five body lengths.
   - **Curiosity.** Pea puffers, bettas and fancy goldfish swim towards an
     enabled cursor within six grown body lengths. They cruise to about
-    one and a half lengths away and hover facing it. Fleeing, surfacing
-    for air and feeding take priority. After 20 world seconds of
-    interest in the same cursor cell, the fish ignores the cursor for
-    30 world seconds. An awake, calm curious fish also heads toward a
-    pour within 24 cells if it cannot eat the material, using its usual
-    wander timer.
+    one and a half lengths away and hover facing it, holding station
+    even against the current but still eating what is under its mouth.
+    Fleeing, surfacing for air, heading for food and a chase (a betta
+    driving off a rival) take priority. Each fish is interested for 20
+    world seconds in every 50, at a phase of its own worked out from the
+    tick and its id (nothing is saved, so a reloaded tank behaves the
+    same). An awake, calm curious fish not in the net or the bed also
+    heads toward a pour within 24 cells if it cannot eat the material,
+    using its usual wander timer.
   - **Cover.** A creature is in cover with 4 plant cells within 2 bands
     of its own inside 2 cells of its body. A predator neither sees nor
     strikes prey in cover.
