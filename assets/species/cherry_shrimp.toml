@@ -28,6 +28,7 @@ max_speed = 6.0
 swim_every = 30.0
 # Seconds between hops: it pushes off and drifts back down a few cells away.
 hop_every = 6.0
+skittish = true
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "flake_food"]
 
 # The female carries her eggs under her tail ("berried", carrying_frames

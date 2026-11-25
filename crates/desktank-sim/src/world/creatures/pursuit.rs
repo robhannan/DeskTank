@@ -3,7 +3,7 @@
 //! - **Sensing.** Every [`SENSE_EVERY`] ticks, at a tick picked from its
 //!   id, a creature looks round a start-of-tick snapshot of the tank's
 //!   creatures (`Creatures::near`, in id order). The snapshot is built only
-//!   while the tank holds a hunter, a territorial or shy creature, or
+//!   while the tank holds a hunter, a territorial, shy or skittish creature, or
 //!   live food and an eater of it. The look costs at most n² /
 //!   [`SENSE_EVERY`] distance checks a tick (n is at most the cap).
 //! - **Hunting.** A hungry adult predator (`prey_cm`), outside easy mode,
@@ -40,6 +40,11 @@
 //!   lengths (at least eight cells before its boldness is applied).
 //!   A nearby pour of something it doesn't eat also frightens it while
 //!   awake. In both cases it flees to cover, or away from the disturbance.
+//! - **Skittishness.** A calm, awake bottom hopper tail-flips away from an
+//!   approaching larger swimmer within three of its grown lengths (at least
+//!   six cells before applying boldness). It kicks away and up at
+//!   double top speed for half a second, holds its facing, then sinks and
+//!   ignores threats for 2 s.
 //! - **Cover.** A creature is in cover when [`COVER_CELLS`] plant cells
 //!   within [`COVER_BANDS`] of its band lie within [`COVER_REACH`] cells of
 //!   its body. A predator neither sees nor strikes prey in cover.
@@ -105,10 +110,20 @@ pub const COVER_CELLS: u32 = 4;
 pub const TERRITORY_MARGIN: i32 = 6;
 /// How far a creature flees with no cover near, in cells.
 const FLEE_RUN: i32 = 24;
-/// How many of its own grown lengths away a shy fish senses a swimmer.
-const SHY_SENSE: i32 = 3;
+/// How many of its own grown lengths away a shy or skittish creature senses a swimmer.
+const APPROACH_LENGTHS: i32 = 3;
 /// Minimum shy sensing range in cells, before applying boldness.
 const SHY_MIN_SENSE: i32 = 8;
+/// Minimum skittish sensing range in cells, before applying boldness.
+const FLIP_MIN_SENSE: i32 = 6;
+/// How long a tail flip lasts (0.5 s).
+pub(super) const FLIP_TICKS: u16 = 10;
+/// How long a skittish creature ignores threats after flipping (2 s).
+#[allow(clippy::cast_possible_truncation)]
+pub(super) const FLIP_REST: u16 = 2 * TICKS_PER_SECOND as u16;
+/// Target offset of a tail flip, in cells horizontally and up.
+const FLIP_RUN: i32 = 4;
+const FLIP_RISE: i32 = 3;
 /// How far a startle reaches, in halves of the species' full-grown length.
 const STARTLE_REACH: i32 = 3;
 /// Ticks of fright a startle loses with each fish it passes through.
@@ -150,7 +165,7 @@ pub(super) struct Near {
 
 impl World {
     /// Fills the sensing snapshot from `list` (the creatures in id order),
-    /// or empties it when no creature there hunts, keeps a territory or is shy.
+    /// or empties it when no creature there hunts, keeps a territory, is shy or is skittish.
     pub(super) fn snapshot_near(&mut self, list: &[Creature]) {
         let mut near = core::mem::take(&mut self.creatures.near);
         near.clear();
@@ -158,7 +173,11 @@ impl World {
         let has_live = list.iter().any(|c| self.is_live(c.species));
         let active = list.iter().any(|c| {
             self.kind(c.species).is_some_and(|k| {
-                (k.prey_mm > 0 && !easy) || k.territory > 0 || (has_live && k.eats_live) || k.shy
+                (k.prey_mm > 0 && !easy)
+                    || k.territory > 0
+                    || (has_live && k.eats_live)
+                    || k.shy
+                    || k.skittish
             })
         });
         if active {
@@ -390,9 +409,9 @@ impl World {
     }
 
     /// On a sensing tick: takes fright at the nearest hunter that could eat
-    /// `c`, a chaser of it, or a large swimmer approaching a shy creature.
+    /// `c`, a chaser of it, or a large swimmer approaching a shy or skittish creature.
     pub(super) fn take_fright(&self, k: &Kind, c: &mut Creature) {
-        if self.creatures.near.is_empty() {
+        if self.creatures.near.is_empty() || (k.skittish && c.quarry.is_none() && c.pursuit > 0) {
             return;
         }
         let length = self.length_mm(c);
@@ -402,8 +421,21 @@ impl World {
         let full = i64::from(FLEE_SENSE * ONE);
         let bold_scale = 50 + bold / 2;
         let bold_sense = full * bold_scale / 100;
-        let shy = k.shy && !c.asleep && c.fear == 0;
-        let shy_sense = i64::from((SHY_SENSE * k.w).max(SHY_MIN_SENSE) * ONE) * bold_scale / 100;
+        let calm = !c.asleep && c.fear == 0;
+        let shy = k.shy && calm;
+        let shy_sense =
+            i64::from((APPROACH_LENGTHS * k.w).max(SHY_MIN_SENSE) * ONE) * bold_scale / 100;
+        let skittish = k.skittish && calm && c.held_until < self.tick;
+        let flip_sense = if skittish {
+            // At two cells per cm, one cell represents five mm.
+            (i64::from(length) * i64::from(APPROACH_LENGTHS * ONE) / 5)
+                .max(i64::from(FLIP_MIN_SENSE * ONE))
+                * bold_scale
+                / 100
+        } else {
+            0
+        };
+        let mut flip: Option<(i64, i32)> = None;
         let mut threat: Option<(i64, i32, i32, bool)> = None;
         for n in &self.creatures.near {
             if n.id == c.id || n.held {
@@ -412,25 +444,55 @@ impl World {
             // Live food squirms away from a chaser only, seeking no cover.
             let hunter = !k.live && n.hunts_mm >= length && n.hunts_mm > 0;
             let chaser = n.chasing == Some(c.id);
-            let bigger =
-                shy && n.swimmer && !n.live && u64::from(n.length_mm) * 2 >= u64::from(length) * 3;
-            if !(hunter || chaser || bigger) {
+            let shy_threat = shy && u64::from(n.length_mm) * 2 >= u64::from(length) * 3;
+            let flip_threat = skittish && n.length_mm > length;
+            if !(hunter || chaser || shy_threat || flip_threat) {
                 continue;
             }
             let (dx, dy) = (c.x - n.x, c.y - n.y);
             let d = dist(dx, dy);
-            let approaching = bigger
-                && d <= shy_sense
-                && i64::from(n.vx) * i64::from(dx) + i64::from(n.vy) * i64::from(dy) > 0;
+            let can_flip = flip_threat && d <= flip_sense;
+            let can_startle = shy_threat && d <= shy_sense;
+            let approaching = (can_flip || can_startle) && approaching(n, dx, dy);
+            if can_flip && approaching {
+                if flip.is_none_or(|(td, _)| d < td) {
+                    flip = Some((d, n.x));
+                }
+                continue;
+            }
+            let startles = can_startle && approaching;
             let under_threat = (hunter || chaser) && d <= if chaser { full } else { bold_sense };
-            if (approaching || under_threat) && threat.is_none_or(|(td, ..)| d < td) {
-                threat = Some((d, n.x, n.y, approaching || hunter));
+            if (startles || under_threat) && threat.is_none_or(|(td, ..)| d < td) {
+                threat = Some((d, n.x, n.y, startles || hunter));
             }
         }
-        let Some((_, fx, fy, seek_cover)) = threat else {
-            return;
-        };
-        self.frighten(k, c, fx, fy, seek_cover);
+        if let Some((_, x)) = flip {
+            self.flip_from(k, c, x);
+        } else if let Some((_, fx, fy, seek_cover)) = threat {
+            self.frighten(k, c, fx, fy, seek_cover);
+        }
+    }
+
+    /// Starts a tail flip and its recovery using the saved fright and rest counters.
+    fn flip_from(&self, k: &Kind, c: &mut Creature, threat_x: i32) {
+        let left = c.x < threat_x || (c.x == threat_x && !c.facing_left);
+        let dx = if left { -FLIP_RUN } else { FLIP_RUN };
+        // Inside the water and the walls, like a run (`run_from`).
+        let (hw, hh) = (k.w / 2 + 1, k.h / 2 + 1);
+        let clamp = |v: i32, lo: i64, hi: i64| v.clamp(centre_of(lo), centre_of(hi.max(lo)));
+        c.tx = clamp(
+            c.x + dx * ONE,
+            i64::from(hw),
+            to_i64(self.width) - i64::from(hw) - 1,
+        );
+        c.ty = clamp(
+            c.y - FLIP_RISE * ONE,
+            to_i64(self.surface_row) + i64::from(hh),
+            to_i64(self.height) - i64::from(hh) - 1,
+        );
+        c.quarry = None;
+        c.fear = FLIP_TICKS;
+        c.pursuit = FLIP_TICKS + FLIP_REST;
     }
 
     /// Starts a fright, seeking cover if appropriate or running from its source.
@@ -636,10 +698,29 @@ fn in_territory(k: &Kind, c: &Creature, x: i32, y: i32, radius: i32) -> bool {
             <= i64::from(radius * ONE)
 }
 
+/// Whether a larger swimmer is heading towards the creature at offset `(dx, dy)`.
+fn approaching(n: &Near, dx: i32, dy: i32) -> bool {
+    n.swimmer
+        && !n.live
+        && !n.held
+        && i64::from(n.vx) * i64::from(dx) + i64::from(n.vy) * i64::from(dy) > 0
+}
+
+/// During a tail flip both counters run down together, leaving only the rest.
+pub(super) fn flipping(k: &Kind, c: &Creature) -> bool {
+    k.skittish
+        && c.quarry.is_none()
+        && (1..=FLIP_TICKS).contains(&c.fear)
+        && c.pursuit == FLIP_REST + c.fear
+}
+
 /// Where `c` runs while frightened, and how fast: its burst speed.
 pub(super) fn flee_target(k: &Kind, c: &Creature) -> Option<(i32, i32, i32)> {
     if c.fear == 0 {
         return None;
+    }
+    if flipping(k, c) {
+        return Some((c.tx, c.ty, 2 * k.top));
     }
     let percent = i32::try_from(grown_percent(c.growth, k.maturity)).unwrap_or(100);
     let burst = (k.top * percent / 100).max(k.cruise);

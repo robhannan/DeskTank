@@ -281,7 +281,7 @@ pub struct Creature {
     /// [`pursuit`]).
     quarry: Option<CreatureId>,
     /// Ticks it has chased its quarry; without one, ticks it rests before
-    /// the next chase.
+    /// the next chase or tail flip.
     pursuit: u16,
     /// Ticks of fright left: it flees to cover or away while above 0.
     fear: u16,
@@ -492,6 +492,7 @@ struct Kind {
     shoaling: bool,
     shy: bool,
     curious: bool,
+    skittish: bool,
     zone: Zone,
     breathes_air: bool,
     /// Stress per second once out of air (0: it doesn't breathe air).
@@ -667,6 +668,7 @@ impl Creatures {
                 shoaling: s.temperament == Temperament::Shoaling,
                 shy: s.shy,
                 curious: s.curious,
+                skittish: s.skittish,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
                 air_stress: breathing::air_stress(s.air_tolerance_seconds),
@@ -1674,12 +1676,13 @@ impl World {
             }
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
-        let moved = self.step_toward(&k, c, (tx, ty, speed), sponge.is_none());
+        let flipping = pursuit::flipping(&k, c);
+        let moved = self.step_toward(&k, c, (tx, ty, speed), sponge.is_none(), flipping);
         if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
             c.food = None;
         } else if moved != Move::Moved {
             (c.vx, c.vy) = (0, 0);
-            if moved == Move::Blocked {
+            if moved == Move::Blocked && !flipping {
                 if let Some(f) = c.food.take() {
                     c.ignore = Some(f);
                 }
@@ -1692,7 +1695,9 @@ impl World {
                 }
             }
         }
-        update_facing(c, sponge);
+        if !flipping {
+            update_facing(c, sponge);
+        }
         (c.x, c.y, c.facing_left, c.turn) != before
     }
 
@@ -1704,9 +1709,15 @@ impl World {
         c: &mut Creature,
         target: (i32, i32, i32),
         walking: bool,
+        flipping: bool,
     ) -> Move {
         let (tx, ty, speed) = target;
-        steer(k, c, tx, ty, speed, speed > k.cruise);
+        if flipping {
+            flip_kick(c, tx, ty, speed);
+        } else {
+            steer(k, c, tx, ty, speed, speed > k.cruise);
+        }
+        let walking = walking && !flipping;
         // Walkers keep a downward bias even on long, nearly horizontal
         // routes. A one-row step lets them follow a sloping sand bed.
         // Hoppers (shrimp) kick upwards now and then and sink back, except
@@ -2357,10 +2368,11 @@ fn update_facing(c: &mut Creature, sponge: Option<(i32, i32, i32)>) {
 fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool) {
     let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
     let d = dist(tx - c.x, ty - c.y);
+    let speed = i64::from(speed);
     let want = if d < ARRIVE {
-        i64::from(speed) * d / ARRIVE
+        speed * d / ARRIVE
     } else {
-        i64::from(speed)
+        speed
     };
     let (wx, wy) = if d == 0 {
         (0, 0)
@@ -2375,6 +2387,23 @@ fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool
     c.vx = i32::try_from(vx.clamp(-top, top)).unwrap_or(0);
     let rise = if darting { top } else { top / 2 };
     c.vy = i32::try_from(vy.clamp(-rise, rise)).unwrap_or(0);
+}
+
+/// A tail flip's kick (see [`pursuit`]): straight at `speed` (above top
+/// speed) towards the flip target, with no easing in, slowing only within
+/// a tick's travel of it.
+fn flip_kick(c: &mut Creature, tx: i32, ty: i32, speed: i32) {
+    let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
+    let d = dist(tx - c.x, ty - c.y);
+    let speed = i64::from(speed);
+    let want = speed.min(d);
+    let (wx, wy) = if d == 0 {
+        (0, 0)
+    } else {
+        (dx * want / d, dy * want / d)
+    };
+    c.vx = i32::try_from(wx).unwrap_or(0);
+    c.vy = i32::try_from(wy).unwrap_or(0);
 }
 
 /// A body's width and height in cells once turned `turn` quarter turns.
@@ -2611,6 +2640,102 @@ mod tests {
             }
             assert_eq!(fish.asleep, asleep);
         }
+    }
+
+    #[test]
+    fn a_cherry_shrimp_flips_away_from_an_approaching_goldfish_and_settles() {
+        for (species, vx, flips) in [
+            ("cherry_shrimp", -ONE, true),
+            ("cherry_shrimp", ONE, false),
+            ("amano_shrimp", -ONE, false),
+        ] {
+            let mut world = World::new(
+                WorldConfig {
+                    width: 120,
+                    height: 64,
+                    seed: 1,
+                    water_level: 0.95,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            world.set_easy_mode(true);
+            let sand = world.materials().id("sand").unwrap();
+            world
+                .fill_rect(
+                    Rect {
+                        x0: 0,
+                        y0: 60,
+                        x1: 120,
+                        y1: 64,
+                    },
+                    sand,
+                    Brush::Replace,
+                )
+                .unwrap();
+            let species = world.species().id(species).unwrap();
+            let shrimp_id = world.add_creature(species, 40, 59).unwrap();
+            let goldfish = world.species().id("common_goldfish").unwrap();
+            let fish_id = world.add_creature(goldfish, 50, 54).unwrap();
+            let start_tick = pursuit::SENSE_EVERY * 2 - u64::from(shrimp_id.0);
+            world.tick = start_tick;
+            world.creature_mut(fish_id).unwrap().vx = vx;
+            let mut list = world.creatures.list.clone();
+            world.snapshot_near(&list);
+
+            let mut shrimp = world.creature(shrimp_id).unwrap().clone();
+            shrimp.facing_left = false;
+            let (bed_x, bed_y) = (shrimp.x, shrimp.y);
+            world.update_creature(&mut shrimp);
+            assert_eq!(shrimp.fear, if flips { pursuit::FLIP_TICKS } else { 0 });
+            if !flips {
+                continue;
+            }
+            assert!(!shrimp.facing_left);
+            for _ in 1..pursuit::FLIP_TICKS {
+                world.tick += 1;
+                world.update_creature(&mut shrimp);
+                assert!(!shrimp.facing_left, "the shrimp should keep facing right");
+            }
+            assert!(shrimp.x < bed_x - 2 * ONE && shrimp.y <= bed_y - 2 * ONE);
+            // Keep a fish approaching from within range even as the shrimp moves away.
+            let fish = list.iter().position(|c| c.id == fish_id).unwrap();
+            for elapsed in 0..=pursuit::FLIP_REST {
+                if elapsed == pursuit::FLIP_REST {
+                    assert!(
+                        shrimp.y >= bed_y,
+                        "the shrimp should settle back onto the bed"
+                    );
+                    assert_eq!(shrimp.pursuit, 1);
+                }
+                list[fish].x = shrimp.x + 8 * ONE;
+                world.snapshot_near(&list);
+                world.tick += 1;
+                world.update_creature(&mut shrimp);
+                if elapsed < pursuit::FLIP_REST {
+                    assert_eq!(shrimp.fear, 0);
+                }
+            }
+            assert_eq!(shrimp.fear, pursuit::FLIP_TICKS, "recovery should expire");
+        }
+    }
+
+    #[test]
+    fn skittish_shrimp_alone_activate_near_sensing() {
+        let mut world =
+            World::new(WorldConfig::default(), MaterialTable::builtin().unwrap()).unwrap();
+        world.set_easy_mode(false);
+        let amano = world.species().id("amano_shrimp").unwrap();
+        let id = world.add_creature(amano, 40, 30).unwrap();
+        world.tick();
+        assert!(world.creatures.near.is_empty());
+        assert_eq!(world.creatures.near.capacity(), 0);
+        world.remove_creature(id);
+        let cherry = world.species().id("cherry_shrimp").unwrap();
+        world.add_creature(cherry, 40, 30).unwrap();
+        world.add_creature(cherry, 50, 30).unwrap();
+        world.tick();
+        assert_eq!(world.creatures.near.len(), 2);
     }
 
     #[test]

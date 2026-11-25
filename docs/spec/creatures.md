@@ -27,7 +27,7 @@
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Eight species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Nine species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp), `swim_every` (seconds between a
@@ -39,8 +39,10 @@
   back over its body, conserving the substrate), `bands` (the depth bands it
   keeps to, front and back, D21; every band by default), `rests` (where
   it rests at night, *Night* below), `shy` (seeks cover and startles
-  easily, false by default), and `curious` (investigates the cursor and
-  nearby pours, false by default). A species can enable only one of
+  easily, false by default), `curious` (investigates the cursor and
+  nearby pours, false by default), and `skittish` (tail-flips away from
+  larger swimmers, false by default, allowed only for bottom walkers
+  with `hop_every`). A species can enable only one of
   `shy` and `curious`. Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
@@ -261,7 +263,7 @@
   T9 part 2's predation, unchanged):
   - **Sensing.** Every 10 ticks (offset by its id) a creature looks round
     a start-of-tick snapshot of the tank's creatures, built only while the
-    tank holds a predator (outside easy mode), a territorial or shy creature,
+    tank holds a predator (outside easy mode), a territorial, shy or skittish creature,
     or live food and one of its eaters. The cost is at most n²/10 distance
     checks a tick.
   - **Hunting.** A hungry adult predator, outside easy mode, not in the
@@ -306,6 +308,13 @@
     same). An awake, calm curious fish not in the net or the bed also
     heads toward a pour within 24 cells if it cannot eat the material,
     using its usual wander timer.
+  - **Skittishness.** A calm, awake cherry shrimp tail-flips when a
+    larger swimmer heads toward it within three of its grown lengths
+    (at least 6 cells before its boldness is applied). For 0.5 s it
+    moves away and up at twice its top speed, keeping its facing. It
+    then sinks to the bed and ignores threats for 2 s. Amano shrimp
+    stay bold, and a skittish shrimp ignores a hunter too during
+    those 2 s.
   - **Cover.** A creature is in cover with 4 plant cells within 2 bands
     of its own inside 2 cells of its body. A predator neither sees nor
     strikes prey in cover.
