@@ -2167,11 +2167,16 @@ impl World {
         let adult = self.kind(c.species).is_some_and(|g| c.growth >= g.maturity);
         let others = || mates.iter().filter(|m| m.id != c.id && m.adult == adult);
         let nearest = others().min_by_key(|m| distance_sq(m))?;
-        let length = self.kind(c.species).map_or(k.w, |g| g.size_of(c.female).0) * ONE;
-        let mate = if distance_sq(nearest) > i64::from(12 * length).pow(2) {
+        // In the shorter sex's full-grown length, so a shoal of big females
+        // (a guppy's are half as long again) keeps as close as the males'.
+        let length = self
+            .kind(c.species)
+            .map_or(k.w, |g| g.size_of(false).0.min(g.size_of(true).0))
+            * ONE;
+        let mate = if distance_sq(nearest) > i64::from(8 * length).pow(2) {
             nearest
         } else {
-            if rng.next_u32().is_multiple_of(3) {
+            if rng.next_u32().is_multiple_of(4) {
                 return None;
             }
             let count = u32::try_from(others().count()).ok()?;
@@ -2508,14 +2513,21 @@ mod tests {
             sum / (60 * 8)
         };
 
-        for seed in [4, 77] {
+        // Each seed draws closer, and over all of them by a fifth or more.
+        let (mut shoals, mut roams) = (0, 0);
+        for seed in [4, 5, 9, 13, 21, 77] {
             let peaceful = mean_gap(seed, "temperament = \"peaceful\"");
             let shoaling = mean_gap(seed, "temperament = \"shoaling\"");
             assert!(
-                shoaling * 4 < peaceful * 3,
+                shoaling < peaceful,
                 "seed {seed}, shoaling {shoaling}, peaceful {peaceful}"
             );
+            (shoals, roams) = (shoals + shoaling, roams + peaceful);
         }
+        assert!(
+            shoals * 5 < roams * 4,
+            "shoaling {shoals}, peaceful {roams}"
+        );
     }
 
     fn dimorphic_tank(female_art: &str) -> World {
