@@ -2178,7 +2178,20 @@ impl World {
             if gx * gx + gy * gy > limit {
                 continue;
             }
-            for &i in list.iter().chain(film.into_iter().flatten()) {
+            // The coat set is row-major: visit only its cells inside the
+            // sensing square, a range per row, not every coated cell.
+            let rows = (cy - FOOD_SENSE).max(to_i64(b.y0))..(cy + FOOD_SENSE + 1).min(to_i64(b.y1));
+            let x0 = (cx - FOOD_SENSE).max(to_i64(b.x0));
+            let x1 = (cx + FOOD_SENSE + 1).min(to_i64(b.x1)).max(x0);
+            let w = to_i64(self.width);
+            let coat = film.into_iter().flat_map(|set| {
+                rows.clone().flat_map(move |y| {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    // Row-major cell indices fit u32 (MAX_SIDE squared).
+                    set.range((y * w + x0) as u32..(y * w + x1) as u32)
+                })
+            });
+            for &i in list.iter().chain(coat) {
                 if !self.edible_cell(k, i as usize) {
                     continue;
                 }

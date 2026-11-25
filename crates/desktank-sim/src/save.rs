@@ -424,6 +424,39 @@ mod tests {
     }
 
     #[test]
+    fn v16_rejects_reserved_coat_varieties() {
+        let materials = MaterialTable::builtin().unwrap();
+        let mut w = World::new(
+            crate::WorldConfig {
+                width: 16,
+                height: 16,
+                ..crate::WorldConfig::default()
+            },
+            materials.clone(),
+        )
+        .unwrap();
+        let sand = materials.id("sand").unwrap();
+        w.set_cell(3, 15, sand).unwrap();
+        assert!(w.set_algae_coat(3, 15, 7));
+        let mut coat = w.coat().to_vec();
+        assert_eq!(coat[15 * 16 + 3], 0x17);
+        assert!(decode(&encode(&w), materials.clone()).is_ok());
+        for variety in [0u8, 2, 15] {
+            coat[15 * 16 + 3] = variety << 4 | 7;
+            let mut saved = w.to_v16();
+            saved.coat = runs(coat.iter().copied());
+            let bytes = wrap(16, &postcard::to_allocvec(&saved).unwrap());
+            assert!(
+                matches!(
+                    decode(&bytes, materials.clone()),
+                    Err(SaveError::Invalid(_))
+                ),
+                "variety {variety}"
+            );
+        }
+    }
+
+    #[test]
     fn runs_round_trip() {
         let v = [0u8, 0, 0, 5, 5, 1, 0, 0];
         let r = runs(v);

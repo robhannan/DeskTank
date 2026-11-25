@@ -1,6 +1,8 @@
 //! Surface film uses bounded batches of field blocks, including when the
 //! material chunks are asleep. Only mixed blocks and wet block edges can
 //! grow a surface coat. Coated cells are indexed by chunk for grazers.
+//! Catch-up visits disjoint groups of blocks in turn and credits each group
+//! with the time its neighbours skipped, so it grows film at the live rate.
 
 use std::collections::BTreeSet;
 
@@ -29,7 +31,8 @@ pub(super) struct Algae {
     pub(super) coated: usize,
     pub(super) glass: usize,
     by_field: Vec<u8>,
-    version: u64,
+    coat_version: u64,
+    glass_version: u64,
 }
 
 impl Algae {
@@ -45,13 +48,14 @@ impl Algae {
             coated: 0,
             glass: 0,
             by_field: vec![0; fw * fh],
-            version: 0,
+            coat_version: 0,
+            glass_version: 0,
         }
     }
     pub(super) fn glass_changed(&mut self, (old, new): (u8, u8)) {
         if old != new {
             self.glass = self.glass + usize::from(new != 0) - usize::from(old != 0);
-            self.version = self.version.wrapping_add(1);
+            self.glass_version = self.glass_version.wrapping_add(1);
         }
     }
 
@@ -103,7 +107,27 @@ impl World {
     /// Changes whenever the coat or glass density changes.
     #[must_use]
     pub fn algae_version(&self) -> u64 {
-        self.algae.version
+        self.algae
+            .coat_version
+            .wrapping_add(self.algae.glass_version)
+    }
+
+    /// Changes whenever a coat density changes.
+    #[must_use]
+    pub fn coat_version(&self) -> u64 {
+        self.algae.coat_version
+    }
+
+    /// Changes whenever a glass density changes.
+    #[must_use]
+    pub fn glass_version(&self) -> u64 {
+        self.algae.glass_version
+    }
+
+    /// How many cells carry a coat.
+    #[must_use]
+    pub fn coated_cells(&self) -> usize {
+        self.algae.coated
     }
 
     /// Initialises green film for a simulation fixture. Returns whether
@@ -171,7 +195,7 @@ impl World {
                 self.algae.by_field[field] += 1;
             }
         }
-        self.algae.version = self.algae.version.wrapping_add(1);
+        self.algae.coat_version = self.algae.coat_version.wrapping_add(1);
         self.mark_film_light_dirty(field);
     }
 
@@ -203,20 +227,18 @@ impl World {
 
     pub(super) fn catch_up_algae(&mut self, start: u64) {
         let blocks = self.algae.front.len();
-        let steps = self.tick / FIELD_EVERY - start / FIELD_EVERY;
-        if steps == 0 {
+        if blocks == 0 || self.tick == start {
             return;
         }
-        let count = blocks
-            .min(CATCH_UP_BLOCKS)
-            .min(usize::try_from(steps).unwrap_or(CATCH_UP_BLOCKS) * BLOCKS_PER_STEP);
-        // Consecutive coarse intervals visit disjoint batches until they wrap.
-        let batch = start / u64::from(STEP_TICKS) % blocks as u64;
+        // Consecutive coarse intervals visit disjoint groups of blocks until
+        // they wrap, and each visit stands for every interval it skipped.
+        let size = blocks.min(CATCH_UP_BLOCKS);
+        let groups = blocks.div_ceil(size);
         #[allow(clippy::cast_possible_truncation)] // The modulo fits the field grid.
-        let offset = (batch * CATCH_UP_BLOCKS as u64 % blocks as u64) as usize;
-        #[allow(clippy::cast_precision_loss)] // At most five minutes of ticks
-        let seconds = (self.tick - start) as f32 / TICKS_PER_SECOND as f32;
-        self.update_algae(offset, count, seconds);
+        let first = (start / u64::from(STEP_TICKS) % groups as u64) as usize * size;
+        #[allow(clippy::cast_precision_loss)] // At most five minutes of ticks, and a few groups
+        let seconds = (self.tick - start) as f32 / TICKS_PER_SECOND as f32 * groups as f32;
+        self.update_algae(first, (blocks - first).min(size), seconds);
         self.refresh_light_if_dirty();
     }
 
@@ -232,9 +254,11 @@ impl World {
             let block = row % blocks;
             let nutrient = self.field(FieldKind::Nutrient).values()[block];
             let light = self.field(FieldKind::Light).values()[block];
+            let co2 = self.field(FieldKind::Co2).values()[block];
             let mut step = FilmStep {
                 cfg,
-                competition,
+                // Plants with CO₂ to work with are stronger competitors.
+                competition: (competition * (1.0 + cfg.co2_boost * co2)).min(1.0),
                 seconds,
                 rng: &mut rng,
             };
@@ -383,5 +407,122 @@ impl FilmStep<'_> {
                 fraction > 0.0 && f64::from(self.rng.next_u32()) < fraction * 4_294_967_296.0,
             );
         if grow { old + amount } else { old - amount }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Brush, MaterialTable, Rect, WorldConfig};
+
+    #[test]
+    fn catch_up_credits_every_block_across_a_cycle_of_intervals() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 1280,
+                height: 240,
+                seed: 3,
+                water_level: 1.0,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let sand = w.materials().id("sand").unwrap();
+        let bed = Rect {
+            x0: 0,
+            y0: 200,
+            x1: 1280,
+            y1: 240,
+        };
+        w.fill_rect(bed, sand, Brush::Replace).unwrap();
+        for y in (0..w.height()).step_by(FIELD_SCALE) {
+            for x in (0..w.width()).step_by(FIELD_SCALE) {
+                w.add_to_field(FieldKind::Nutrient, x, y, 1.0);
+            }
+        }
+        for _ in 0..TICKS_PER_SECOND {
+            w.tick();
+        }
+        let blocks = w.algae.front.len();
+        let groups = blocks.div_ceil(CATCH_UP_BLOCKS);
+        assert!(groups > 1, "needs several groups, has {blocks} blocks");
+        let top = 200 * w.width;
+        for x in 0..w.width {
+            assert!(w.set_algae_coat(x, 200, 1));
+        }
+        let before: usize = w.algae.coat[top..top + w.width]
+            .iter()
+            .map(|&v| usize::from(v & DENSITY_MASK))
+            .sum();
+        // One short interval per group, as `catch_up` would visit them.
+        let interval = 10 * TICKS_PER_SECOND;
+        for g in 0..groups as u64 {
+            let start = (1 + g) * u64::from(STEP_TICKS);
+            w.tick = start + u64::from(interval);
+            w.catch_up_algae(start);
+        }
+        let after: usize = w.algae.coat[top..top + w.width]
+            .iter()
+            .map(|&v| usize::from(v & DENSITY_MASK))
+            .sum();
+        // Every block has grown for the whole 10 s × groups it stands for.
+        #[allow(clippy::cast_precision_loss)]
+        let gain = (after - before) as f32 / w.width as f32;
+        #[allow(clippy::cast_precision_loss)]
+        let expected = 0.15 * 10.0 * groups as f32;
+        assert!(
+            (gain - expected).abs() < expected * 0.2,
+            "mean gain {gain}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn co2_strengthens_plant_competition_against_film() {
+        let film_after = |co2_boost: f32| {
+            let mut w = World::new(
+                WorldConfig {
+                    width: 64,
+                    height: 48,
+                    seed: 9,
+                    water_level: 1.0,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            let sand = w.materials().id("sand").unwrap();
+            let bed = Rect {
+                x0: 0,
+                y0: 42,
+                x1: 64,
+                y1: 48,
+            };
+            w.fill_rect(bed, sand, Brush::Replace).unwrap();
+            let rotala = w.plant_species().id("rotala").unwrap();
+            for x in [4, 12, 20, 28, 36] {
+                w.paint_plant(x, 41, 0, rotala, crate::Propagule::Cuttings)
+                    .unwrap();
+            }
+            w.life.eco.algae.as_mut().unwrap().co2_boost = co2_boost;
+            for _ in 0..12 {
+                for y in (0..w.height()).step_by(FIELD_SCALE) {
+                    for x in (0..w.width()).step_by(FIELD_SCALE) {
+                        w.add_to_field(FieldKind::Nutrient, x, y, 1.0);
+                        w.add_to_field(FieldKind::Co2, x, y, 0.4);
+                    }
+                }
+                for _ in 0..10 * TICKS_PER_SECOND {
+                    w.tick();
+                }
+            }
+            (w.plant_cells(), w.coated_cells())
+        };
+        let (plants, plain) = film_after(0.0);
+        let (more_plants, boosted) = film_after(0.5);
+        assert!(
+            plain > 40 && boosted * 4 < plain * 3,
+            "{boosted} coated cells against {plain}"
+        );
+        // The plants themselves are the same either way.
+        assert_eq!(plants, more_plants);
     }
 }

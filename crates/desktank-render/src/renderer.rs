@@ -221,7 +221,8 @@ impl Renderer {
         self.bases_version = None;
         self.fields_version = None;
         self.flow_version = None;
-        self.algae.version = None;
+        self.algae.coat_version = None;
+        self.algae.glass_version = None;
         self.plant_tints.invalidate();
         self.instance_bytes.clear();
         self.view.clear();
@@ -733,7 +734,8 @@ struct AlgaeTextures {
     coat: wgpu::Texture,
     glass: wgpu::Texture,
     sampler: wgpu::Sampler,
-    version: Option<u64>,
+    coat_version: Option<u64>,
+    glass_version: Option<u64>,
     coat_visible: bool,
     rear_film_visible: bool,
     front_film_visible: bool,
@@ -752,7 +754,8 @@ impl AlgaeTextures {
             coat,
             glass,
             sampler,
-            version: None,
+            coat_version: None,
+            glass_version: None,
             coat_visible: false,
             rear_film_visible: false,
             front_film_visible: false,
@@ -767,22 +770,25 @@ impl AlgaeTextures {
     }
 
     fn upload(&mut self, gpu: &Gpu, world: &World, scratch: &mut Vec<u8>) {
-        let version = world.algae_version();
-        if self.version == Some(version) {
+        let version = world.coat_version();
+        if self.coat_version != Some(version) {
+            self.coat_version = Some(version);
+            self.coat_visible = world.coated_cells() != 0;
+            if self.coat_visible {
+                let rect = desktank_sim::Rect {
+                    x0: 0,
+                    y0: 0,
+                    x1: world.width(),
+                    y1: world.height(),
+                };
+                write_rect(gpu, &self.coat, rect, world.coat(), 1);
+            }
+        }
+        let version = world.glass_version();
+        if self.glass_version == Some(version) {
             return;
         }
-        self.version = Some(version);
-        let coat = world.coat();
-        self.coat_visible = coat.iter().any(|&v| v != 0);
-        if self.coat_visible {
-            let rect = desktank_sim::Rect {
-                x0: 0,
-                y0: 0,
-                x1: world.width(),
-                y1: world.height(),
-            };
-            write_rect(gpu, &self.coat, rect, coat, 1);
-        }
+        self.glass_version = Some(version);
         let front = world.front_glass_algae();
         let back = world.back_glass_algae();
         let sides = world.side_glass_algae();

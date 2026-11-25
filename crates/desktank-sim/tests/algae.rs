@@ -161,3 +161,43 @@ fn coat_is_cleared_on_overwrite_and_reduces_light_below_it() {
     let retired = w.materials().id("algae").unwrap();
     assert!(w.set_cell(16, 16, retired).is_err());
 }
+
+fn film_total(w: &World) -> usize {
+    let sum = |layer: &[u8]| layer.iter().map(|&v| usize::from(v & 15)).sum::<usize>();
+    sum(w.coat())
+        + sum(w.front_glass_algae())
+        + sum(w.back_glass_algae())
+        + w.side_glass_algae()
+            .iter()
+            .flatten()
+            .map(|&v| usize::from(v))
+            .sum::<usize>()
+}
+
+#[test]
+fn catch_up_grows_film_at_the_live_rate_on_a_large_tank() {
+    // 160 × 60 field blocks: more than one catch-up batch.
+    let mut live = World::new(
+        WorldConfig {
+            width: 1280,
+            height: 480,
+            seed: 5,
+            water_level: 1.0,
+        },
+        MaterialTable::builtin().unwrap(),
+    )
+    .unwrap();
+    fill(&mut live, "sand", (0, 440, 1280, 480));
+    enrich(&mut live, 1.0);
+    let mut caught_up = live.clone();
+    // Long enough for every group of blocks to be visited several times.
+    let seconds = 900;
+    run(&mut live, seconds);
+    caught_up.catch_up(seconds);
+    let (live, caught_up) = (film_total(&live), film_total(&caught_up));
+    assert!(live > 10_000, "live film {live}");
+    assert!(
+        caught_up.abs_diff(live) * 4 < live,
+        "catch-up {caught_up} against live {live}"
+    );
+}

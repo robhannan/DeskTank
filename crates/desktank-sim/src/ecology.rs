@@ -335,6 +335,7 @@ struct AlgaeDef {
     creep_rate: f32,
     growth_rate: f32,
     die_back_rate: f32,
+    co2_boost: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -624,6 +625,8 @@ pub(crate) struct AlgaeConfig {
     pub creep_rate: f32,
     pub growth_rate: f32,
     pub die_back_rate: f32,
+    /// Plant competition grows by this fraction per unit of CO₂ in a block.
+    pub co2_boost: f32,
 }
 
 /// The resolved reaction table, processes, field and device settings for
@@ -1152,6 +1155,9 @@ fn algae(
             "thresholds and rates must be finite and positive, with light <= 1",
         ));
     }
+    if !(d.co2_boost.is_finite() && d.co2_boost >= 0.0) {
+        return Err(invalid(&what, "co2_boost must be finite and >= 0"));
+    }
     let surfaces = set(&d.surfaces, materials, strict)?;
     if materials
         .iter()
@@ -1167,6 +1173,7 @@ fn algae(
         creep_rate: d.creep_rate,
         growth_rate: d.growth_rate,
         die_back_rate: d.die_back_rate,
+        co2_boost: d.co2_boost,
     })
 }
 
