@@ -644,3 +644,63 @@ fn christmas_moss_grows_over_rock_slower_than_java_moss() {
         sizes[1]
     );
 }
+
+#[test]
+fn aged_cuttings_root_as_their_original_species() {
+    for (name, method, bed) in [
+        ("rotala", Propagule::Cuttings, "aquasoil"),
+        ("java_moss", Propagule::Fragments, "rock"),
+    ] {
+        let mut w = world(48, 48, 8);
+        let sand = id(&w, "sand");
+        w.fill_rect(rect(0, 40, 48, 48), sand, Brush::Replace)
+            .unwrap();
+        let species = species(&w, name);
+        w.paint_plant(24, 39, 0, species, method).unwrap();
+        run(&mut w, 4 * MINUTE);
+        assert!(w.cell(24, 39).unwrap().state >> 8 > 0, "{name}");
+        assert_eq!(w.plant_count(), 0, "{name}");
+
+        let bed = id(&w, bed);
+        w.fill_rect(rect(0, 40, 48, 48), bed, Brush::Replace)
+            .unwrap();
+        w.paint_plant(30, 39, 0, species, method).unwrap();
+        run(&mut w, MINUTE);
+        assert_eq!(count(&w, "cutting"), 0, "{name}");
+        assert_eq!(w.plant_count(), 2, "{name}");
+        assert!(w.plants().all(|p| p.species == species), "{name}");
+        check_table(&w);
+    }
+}
+
+#[test]
+fn aged_and_fresh_marimo_fragments_join_one_ball() {
+    let mut w = world(48, 48, 9);
+    let sand = id(&w, "sand");
+    w.fill_rect(rect(0, 40, 48, 48), sand, Brush::Replace)
+        .unwrap();
+    lid(&mut w, 0, 48, 24);
+    run(&mut w, MINUTE);
+    let marimo = species(&w, "marimo");
+    for x in 22..24 {
+        w.paint_plant(x, 39, 0, marimo, Propagule::Fragments)
+            .unwrap();
+    }
+    run(&mut w, 4 * MINUTE);
+    assert_eq!(w.plant_count(), 0);
+    assert!(w.cell(22, 39).unwrap().state >> 8 > 0);
+    assert!(w.cell(23, 39).unwrap().state >> 8 > 0);
+
+    let water = id(&w, "water");
+    w.fill_rect(rect(0, 8, 48, 32), water, Brush::Replace)
+        .unwrap();
+    w.paint_plant(24, 39, 0, marimo, Propagule::Fragments)
+        .unwrap();
+    run(&mut w, 20);
+    assert_eq!(count(&w, "cutting"), 0);
+    assert_eq!(w.plant_count(), 1);
+    let ball = w.plants().next().unwrap();
+    assert_eq!(ball.species, marimo);
+    assert!(ball.size() >= 3);
+    check_table(&w);
+}
