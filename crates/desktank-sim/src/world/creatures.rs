@@ -77,6 +77,7 @@ mod lifecycle;
 mod live;
 mod naming;
 pub mod night;
+mod panes;
 pub mod pursuit;
 mod quirks;
 use quirks::salt;
@@ -108,6 +109,7 @@ pub use lifecycle::{
 };
 pub use live::{LIVE_FOOD_BITES, MAX_LIVE_FOOD, PINCH};
 pub use naming::{CreatureCard, MAX_NAME_CHARS, clean_name};
+pub use panes::Pane;
 
 /// The default population cap per display (SPEC §2.4), which protects the
 /// budget; [`World::set_creature_cap`] changes it.
@@ -289,6 +291,8 @@ pub struct Creature {
     asleep: bool,
     /// Ticks it stays up after being woken at night (see [`night`]).
     woken: u16,
+    /// The pane it crawls, if any (see [`panes`]).
+    pane: Pane,
 }
 
 /// What a creature added by a host, a script or a test is like (see
@@ -540,6 +544,11 @@ struct Kind {
     is_shrimp: bool,
     /// Where it rests at night (see [`night`]).
     rests: RestSpot,
+    /// Its body on the edges, and on a pane (head right) if it has pane
+    /// art (see [`panes`]); a grown kind scales both, and `w`/`h` are
+    /// the pane's while it is on one.
+    side: (i32, i32),
+    pane: Option<(i32, i32)>,
 }
 
 impl Kind {
@@ -713,6 +722,9 @@ impl Creatures {
                 eats_live: live_prey != [0; 4],
                 is_shrimp: s.name.ends_with("_shrimp"),
                 rests: s.rests,
+                side: (w, h),
+                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                pane: s.pane_size().map(|(w, h)| (w as i32, h as i32)),
             });
         }
         let school = vec![
@@ -975,6 +987,7 @@ impl World {
             fear: 0,
             asleep: false,
             woken: 0,
+            pane: Pane::Off,
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -1016,6 +1029,10 @@ impl World {
         self.creature_mut(id)
             .map(|c| {
                 c.held_until = until;
+                // The net lifts it off a pane, upright (see `panes`).
+                if c.pane != Pane::Off {
+                    (c.pane, c.turn) = (Pane::Off, 0);
+                }
                 // Netting wakes a sleeper (see `night`).
                 if c.asleep {
                     c.wake();
@@ -1071,6 +1088,7 @@ impl World {
     pub fn in_zone(&self, creature: &Creature) -> bool {
         if let Some(k) = self.grown_kind(creature)
             && k.zone == Zone::Surfaces
+            && creature.pane == Pane::Off
             && !self.on_surface(&k, creature.turn, creature.x, creature.y, creature.band())
         {
             return false;
@@ -1303,6 +1321,7 @@ impl World {
                 fear,
                 asleep: false,
                 woken: 0,
+                pane: Pane::Off,
             });
         }
         let corpses = self.load_corpses(saved.corpses)?;
@@ -1400,6 +1419,11 @@ impl World {
                 c.sire[0],
                 c.sire[1],
             ]);
+            // Only pane crawlers hash their pane, so other tanks hash as
+            // before.
+            if c.pane != Pane::Off {
+                h.write(&[b'p', c.pane.code()]);
+            }
             // Only home owners have one, so other tanks hash as before.
             if let Some((x, y)) = c.home {
                 h.write(&x.to_le_bytes());
@@ -1631,6 +1655,16 @@ impl World {
         self.shift_depth(&k, c);
         let swim = self.swim(&k, c).filter(|_| c.food.is_none() && c.fear == 0);
         if k.zone == Zone::Surfaces {
+            if c.pane != Pane::Off {
+                self.pane_step(&k, c, &mut rng);
+                if hungry && self.anything_to_eat(&k) {
+                    self.eat(&k, c);
+                }
+                return (c.x, c.y, c.facing_left, c.turn) != before;
+            }
+            if self.seek_pane(&k, c) {
+                return true;
+            }
             if let Some(swim) = swim
                 && self.swim_step(&k, c, swim)
             {
@@ -3224,9 +3258,11 @@ mod tests {
                 assert!((2.0..=3.0).contains(&c.depth()), "depth {}", c.depth());
                 seen[usize::from(c.band())] = true;
             }
-            // A crawler keeps its band, unless a growing plant buries it.
+            // A crawler keeps its band, unless a growing plant buries it or
+            // it heads for a pane (#371).
             let now = w.creature(snail).unwrap().band();
-            if now != band {
+            let to_pane = before.tz == z_of(0) || before.tz == z_of(DEPTH_BANDS - 1);
+            if now != band && !to_pane {
                 let k = w.grown_kind(&before).unwrap();
                 assert!(
                     !w.fits(&k, before.turn, before.x, before.y, band),

@@ -912,3 +912,49 @@ fn a_loaded_tank_lights_its_water_as_the_running_one() {
         }
     }
 }
+
+/// A snail on a pane (#371, version 16) saves on it, in its band, and the
+/// loaded tank carries on exactly.
+#[test]
+fn a_snail_on_a_pane_saves_on_it_and_carries_on() {
+    let mut w = World::new(
+        WorldConfig {
+            width: 120,
+            height: 80,
+            seed: 5,
+            water_level: 0.95,
+        },
+        table(),
+    )
+    .unwrap();
+    let sand = id(&w, "sand");
+    w.fill_rect(rect(0, 74, 120, 80), sand, Brush::Replace)
+        .unwrap();
+    let nerite = w.species().id("nerite").unwrap();
+    let ids: Vec<_> = (0..4)
+        .map(|i| w.add_creature(nerite, 20 + i * 25, 70).unwrap())
+        .collect();
+    let on_pane = |w: &World| {
+        ids.iter()
+            .any(|&id| w.creature(id).unwrap().pane() != desktank_sim::Pane::Off)
+    };
+    let mut ticks = 0;
+    while !on_pane(&w) {
+        w.tick();
+        ticks += 1;
+        assert!(ticks < 200 * 20, "no nerite took to a pane");
+    }
+    let mut loaded = reload(&w);
+    assert_eq!(loaded.state_hash(), w.state_hash());
+    for &id in &ids {
+        assert_eq!(
+            loaded.creature(id).unwrap().pane(),
+            w.creature(id).unwrap().pane()
+        );
+    }
+    for _ in 0..1200 {
+        w.tick();
+        loaded.tick();
+    }
+    assert_eq!(loaded.state_hash(), w.state_hash());
+}

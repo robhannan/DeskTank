@@ -343,6 +343,10 @@ pub struct Species {
     /// female if the species is drawn differently by sex, then for a
     /// carrying female if it has carrying art. See [`Species::look`].
     pub looks: Vec<Look>,
+    /// Its looks on the front and back panes (#371), if it has pane art:
+    /// for each morph the top view (back pane), then the view from below
+    /// (front pane). See [`Species::pane_look`].
+    pub pane_looks: Vec<Look>,
     /// Its pixel art; half its size in texels is the body size in cells.
     pub sprite: Sprite,
     /// Its main colour (the commonest in the first frame), for swatches.
@@ -502,6 +506,29 @@ impl Species {
         } else {
             morph
         }
+    }
+
+    /// Index in [`Species::pane_looks`] of this morph's look on a pane:
+    /// from below on the front pane (`under`), else from above. `None`
+    /// without pane art. Unknown morphs use morph 0.
+    #[must_use]
+    pub fn pane_look(&self, morph: u8, under: bool) -> Option<usize> {
+        if self.pane_looks.is_empty() {
+            return None;
+        }
+        let morph = if usize::from(morph) < self.morphs.len() {
+            usize::from(morph)
+        } else {
+            0
+        };
+        Some(morph * 2 + usize::from(under))
+    }
+
+    /// Its body size in cells on a pane (head right), if it has pane art.
+    #[must_use]
+    pub fn pane_size(&self) -> Option<(usize, usize)> {
+        let (w, h) = self.pane_looks.first()?.size;
+        Some((w / TEXELS_PER_CELL, h / TEXELS_PER_CELL))
     }
 
     /// The index of the morph with this name.
@@ -702,6 +729,15 @@ pub(crate) struct SpriteDef {
     /// Colours replacing the sprite's (after the morph's) on a female.
     #[serde(default)]
     female: Option<BTreeMap<String, String>>,
+    /// Frames seen from above, on the back pane (#371): head right, the
+    /// base frame count. With `top_fine_frames` and both under views.
+    top_frames: Option<Vec<Vec<String>>>,
+    /// The top view at twice the size.
+    top_fine_frames: Option<Vec<Vec<String>>>,
+    /// Frames seen from below, on the front pane: the top view's size.
+    under_frames: Option<Vec<Vec<String>>>,
+    /// The view from below at twice the size.
+    under_fine_frames: Option<Vec<Vec<String>>>,
 }
 
 /// The species embedded in the binary (T7a placeholders, D11).
@@ -985,7 +1021,8 @@ fn validate(
         }
     };
     let sprite = sprite(&d.sprite).map_err(invalid)?;
-    let (morphs, wildtype, palette_morph, looks) = looks(d, &sprite).map_err(invalid)?;
+    let (morphs, wildtype, palette_morph, looks, pane_looks) =
+        looks(d, &sprite).map_err(invalid)?;
     let female_size = looks.get(morphs.len()).unwrap_or(&looks[0]).size;
     if !length_fits(d.length_cm, (sprite.width, sprite.height)) {
         return Err(invalid(
@@ -1081,6 +1118,7 @@ fn validate(
         palette_morph,
         cycle_palette: d.genetics.as_ref().is_some_and(|g| g.cycle_palette),
         looks,
+        pane_looks,
         sprite,
         colour,
     })
@@ -1137,8 +1175,9 @@ fn glow(g: &GlowDef, colours: &BTreeMap<String, String>) -> Result<Glow, &'stati
     })
 }
 
-/// The morph names, the wildtype's and the sprite's indices, and every look.
-type Looks = (Vec<String>, u8, u8, Vec<Look>);
+/// The morph names, the wildtype's and the sprite's indices, every look,
+/// and the pane looks.
+type Looks = (Vec<String>, u8, u8, Vec<Look>, Vec<Look>);
 
 #[derive(Clone, Copy)]
 struct LookArt<'a> {
@@ -1161,6 +1200,30 @@ fn alternate_art<'a>(
         _ => {
             Err("female and carrying art each need coarse and fine frames matching the base count")
         }
+    }
+}
+
+/// The top and under views' art (#371): both or neither, each with coarse
+/// and fine frames, `count` of them, the two of one size.
+fn pane_art(def: &SpriteDef, count: usize) -> Result<Option<[LookArt<'_>; 2]>, &'static str> {
+    const BOTH: &str = "pane art needs top_frames, top_fine_frames, under_frames and \
+                        under_fine_frames, the base frame count, top and under of one size";
+    let top = alternate_art(
+        def.top_frames.as_deref(),
+        def.top_fine_frames.as_deref(),
+        count,
+    )
+    .map_err(|_| BOTH)?;
+    let under = alternate_art(
+        def.under_frames.as_deref(),
+        def.under_fine_frames.as_deref(),
+        count,
+    )
+    .map_err(|_| BOTH)?;
+    match (top, under) {
+        (None, None) => Ok(None),
+        (Some(top), Some(under)) if top.size == under.size => Ok(Some([top, under])),
+        _ => Err(BOTH),
     }
 }
 
@@ -1251,12 +1314,30 @@ fn looks(d: &SpeciesDef, sprite: &Sprite) -> Result<Looks, &'static str> {
             });
         }
     }
+    let mut pane_looks = Vec::new();
+    if let Some(views) = pane_art(&d.sprite, sprite.frames.len())? {
+        for (i, m) in defs.iter().enumerate() {
+            let mut key = base.clone();
+            recolour(&mut key, &m.colours)?;
+            for art in views {
+                let (w, h) = art.size;
+                pane_looks.push(Look {
+                    morph: u8::try_from(i).unwrap_or(0),
+                    female: false,
+                    size: art.size,
+                    frames: decode_frames(art.frames, (w, h), &key)?,
+                    fine_frames: decode_frames(art.fine, (w * 2, h * 2), &key)?,
+                });
+            }
+        }
+    }
     let index = |i: usize| u8::try_from(i).unwrap_or(0);
     Ok((
         defs.iter().map(|m| m.name.clone()).collect(),
         index(wildtype),
         index(palette),
         looks,
+        pane_looks,
     ))
 }
 

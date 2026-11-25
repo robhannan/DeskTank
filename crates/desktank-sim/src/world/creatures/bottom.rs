@@ -605,6 +605,10 @@ mod tests {
         for _ in 0..TICKS_PER_SECOND * 300 {
             w.tick();
             for &id in &snails {
+                // A pane crawler holds the glass (#371).
+                if w.creature(id).unwrap().pane != super::super::Pane::Off {
+                    continue;
+                }
                 assert!(
                     on_surface(&w, id),
                     "a snail or crab swam off at tick {}",

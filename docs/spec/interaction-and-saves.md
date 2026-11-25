@@ -163,7 +163,9 @@
       creature's quarry, pursuit counter and fright in version 9, hunting
       and territory, migrating version 8 creatures calm; whether each
       creature is asleep for the night and how long it stays up after
-      being woken in version 15, migrating version 14 creatures awake);
+      being woken in version 15, migrating version 14 creatures awake;
+      the pane each creature crawls in version 16, #371, migrating
+      version 15 creatures off the panes);
     - each floater's raft, its motion as a buoyant body (offset,
       velocity, rest ticks, awake; version 7, T6c part 2, D22; a version 6
       tank had no floaters and migrates with none);

@@ -29,8 +29,8 @@
 //! pupils [`ALPHA_UNLIT`]; still opaque to every other test).
 
 use desktank_sim::{
-    Device, DeviceKind, DeviceKinds, LifeStage, SpeciesId, SpeciesTable, TEXELS_PER_CELL,
-    TICKS_PER_SECOND, World,
+    Creature, Device, DeviceKind, DeviceKinds, LifeStage, Pane, SpeciesId, SpeciesTable,
+    TEXELS_PER_CELL, TICKS_PER_SECOND, World,
 };
 
 /// Atlas width in texels; species shelves stack downwards. 512 wide keeps
@@ -126,7 +126,8 @@ impl Atlas {
                 .glow
                 .as_ref()
                 .map(|g| (g.colour.map(|c| f32::from(c) / 255.0), g.strength, g.pulse));
-            for look in &s.looks {
+            // Its looks, then its pane looks (#371) after them.
+            for look in s.looks.iter().chain(&s.pane_looks) {
                 let owner = Some(usize::from(s.id.0));
                 arts.push((
                     &look.frames,
@@ -232,6 +233,21 @@ impl Atlas {
         self.entries[usize::from(species.0)].get(look).copied()
     }
 
+    /// Where a creature's look is: its pane look while it crawls the front
+    /// or back pane (from below or above, #371), else as [`Atlas::entry`].
+    fn creature_entry(&self, world: &World, c: &Creature) -> Option<Entry> {
+        let table = world.species();
+        let morph = world.creature_morph(c);
+        if c.pane() != Pane::Off {
+            let s = table.get(c.species())?;
+            let look = s.pane_look(morph, c.pane() == Pane::Front)?;
+            return self.entries[usize::from(c.species().0)]
+                .get(s.looks.len() + look)
+                .copied();
+        }
+        self.entry(table, c.species(), morph, c.female(), c.carrying() > 0)
+    }
+
     /// Atlas texel of frame `frame`'s top-left in the shelf at `origin` of
     /// `w × h`-texel frames.
     fn frame_origin(
@@ -284,13 +300,7 @@ impl Atlas {
         let ghost_count = sprites.len();
         let tick = world.tick_count();
         for c in world.creatures() {
-            let Some(e) = self.entry(
-                world.species(),
-                c.species(),
-                world.creature_morph(c),
-                c.female(),
-                c.carrying() > 0,
-            ) else {
+            let Some(e) = self.creature_entry(world, c) else {
                 continue;
             };
             if sprites.len() == MAX_SPRITES {
