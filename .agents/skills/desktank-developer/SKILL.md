@@ -153,14 +153,25 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   `diff <(gh pr view <n> --json body -q .body) <file>`. If a command that
   both writes the file and creates the PR is refused, rewrite the file
   before retrying the create.
-- Start the PR title with one category emoji. Squash merges use the
-  title as the commit subject on `main`, so history stays scannable:
-  ⚡️ feature, 🐛 bug fix, 🏎️ performance, ♻️ refactor, 📝 docs,
-  ✅ tests only, 👷 CI, 🔧 config/tooling, 💄 UI polish, 🎨 graphics
-  (art, sprites, shaders, how the tank looks), 🏷️ tag/release.
-  Copy the emoji exactly as shown (some include the U+FE0F variation
-  selector). Pick the dominant category. If a change fixes wrong
-  behaviour, use 🐛 even when the fix is a speed-up; use 🏎️ only for
+- Start the PR title with one [gitmoji](https://gitmoji.dev). Squash
+  merges use the title as the commit subject on `main`, so history stays
+  scannable. The ones this project uses:
+  ✨ new feature or behaviour, 🐛 bug fix, ⚡️ performance,
+  ♻️ refactor, 📝 docs (including spec, ADRs and agent skills),
+  ✅ tests, 👷 CI, 💚 fix a failing CI build, 🔧 config,
+  🔨 developer scripts, 🍱 assets (creature and plant art, sprites,
+  species data), 💄 how the tank looks (rendering, shaders, UI styling),
+  ⬆️ dependency upgrades, 🔥 remove code or files, 🔖 release tag,
+  🎉 begin a project. For anything else use the gitmoji.dev meaning;
+  never give an emoji a house meaning (🎨, for example, means code
+  structure or formatting, not graphics). Copy the emoji exactly as
+  shown (some include the U+FE0F variation selector). Pick the dominant
+  category. Between 🍱 and 💄, ask whether the diff is mostly new
+  pixels or new drawing code: 🍱 when it is mostly art data in
+  `assets/` (a traced or redrawn sprite, colour morphs), 💄 when it is
+  mostly rendering code in `desktank-render` or `tank.wgsl` (outlines,
+  resolution, shading, colour response). If a change fixes wrong
+  behaviour, use 🐛 even when the fix is a speed-up; use ⚡️ only for
   speed with no behaviour change.
 - Push the branch and open a PR against `main` (or against the lower PR's
   branch when stacking — prefer stacking when multiple PRs are in flight or
