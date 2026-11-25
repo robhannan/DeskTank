@@ -266,7 +266,9 @@ impl World {
             };
             let wake = !k.live && k.rests != RestSpot::Never && self.night_for(c);
             let fed = k.edible[usize::from(material.0)];
-            let startle = k.shy && !c.asleep && !fed;
+            // Netted or burrowed, it can't run: a pour doesn't frighten it.
+            let held = c.held_until >= self.tick || self.sunk_depth(c) > 0;
+            let startle = k.shy && !c.asleep && !fed && !held;
             if !(wake || startle) {
                 continue;
             }

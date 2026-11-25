@@ -2594,6 +2594,8 @@ mod tests {
             let mut world = shy_world(true);
             let gourami = world.species().id("honey_gourami").unwrap();
             let id = world.add_creature(gourami, 40, 25).unwrap();
+            // Past tick 0, where `held_until` 0 still counts as held.
+            world.tick += 1;
             let material = world.materials().id(material).unwrap();
             assert!(world.paint(x, 25, 0, material, Brush::Replace).unwrap() > 0);
             let fish = world.creature(id).unwrap();
@@ -2602,6 +2604,18 @@ mod tests {
                 assert!(fish.tx < fish.x, "the startled gourami should run away");
             }
         }
+    }
+
+    #[test]
+    fn a_netted_shy_gourami_isnt_frightened_by_a_pour() {
+        let mut world = shy_world(true);
+        let gourami = world.species().id("honey_gourami").unwrap();
+        let id = world.add_creature(gourami, 40, 25).unwrap();
+        world.tick += 1;
+        assert!(world.hold_creature(id));
+        let sand = world.materials().id("sand").unwrap();
+        assert!(world.paint(48, 25, 0, sand, Brush::Replace).unwrap() > 0);
+        assert_eq!(world.creature(id).unwrap().fear, 0);
     }
 
     #[test]
