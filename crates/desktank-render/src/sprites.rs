@@ -770,6 +770,8 @@ mod tests {
             r##"
             id = 0
             name = "test_shrimp"
+            scientific_name = "Caridina ficta"
+            description = "A small shrimp for sprite tests."
             zone = "bottom"
             depth = [0.5, 1.0]
             min_depth = 2

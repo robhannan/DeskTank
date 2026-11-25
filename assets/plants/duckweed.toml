@@ -4,6 +4,7 @@
 # take CO₂ from the air, so the water's CO₂ hardly limits them.
 id = 13
 name = "duckweed"
+scientific_name = "Lemna minor"
 palette = "plants/floating"
 description = "Tiny floating fronds that bud fast and cover the surface."
 form = "floater"

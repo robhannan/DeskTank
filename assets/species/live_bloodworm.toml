@@ -8,6 +8,8 @@
 # is never stocked or bred and doesn't count against the population cap.
 id = 27
 name = "live_bloodworm"
+scientific_name = "Chironomus plumosus"
+description = "A red midge larva that wriggles along the bottom as live food."
 palette = "food/live"
 live_food = "bloodworm"
 zone = "bottom"

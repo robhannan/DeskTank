@@ -1,5 +1,7 @@
 id = 21
 name = "kuhli_loach"
+scientific_name = "Pangio kuhlii"
+description = "A slender, banded loach that burrows into loose substrate and forages at night."
 palette = "fish/cleanup"
 zone = "bottom"
 depth = [0.72, 1.0]

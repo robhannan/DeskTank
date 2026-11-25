@@ -793,6 +793,9 @@ pub struct PlantSpecies {
     pub id: PlantSpeciesId,
     /// Unique name, e.g. `"hygrophila"`.
     pub name: String,
+    /// Latin binomial (with cultivar or variety if it has one), e.g.
+    /// `"Hygrophila polysperma"`, for the species cards.
+    pub scientific_name: String,
     /// One line for the inspect card.
     pub description: String,
     /// The palette sub-category it is offered in (`palette = "plants/stem"`),
@@ -851,6 +854,88 @@ impl PlantSpecies {
     /// The ways it grows, in [`Propagule::ALL`] order (never empty).
     pub fn propagules(&self) -> impl Iterator<Item = Propagule> + '_ {
         Propagule::ALL.into_iter().filter(|&p| self.grows_from(p))
+    }
+
+    /// What kind of plant it is, in one lower-case word for the species
+    /// cards: `"stem"`, `"mat"`, `"rosette"`, `"carpet"`, `"floater"`,
+    /// `"epiphyte"` or `"ball"`.
+    #[must_use]
+    pub fn describe_form(&self) -> &'static str {
+        match self.form {
+            Form::Stem(_) => "stem",
+            Form::Mat(_) => "mat",
+            Form::Rosette(_) => "rosette",
+            Form::Carpet(_) => "carpet",
+            Form::Floater(_) => "floater",
+            Form::Epiphyte(_) => "epiphyte",
+            Form::Ball(_) => "ball",
+        }
+    }
+
+    /// What it needs, as comma-separated phrases for the species cards:
+    /// its light band, any CO₂ need, root feeding and where it lives.
+    /// Derived from its preferences, growth and form; material names come
+    /// from `materials`.
+    #[must_use]
+    pub fn describe_requirements(&self, materials: &MaterialTable) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        let light = self.prefer.light.optimum;
+        parts.push(
+            if light < 0.45 {
+                "low light"
+            } else if light < 0.70 {
+                "moderate light"
+            } else {
+                "strong light"
+            }
+            .to_owned(),
+        );
+        let co2_min = self.prefer.co2.min;
+        if co2_min >= 0.0 {
+            parts.push("needs CO₂".to_owned());
+        } else if co2_min > -0.8 {
+            parts.push("benefits from CO₂".to_owned());
+        }
+        if self.growth.root_feeder {
+            parts.push("root feeder".to_owned());
+        }
+        let names = |ids: &[MaterialId]| -> String {
+            ids.iter()
+                .filter_map(|&id| materials.get(id))
+                .map(|m| m.name.replace('_', " "))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let placement = match &self.form {
+            Form::Stem(f) => Some(("roots in", names(&f.substrates))),
+            Form::Rosette(f) | Form::Carpet(f) => Some(("roots in", names(&f.substrates))),
+            Form::Mat(f) => Some(("clings to", names(&f.on))),
+            Form::Epiphyte(f) => Some(("clings to", names(&f.on))),
+            Form::Floater(_) => {
+                parts.push("floats at surface".to_owned());
+                None
+            }
+            Form::Ball(_) => {
+                parts.push("rests on bottom".to_owned());
+                None
+            }
+        };
+        if let Some((verb, list)) = placement
+            && !list.is_empty()
+        {
+            parts.push(format!("{verb} {list}"));
+        }
+        parts.join(", ")
+    }
+
+    /// The ways it grows, comma-separated, for the species cards (the
+    /// names of [`PlantSpecies::propagules`]).
+    #[must_use]
+    pub fn describe_propagation(&self) -> String {
+        self.propagules()
+            .map(Propagule::name)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// The propagule the palette pours until another is picked: cuttings
@@ -977,6 +1062,7 @@ pub enum PlantSpeciesError {
 struct SpeciesDef {
     id: u8,
     name: String,
+    scientific_name: String,
     description: String,
     #[serde(default)]
     palette: Option<String>,
@@ -1277,6 +1363,12 @@ fn validate(
         }
         Ok(out)
     };
+    if d.scientific_name.trim().is_empty() {
+        return Err(invalid("scientific_name must not be empty"));
+    }
+    if d.description.trim().is_empty() {
+        return Err(invalid("description must not be empty"));
+    }
     let tables = [
         d.stem.is_some(),
         d.mat.is_some(),
@@ -1555,6 +1647,7 @@ fn validate(
     Ok(PlantSpecies {
         id: PlantSpeciesId(d.id),
         name: d.name.clone(),
+        scientific_name: d.scientific_name.clone(),
         description: d.description.clone(),
         palette: d
             .palette
@@ -1594,6 +1687,7 @@ mod tests {
     const OK: &str = r##"
         id = 9
         name = "test_weed"
+        scientific_name = "Testus weedus"
         description = "A test plant."
         form = "stem"
         propagation = ["cuttings"]
@@ -1623,6 +1717,135 @@ mod tests {
 
     fn materials() -> MaterialTable {
         MaterialTable::builtin().unwrap()
+    }
+
+    #[test]
+    fn builtin_species_have_card_text() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        for s in t.iter() {
+            let n = &s.name;
+            assert!(!s.scientific_name.trim().is_empty(), "{n} scientific_name");
+            assert!(!s.description.trim().is_empty(), "{n} description");
+            assert!(!s.describe_form().is_empty(), "{n} form");
+            assert!(!s.describe_requirements(&m).is_empty(), "{n} requirements");
+            assert!(!s.describe_propagation().is_empty(), "{n} propagation");
+        }
+    }
+
+    #[test]
+    fn blank_scientific_name_or_description_is_rejected() {
+        for (from, to) in [
+            (
+                "scientific_name = \"Testus weedus\"",
+                "scientific_name = \"\"",
+            ),
+            (
+                "scientific_name = \"Testus weedus\"",
+                "scientific_name = \"  \"",
+            ),
+            ("description = \"A test plant.\"", "description = \"\""),
+            ("description = \"A test plant.\"", "description = \" \\t \""),
+        ] {
+            let src = OK.replace(from, to);
+            assert_ne!(src, OK, "{from:?} not in the template");
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &materials());
+            assert!(matches!(r, Err(PlantSpeciesError::Invalid { .. })), "{r:?}");
+        }
+        for line in [
+            "scientific_name = \"Testus weedus\"",
+            "description = \"A test plant.\"",
+        ] {
+            let src = OK.replace(line, "");
+            assert_ne!(src, OK, "{line:?} not in the template");
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &materials());
+            assert!(matches!(r, Err(PlantSpeciesError::Parse { .. })), "{r:?}");
+        }
+    }
+
+    #[test]
+    fn describes_species_for_cards() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let get = |n: &str| t.get(t.id(n).unwrap()).unwrap();
+        let soil = "roots in sand, gravel, aquasoil, clown vomit gravel";
+
+        let hygro = get("hygrophila");
+        assert_eq!(hygro.scientific_name, "Hygrophila polysperma");
+        assert_eq!(hygro.describe_form(), "stem");
+        assert_eq!(
+            hygro.describe_requirements(&m),
+            format!("low light, {soil}")
+        );
+        assert_eq!(hygro.describe_propagation(), "seeds, cuttings, fragments");
+
+        let sword = get("amazon_sword");
+        assert_eq!(sword.describe_form(), "rosette");
+        assert_eq!(
+            sword.describe_requirements(&m),
+            format!("low light, root feeder, {soil}")
+        );
+        assert_eq!(sword.describe_propagation(), "runners");
+
+        let carpet = get("monte_carlo");
+        assert_eq!(carpet.describe_form(), "carpet");
+        assert_eq!(
+            carpet.describe_requirements(&m),
+            format!("strong light, benefits from CO₂, {soil}")
+        );
+        assert_eq!(carpet.describe_propagation(), "fragments, runners");
+
+        let anubias = get("anubias");
+        assert_eq!(anubias.describe_form(), "epiphyte");
+        assert_eq!(
+            anubias.describe_requirements(&m),
+            "low light, clings to rock, driftwood"
+        );
+        assert_eq!(anubias.describe_propagation(), "fragments");
+
+        let moss = get("java_moss");
+        assert_eq!(moss.describe_form(), "mat");
+        assert_eq!(
+            moss.describe_requirements(&m),
+            "low light, clings to rock, driftwood"
+        );
+
+        let duckweed = get("duckweed");
+        assert_eq!(duckweed.describe_form(), "floater");
+        assert_eq!(
+            duckweed.describe_requirements(&m),
+            "strong light, floats at surface"
+        );
+        assert_eq!(duckweed.describe_propagation(), "fragments, buds");
+
+        let marimo = get("marimo");
+        assert_eq!(marimo.describe_form(), "ball");
+        assert_eq!(
+            marimo.describe_requirements(&m),
+            "low light, rests on bottom"
+        );
+    }
+
+    #[test]
+    fn requirement_bands_follow_the_ranges() {
+        let m = materials();
+        let t = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let mut s = t.get(t.id("hygrophila").unwrap()).unwrap().clone();
+        for (optimum, band) in [
+            (0.44, "low light"),
+            (0.45, "moderate light"),
+            (0.69, "moderate light"),
+            (0.70, "strong light"),
+        ] {
+            s.prefer.light.optimum = optimum;
+            assert!(s.describe_requirements(&m).starts_with(band), "{optimum}");
+        }
+        s.prefer.co2.min = 0.0;
+        assert!(s.describe_requirements(&m).contains("needs CO₂"));
+        s.prefer.co2.min = -0.5;
+        assert!(s.describe_requirements(&m).contains("benefits from CO₂"));
+        s.prefer.co2.min = -0.8;
+        assert!(!s.describe_requirements(&m).contains("CO₂"));
     }
 
     #[test]

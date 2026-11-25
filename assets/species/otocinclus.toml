@@ -5,6 +5,8 @@
 # films and mulm as it goes.
 id = 11
 name = "otocinclus"
+scientific_name = "Otocinclus vittatus"
+description = "A small suckermouth catfish that grazes algae from surfaces."
 palette = "fish/cleanup"
 zone = "surfaces"
 depth = [0.0, 1.0]

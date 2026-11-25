@@ -1,6 +1,8 @@
 # A surface grazer. The shell and foot occupy five by three cells.
 id = 4
 name = "nerite"
+scientific_name = "Neritina natalensis"
+description = "A patterned snail that grazes algae from glass and other surfaces."
 palette = "invertebrates/snails"
 zone = "surfaces"
 depth = [0.0, 1.0]

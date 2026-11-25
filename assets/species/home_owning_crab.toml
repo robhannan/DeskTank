@@ -5,6 +5,8 @@
 # it. Peaceful, eats anything that isn't alive, and very stinky.
 id = 13
 name = "home_owning_crab"
+scientific_name = "Decapodus zoidbergii dominus"
+description = "A gardening crab that plants a patch of dwarf hairgrass for its home."
 zone = "bottom"
 depth = [0.7, 1.0]
 min_depth = 18

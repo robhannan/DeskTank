@@ -5,6 +5,8 @@
 # goldfish: eats almost anything, grows big and is very messy.
 id = 14
 name = "blinker"
+scientific_name = "Carassius auratus springfieldensis"
+description = "A three-eyed mutant goldfish that glows after dark."
 zone = "mid"
 depth = [0.15, 0.9]
 # Its body is 22 cells tall: it needs over twice that to turn and swim

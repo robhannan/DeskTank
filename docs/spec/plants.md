@@ -12,7 +12,8 @@ stays a material film, not individuals.
 
 - **Species are data**, as creatures are (§2.4, D8). One TOML file per
   species in `assets/plants/` defines:
-  - name and a one-line description (the inspect card);
+  - name, scientific name (Latin binomial, with cultivar or variety if it
+    has one) and a one-line description (the inspect and species cards);
   - the **growth form** and its parameters ([below](#growth-forms));
   - **environment preferences**: for light, nutrient and CO₂ a range of
     `min`, `optimum` and `max`. Each factor's response is 0 outside

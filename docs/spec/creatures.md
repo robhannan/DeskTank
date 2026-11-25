@@ -3,6 +3,8 @@
 ### 2.4 Creatures
 
 - **Species are data** (D8). A TOML entry plus a sprite sheet defines:
+  - scientific name (`scientific_name`) and a short species card description
+    (`description`);
   - size;
   - zone: surface, mid-water, bottom or surfaces;
   - temperament: schooling, peaceful or territorial;

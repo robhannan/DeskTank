@@ -1,5 +1,7 @@
 id = 16
 name = "fancy_goldfish"
+scientific_name = "Carassius auratus"
+description = "A round-bodied goldfish with flowing fins and a broad tail."
 palette = "fish/coldwater"
 zone = "mid"
 depth = [0.18, 0.85]

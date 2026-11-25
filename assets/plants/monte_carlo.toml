@@ -3,6 +3,7 @@
 # carpets far better with CO₂.
 id = 11
 name = "monte_carlo"
+scientific_name = "Micranthemum tweediei"
 palette = "plants/carpet"
 description = "A dense carpet of tiny round leaves for strong light."
 form = "carpet"
