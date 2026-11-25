@@ -1142,6 +1142,50 @@ fn bottom_and_surface_shoalers_keep_moving() {
 }
 
 #[test]
+fn hungry_shrimp_climb_a_rock_face_to_algae_and_drift_back_down() {
+    for (name, seed) in [9, 4, 2]
+        .into_iter()
+        .flat_map(|s| [("cherry_shrimp", s), ("amano_shrimp", s)])
+    {
+        let mut w = world(120, 80, seed);
+        sand_bed(&mut w, 6);
+        let rock = id(&w, "rock");
+        w.fill_rect(rect(70, 46, 84, 74), rock, Brush::Replace)
+            .unwrap();
+        w.set_anchored(w.body_at(76, 60).unwrap(), true);
+        // A film high on the rock's left face, out of reach of the bed.
+        let algae = id(&w, "algae");
+        w.fill_rect(rect(69, 48, 70, 64), algae, Brush::Replace)
+            .unwrap();
+        let shrimp = w.add_creature(species(&w, name), 40, 72).unwrap();
+        let floor = w.height() - 6;
+        let (mut held, mut high_bites, mut eaten, mut landed) = (0, 0, 0, false);
+        for _ in 0..120 * TICKS_PER_SECOND {
+            w.tick();
+            let c = w.creature(shrimp).unwrap();
+            assert_eq!(solid_under(&w, c), None, "{name} in a solid cell");
+            if c.turn() != 0 {
+                held += 1;
+            } else if held > 0 && w.creature_body(c).y1 == floor {
+                landed = true;
+            }
+            if c.eaten() > eaten {
+                eaten = c.eaten();
+                high_bites += u32::from(w.creature_body(c).y1 < floor - 4);
+            }
+        }
+        eprintln!("{name} (seed {seed}): on the face {held} ticks, {high_bites} bites up it");
+        assert!(held > 0, "{name} never took hold of the face");
+        assert!(
+            high_bites >= 2,
+            "{name} grazed {high_bites} cells up the face"
+        );
+        // Fed or out of film, it let go and drifted back to the bed.
+        assert!(landed, "{name} never came back down to the bed");
+    }
+}
+
+#[test]
 fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     let mut w = world(120, 80, 9);
     sand_bed(&mut w, 6);
