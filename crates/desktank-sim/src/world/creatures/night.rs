@@ -216,7 +216,9 @@ impl World {
                 }
             }
             Zone::Bottom => {
-                // It sinks back to the bed and stays.
+                // It sinks back to the bed and stays, off any face it
+                // climbed.
+                self.let_go(k, c);
                 (c.vx, c.vy) = (0, k.cruise);
                 if self.try_move(k, c) != Move::Moved {
                     c.vy = 0;

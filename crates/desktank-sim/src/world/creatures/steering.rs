@@ -6,8 +6,8 @@ use rand_pcg::Pcg32;
 use super::quirks::Quirks;
 
 use super::{
-    Creature, FEET, Kind, ONE, REACHED, TICKS_PER_SECOND, World, Zone, body, centre_of,
-    clamp_target, dist, extent, school, to_i64, zone,
+    Creature, DEPTH_BANDS, FEET, Kind, ONE, REACHED, TICKS_PER_SECOND, World, Zone, body,
+    centre_of, clamp_target, dist, extent, school, to_i64, z_of, zone,
 };
 use crate::rng::splitmix64;
 
@@ -153,6 +153,206 @@ impl World {
         self.support_face(k, turn, x, y, band).is_some() || self.at_corner(k, turn, x, y, band)
     }
 
+    /// A shrimp foraging up a face (#370): a hungry upright shrimp whose
+    /// food is above its body takes hold of a face beside it on the food's
+    /// side (glass, rock, wood or a plant), turned onto it like a crawler.
+    /// Returns whether it took hold.
+    pub(super) fn start_climb(&self, k: &Kind, c: &mut Creature, hungry: bool) -> bool {
+        if !k.is_shrimp || c.turn != 0 || !hungry || c.fear > 0 {
+            return false;
+        }
+        let Some((fx, fy)) = c.food.map(|i| self.food_centre(i)) else {
+            return false;
+        };
+        // Beyond the reach of its head: food it can eat from the bed (or
+        // with a step up) isn't worth a climb.
+        if fy >= c.y - extent(k, 0).1 * ONE / 2 - ONE {
+            return false;
+        }
+        // Into the band of the face that holds the food, to reach it.
+        if let Some((_, _, b)) = c.food.and_then(|i| self.food_face(k, c, i))
+            && b != c.band()
+        {
+            c.tz = z_of(b);
+        }
+        let band = c.band();
+        let sides = match fx.cmp(&c.x) {
+            std::cmp::Ordering::Greater => [1, 1],
+            std::cmp::Ordering::Less => [-1, -1],
+            std::cmp::Ordering::Equal => [1, -1],
+        };
+        // Against the face, or at the spot beside it it walked to: a face
+        // above its head (a film over a bare foot of rock) is held turned.
+        let at_spot = self
+            .climb_spot(k, c)
+            .is_some_and(|x| (x - c.x).abs() <= ONE);
+        for side in sides {
+            if at_spot || self.supported(k, 0, c.x + side * ONE, c.y, band) {
+                self.attach(k, c, (side, 0));
+                if c.turn != 0 {
+                    (c.vx, c.vy) = (0, -k.cruise);
+                    c.face_along(0, -1);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// A foraging shrimp (#370) climbs to food above it. Its tick on a
+    /// face, or taking hold of one: it eats
+    /// what it reaches, then steps (see [`World::climb`]). Returns whether
+    /// it holds a face still, which takes the rest of its tick.
+    pub(super) fn forage_climb(&mut self, k: &Kind, c: &mut Creature, hungry: bool) -> bool {
+        if !k.is_shrimp || (c.turn == 0 && !self.start_climb(k, c, hungry)) {
+            return false;
+        }
+        if hungry && self.anything_to_eat(k) && self.eat(k, c) {
+            c.food = None;
+        }
+        self.climb(k, c, c.hungry());
+        c.turn != 0
+    }
+
+    /// One tick of a shrimp on a face (`c.turn != 0`): fed, frightened or
+    /// out of food, it lets go and drifts down; otherwise it steps along the
+    /// face towards its food at its cruising pace, a step only where it
+    /// gets closer, so it never paces back and forth. With no step closer
+    /// and the food out of reach it gives that food up and lets go. A step
+    /// onto a top face turns it upright, a walker again.
+    pub(super) fn climb(&self, k: &Kind, c: &mut Creature, hungry: bool) {
+        if c.turn == 0 {
+            return;
+        }
+        if !hungry || c.fear > 0 {
+            self.let_go(k, c);
+            return;
+        }
+        if c.food.is_none() {
+            c.food = self.nearest_food(k, c);
+        }
+        let Some((fx, fy)) = c.food.map(|i| self.food_centre(i)) else {
+            self.let_go(k, c);
+            return;
+        };
+        let interval = u64::try_from((ONE + k.cruise / 2) / k.cruise).unwrap_or(1);
+        if !(self.tick + u64::from(c.id.0)).is_multiple_of(interval) {
+            return;
+        }
+        let (turn, band) = (c.turn, c.band());
+        let here = dist(fx - c.x, fy - c.y);
+        let step = [(0, -1), (1, 0), (-1, 0), (0, 1)]
+            .into_iter()
+            .map(|(dx, dy)| (dx, dy, dist(fx - c.x - dx * ONE, fy - c.y - dy * ONE)))
+            .filter(|&(dx, dy, d)| {
+                let (x, y) = (c.x + dx * ONE, c.y + dy * ONE);
+                d < here && self.fits(k, turn, x, y, band) && self.on_surface(k, turn, x, y, band)
+            })
+            .min_by_key(|&(_, _, d)| d);
+        let Some((dx, dy, _)) = step else {
+            c.ignore = c.food.take();
+            self.let_go(k, c);
+            return;
+        };
+        c.x += dx * ONE;
+        c.y += dy * ONE;
+        (c.vx, c.vy) = (dx * k.cruise, dy * k.cruise);
+        if let Some(face) = self.support_face(k, c.turn, c.x, c.y, band) {
+            self.attach(k, c, face);
+        }
+        // Pressed to the face: where a bite or a step left a gap under its
+        // foot, it closes it, by half a cell where a box with an even side
+        // sits off the cell grid.
+        let (fx, fy) = FEET[usize::from(c.turn)];
+        if c.turn != 0
+            && let Some(d) = [ONE, ONE / 2]
+                .into_iter()
+                .find(|&d| self.fits(k, c.turn, c.x + fx * d, c.y + fy * d, band))
+        {
+            c.x += fx * d;
+            c.y += fy * d;
+        }
+        c.face_along(c.vx, c.vy);
+    }
+
+    /// Turns a shrimp on a face upright where it is, shifted off the face
+    /// as far as it must to fit, to drift back down to the bed. It holds on
+    /// if there is no room to turn.
+    pub(super) fn let_go(&self, k: &Kind, c: &mut Creature) {
+        if c.turn == 0 {
+            return;
+        }
+        let (fx, fy) = FEET[usize::from(c.turn)];
+        let slide = (k.w - k.h).abs() / 2 + 1;
+        if let Some((x, y)) = (0..=slide)
+            .map(|s| (c.x - fx * s * ONE, c.y - fy * s * ONE))
+            .find(|&(x, y)| self.fits(k, 0, x, y, c.band()))
+        {
+            (c.x, c.y, c.turn) = (x, y, 0);
+            (c.vx, c.vy) = (0, k.cruise);
+        }
+    }
+
+    /// The face that holds food cell `i`, for a shrimp to climb to it: the
+    /// side of the food a blocking cell is on, `(dx, dy)`, and the band
+    /// nearest `c`'s, within its species' bands, that cell blocks in.
+    /// `None` if nothing but more food beside it blocks in any of those
+    /// bands.
+    fn food_face(&self, k: &Kind, c: &Creature, food: u32) -> Option<(i32, i32, u8)> {
+        let (cell, width) = (food as usize, self.width);
+        let (col, row) = (cell % width, cell / width);
+        let beside = [
+            (col + 1 < width).then(|| (1, 0, cell + 1)),
+            (col > 0).then(|| (-1, 0, cell - 1)),
+            (row + 1 < self.height).then(|| (0, 1, cell + width)),
+            (row > 0).then(|| (0, -1, cell - width)),
+        ];
+        let (band, (lo, hi)) = (c.band(), k.bands);
+        (0..DEPTH_BANDS)
+            .flat_map(|d| [band.checked_sub(d), band.checked_add(d)])
+            .flatten()
+            .filter(|b| (lo..=hi).contains(b))
+            .find_map(|b| {
+                beside.iter().flatten().find_map(|&(dx, dy, j)| {
+                    // More of a film is food, not the face it grows on.
+                    (self.cells[j].material != self.creatures.air
+                        && !self.edible_cell(k, j)
+                        && self.blocks(j, Some(b)))
+                    .then_some((dx, dy, b))
+                })
+            })
+    }
+
+    /// Where a hungry upright shrimp heads for food it would climb to
+    /// (see [`World::start_climb`]): beside the face that holds it, its
+    /// body's edge against the face, so it takes hold in the face's band.
+    /// `None` for food it can reach from the bed, or on a top or under face.
+    pub(super) fn climb_spot(&self, k: &Kind, c: &Creature) -> Option<i32> {
+        let i = c.food?;
+        let (_, fy) = self.food_centre(i);
+        if !k.is_shrimp || c.turn != 0 || fy >= c.y - extent(k, 0).1 * ONE / 2 - ONE {
+            return None;
+        }
+        let (dx, _, band) = self.food_face(k, c, i).filter(|&(dx, _, _)| dx != 0)?;
+        // A film is held where it grows, and loose food by what it lies on.
+        let col = to_i64(i as usize % self.width);
+        let col = if self.blocks(i as usize, Some(band)) {
+            col
+        } else {
+            col + i64::from(dx)
+        };
+        Some(centre_of(col) - dx * ONE / 2 - dx * k.w * ONE / 2)
+    }
+
+    /// The centre of food cell `i`, fixed point.
+    fn food_centre(&self, i: u32) -> (i32, i32) {
+        let i = i as usize;
+        (
+            centre_of(to_i64(i % self.width)),
+            centre_of(to_i64(i / self.width)),
+        )
+    }
+
     /// A graze perch `(tx, ty, device_mid_x)` on the nearest accessible
     /// shrimp-grazeable device (sponge filter, DV4), if `c` is a hungry shrimp
     /// with no closer loose food cell. Returns `None` in O(1) when there is no
@@ -272,6 +472,9 @@ impl World {
                 k.cruise
             };
             return (gx, gy, speed);
+        }
+        if let Some(x) = self.climb_spot(k, c) {
+            return (x, c.y, k.top);
         }
         if let Some(i) = c.food {
             let i = i as usize;
