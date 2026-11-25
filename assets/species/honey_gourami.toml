@@ -10,6 +10,7 @@ description = "A small honey-coloured fish that swims near the surface and gulps
 palette = "fish/centrepiece"
 zone = "surface"
 depth = [0.0, 0.5]
+bands = [3, 7]
 min_depth = 20
 # Real-world body length in cm (real 4–5 cm), at two cells per cm.
 length_cm = 4.5
@@ -28,6 +29,7 @@ breathes_air = true
 # its needs, so it fades slowly without air. Fifteen minutes here.
 air_tolerance_seconds = 900
 temperament = "peaceful"
+shy = true
 speed = 2.5
 max_speed = 6.0
 diet = ["flake_food", "bloodworm", "sinking_pellet"]

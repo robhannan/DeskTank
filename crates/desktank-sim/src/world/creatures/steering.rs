@@ -227,7 +227,7 @@ impl World {
 
         if let Some((px, py)) = self.creatures.cursor {
             let (mut dx, dy) = (c.x - px, c.y - py);
-            if dist(dx, dy) < i64::from(3 * k.w * ONE) {
+            if dist(dx, dy) < cursor_reach(k) {
                 if dx == 0 && (dy == 0 || k.zone == Zone::Bottom) {
                     dx = if c.facing_left { -ONE } else { ONE };
                 }
@@ -356,4 +356,10 @@ impl World {
         let far = dist(tx - c.x, ty - c.y) > i64::from(school::CATCH_UP * grown);
         Some((tx, ty, school::pace(quirks, k, far)))
     }
+}
+
+/// Distance at which an avoided cursor disturbs a creature, in fixed point.
+pub(super) fn cursor_reach(k: &Kind) -> i64 {
+    let lengths = if k.shy { 5 } else { 3 };
+    i64::from(lengths * k.w * ONE)
 }

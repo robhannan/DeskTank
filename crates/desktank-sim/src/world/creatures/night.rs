@@ -140,7 +140,7 @@ impl World {
     fn cursor_near(&self, k: &Kind, c: &Creature) -> bool {
         self.creatures
             .cursor
-            .is_some_and(|(px, py)| dist(c.x - px, c.y - py) < i64::from(3 * k.w * ONE))
+            .is_some_and(|(px, py)| dist(c.x - px, c.y - py) < super::steering::cursor_reach(k))
     }
 
     /// Where a swimmer settling for the night heads (body centre, 1/256
@@ -249,7 +249,8 @@ impl World {
 
     /// The keeper poured `material` over the disc at `(x, y)`, `radius`
     /// cells: at night it wakes every creature that eats it (they were
-    /// fed) and every creature near the pour (disturbed).
+    /// fed) and every creature near the pour (disturbed). A nearby pour
+    /// that isn't food also frightens an awake shy creature.
     pub(in crate::world) fn disturb_creatures(
         &mut self,
         x: i64,
@@ -263,15 +264,23 @@ impl World {
             let Some(k) = self.grown_kind(c) else {
                 continue;
             };
-            if k.live || k.rests == RestSpot::Never || !self.night_for(c) {
+            let wake = !k.live && k.rests != RestSpot::Never && self.night_for(c);
+            let fed = k.edible[usize::from(material.0)];
+            // Netted or burrowed, it can't run: a pour doesn't frighten it.
+            let held = c.held_until >= self.tick || self.sunk_depth(c) > 0;
+            let startle = k.shy && !c.asleep && !fed && !held;
+            if !(wake || startle) {
                 continue;
             }
             let b = self.creature_body(c);
             let near = |v: i64, lo: usize, hi: usize| {
                 v + reach >= to_i64(lo) && v - reach < to_i64(hi.max(lo + 1))
             };
-            let fed = k.edible[usize::from(material.0)];
-            if fed || (near(x, b.x0, b.x1) && near(y, b.y0, b.y1)) {
+            let nearby = near(x, b.x0, b.x1) && near(y, b.y0, b.y1);
+            if startle && nearby {
+                self.frighten(&k, c, centre_of(x), centre_of(y), true);
+            }
+            if wake && (fed || nearby) {
                 c.wake();
                 c.woken = WOKEN_TICKS;
             }
