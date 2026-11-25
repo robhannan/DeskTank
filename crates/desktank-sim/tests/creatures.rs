@@ -1246,9 +1246,9 @@ fn hungry_shrimp_climb_a_rock_face_to_algae_and_drift_back_down() {
             .unwrap();
         w.set_anchored(w.body_at(76, 60).unwrap(), true);
         // A film high on the rock's left face, out of reach of the bed.
-        let algae = id(&w, "algae");
-        w.fill_rect(rect(69, 48, 70, 64), algae, Brush::Replace)
-            .unwrap();
+        for y in 48..64 {
+            assert!(w.set_algae_coat(70, y, 4));
+        }
         let shrimp = w.add_creature(species(&w, name), 40, 72).unwrap();
         let floor = w.height() - 6;
         let (mut held, mut high_bites, mut eaten, mut landed) = (0, 0, 0, false);
