@@ -127,10 +127,12 @@ const SEARCH_EVERY: u64 = 10;
 const FOOD_SENSE: i64 = 160;
 /// How far from where it is asked for a creature is added, in cells.
 const PLACE_RADIUS: i32 = 8;
-/// How far a creature hops to get out of a solid, in cells: twice
-/// [`PLACE_RADIUS`], so a big walker caught by sand raining onto a mound
-/// still finds room (the search runs only while it is buried).
-const UNSTUCK_RADIUS: i32 = 16;
+/// How far a creature hops to get out of a solid, in cells: three times
+/// [`PLACE_RADIUS`], so a big walker caught by sand raining onto a mound,
+/// or a wide swimmer pressed against the glass under a pour (each hop
+/// away from the sand can lead further into the heap), still finds room
+/// (the search runs only while it is buried).
+const UNSTUCK_RADIUS: i32 = 24;
 /// Ticks a netted creature stays held after the last hold.
 const HOLD_TICKS: u64 = 2;
 /// Creature random streams: above every chunk id, below the life stream.
