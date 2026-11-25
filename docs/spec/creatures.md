@@ -40,9 +40,10 @@
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
-  1.5 cm), cherry shrimp 2.5 cm, guppy 3 cm (4.5 cm with its tail), neon
-  tetra and otocinclus 3.5 cm, amano shrimp 4 cm, harlequin rasbora and
-  honey gourami 4.5 cm.
+  1.5 cm), cherry shrimp 2.5 cm (a female 3 cm), guppy 3 cm (a female 4.5
+  cm, a male 4.5 cm with its tail), neon tetra and otocinclus 3.5 cm, amano
+  shrimp 4 cm, harlequin rasbora 4.5 cm, honey gourami 4.5 cm (a female 5
+  cm) and betta 6 cm (a female 5 cm).
 - **Behaviour** is steering-based:
   - wander;
   - schooling for schoolers: loose and irregular, speeding up and slowing
@@ -167,12 +168,17 @@
     her eggs 30 days, 3–8; neon tetra and harlequin eggs 1 day, corydoras
     4, betta 2, honey gourami 1, otocinclus 3. Cherry shrimp morphs red
     (palette), wild (brown, the wildtype), blue and yellow; guppy strains
-    wild (palette and wildtype), red and blue, and a plainer, deeper,
-    short-tailed female; betta morphs wild (red; palette and wildtype),
-    royal blue, copper, koi (red and black patches on white), marble
-    (blue and red patches), butterfly (white-edged fins), yellow and
-    lavender. Predators: betta 2.5 cm (fry, cherry shrimp,
-    crabs), honey gourami and guppy 1.2 cm (fry, shrimplets, crabs).
+    wild (palette and wildtype), red and blue, and a larger, plainer,
+    deeper, short-tailed female; betta morphs wild (red; palette and
+    wildtype), royal blue, copper, koi (red and black patches on white),
+    marble (blue and red patches), butterfly (white-edged fins), yellow
+    and lavender. Cherry shrimp are drawn by sex too: a small, slim, paler
+    male, a larger female with a rounder belly and a berried female whose
+    yellow-orange eggs (keys no morph recolours) show under her abdomen.
+    Predators: betta 2.5 cm (fry, male and young cherry shrimp, crabs: an
+    adult female shrimp, at 3 cm, outgrows it), honey gourami
+    1.2 cm (fry, shrimplets, crabs) and guppy 1.6 cm (so newborn fry of
+    either sex, a female's a third of her 4.5 cm).
   - **Sexes.** Every creature is male or female. One added from the
     palette (or a script or host without a sex) takes whichever sex its
     species has fewer of in the tank, a male on a tie, so adding two makes
@@ -211,16 +217,19 @@
     predator is fed (an hour of energy). Neither may be in the net, and
     prey in plant cover is safe. Predators chase their prey and prey flees
     (*Hunting and territory* below).
-  - **Drawing.** Each creature and corpse is drawn in its look (morph and
-    sex), two atlas shelves per look: its frames, then its recoloured
-    fine frames at four texels per cell.
+  - **Drawing.** Each creature and corpse is drawn in its look (morph,
+    sex and carrying state), two atlas strips per look: its frames, then its
+    recoloured fine frames at four texels per cell. Strips pack side by side
+    on shared rows, so the many looks stay inside WebGL2's 2048-texel atlas
+    limit.
   - **Save format v3** adds each creature's sex, alleles, pregnancy and
     rest, each corpse's morph and sex, the clutches and every species'
     morph names (checked on load: a species' morphs may only be appended
     to). v2 saves migrate: every creature shows its palette morph, sexes
     alternate within a species in id order, none is carrying, and each
     settles for a day.
-  - **Scripts** take `sex` and `morph` in `[[creature]]`; `World` has
+  - **Scripts** take `sex`, `morph` and `carrying_days` (a mature female
+    livebearer, at most her species' gestation) in `[[creature]]`; `World` has
     `add_creature_with_traits` (age, sex, alleles) and the debug hook
     `skip_breeding_time`.
 - **Names** (D4): none by default. In interact mode, click a creature to
