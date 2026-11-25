@@ -51,8 +51,8 @@
 //! ball rotation (version 14), and whether each creature is asleep for
 //! the night and how long it stays up after being woken (version 15),
 //! the pane each creature crawls (version 16), and surface and glass algae
-//! film (version 17). Earlier algae material cells become water and
-//! surfaces start bare.
+//! film, each byte a variety and a density (version 17). Earlier algae
+//! material cells become water and surfaces start bare.
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn v17_rejects_reserved_coat_varieties() {
+    fn v17_rejects_unknown_coat_and_glass_varieties() {
         let materials = MaterialTable::builtin().unwrap();
         let mut w = World::new(
             crate::WorldConfig {
@@ -456,8 +456,18 @@ mod tests {
         let mut coat = w.coat().to_vec();
         assert_eq!(coat[15 * 16 + 3], 0x17);
         assert!(decode(&encode(&w), materials.clone()).is_ok());
-        for variety in [0u8, 2, 15] {
+        // The known varieties load; bare, unused and dense-less bytes don't.
+        for variety in 1u8..=4 {
             coat[15 * 16 + 3] = variety << 4 | 7;
+            let mut saved = w.to_v17();
+            saved.coat = runs(coat.iter().copied());
+            let bytes = wrap(17, &postcard::to_allocvec(&saved).unwrap());
+            let loaded = decode(&bytes, materials.clone()).unwrap();
+            assert_eq!(loaded.coat()[15 * 16 + 3], variety << 4 | 7);
+            assert_eq!(loaded.coated_cells_of(variety), 1);
+        }
+        for bad in [0x07u8, 0x57, 0xf7, 0x30] {
+            coat[15 * 16 + 3] = bad;
             let mut saved = w.to_v17();
             saved.coat = runs(coat.iter().copied());
             let bytes = wrap(17, &postcard::to_allocvec(&saved).unwrap());
@@ -466,8 +476,18 @@ mod tests {
                     decode(&bytes, materials.clone()),
                     Err(SaveError::Invalid(_))
                 ),
-                "variety {variety}"
+                "byte {bad:#04x}"
             );
+        }
+        // The glass planes are checked the same way, and the front's cap.
+        let mut saved = w.to_v17();
+        let planes = w.front_glass_algae().len();
+        for (byte, ok) in [(0x35u8, true), (0x36, false), (0x55, false), (0x30, false)] {
+            let mut front = vec![0; planes];
+            front[0] = byte;
+            saved.front = runs(front);
+            let bytes = wrap(17, &postcard::to_allocvec(&saved).unwrap());
+            assert_eq!(decode(&bytes, materials.clone()).is_ok(), ok, "{byte:#04x}");
         }
     }
 

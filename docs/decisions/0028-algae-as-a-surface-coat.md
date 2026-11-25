@@ -7,10 +7,13 @@ body moves or rotates. D24 epiphytes occupy grid cells and can detach when
 their support moves.
 
 Each world cell has a coat byte with a four-bit variety and a four-bit
-density. Green film uses variety 1. Varieties 2–15 are reserved for
-[#369](https://github.com/robhannan/DeskTank/issues/369). Glass densities
-use the fields' 1/8 resolution, with front and back planes and one strip
-per side wall. The front pane is capped at 5 of 15 density levels so the
+density. Green film uses variety 1; brown diatoms, green spot algae and
+green dust algae use 2–4, and 5–15 stay free for the threads, tufts and
+green water of [#369](https://github.com/robhannan/DeskTank/issues/369).
+Glass uses the same packed byte at the fields' 1/8 resolution, with front
+and back planes and one strip per side wall, so each glass block holds one
+variety and a density. The varieties, their conditions and looks are data
+in `assets/fields.toml`. The front pane is capped at 5 of 15 density levels so the
 tank contents stay visible. See the [ecosystem rules](../spec/world.md#23-ecosystem-d3)
 for growth, competition and decay.
 
@@ -22,6 +25,8 @@ to grow with hold film back sooner. Film growth itself needs only
 nutrient and light. Catch-up updates the field blocks in bounded, disjoint
 groups and credits each group for the intervals it skips.
 
-Format version 17 saves the four density layers (version 16 went to the snails' panes, #380). Earlier algae cells
+Format version 17 saves the four packed layers (version 16 went to the
+snails' panes, #380). A load accepts any configured variety and rejects
+an unknown one. Earlier algae cells
 become water on load, since a cell of the old material could touch several
 different surfaces. Legacy material ID 76 stays reserved for those saves.

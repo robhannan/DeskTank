@@ -70,6 +70,10 @@ struct View {
     // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
     // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
     ripples: array<vec4<f32>, 16>,
+    // Algae variety looks by id (D28, #369): the dark shade (rgb) and style
+    // (w: 0 film, 1 slime, 2 spots, 3 dust), then the light shade (rgb) and
+    // strength (w) at 2 × id and 2 × id + 1.
+    looks: array<vec4<f32>, 32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -94,11 +98,11 @@ struct View {
 // Per 8x8-cell field cell (128/255 = 0): the 2D flow vector (rg), for the
 // overlay and surface ripples, and the sway lean (b; renderer.rs `sway_lean`).
 @group(0) @binding(9) var flow: texture_2d<f32>;
-// Green film's variety (high nibble) and density (low nibble) per grid cell.
+// Algae's variety (high nibble) and density (low nibble) per grid cell.
 @group(0) @binding(10) var coat: texture_2d<f32>;
-// Front, back, left and right glass film per 8x8-cell field block.
+// Front, back, left and right glass film per 8x8-cell field block, each a
+// variety (high nibble) and density (low nibble); read by texel, not filtered.
 @group(0) @binding(11) var glass: texture_2d<f32>;
-@group(0) @binding(12) var glass_sampler: sampler;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
 const BACK_BAND: f32 = 7.0;
@@ -464,9 +468,9 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return layer_out(grid_post(bg.rgb, cell), bg.a);
 }
 
-// Pass 2, drawn only while a coat or rear or side film shows: the algae over
-// what fs_ground drew (ground_film), which would take fs_ground past Chrome
-// 68's register limit. The blend keeps the ground's alpha.
+// Pass 2, drawn only while a coat shows: the algae over what fs_ground drew
+// (ground_film). It would take fs_ground past Chrome 68's register limit.
+// The blend keeps the water's alpha.
 @fragment
 fn fs_ground_film(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (view.algae.x <= 0.0 && view.algae.y <= 0.0) || outside_lens(pos.xy) || hud_at(pos.xy).a > 0.5 {
@@ -636,17 +640,121 @@ fn film_mottle(p: vec2<i32>) -> vec2<f32> {
     );
 }
 
-fn film_green(speck: f32) -> vec3<f32> {
-    return mix(vec3<f32>(0.29, 0.40, 0.13), vec3<f32>(0.55, 0.64, 0.27), speck);
+// Algae varieties (D28, #369) are drawn from the sim's look table in the view
+// uniform: the dark shade and style, then the light shade and strength.
+const ALGAE_FILM: u32 = 0u;
+const ALGAE_SLIME: u32 = 1u;
+const ALGAE_SPOTS: u32 = 2u;
+const ALGAE_DUST: u32 = 3u;
+
+// Texels per cell side: two, or four at fine scales.
+fn texel_density() -> i32 {
+    return select(2, 4, FINE_PLANTS && fine_scale());
 }
 
-fn coat_density(at: vec2<i32>) -> f32 {
+fn look_dark(id: u32) -> vec4<f32> {
+    return view.looks[(id & 15u) * 2u];
+}
+
+fn look_light(id: u32) -> vec4<f32> {
+    return view.looks[(id & 15u) * 2u + 1u];
+}
+
+fn look_style(id: u32) -> u32 {
+    return u32(look_dark(id).w + 0.5);
+}
+
+fn unit_hash(p: vec2<i32>) -> f32 {
+    return f32(hash(p) & 1023u) / 1023.0;
+}
+
+// A coat cell's density (x, 0..1) and variety id (y).
+fn coat_at(at: vec2<i32>) -> vec2<f32> {
     if !inside(at) {
-        return 0.0;
+        return vec2<f32>(0.0);
     }
     let packed = u32(round(textureLoad(coat, at, 0).r * 255.0));
-    // Other varieties reserve their own colours and coverage.
-    return select(0.0, f32(packed & 15u) / 15.0, (packed >> 4u) == 1u);
+    return vec2<f32>(f32(packed & 15u) / 15.0, f32(packed >> 4u));
+}
+
+// `film` with `source`'s density scaled by `k` if that is more, and its variety.
+fn spread_coat(film: vec2<f32>, source: vec2<f32>, k: f32) -> vec2<f32> {
+    return select(film, vec2<f32>(source.x * k, source.y), source.x * k > film.x);
+}
+
+// Smooth value noise in cells: hashes at whole numbers, blended between.
+fn value_noise(q: vec2<f32>) -> f32 {
+    let i = vec2<i32>(floor(q));
+    let f = fract(q);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(unit_hash(i), unit_hash(i + vec2<i32>(1, 0)), u.x),
+        mix(unit_hash(i + vec2<i32>(0, 1)), unit_hash(i + vec2<i32>(1, 1)), u.x),
+        u.y,
+    );
+}
+
+// Crisp round spots, at most one in each square of a loose lattice (a little
+// over two cells across), with a chance that rises with the density, a random
+// centre and a random size. The rim is the dark shade, the middle the light
+// one, with a bright pixel at the top left. Alpha 1 inside a spot, else 0.
+fn algae_spots(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>) -> vec4<f32> {
+    let tpc = texel_density();
+    let size = 5 * tpc / 2;
+    let reach = f32(tpc) * 0.7 + 0.5;
+    let home = vec2<i32>(floor(vec2<f32>(p) / f32(size)));
+    let here = vec2<f32>(p) + 0.5;
+    // A spot centred in a neighbouring square can spill over its edge.
+    let near = vec2<i32>(
+        select(select(0, 1, here.x > f32((home.x + 1) * size) - reach), -1, here.x < f32(home.x * size) + reach),
+        select(select(0, 1, here.y > f32((home.y + 1) * size) - reach), -1, here.y < f32(home.y * size) + reach),
+    );
+    for (var i = 0; i < 4; i += 1) {
+        let cell = home + vec2<i32>(select(0, near.x, (i & 1) == 1), select(0, near.y, i >= 2));
+        let h = hash(cell + vec2<i32>(31, 7));
+        if f32(h & 255u) / 255.0 >= density * 0.8 {
+            continue;
+        }
+        let centre = vec2<f32>(cell * size)
+            + vec2<f32>(f32((h >> 8u) % u32(size)) + 0.5, f32((h >> 12u) % u32(size)) + 0.5);
+        let radius = f32(tpc) * (0.4 + 0.25 * f32((h >> 16u) & 3u) / 3.0) + 0.3;
+        let off = here - centre;
+        let d2 = dot(off, off);
+        if d2 > radius * radius {
+            continue;
+        }
+        let into = clamp(d2 / (radius * radius), 0.0, 1.0);
+        var rgb = mix(light, dark, smoothstep(0.35, 0.95, into));
+        if off.x < -0.5 && off.y < -0.5 && d2 > 0.5 && into < 0.75 {
+            rgb = min(rgb * 1.25 + vec3<f32>(0.04), vec3<f32>(1.0));
+        }
+        return vec4<f32>(rgb, 1.0);
+    }
+    return vec4<f32>(0.0);
+}
+
+// A fine speckle of single texels over a faint haze. Alpha is the speckle's
+// at most `peak` over the haze's at most `haze`.
+fn algae_dust(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>, peak: f32, haze: f32) -> vec4<f32> {
+    let h = hash(p + vec2<i32>(3, 19));
+    let tone = f32((h >> 10u) & 7u) / 7.0;
+    let rgb = mix(dark, light, tone);
+    let speck = f32(h & 255u) / 255.0 < density * 0.8;
+    let veil = haze * density * (0.7 + 0.6 * unit_hash(p / 3 + vec2<i32>(5, 2)));
+    return vec4<f32>(rgb, select(veil, max(veil, peak * (0.55 + 0.45 * tone)), speck));
+}
+
+// A smooth slimy sheen in broad patches and tall streaks, nearly continuous
+// once the coat is moderate and darker where it is thick, with a little grain.
+fn algae_slime(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>) -> vec4<f32> {
+    let cells = vec2<f32>(p) / f32(texel_density());
+    let broad = value_noise(cells / 6.0 + vec2<f32>(3.0, 8.0));
+    let streak = value_noise(vec2<f32>(cells.x * 1.1, cells.y * 0.15) + vec2<f32>(9.0, 1.0));
+    let grain = unit_hash(p);
+    let noise = broad * 0.45 + streak * 0.4 + grain * 0.15;
+    let cover = smoothstep(noise * 0.75 - 0.1, noise * 0.75 + 0.14, density * 1.3);
+    let thick = clamp(density * 0.55 + (broad - 0.5) * 0.6 + (streak - 0.5) * 0.5 - (grain - 0.5) * 0.12, 0.0, 1.0);
+    return vec4<f32>(mix(light, dark, thick), cover);
 }
 
 // Patchy coverage on a host: patches of clean stone, wood or grain stay open
@@ -655,22 +763,42 @@ fn host_coat(at: vec2<i32>, p: vec2<i32>, rigid: bool, loose: bool) -> vec4<f32>
     if view.algae.x <= 0.0 {
         return vec4<f32>(0.0);
     }
-    var density = coat_density(at);
+    var film = coat_at(at);
     if loose {
         if style_at(at + vec2<i32>(0, -1)) == style_at(at) {
             // Thin film creeps a little into the grains beneath the surface.
-            density = max(density, 0.45 * coat_density(at + vec2<i32>(0, -1)));
+            film = spread_coat(film, coat_at(at + vec2<i32>(0, -1)), 0.45);
         }
-    } else if density < 1.0 {
+    } else if film.x < 1.0 {
         // The film spreads thinly over the face of a body from its coated edge.
         for (var i = 0; i < 4; i += 1) {
             let d = select(vec2<i32>(0, select(-1, 1, i == 3)), vec2<i32>(select(-1, 1, i == 1), 0), i < 2);
-            density = max(density, 0.6 * coat_density(at + d));
-            density = max(density, 0.3 * coat_density(at + d * 2));
+            film = spread_coat(film, coat_at(at + d), 0.6);
+            film = spread_coat(film, coat_at(at + d * 2), 0.3);
         }
     }
+    let density = film.x;
     if density <= 0.0 {
         return vec4<f32>(0.0);
+    }
+    let id = u32(film.y);
+    let dark = look_dark(id);
+    let light = look_light(id);
+    let depth = select(0.0, band_at(at) - RIGID_BAND_TAG, rigid);
+    let style = look_style(id);
+    if style == ALGAE_SPOTS {
+        // Spots keep to the rigid face itself, a little thinner on loose grains.
+        let spot = algae_spots(p, density, dark.rgb, light.rgb);
+        return vec4<f32>(depth_cue(spot.rgb, depth), spot.a * light.w * select(1.0, 0.8, loose));
+    }
+    if style == ALGAE_DUST {
+        let dust = algae_dust(p, density, dark.rgb, light.rgb, light.w * 0.8, light.w * 0.22);
+        return vec4<f32>(depth_cue(dust.rgb, depth), dust.a);
+    }
+    if style == ALGAE_SLIME {
+        let slime = algae_slime(p, density, dark.rgb, light.rgb);
+        let strength = light.w * select(0.55 + 0.45 * density, 0.35 + 0.65 * density, loose);
+        return vec4<f32>(depth_cue(slime.rgb, depth), slime.a * strength);
     }
     let grain = hash(p);
     let blob = f32(hash(p / 5 + vec2<i32>(17, 3)) & 255u) / 255.0;
@@ -679,25 +807,26 @@ fn host_coat(at: vec2<i32>, p: vec2<i32>, rigid: bool, loose: bool) -> vec4<f32>
     let reach = select(density * 1.15, density * 1.5, loose);
     let cover = smoothstep(noise - 0.08, noise + 0.08, reach);
     let speck = f32((grain >> 8u) & 7u) / 7.0;
-    let strength = select(0.2 + 0.2 * density, 0.35 + 0.35 * density, loose);
-    let depth = select(0.0, band_at(at) - RIGID_BAND_TAG, rigid);
-    return vec4<f32>(depth_cue(film_green(speck), depth), cover * strength);
+    let strength = light.w / 0.7 * select(0.2 + 0.2 * density, 0.35 + 0.35 * density, loose);
+    return vec4<f32>(depth_cue(mix(dark.rgb, light.rgb, speck), depth), cover * strength);
 }
 
 // A few strands reach into the outermost art texel of the adjacent water.
 // Pass a sprite's depth to put only the fringe of a nearer rigid face over it.
-fn fringe_density(at: vec2<i32>, depth: f32) -> vec2<f32> {
-    let density = coat_density(at);
-    if density <= 0.0 {
-        return vec2<f32>(0.0);
+// Returns the density (x), the depth band (y) and the variety id (z).
+fn fringe_density(at: vec2<i32>, depth: f32) -> vec3<f32> {
+    let film = coat_at(at);
+    // Spots and dust are crisp: they have no strands.
+    if film.x <= 0.0 || look_style(u32(film.y)) >= ALGAE_SPOTS {
+        return vec3<f32>(0.0);
     }
     let t = textureLoad(cells, at, 0);
     let rigid = (material_flags(t) & 128) != 0;
     let band = select(0.0, band_at(at) - RIGID_BAND_TAG, rigid);
     if depth >= 0.0 && (!rigid || depth < band - 0.5) {
-        return vec2<f32>(0.0);
+        return vec3<f32>(0.0);
     }
-    return vec2<f32>(density, band);
+    return vec3<f32>(film.x, band, film.y);
 }
 
 fn coat_fringe(at: vec2<i32>, quarter: vec2<i32>, fine: bool, depth: f32) -> vec4<f32> {
@@ -711,7 +840,7 @@ fn coat_fringe(at: vec2<i32>, quarter: vec2<i32>, fine: bool, depth: f32) -> vec
     if (grain & 3u) != 0u {
         return vec4<f32>(0.0);
     }
-    var film = vec2<f32>(0.0);
+    var film = vec3<f32>(0.0);
     if q.x == 0 || q.x == far {
         film = fringe_density(at + vec2<i32>(select(-1, 1, q.x == far), 0), depth);
     }
@@ -721,8 +850,9 @@ fn coat_fringe(at: vec2<i32>, quarter: vec2<i32>, fine: bool, depth: f32) -> vec
             film = vertical;
         }
     }
-    let green = film_green(f32((grain >> 2u) & 7u) / 7.0);
-    return vec4<f32>(depth_cue(green, film.y), film.x * 0.23);
+    let id = u32(film.z);
+    let colour = mix(look_dark(id).rgb, look_light(id).rgb, f32((grain >> 2u) & 7u) / 7.0);
+    return vec4<f32>(depth_cue(colour, film.y), film.x * 0.23);
 }
 
 // `top` blended over `bottom` as one layer (straight alpha).
@@ -803,10 +933,59 @@ fn ground_film(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>, under: ptr<funct
     return host_coat(at, p, rigid, !rigid);
 }
 
-fn glass_density(grid_pos: vec2<f32>) -> vec4<f32> {
-    // Field texels are centred on the 8x8 blocks. Clamp at the grid edges.
-    let field_size = ceil(view.grid / 8.0);
-    return textureSampleLevel(glass, glass_sampler, grid_pos / (field_size * 8.0), 0.0);
+// The glass film of one field block (8x8 cells): the front, back, left and
+// right planes' packed variety (high nibble) and density (low nibble).
+fn glass_bytes(block: vec2<i32>) -> vec4<u32> {
+    let size = vec2<i32>(ceil(view.grid / 8.0));
+    let c = clamp(block, vec2<i32>(0), size - vec2<i32>(1));
+    return vec4<u32>(round(textureLoad(glass, c, 0) * 255.0));
+}
+
+struct GlassFilm {
+    // Densities (0..1) of the front, back, left and right planes at the point.
+    density: vec4<f32>,
+    // Their variety ids: the block the point lies in decides.
+    kind: vec4<u32>,
+};
+
+// Block densities blend bilinearly between block centres, but only between
+// blocks of the same variety, so neighbouring varieties meet at a clean edge.
+fn glass_film(grid_pos: vec2<f32>) -> GlassFilm {
+    let f = grid_pos / 8.0 - 0.5;
+    let base = vec2<i32>(floor(f));
+    let t = f - floor(f);
+    let kind = glass_bytes(vec2<i32>(floor(grid_pos / 8.0))) >> vec4<u32>(4u);
+    var density = vec4<f32>(0.0);
+    for (var i = 0; i < 4; i += 1) {
+        let d = vec2<i32>(i & 1, i >> 1);
+        let w = select(1.0 - t.x, t.x, d.x == 1) * select(1.0 - t.y, t.y, d.y == 1);
+        let b = glass_bytes(base + d);
+        let own = vec4<f32>(b & vec4<u32>(15u)) / 15.0;
+        density += w * select(vec4<f32>(0.0), own, (b >> vec4<u32>(4u)) == kind);
+    }
+    return GlassFilm(density, kind);
+}
+
+// A glass film of variety `id` and `density` at texel `p`. Alpha is capped at
+// `cap` so the pane over the tank stays readable.
+fn glass_look(id: u32, density: f32, p: vec2<i32>, grid_pos: vec2<f32>, cap: f32) -> vec4<f32> {
+    let dark = look_dark(id);
+    let light = look_light(id);
+    let style = look_style(id);
+    if style == ALGAE_SPOTS {
+        let spot = algae_spots(p, density, dark.rgb, light.rgb);
+        return vec4<f32>(spot.rgb, spot.a * min(light.w * 0.6, cap));
+    }
+    if style == ALGAE_DUST {
+        let dust = algae_dust(p, density, dark.rgb, light.rgb, min(light.w * 0.6, cap), cap * 0.25);
+        return dust;
+    }
+    if style == ALGAE_SLIME {
+        let slime = algae_slime(p, density, dark.rgb, light.rgb);
+        return vec4<f32>(slime.rgb, slime.a * min(density * 0.8, 1.0) * cap);
+    }
+    let m = film_mottle(p);
+    return vec4<f32>(mix(dark.rgb, light.rgb, m.y), min(density * 0.75 * m.x, cap));
 }
 
 fn front_film_at(grid_pos: vec2<f32>) -> vec4<f32> {
@@ -814,14 +993,13 @@ fn front_film_at(grid_pos: vec2<f32>) -> vec4<f32> {
     if f32(at.y) < view.surface_row || !inside(at) {
         return vec4<f32>(0.0);
     }
-    let density = glass_density(grid_pos).r;
+    let g = glass_film(grid_pos);
+    let density = g.density.r;
     if density <= 0.0 || round(textureLoad(cells, at, 0).r * 255.0) == view.plant_parts2.w {
         return vec4<f32>(0.0);
     }
-    let m = film_mottle(vec2<i32>(floor(grid_pos * 2.0)));
-    let alpha = min(density * 0.75 * m.x, 0.25);
-    let rgb = mix(vec3<f32>(0.31, 0.46, 0.26), vec3<f32>(0.55, 0.65, 0.39), m.y);
-    return vec4<f32>(rgb, alpha);
+    let p = vec2<i32>(floor(grid_pos * f32(texel_density())));
+    return glass_look(g.kind.r, density, p, grid_pos, 0.25);
 }
 
 // The front film's colour transform commutes with compositing opaque scenes.
@@ -842,14 +1020,31 @@ fn rear_film_at(at: vec2<i32>, p: vec2<i32>, grid_pos: vec2<f32>) -> vec4<f32> {
     if view.algae.y <= 0.0 || f32(at.y) < view.surface_row {
         return vec4<f32>(0.0);
     }
-    let film = glass_density(grid_pos);
-    let edge = max(
-        film.b * clamp(1.0 - grid_pos.x * 0.5, 0.0, 1.0),
-        film.a * clamp(1.0 - (view.grid.x - grid_pos.x) * 0.5, 0.0, 1.0),
-    );
-    let m = film_mottle(p);
-    let green = film_green(m.y) * depth_factor(grid_pos.y);
-    return vec4<f32>(depth_cue(green, BACK_BAND), m.x * (film.g * 0.34 + edge * 0.36));
+    let g = glass_film(grid_pos);
+    let left = g.density.b * clamp(1.0 - grid_pos.x * 0.5, 0.0, 1.0);
+    let right = g.density.a * clamp(1.0 - (view.grid.x - grid_pos.x) * 0.5, 0.0, 1.0);
+    let edge = max(left, right);
+    let back = g.density.g;
+    let weight = back * 0.34 + edge * 0.36;
+    if weight <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    // The plane that contributes most names the variety.
+    let side_kind = select(g.kind.a, g.kind.b, left >= right);
+    let id = select(g.kind.g, side_kind, edge * 0.36 > back * 0.34);
+    let dark = look_dark(id);
+    let light = look_light(id);
+    let shade = depth_factor(grid_pos.y);
+    let style = look_style(id);
+    if style == ALGAE_FILM {
+        let m = film_mottle(p);
+        let green = mix(dark.rgb, light.rgb, m.y) * shade;
+        return vec4<f32>(depth_cue(green, BACK_BAND), m.x * weight);
+    }
+    // The sparse styles read as if on a pane, so their density scales from
+    // the weight back to a whole (0.36 is a fully coated side wall).
+    let look = glass_look(id, min(weight / 0.36, 1.0), p, grid_pos, 0.6);
+    return vec4<f32>(depth_cue(look.rgb * shade, BACK_BAND), look.a);
 }
 
 fn rear_film_behind(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec4<f32> {

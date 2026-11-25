@@ -966,13 +966,21 @@ fn grazing_removes_food_or_coat_and_updates_the_ecosystem() {
             run(&mut w, 40);
             run(&mut control, 40);
             let c = w.creature(grazer).unwrap();
-            assert_eq!(c.eaten(), 4, "{name} grazing {meal}");
+            let eaten = c.eaten() as usize;
             assert!(!c.hungry());
             let (after, before) = (w.ecosystem(), control.ecosystem());
             if meal == "algae" {
-                assert_eq!(after.algae_cells + 4, before.algae_cells);
+                // A grazer with less taste for the green film takes partial
+                // bites: more of them, each thinning a cell it may not clear.
+                assert!(eaten >= 4, "{name} grazing {meal}: {eaten}");
+                let cleared = before.algae_cells - after.algae_cells;
+                assert!(
+                    (1..=eaten).contains(&cleared),
+                    "{name}: {cleared} of {eaten}"
+                );
                 assert!(after.algae_coverage < before.algae_coverage);
             } else {
+                assert_eq!(eaten, 4, "{name} grazing {meal}");
                 assert_eq!(after.pollutant_cells + 4, before.pollutant_cells);
             }
         }
@@ -1285,13 +1293,13 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     w.fill_rect(rect(70, 46, 84, 74), rock, Brush::Replace)
         .unwrap();
     w.set_anchored(w.body_at(76, 60).unwrap(), true);
-    // A film on the rock's left face and top, about 45 cells from the
-    // start.
+    // Diatoms (variety 2, which it grazes in full bites) on the rock's left
+    // face and top, about 45 cells from the start.
     for y in 50..66 {
-        assert!(w.set_algae_coat(70, y, 4));
+        assert!(w.set_algae_variety(70, y, 2, 4));
     }
     for x in 72..82 {
-        assert!(w.set_algae_coat(x, 46, 4));
+        assert!(w.set_algae_variety(x, 46, 2, 4));
     }
     let oto = w.add_creature(species(&w, "otocinclus"), 20, 72).unwrap();
     // The same tank without it, for the algae it took.

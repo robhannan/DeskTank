@@ -170,6 +170,13 @@ fn algae_film_scene_matches_reference() {
     check_named("algae_film", "algae_film_x4", None, SIZE_X4);
 }
 
+/// D28, #369: brown diatoms, green spot algae and green dust algae side by
+/// side on the sand, stone, wood and glass.
+#[test]
+fn algae_varieties_scene_matches_reference() {
+    check_named("algae_varieties", "algae_varieties_x4", None, SIZE_X4);
+}
+
 /// Day and night (T6): the planted tank at night, dawn, midday and dusk.
 #[test]
 fn planted_scene_matches_reference_at_four_times_of_day() {
@@ -353,6 +360,7 @@ fn split_grid_matches_one_pass_with_sway_and_overlays() {
     for (scene, size, time, extra) in [
         ("depth", SIZE_X4, None, &["--sway"][..]),
         ("algae_film", SIZE_X4, None, &[][..]),
+        ("algae_varieties", SIZE_X4, None, &[][..]),
         (
             "plant_floaters",
             SIZE,

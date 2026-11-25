@@ -87,11 +87,18 @@ directory for custom materials and species is a stretch goal.
   cell's depth band, and a sprite fragment over a covered texel of a
   nearer plant cell is discarded, so the plant the grid drew stays in
   front (D21). A versioned `R8` texture holds the per-cell algae coat
-  (D28). The grid shader blends it into the substrate and hardscape
-  shading. A bilinearly filtered field-resolution `RGBA8` texture holds
-  all four glass densities. The back and sides tint the water behind the
+  (D28), each byte a variety and a density. The grid shader blends it into
+  the substrate and hardscape shading in the variety's style. A
+  field-resolution `RGBA8` texture holds the four glass planes in the same
+  packed form; the shader reads it by texel and blends densities
+  bilinearly only between blocks of the same variety. The look of each
+  variety (style, two shades and a strength; the styles are film, slime,
+  spots and dust, all procedural) comes from `assets/fields.toml` through
+  two `vec4`s per variety id in the view uniform, so no texture or sampler
+  was added (eleven textures). The back and sides tint the water behind the
   contents, and the front blends over the submerged scene with at most
-  25% opacity. On opaque sRGB targets the grid and sprites apply the same
+  25% opacity (spots and dust are sparse and keep to the same cap in
+  proportion). On opaque sRGB targets the grid and sprites apply the same
   pane tint before conversion to linear colour, so they match the separate
   pane draw on encoded targets. Clear panes skip the blend.
   Water is opaque in wallpaper mode and transparent or tinted in overlay

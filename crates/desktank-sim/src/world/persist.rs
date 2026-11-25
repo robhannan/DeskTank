@@ -127,31 +127,35 @@ impl World {
         let front = unrun(&s.front, world.algae.front.len(), "the front glass film")?;
         let back = unrun(&s.back, world.algae.back.len(), "the back wall film")?;
         let sides = unrun(&s.sides, world.algae.sides.len(), "the side wall film")?;
-        if front.iter().any(|&v| v > FRONT_CAP)
-            || back
-                .iter()
-                .chain(sides.iter().flatten())
-                .any(|&v| v > DENSITY_MASK)
+        // Hosts are not checked: a variety's data may change between releases.
+        let known: Vec<bool> = (0..16).map(|id| world.algae_known(id)).collect();
+        let film = |v: u8| v == 0 || (v & DENSITY_MASK != 0 && known[usize::from(v >> 4)]);
+        if !front
+            .iter()
+            .chain(&back)
+            .chain(sides.iter().flatten())
+            .all(|&v| film(v))
         {
+            return Err(SaveError::Invalid(
+                "glass film of an unknown variety".into(),
+            ));
+        }
+        if front.iter().any(|&v| v & DENSITY_MASK > FRONT_CAP) {
             return Err(SaveError::Invalid(
                 "glass film exceeds its density cap".into(),
             ));
         }
         for (i, v) in coat.into_iter().enumerate().filter(|&(_, v)| v != 0) {
-            // Only green film (variety 1) exists; 2-15 are reserved.
             // Exposure changes when objects move, so an otherwise eligible
             // cell may be temporarily dry or buried between field updates.
-            if v & DENSITY_MASK == 0 || v >> 4 != 1 || !world.algae_surface(world.cells[i]) {
+            if !film(v) || !world.algae_surface(world.cells[i]) {
                 return Err(SaveError::Invalid(format!("invalid film on cell {i}")));
             }
             world.write_coat(i, v);
         }
-        world.algae.glass = front
-            .iter()
-            .chain(&back)
-            .chain(sides.iter().flatten())
-            .filter(|&&v| v != 0)
-            .count();
+        for &v in front.iter().chain(&back).chain(sides.iter().flatten()) {
+            world.algae.glass_changed((0, v));
+        }
         world.algae.front = front;
         world.algae.back = back;
         world.algae.sides = sides;

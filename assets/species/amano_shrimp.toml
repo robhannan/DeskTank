@@ -24,6 +24,9 @@ max_speed = 8.0
 swim_every = 24.0
 hop_every = 10.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "bloodworm", "flake_food"]
+# Soft films only: it picks diatoms and green film but can't shift the hard
+# spots or the dust (percent of a full bite).
+grazing = { diatoms = 90, green_film = 80, green_spot = 0, green_dust = 0 }
 
 # Doesn't breed here: its larvae need brackish water.
 

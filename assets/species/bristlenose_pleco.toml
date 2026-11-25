@@ -17,6 +17,9 @@ max_speed = 5.0
 # Would rather stay on the bottom, but lifts off for a short swim now and then.
 swim_every = 40.0
 diet = ["algae", "algae_wafer", "detritus"]
+# Rasps hard surfaces: diatoms and film, and a little of the dust (percent
+# of a full bite). It leaves the spots.
+grazing = { diatoms = 90, green_film = 100, green_spot = 0, green_dust = 20 }
 
 
 [breeding]

@@ -30,6 +30,8 @@ swim_every = 30.0
 hop_every = 6.0
 skittish = true
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "flake_food"]
+# Soft films only (percent of a full bite).
+grazing = { diatoms = 80, green_film = 60, green_spot = 0, green_dust = 0 }
 
 # The female carries her eggs under her tail ("berried", carrying_frames
 # below) for about 30 days and releases tiny shrimplets (real broods of

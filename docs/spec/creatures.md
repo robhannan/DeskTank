@@ -9,7 +9,12 @@
   - zone: surface, mid-water, bottom or surfaces;
   - temperament: schooling, shoaling, peaceful or territorial;
   - diet: which food it eats and surfaces or materials it grazes, such as algae film and
-    detritus, and which plant species (by their palatability, §2.7);
+    detritus, and which plant species (by their palatability, §2.7). A
+    species that grazes algae can set how well it takes each algae variety
+    (`grazing`, a percentage of a full bite, [world](world.md) *Algae
+    varieties*): otocinclus rasp diatoms off at once, shrimp take soft
+    films but not hard spots or dust, and only a nerite takes some green spot
+    algae;
   - lifespan and maturity age;
   - breeding: egg layer (and which egg material) or livebearer;
   - tolerances;
