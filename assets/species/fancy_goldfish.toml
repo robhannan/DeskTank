@@ -12,6 +12,7 @@ length_cm = 9.0
 lifespan_days = 3650
 maturity_days = 365
 temperament = "peaceful"
+curious = true
 speed = 2.8
 max_speed = 6.0
 diet = ["flake_food", "algae_wafer", "sinking_pellet"]
