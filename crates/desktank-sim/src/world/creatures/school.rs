@@ -169,39 +169,28 @@ fn far_side(seed: u64, id: super::CreatureId, tick: u64) -> bool {
     Quirks::of(epoch, id, 0).percent(salt::SIDE, 0, 1) == 1
 }
 
-/// Sets each schoolmate's `head`, the fish its group follows, in the
-/// start-of-tick snapshot `mates` (in id order, every schooling species
-/// mixed): its species' first fish is the lead of all, unless the species
-/// is splitting (see the module docs), when those on the far side follow
-/// their first, the sub-lead. A species costs one pass, or three while it
-/// splits.
+/// Sets the heads of one schooling species' mates, in id order. They
+/// follow the first fish, or the first on their side while they split.
 pub(super) fn divide(mates: &mut [Schoolmate], seed: u64, tick: u64) {
-    // The species whose lead is found: one bit per species id.
-    let mut found = [0_u64; 4];
-    for i in 0..mates.len() {
-        let (species, lead) = (mates[i].species, mates[i].id);
-        let (word, bit) = (usize::from(species.0 >> 6), 1_u64 << (species.0 & 63));
-        if found[word] & bit != 0 {
-            continue;
-        }
-        found[word] |= bit;
-        let rest = &mut mates[i..];
-        let count = rest.iter().filter(|m| m.species == species).count();
-        let far = |m: &Schoolmate| m.id != lead && far_side(seed, m.id, tick);
-        let sub = if count >= SPLIT_MIN && splitting(Quirks::of(seed, lead, tick)) {
-            let mut far_mates = rest.iter().filter(|m| m.species == species && far(m));
-            let first = far_mates.next().map(|m| m.id);
-            let n = first.map_or(0, |_| 1 + far_mates.count());
-            first.filter(|_| n >= 2 && count - n >= 2)
-        } else {
-            None
+    let Some(first) = mates.first() else {
+        return;
+    };
+    let lead = first.id;
+    let count = mates.len();
+    let far = |m: &Schoolmate| m.id != lead && far_side(seed, m.id, tick);
+    let sub = if count >= SPLIT_MIN && splitting(Quirks::of(seed, lead, tick)) {
+        let mut far_mates = mates.iter().filter(|m| far(m));
+        let first = far_mates.next().map(|m| m.id);
+        let n = first.map_or(0, |_| 1 + far_mates.count());
+        first.filter(|_| n >= 2 && count - n >= 2)
+    } else {
+        None
+    };
+    for m in mates {
+        m.head = match sub {
+            Some(sub) if far(m) => sub,
+            _ => lead,
         };
-        for m in rest.iter_mut().filter(|m| m.species == species) {
-            m.head = match sub {
-                Some(sub) if far(m) => sub,
-                _ => lead,
-            };
-        }
     }
 }
 
@@ -275,13 +264,13 @@ mod tests {
     fn lead(vx: i32, vy: i32) -> Schoolmate {
         Schoolmate {
             id: CreatureId(1),
-            species: crate::species::SpeciesId(0),
             x: 0,
             y: 0,
             vx,
             vy,
             fear: 0,
             head: CreatureId(1),
+            adult: true,
         }
     }
 
@@ -393,56 +382,43 @@ mod tests {
         assert!(lo < k.cruise * 3 / 4 && hi > k.cruise * 5 / 4, "{lo}..{hi}");
     }
 
-    fn mate(id: u32, species: u8) -> Schoolmate {
+    fn mate(id: u32) -> Schoolmate {
         Schoolmate {
             id: CreatureId(id),
-            species: crate::species::SpeciesId(species),
             x: 0,
             y: 0,
             vx: 0,
             vy: 0,
             fear: 0,
             head: CreatureId(id),
+            adult: true,
         }
     }
 
-    /// Two species interleaved in id order: `a` fish of species 1 and `b`
-    /// of species 2.
-    fn mixed(a: u32, b: u32) -> Vec<Schoolmate> {
-        (1..=a + b)
-            .map(|id| mate(id, if id % 2 == 1 && id / 2 < a { 1 } else { 2 }))
-            .collect()
-    }
-
     #[test]
-    fn a_school_divides_only_when_both_sides_keep_two_and_never_across_species() {
+    fn a_school_divides_only_when_both_sides_keep_two() {
         let (mut splits, mut calm) = (0, 0);
         for seed in 0..20 {
             for tick in (0..30_000).step_by(100) {
-                for (a, b) in [(4, 3), (6, 3), (10, 12)] {
-                    let mut m = mixed(a, b);
-                    divide(&mut m, seed, tick);
-                    for species in [1, 2] {
-                        let of: Vec<_> = m.iter().filter(|x| x.species.0 == species).collect();
-                        let lead = of[0].id;
-                        let heads: std::collections::BTreeSet<_> =
-                            of.iter().map(|x| x.head).collect();
-                        // Only its own species' fish lead it, and the lead
-                        // is always its own head.
-                        assert!(of.iter().all(|x| of.iter().any(|y| y.id == x.head)));
-                        assert_eq!(of[0].head, lead);
-                        assert!(heads.len() <= 2);
-                        if heads.len() == 2 {
-                            let sub = heads.iter().find(|&&h| h != lead).unwrap();
-                            let side = of.iter().filter(|x| x.head == *sub).count();
-                            assert!(of.len() >= SPLIT_MIN, "{} fish split", of.len());
-                            assert!(side >= 2 && of.len() - side >= 2);
-                            // The sub-lead is the first of its side.
-                            assert_eq!(of.iter().find(|x| x.head == *sub).unwrap().id, *sub);
-                            splits += 1;
-                        } else {
-                            calm += 1;
-                        }
+                for count in [3, 4, 6, 10, 12] {
+                    let mut of: Vec<_> = (1..=count).map(mate).collect();
+                    divide(&mut of, seed, tick);
+                    let lead = of[0].id;
+                    let heads: std::collections::BTreeSet<_> = of.iter().map(|x| x.head).collect();
+                    // Every head is in the group, and the lead is its own head.
+                    assert!(of.iter().all(|x| of.iter().any(|y| y.id == x.head)));
+                    assert_eq!(of[0].head, lead);
+                    assert!(heads.len() <= 2);
+                    if heads.len() == 2 {
+                        let sub = heads.iter().find(|&&h| h != lead).unwrap();
+                        let side = of.iter().filter(|x| x.head == *sub).count();
+                        assert!(of.len() >= SPLIT_MIN, "{} fish split", of.len());
+                        assert!(side >= 2 && of.len() - side >= 2);
+                        // The sub-lead is the first of its side.
+                        assert_eq!(of.iter().find(|x| x.head == *sub).unwrap().id, *sub);
+                        splits += 1;
+                    } else {
+                        calm += 1;
                     }
                 }
             }

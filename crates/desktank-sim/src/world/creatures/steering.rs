@@ -279,8 +279,8 @@ impl World {
     /// of step, and how it splits and rejoins). All sample the same tick
     /// snapshot.
     fn school_target(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, i32)> {
-        let all = &self.creatures.school;
-        let lead = all.iter().find(|m| m.species == c.species)?;
+        let all = &self.creatures.school[usize::from(c.species.0)];
+        let lead = all.first()?;
         let find = |id| {
             all.binary_search_by_key(&id, |m| m.id)
                 .ok()
@@ -306,10 +306,7 @@ impl World {
         // The mean heading of the group's mates close by.
         let (mut ax, mut ay, mut near) = (0, 0, 0);
         let reach = school::align_reach(grown);
-        for m in all
-            .iter()
-            .filter(|m| m.species == c.species && m.id != c.id)
-        {
+        for m in all.iter().filter(|m| m.id != c.id) {
             if m.head == head.id && dist(c.x - m.x, c.y - m.y) <= reach {
                 (ax, ay, near) = (ax + m.vx, ay + m.vy, near + 1);
             }
