@@ -181,7 +181,7 @@
     - the device table (version 12, D27; loading version 11 or older
       turns legacy filter outlet cells into internal filters, see
       [devices](devices.md) *Migration*);
-    - the surface and glass algae density planes (version 16, D28). Older
+    - the surface and glass algae density planes (version 17, D28). Older
       saves replace algae material cells with water and start with bare
       surfaces;
     - the ecosystem state.

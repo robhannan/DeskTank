@@ -22,6 +22,6 @@ to grow with hold film back sooner. Film growth itself needs only
 nutrient and light. Catch-up updates the field blocks in bounded, disjoint
 groups and credits each group for the intervals it skips.
 
-Format version 16 saves the four density layers. Earlier algae cells
+Format version 17 saves the four density layers (version 16 went to the snails' panes, #380). Earlier algae cells
 become water on load, since a cell of the old material could touch several
 different surfaces. Legacy material ID 76 stays reserved for those saves.

@@ -398,7 +398,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v15_algae_material_migrates_to_water() {
+    fn v15_and_v16_algae_material_migrates_to_water() {
         let materials = MaterialTable::builtin().unwrap();
         let mut w = World::new(
             crate::WorldConfig {
@@ -415,22 +415,31 @@ mod tests {
             materials.id("water").unwrap(),
         );
         w.set_cell(3, 15, sand).unwrap();
-        let mut legacy = w.to_v15();
-        let grid = &mut legacy.base.base.base.base.base.base.grid;
-        let mut ids = unrun(&grid.materials, 16 * 16, "test grid").unwrap();
-        ids[14 * 16 + 3] = algae.0;
-        grid.materials = runs(ids);
-        let bytes = wrap(15, &postcard::to_allocvec(&legacy).unwrap());
-        let migrated = decode(&bytes, materials).unwrap();
-        assert_eq!(migrated.cell(3, 14).unwrap().material, water);
-        assert_eq!(migrated.cell(3, 15).unwrap().material, sand);
-        assert!(migrated.coat().iter().all(|&v| v == 0));
-        assert_eq!(migrated.material_counts()[usize::from(algae.0)], 0);
-        assert_eq!(check(&encode(&migrated)), Ok(16));
+        let with_algae = |grid: &mut v1::Grid| {
+            let mut ids = unrun(&grid.materials, 16 * 16, "test grid").unwrap();
+            ids[14 * 16 + 3] = algae.0;
+            grid.materials = runs(ids);
+        };
+        let mut v15 = w.to_v15();
+        with_algae(&mut v15.base.base.base.base.base.base.grid);
+        // Version 16 (the snails' panes) predates the coat too.
+        let mut v16 = w.to_v16();
+        with_algae(&mut v16.base.base.base.base.base.base.base.grid);
+        for bytes in [
+            wrap(15, &postcard::to_allocvec(&v15).unwrap()),
+            wrap(16, &postcard::to_allocvec(&v16).unwrap()),
+        ] {
+            let migrated = decode(&bytes, materials.clone()).unwrap();
+            assert_eq!(migrated.cell(3, 14).unwrap().material, water);
+            assert_eq!(migrated.cell(3, 15).unwrap().material, sand);
+            assert!(migrated.coat().iter().all(|&v| v == 0));
+            assert_eq!(migrated.material_counts()[usize::from(algae.0)], 0);
+            assert_eq!(check(&encode(&migrated)), Ok(FORMAT_VERSION));
+        }
     }
 
     #[test]
-    fn v16_rejects_reserved_coat_varieties() {
+    fn v17_rejects_reserved_coat_varieties() {
         let materials = MaterialTable::builtin().unwrap();
         let mut w = World::new(
             crate::WorldConfig {
@@ -449,9 +458,9 @@ mod tests {
         assert!(decode(&encode(&w), materials.clone()).is_ok());
         for variety in [0u8, 2, 15] {
             coat[15 * 16 + 3] = variety << 4 | 7;
-            let mut saved = w.to_v16();
+            let mut saved = w.to_v17();
             saved.coat = runs(coat.iter().copied());
-            let bytes = wrap(16, &postcard::to_allocvec(&saved).unwrap());
+            let bytes = wrap(17, &postcard::to_allocvec(&saved).unwrap());
             assert!(
                 matches!(
                     decode(&bytes, materials.clone()),
