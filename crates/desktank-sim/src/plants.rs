@@ -1752,6 +1752,15 @@ mod tests {
             let r = PlantSpeciesTable::from_toml_sources(&[&src], &materials());
             assert!(matches!(r, Err(PlantSpeciesError::Invalid { .. })), "{r:?}");
         }
+        for line in [
+            "scientific_name = \"Testus weedus\"",
+            "description = \"A test plant.\"",
+        ] {
+            let src = OK.replace(line, "");
+            assert_ne!(src, OK, "{line:?} not in the template");
+            let r = PlantSpeciesTable::from_toml_sources(&[&src], &materials());
+            assert!(matches!(r, Err(PlantSpeciesError::Parse { .. })), "{r:?}");
+        }
     }
 
     #[test]

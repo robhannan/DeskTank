@@ -1436,6 +1436,12 @@ mod tests {
                     Err(SpeciesError::Invalid { reason, .. }) if reason == expected_reason
                 ));
             }
+            let missing = OK.replace(&format!("{field} = \"{value}\""), "");
+            assert_ne!(missing, OK, "{field} not in template");
+            assert!(matches!(
+                SpeciesTable::from_toml_sources(&[&missing], &materials),
+                Err(SpeciesError::Parse { .. })
+            ));
         }
     }
 

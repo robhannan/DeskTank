@@ -4,7 +4,7 @@
 # eats anything that isn't alive, and is very stinky.
 id = 12
 name = "medical_crab"
-scientific_name = "Decapodus medicus"
+scientific_name = "Cancer medicus"
 description = "A red crab in a pale coat that dances along the bottom."
 zone = "bottom"
 depth = [0.7, 1.0]
