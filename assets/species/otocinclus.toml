@@ -17,7 +17,7 @@ length_cm = 3.5
 # months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
 lifespan_days = 1460
 maturity_days = 300
-temperament = "peaceful"
+temperament = "shoaling"
 speed = 3.0
 max_speed = 3.0
 # Would rather stay on the bottom, but lifts off for a short swim now and then.

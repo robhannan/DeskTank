@@ -1,5 +1,5 @@
 //! Creatures (SPEC §2.4) steer in fixed point, collide with the cell grid
-//! and eat within reach of their bodies. Species data selects schooling,
+//! and eat within reach of their bodies. Species data selects schooling, shoaling,
 //! substrate walking, contour grazing and trips to the air interface.
 //!
 //! - **Fixed point.** Positions and velocities are integers in 1/256 cell
@@ -57,7 +57,10 @@
 //! - **Names** and the inspect card are in [`naming`].
 //! - **Schooling** (loose, irregular, splitting and rejoining) is in
 //!   [`school`]: a school follows its lead, or a sub-lead while it is
-//!   split, and a fright ripples through it from fish to fish.
+//!   split, and a fright ripples through it from fish to fish. Shoalers
+//!   wander near mates of their own stage with no lead, and a fright
+//!   doesn't spread through a shoal (fry that passed it on outran every
+//!   hunter).
 //! - **Hunting, fleeing to cover, startling a school and territory** are in
 //!   [`pursuit`].
 //! - **Live food** (bloodworms) are creatures of a `live_food` species,
@@ -485,6 +488,7 @@ struct Kind {
     /// Front and back depth bands it keeps to (D21), inclusive.
     bands: (u8, u8),
     schooling: bool,
+    shoaling: bool,
     zone: Zone,
     breathes_air: bool,
     /// Stress per second once out of air (0: it doesn't breathe air).
@@ -557,8 +561,8 @@ pub(super) struct Creatures {
     /// Local time of day from the host, minutes after midnight (see
     /// [`night`]).
     minute: u16,
-    /// Reused start-of-tick snapshots for schooling, in creature id order.
-    school: Vec<Schoolmate>,
+    /// Reused start-of-tick snapshots by species, each in creature id order.
+    school: Vec<Vec<Schoolmate>>,
     /// Whether a schooler is frightened enough this tick to startle its
     /// mates (see [`pursuit`]); calm tanks skip the look.
     scared: bool,
@@ -597,7 +601,6 @@ pub(super) struct Creatures {
 #[derive(Clone, Copy, Debug)]
 struct Schoolmate {
     id: CreatureId,
-    species: SpeciesId,
     x: i32,
     y: i32,
     vx: i32,
@@ -607,6 +610,8 @@ struct Schoolmate {
     /// The one its group follows: its species' lead, or a sub-lead while
     /// the school is split (see [`school`]).
     head: CreatureId,
+    /// Grown to maturity: a shoaler keeps with mates of its own stage.
+    adult: bool,
 }
 
 impl Creatures {
@@ -656,6 +661,7 @@ impl Creatures {
                 depth: s.depth,
                 bands: (s.bands[0], s.bands[1]),
                 schooling: s.temperament == Temperament::Schooling,
+                shoaling: s.temperament == Temperament::Shoaling,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
                 air_stress: breathing::air_stress(s.air_tolerance_seconds),
@@ -702,12 +708,20 @@ impl Creatures {
                 rests: s.rests,
             });
         }
+        let school = vec![
+            Vec::new();
+            species
+                .iter()
+                .map(|s| usize::from(s.id.0) + 1)
+                .max()
+                .unwrap_or(0)
+        ];
         Self {
             species,
             list: Vec::new(),
             cursor: None,
             minute: crate::daylight::NOON,
-            school: Vec::new(),
+            school,
             scared: false,
             gaps: Vec::new(),
             near: Vec::new(),
@@ -1213,14 +1227,15 @@ impl World {
             if c.growth > k.maturity || c.energy > ENERGY_RESERVE {
                 return Err(invalid("growth or energy out of range"));
             }
+            // Older saves can hold a stray for a species that no longer schools.
+            let stray = if k.schooling { c.stray } else { 0 };
             // Within its species' bands (as every move keeps it).
             let deep = |z: i32| (z_of(k.bands.0)..=z_of(k.bands.1)).contains(&z);
             if !(deep(c.z)
                 && deep(c.tz)
-                && (k.schooling || c.stray == 0)
                 && c.tz % ONE == 0
                 && c.dodging <= DODGE_TICKS
-                && u32::from(c.stray) < RETARGET_TICKS.1)
+                && u32::from(stray) < RETARGET_TICKS.1)
             {
                 return Err(invalid("depth out of range"));
             }
@@ -1253,7 +1268,7 @@ impl World {
                 ty: c.ty,
                 tz: c.tz,
                 dodging: c.dodging,
-                stray: c.stray,
+                stray,
                 retarget: c.retarget,
                 satiety: c.satiety,
                 food: c.food,
@@ -1455,29 +1470,37 @@ impl World {
         }
         self.snapshot_near(&list);
         self.refresh_air_gaps(&list);
-        self.creatures.school.clear();
+        for mates in &mut self.creatures.school {
+            mates.clear();
+        }
         let mut scared = false;
         for c in &list {
-            // A sleeper doesn't lead or join the school (see `night`).
-            if self.kind(c.species).is_some_and(|k| k.schooling)
-                && c.held_until < self.tick
-                && !c.asleep
-            {
-                scared |= c.fear > pursuit::STARTLE_HOP;
-                self.creatures.school.push(Schoolmate {
+            // A sleeper doesn't join the school or shoal (see `night`); only
+            // schoolers startle each other.
+            let Some(k) = self.kind(c.species) else {
+                continue;
+            };
+            if (k.schooling || k.shoaling) && c.held_until < self.tick && !c.asleep {
+                let adult = c.growth >= k.maturity;
+                scared |= k.schooling && c.fear > pursuit::STARTLE_HOP;
+                self.creatures.school[usize::from(c.species.0)].push(Schoolmate {
                     id: c.id,
-                    species: c.species,
                     x: c.x,
                     y: c.y,
                     vx: c.vx,
                     vy: c.vy,
                     fear: c.fear,
                     head: c.id,
+                    adult,
                 });
             }
         }
         self.creatures.scared = scared;
-        school::divide(&mut self.creatures.school, self.seed, self.tick);
+        for (mates, kind) in self.creatures.school.iter_mut().zip(&self.creatures.kinds) {
+            if !mates.is_empty() && kind.as_ref().is_some_and(|k| k.schooling) {
+                school::divide(mates, self.seed, self.tick);
+            }
+        }
         for c in &mut list {
             let z = c.z;
             // A shift in depth alone changes how it is drawn (D21).
@@ -2069,6 +2092,7 @@ impl World {
             }
             _ => (y0, y1),
         };
+        let zone_rows = (y0, y1);
         // Every other swimmer's target is near its favourite depth: a
         // fifth of the rows either side of its own spot in the range.
         let q = self.quirks(c);
@@ -2094,6 +2118,69 @@ impl World {
             let n = u32::from(back - front) + 1;
             c.tz = z_of(front + u8::try_from((pick >> 1) % n).unwrap_or(0));
         }
+        if k.shoaling
+            && let Some((tx, ty)) = self.shoal_target(k, c, rng)
+        {
+            // The random spans exclude the upper cell, or use their
+            // midpoint when the body is too large for the span.
+            let clamp = |v: i32, lo, hi| {
+                if lo < hi {
+                    v.clamp(centre_of(lo), centre_of(hi - 1))
+                } else {
+                    centre_of(i64::midpoint(lo, hi))
+                }
+            };
+            c.tx = clamp(tx, x0, x1);
+            if k.zone != Zone::Bottom {
+                c.ty = clamp(ty, zone_rows.0, zone_rows.1);
+            }
+        }
+    }
+
+    /// A target near a random shoalmate, or the nearest one if straying.
+    fn shoal_target(&self, k: &Kind, c: &Creature, rng: &mut Pcg32) -> Option<(i32, i32)> {
+        // Eight directions in fixed point, or two along the bed.
+        const DIAGONAL: i32 = 181;
+        const DIRECTIONS: [(i32, i32); 8] = [
+            (ONE, 0),
+            (-ONE, 0),
+            (0, ONE),
+            (0, -ONE),
+            (DIAGONAL, DIAGONAL),
+            (-DIAGONAL, DIAGONAL),
+            (DIAGONAL, -DIAGONAL),
+            (-DIAGONAL, -DIAGONAL),
+        ];
+        let mates = &self.creatures.school[usize::from(c.species.0)];
+        let bottom = k.zone == Zone::Bottom;
+        let distance_sq = |m: &Schoolmate| {
+            let dx = i64::from(m.x) - i64::from(c.x);
+            let dy = if bottom {
+                0
+            } else {
+                i64::from(m.y) - i64::from(c.y)
+            };
+            dx * dx + dy * dy
+        };
+        // Young shoal with young and adults with adults, as real shoals
+        // sort by size: guppy fry don't swim up to the adults that eat them.
+        let adult = self.kind(c.species).is_some_and(|g| c.growth >= g.maturity);
+        let others = || mates.iter().filter(|m| m.id != c.id && m.adult == adult);
+        let nearest = others().min_by_key(|m| distance_sq(m))?;
+        let length = self.kind(c.species).map_or(k.w, |g| g.size_of(c.female).0) * ONE;
+        let mate = if distance_sq(nearest) > i64::from(12 * length).pow(2) {
+            nearest
+        } else {
+            if rng.next_u32().is_multiple_of(3) {
+                return None;
+            }
+            let count = u32::try_from(others().count()).ok()?;
+            others().nth(usize::try_from(rng.next_u32() % count).ok()?)?
+        };
+        let reach = length * (150 + i32::try_from(rng.next_u32() % 251).ok()?) / 100;
+        let n = if bottom { 2 } else { 8 };
+        let (dx, dy) = DIRECTIONS[usize::try_from(rng.next_u32() % n).ok()?];
+        Some((mate.x + dx * reach / ONE, mate.y + dy * reach / ONE))
     }
 
     /// The nearest spot within `radius` cells where the body fits in
@@ -2356,6 +2443,80 @@ fn to_i64(v: usize) -> i64 {
 mod tests {
     use super::*;
     use crate::{Brush, WorldConfig};
+
+    #[test]
+    fn a_save_only_keeps_stray_ticks_for_schoolers() {
+        let mut world =
+            World::new(WorldConfig::default(), MaterialTable::builtin().unwrap()).unwrap();
+        let goldfish = world.species().id("common_goldfish").unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let goldfish = world.add_creature(goldfish, 40, 30).unwrap();
+        let tetra = world.add_creature(tetra, 60, 30).unwrap();
+        let mut saved = world.save_creatures();
+        for c in &mut saved.list {
+            c.base.stray = 20;
+        }
+        world.load_creatures(saved).unwrap();
+        assert_eq!(world.creature(goldfish).unwrap().stray, 0);
+        assert_eq!(world.creature(tetra).unwrap().stray, 20);
+    }
+
+    #[test]
+    fn dispersed_shoalers_draw_closer_than_peaceful_fish() {
+        let mean_gap = |seed, temperament| {
+            let mut world = World::new(
+                WorldConfig {
+                    width: 360,
+                    height: 100,
+                    seed,
+                    water_level: 0.95,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            let source = include_str!("../../../../assets/species/guppy.toml");
+            let source = source.replace("temperament = \"shoaling\"", temperament);
+            let species = SpeciesTable::from_toml_sources(&[&source], &world.materials).unwrap();
+            let guppy = species.id("guppy").unwrap();
+            world.creatures = Creatures::new(
+                species,
+                &world.materials,
+                world.creatures.water,
+                world.creatures.air,
+            );
+            for index in 0..8 {
+                world.add_creature(guppy, 20 + 45 * index, 35).unwrap();
+            }
+            let mut sum = 0;
+            for tick in 0..(3 * 60 * TICKS_PER_SECOND) {
+                world.tick();
+                if tick >= 2 * 60 * TICKS_PER_SECOND && tick.is_multiple_of(TICKS_PER_SECOND) {
+                    let fish = world.creatures();
+                    assert_eq!(fish.len(), 8);
+                    sum += fish
+                        .iter()
+                        .map(|c| {
+                            fish.iter()
+                                .filter(|m| m.id != c.id)
+                                .map(|m| dist(m.x - c.x, m.y - c.y))
+                                .min()
+                                .unwrap()
+                        })
+                        .sum::<i64>();
+                }
+            }
+            sum / (60 * 8)
+        };
+
+        for seed in [4, 77] {
+            let peaceful = mean_gap(seed, "temperament = \"peaceful\"");
+            let shoaling = mean_gap(seed, "temperament = \"shoaling\"");
+            assert!(
+                shoaling * 4 < peaceful * 3,
+                "seed {seed}, shoaling {shoaling}, peaceful {peaceful}"
+            );
+        }
+    }
 
     fn dimorphic_tank(female_art: &str) -> World {
         let source = r##"

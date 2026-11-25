@@ -27,7 +27,7 @@ maturity_days = 90
 # female is a third of her 4.5 cm), and shrimplets (T9 part 2).
 prey_cm = 1.6
 breathes_air = false
-temperament = "peaceful"
+temperament = "shoaling"
 speed = 4.5
 max_speed = 9.0
 diet = ["flake_food", "bloodworm", "floating_leaf"]

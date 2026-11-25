@@ -1120,6 +1120,28 @@ fn harlequins_and_neons_each_school_with_their_own_kind() {
 }
 
 #[test]
+fn bottom_and_surface_shoalers_keep_moving() {
+    for name in ["corydoras", "otocinclus"] {
+        let mut w = world(180, 80, 7);
+        sand_bed(&mut w, 6);
+        let kind = species(&w, name);
+        let fish = [20, 55, 100, 155].map(|x| w.add_creature(kind, x, 70).unwrap());
+        // Surface crawlers can miss several swim windows in a row.
+        let mut previous = fish.map(|id| w.creature(id).unwrap().centre().0);
+        let mut travel = [0.0; 4];
+        for _ in 0..(3 * 60) {
+            run(&mut w, TICKS_PER_SECOND);
+            for (index, id) in fish.into_iter().enumerate() {
+                let x = w.creature(id).unwrap().centre().0;
+                travel[index] += (x - previous[index]).abs();
+                previous[index] = x;
+            }
+        }
+        assert!(travel.iter().all(|&x| x > 10.0), "{name}: {travel:?}");
+    }
+}
+
+#[test]
 fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     let mut w = world(120, 80, 9);
     sand_bed(&mut w, 6);

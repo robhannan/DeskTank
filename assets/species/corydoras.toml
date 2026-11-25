@@ -16,7 +16,7 @@ length_cm = 4.0
 lifespan_days = 1825
 maturity_days = 270
 breathes_air = false
-temperament = "peaceful"
+temperament = "shoaling"
 speed = 3.5
 max_speed = 7.0
 # Would rather stay on the bottom, but lifts off for a short swim now and then.
