@@ -1,4 +1,4 @@
-# A small schooling tetra (placeholder art, D11): keeps to mid-water and
+# A small schooling tetra, Paracheirodon innesi: keeps to mid-water and
 # takes flakes and bloodworms.
 id = 1
 name = "neon_tetra"
@@ -32,42 +32,48 @@ days = 1
 brood = [6, 12]
 rest_days = 14
 
+# Sprite: 7x3 cells (14x6 texels, 28x12 fine), facing right, traced from the
+# owner's photo of a neon tetra: an olive-silver back, an electric blue-cyan
+# iridescent stripe from the eye past the dorsal fin, a crimson-red lower
+# posterior half tapering diagonally into a silvery-white belly, translucent
+# swept dorsal and anal fins, a symmetrical forked tail, and a cyan-ringed
+# eye. The four frames are rest, the tail sweeping in and lifting, rest, and
+# sweeping in and dropping, with the dorsal and anal fins rippling and
+# glints drifting along the iridescent stripe.
 [sprite]
-# Facing right; '.' is transparent. Two texels per cell side. Four frames:
-# a tail sweep, with glints drifting along the iridescent stripe.
-colours = { b = "#2f8cff", c = "#9fe6ff", r = "#e0373f", w = "#dfe8f0", k = "#0c1016", e = "#ffffff", s = "#8fa3b5", u = "#62b8ff", d = "#4c6470", f = "#bccad6", g = "#7d8fa0", p = "#f05a60" }
+colours = { d = "#728680", h = "#9cb0a8", x = "#4e625e", b = "#0e8cff", u = "#1be6ff", c = "#aef8ff", r = "#eb1c24", p = "#ef5244", R = "#a2121c", w = "#e6eff4", W = "#c4d4de", g = "#8da2b0", a = "#6f8492", f = "#a6bac2", s = "#748a94", l = "#cadbe2", I = "#3ae6ff", k = "#0c1016", e = "#ffffff" }
 frames = [
     [
-        ".....sss......",
-        "s..bbcbbbcbek.",
-        "ssbcbbbcbbbkkw",
-        "ssrrrrrrrwwww.",
-        "s..rrrrrwwww..",
-        "....ss..s.....",
+        "......s.......",
+        "f.....fs......",
+        ".f.bbcbbbbcbb.",
+        ".frrrrrrwwwekW",
+        "ff...frwwwwW..",
+        ".....s........",
     ],
     [
-        "s....sss......",
-        "ss.bbbcbbbcek.",
-        "ssbbcbbbcbbkkw",
-        ".srrrrrrrwwww.",
-        "...rrrrrwwww..",
-        "....ss..s.....",
+        "......s.......",
+        "......fs......",
+        ".f.bcbbbbcbbb.",
+        ".frrrrrrwwwekW",
+        ".f...frwwwwW..",
+        ".....s........",
     ],
     [
-        ".....sss......",
-        "s..cbbbcbbbek.",
-        "ssbbbcbbbcbkkw",
-        "ssrrrrrrrwwww.",
-        "s..rrrrrwwww..",
-        "....ss..s.....",
+        "......s.......",
+        "f.....fs......",
+        ".f.bbbbbcbbbb.",
+        ".frrrrrrwwwekW",
+        "ff...frwwwwW..",
+        ".....s........",
     ],
     [
-        ".....sss......",
-        "...bcbbbcbbek.",
-        ".sbbbbcbbbckkw",
-        "ssrrrrrrrwwww.",
-        "ss.rrrrrwwww..",
-        "s...ss..s.....",
+        "......s.......",
+        "......fs......",
+        ".ffbbbbcbbbbc.",
+        ".frrrrrrwwwekW",
+        ".....frwwwwW..",
+        ".....s........",
     ],
 ]
 # The palette icon, at one pixel per cell.
@@ -82,59 +88,59 @@ icon = [
 # display scales divisible by four.
 fine_frames = [
     [
-        "...........sfs..............",
-        "..........sfssss............",
-        "sss.....dddbbbbbbbbbbbccd...",
-        "sffs..bbbbccbbbbbbccbwekwd..",
-        ".ssffuuuuuuuuuuuuuuuuwkkwuw.",
-        "..ssbbccbbbbbbccbbbbbbwwbkww",
-        "..ssrpprrrrrrrrrrrwwgwwwwww.",
-        ".ssfrrrrrrrrrrrrrrwwgwwwww..",
-        "sffs..rrrrrrrrrrwwwwwgwww...",
-        "sss....ppppppppwwwwwwww.....",
-        "........sfsss...ss..........",
-        "........fss.....s...........",
+        "............sl..............",
+        "............ssl.............",
+        ".............ssl............",
+        "sss..........sddhhhhhh......",
+        ".sss.....hhhhddhdhdhdhhhh...",
+        "..ssrrrrrrcuuuucuuuubbbbbeI.",
+        "...frrRRrrrrrrrpgWgWcuuuIkIa",
+        "..ssRR..RrrrrrpwwWwwWgggWIW.",
+        ".sss.....ssrrpwwwwwwwwaaaa..",
+        "sss.......sfssaaaaaaaa......",
+        "..........ssl...............",
+        "..........sl................",
     ],
     [
-        "sss........sfs..............",
-        "sfss......sfssss............",
-        ".sfss...dddbbbbbbbbbbbccd...",
-        ".ssfssbbbbbbccbbbbbbcwekwd..",
-        "ssssfuuuuuuuuuuuuuuuuwkkwuw.",
-        "ssssbbbbccbbbbbbccbbbbwwbkww",
-        ".fffrpprrrrrrrrrrrwwgwwwwww.",
-        "...srrrrrrrrrrrrrrwwgwwwww..",
-        "......rrrrrrrrrrwwwwwgwww...",
-        ".......ppppppppwwwwwwww.....",
-        "........sfsss...ss..........",
-        "........fss.....s...........",
+        "............................",
+        "............ssl.............",
+        ".............ssl............",
+        ".............sddhhhhhh......",
+        ".sss.....hhhhddhdhdhdhhhh...",
+        "..ssrrrrrruuucuuuucubbbbbeI.",
+        "...frrRRrrrrrrrpgWgWuuucIkIa",
+        "...srR..RrrrrrpwwWwwWgggWIW.",
+        "..sss....ssrrpwwwwwwwwaaaa..",
+        ".sss......sfssaaaaaaaa......",
+        ".s........ssl...............",
+        "..........l.................",
     ],
     [
-        "...........sfs..............",
-        "..........sfssss............",
-        "sss.....dddbbbbbbbbbbbccd...",
-        "sffs..ccbbbbbbccbbbbbwekwd..",
-        ".ssffuuuuuuuuuuuuuuuuwkkwuw.",
-        "..ssbbbbbbccbbbbbbccbbwwbkww",
-        "..ssrpprrrrrrrrrrrwwgwwwwww.",
-        ".ssfrrrrrrrrrrrrrrwwgwwwww..",
-        "sffs..rrrrrrrrrrwwwwwgwww...",
-        "sss....ppppppppwwwwwwww.....",
-        "........sfsss...ss..........",
-        "........fss.....s...........",
+        "............sl..............",
+        "............ssl.............",
+        ".............ssl............",
+        "sss..........sddhhhhhh......",
+        ".sss.....hhhhddhdhdhdhhhh...",
+        "..ssrrrrrrucuuuucuuubbbbbeI.",
+        "...frrRRrrrrrrrpgWgWucuuIkIa",
+        "..ssRR..RrrrrrpwwWwwWgggWIW.",
+        ".sss.....ssrrpwwwwwwwwaaaa..",
+        "sss.......sfssaaaaaaaa......",
+        "..........ssl...............",
+        "..........sl................",
     ],
     [
-        "...........sfs..............",
-        "..........sfssss............",
-        "........dddbbbbbbbbbbbccd...",
-        "......bbccbbbbbbccbbbwekwd..",
-        "...ssuuuuuuuuuuuuuuuuwkkwuw.",
-        ".fffbbbbbbbbccbbbbbbccwwbkww",
-        "ssssrpprrrrrrrrrrrwwgwwwwww.",
-        "ssssrrrrrrrrrrrrrrwwgwwwww..",
-        ".ssfssrrrrrrrrrrwwwwwgwww...",
-        ".sfss..ppppppppwwwwwwww.....",
-        "sfss....sfsss...ss..........",
-        "sss.....fss.....s...........",
+        "............sl..............",
+        "............ssl.............",
+        ".s...........ssl............",
+        ".sss.........sddhhhhhh......",
+        "..sss....hhhhddhdhdhdhhhh...",
+        "...srrrrrruuuucuuuucbbbbbeI.",
+        "...frrRRrrrrrrrpgWgWuuuuIkIa",
+        "..ssRR..RrrrrrpwwWwwWgggWIW.",
+        ".sss.....ssrrpwwwwwwwwaaaa..",
+        "..........sfssaaaaaaaa......",
+        "..........ssl...............",
+        "...........l................",
     ],
 ]
