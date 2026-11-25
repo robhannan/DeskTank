@@ -55,10 +55,11 @@ stays a material film, not individuals.
     part began) moves to the variant byte or is derived from the plant's
     form; T6b fixes the layout.
     *T6b:* the variant byte holds the part-local position in its low 6
-    bits (capped at 63) and colour noise in its top 2; a seed or
-    cutting's `state` holds the species id it grows into (0 for the
-    default, the lowest id). The generic parts so far are root, stem and
-    leaf (a mat's cells are stems); T6c adds the rest.
+    bits (capped at 63) and colour noise in its top 2. The low byte of a
+    seed or cutting's `state` holds the species id it grows into (0 for
+    the default, the lowest id). The high byte holds rot progress for
+    cuttings and stays zero for seeds. The generic parts so far are root,
+    stem and leaf (a mat's cells are stems); T6c adds the rest.
     *T6c (parts 1–3):* a rosette's, carpet's or epiphyte's blades are leaf
     cells (the species' `[look] leaf` picks a blade shape), so blades cost
     no material id; `runner` (id 77, counted with roots), `floating_leaf`
@@ -75,7 +76,11 @@ stays a material film, not individuals.
     propagates by fragments and the piece holds a stem or rhizome (or a
     floater's floating leaf, which floats on as a buoyant body, D22);
     otherwise it becomes dead plant matter. A fragment drifts or sinks
-    like a cutting until it roots.
+    like a cutting until it roots. Unestablished cuttings, including poured
+    fragments, runners and buds, age while the rooting site or conditions
+    are unsuitable. They become dead plant matter after about 7.5 minutes,
+    within one in-tank day (10 minutes) under normal tick loads. Seeds
+    wait indefinitely for suitable conditions.
   - **Health and death.** Health falls while the plant's conditions are
     outside its ranges and recovers inside them. Low health drops the
     oldest leaves first, then the whole plant becomes dead plant matter;

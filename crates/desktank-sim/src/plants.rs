@@ -10,9 +10,9 @@
 //! (1–65535). Its variant byte holds the part-local position in the low
 //! [`POSITION_BITS`] bits (how far the cell is from where its part began:
 //! stem height, leaf length, root depth; 0 for a mat) and colour noise in
-//! the top two bits ([`plant_variant`]). A seed or cutting's `state` holds
-//! the [`PlantSpeciesId`] it grows into (0 for the default species, the
-//! lowest id).
+//! the top two bits ([`plant_variant`]). The low byte of a seed or cutting's
+//! `state` holds the [`PlantSpeciesId`] it grows into (0 for the default
+//! species, the lowest id). Cuttings store their rot age in the high byte.
 //!
 //! **Preferences.** For light, nutrient and CO₂ a species gives `min`,
 //! `optimum` and `max`: the response is 0 outside `min..max`, 1 at the
@@ -54,6 +54,18 @@ pub fn plant_variant(noise: u8, position: u8) -> u8 {
 #[must_use]
 pub fn plant_position(variant: u8) -> u8 {
     variant & MAX_POSITION
+}
+
+pub(crate) const fn propagule_species(state: u16) -> u8 {
+    state.to_le_bytes()[0]
+}
+
+pub(crate) const fn propagule_age(state: u16) -> u8 {
+    state.to_le_bytes()[1]
+}
+
+pub(crate) const fn propagule_state(species: u8, age: u8) -> u16 {
+    u16::from_le_bytes([species, age])
 }
 
 /// The generic plant part materials shared by every species (SPEC §2.7).
@@ -1203,13 +1215,11 @@ impl PlantSpeciesTable {
         self.species.iter().find(|s| s.name == name).map(|s| s.id)
     }
 
-    /// The species a seed or cutting with `state` grows into: that id if it
-    /// exists, else the default (the lowest id).
+    /// The species a seed or cutting with `state` grows into: the low-byte
+    /// id if it exists, else the default (the lowest id).
     #[must_use]
     pub fn for_state(&self, state: u16) -> Option<&PlantSpecies> {
-        u8::try_from(state)
-            .ok()
-            .and_then(|id| self.get(PlantSpeciesId(id)))
+        self.get(PlantSpeciesId(propagule_species(state)))
             .or_else(|| self.species.first())
     }
 
@@ -1627,6 +1637,10 @@ mod tests {
         assert!(matches!(&moss.form, Form::Mat(m) if m.on.len() == 2));
         assert_eq!(t.for_state(0).unwrap().id, first.id);
         assert_eq!(t.for_state(u16::from(moss.id.0)).unwrap().id, moss.id);
+        assert_eq!(
+            t.for_state(propagule_state(moss.id.0, 123)).unwrap().id,
+            moss.id
+        );
         assert_eq!(t.for_state(999).unwrap().id, first.id);
         // The two stem plants want different light, so each wins somewhere.
         let rotala = t.get(t.id("rotala").unwrap()).unwrap();

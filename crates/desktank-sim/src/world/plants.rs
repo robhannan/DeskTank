@@ -57,6 +57,7 @@ use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
     BallForm, COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, Limit, Part, PlantSpecies,
     PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
+    propagule_age, propagule_species, propagule_state,
 };
 use crate::rng::splitmix64;
 use crate::save::{SaveError, v1, v8};
@@ -86,6 +87,10 @@ const BLOCKED_UPDATES: u8 = 6;
 /// Chance per second that a resting seed or cutting roots (T6's values).
 const SEED_ROOTING: f32 = 0.02;
 const CUTTING_ROOTING: f32 = 0.5;
+/// One rot step per 36 unsuitable ticks on average. At 20 Hz, 250 steps
+/// take about 7.5 minutes, leaving margin within a 10-minute tank day.
+const CUTTING_ROT_STEP_TICKS: u16 = 36;
+const CUTTING_ROT_STEPS: u8 = 250;
 /// Chance per second that a mat cell touching nothing it clings to falls
 /// off (T6's moss).
 const MAT_FALLING: f32 = 0.05;
@@ -591,12 +596,12 @@ impl World {
         let mut changed = 0;
         for (x, y) in self.disc(cx, cy, radius) {
             let c = self.cells[y * self.width + x];
-            let same = c.material == material && c.state == u16::from(species.0);
+            let same = c.material == material && propagule_species(c.state) == species.0;
             if same || !self.props[usize::from(c.material.0)].class.is_fluid() {
                 continue;
             }
             self.write_cell(x, y, material, &mut None);
-            self.cells[y * self.width + x].state = u16::from(species.0);
+            self.cells[y * self.width + x].state = propagule_state(species.0, 0);
             changed += 1;
         }
         Ok(changed)
@@ -1246,6 +1251,7 @@ impl World {
             (_, None) => false,
         };
         if !ready || self.response_at(s, x, y).0 <= 0.0 {
+            self.age_cutting(i, cell, k);
             return true;
         }
         let mut clustered = false;
@@ -1266,9 +1272,8 @@ impl World {
                 return true;
             }
             clustered = DIRS.into_iter().any(|(dx, dy)| {
-                self.at(x, y, dx, dy).is_some_and(|j| {
-                    self.cells[j].material == cell.material && self.cells[j].state == cell.state
-                })
+                self.at(x, y, dx, dy)
+                    .is_some_and(|j| self.is_ball_fragment(j, s.id))
             });
         }
         let keep = if Some(cell.material) == self.plants.seed {
@@ -1310,6 +1315,35 @@ impl World {
             Form::Epiphyte(_) => self.put_part(i, Part::Rhizome, id, 1),
         }
         true
+    }
+
+    fn age_cutting(&mut self, index: usize, cell: Cell, ticks: u16) {
+        if Some(cell.material) != self.plants.cutting {
+            return;
+        }
+        let Some(dead) = self.plants.dead else {
+            return;
+        };
+        let mut steps = ticks / CUTTING_ROT_STEP_TICKS;
+        let remainder = ticks % CUTTING_ROT_STEP_TICKS;
+        // Round fractional steps without advancing the shared ecology RNG.
+        if remainder != 0 {
+            let hash = splitmix64(
+                self.seed
+                    ^ self.tick.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    ^ (index as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9),
+            );
+            steps += u16::from(hash % u64::from(CUTTING_ROT_STEP_TICKS) < u64::from(remainder));
+        }
+        let age = u16::from(propagule_age(cell.state)) + steps;
+        if age >= u16::from(CUTTING_ROT_STEPS) {
+            self.write_cell(index % self.width, index / self.width, dead, &mut None);
+        } else if steps != 0 {
+            // Age is invisible. Only a material change wakes the chunk.
+            #[allow(clippy::cast_possible_truncation)] // below CUTTING_ROT_STEPS
+            let age = age as u8;
+            self.cells[index].state = propagule_state(propagule_species(cell.state), age);
+        }
     }
 
     /// Joins a neighbouring ball or waits for it to reach this fragment
@@ -1355,7 +1389,7 @@ impl World {
 
     fn is_ball_fragment(&self, i: usize, species: PlantSpeciesId) -> bool {
         let c = self.cells[i];
-        Some(c.material) == self.plants.cutting && c.state == u16::from(species.0)
+        Some(c.material) == self.plants.cutting && propagule_species(c.state) == species.0
     }
 
     fn ball_fragment_position(
