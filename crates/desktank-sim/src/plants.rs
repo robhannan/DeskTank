@@ -1641,7 +1641,7 @@ mod tests {
             t.for_state(propagule_state(moss.id.0, 123)).unwrap().id,
             moss.id
         );
-        assert_eq!(t.for_state(999).unwrap().id, first.id);
+        assert_eq!(t.for_state(propagule_state(255, 42)).unwrap().id, first.id);
         // The two stem plants want different light, so each wins somewhere.
         let rotala = t.get(t.id("rotala").unwrap()).unwrap();
         assert!(rotala.prefer.light.optimum > first.prefer.light.optimum);

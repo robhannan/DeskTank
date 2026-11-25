@@ -326,7 +326,7 @@ target computes the same bits.
     acceptance test requires N = 150. Under unsuitable rooting conditions,
     propagules using the cutting material quietly accumulate rot progress
     in the high byte of their cell state. They become dead plant matter
-    within one in-tank day (600 s) under normal tick loads, then decay to
+    after about 7.5 minutes (within one in-tank day, 600 s), then decay to
     detritus and release nutrients as the detritus breaks down. Seeds
     retain their species id in the low byte and do not rot.
   - **Moss** grows over rock and driftwood only (each new cell must touch

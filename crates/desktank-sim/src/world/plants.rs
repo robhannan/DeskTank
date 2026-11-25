@@ -18,7 +18,10 @@
 //!   visit samples the light (leaves and stems), nutrient and CO₂ at the
 //!   cell into its plant's entry, and a mat cell that no longer touches
 //!   what it clings to may fall off. A seed or cutting resting where its
-//!   species roots, with every factor in range, roots and becomes a plant.
+//!   species roots, with every factor in range, roots and becomes a plant;
+//!   an unestablished cutting under unsuitable conditions quietly ages in
+//!   the high byte of its cell `state` and turns into dead plant matter
+//!   within one in-tank day.
 //! - **The plant update** visits each plant about every
 //!   [`UPDATE_SECONDS`] of world time, at most [`MAX_UPDATES_PER_TICK`]
 //!   plants per tick. It turns the samples into the species' response,
@@ -1220,7 +1223,9 @@ impl World {
     }
 
     /// One random tick of a seed or cutting: it may root (see the module
-    /// docs). Returns whether the material is a propagule.
+    /// docs), or, if it is a cutting under unsuitable conditions, age
+    /// quietly towards dead plant matter. Returns whether the material is a
+    /// propagule.
     #[allow(clippy::many_single_char_names)] // cell maths
     fn visit_propagule(&mut self, i: usize, cell: Cell, k: u16) -> bool {
         if !self.plants.is_propagule(cell.material) {

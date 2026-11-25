@@ -78,9 +78,9 @@ stays a material film, not individuals.
     otherwise it becomes dead plant matter. A fragment drifts or sinks
     like a cutting until it roots. Unestablished cuttings, including poured
     fragments, runners and buds, age while the rooting site or conditions
-    are unsuitable. They become dead plant matter after about 7.5 minutes,
-    within one in-tank day (10 minutes) under normal tick loads. Seeds
-    wait indefinitely for suitable conditions.
+    are unsuitable. They become dead plant matter after about 7.5 minutes
+    (within one in-tank day, 10 minutes), scaling with the random-tick
+    interval. Seeds wait indefinitely for suitable conditions.
   - **Health and death.** Health falls while the plant's conditions are
     outside its ranges and recovers inside them. Low health drops the
     oldest leaves first, then the whole plant becomes dead plant matter;

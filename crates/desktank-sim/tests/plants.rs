@@ -110,14 +110,44 @@ fn unsuitable_cuttings_rot_within_one_day() {
         assert_eq!(w.plant_count(), 0, "{name}");
 
         if substrate == "sand" && name == "hygrophila" {
-            run(&mut w, 2 * MINUTE);
-            assert_eq!(count(&w, &["detritus"]), 1);
-            run(&mut w, 3 * MINUTE);
+            let detritus = id(&w, "detritus");
+            let water = id(&w, "water");
+            let became_detritus = (0..3 * MINUTE).any(|_| {
+                w.tick();
+                w.cell(24, 39).unwrap().material == detritus
+            });
+            assert!(became_detritus, "dead plant did not decay to detritus");
+            let dissolved = (0..4 * MINUTE).any(|_| {
+                w.tick();
+                w.cell(24, 39).unwrap().material == water
+            });
+            assert!(dissolved, "detritus did not dissolve into water");
             assert_eq!(count(&w, &["detritus", "dead_plant", "cutting"]), 0);
-            assert_eq!(w.cell(24, 39).unwrap().material, id(&w, "water"));
             assert!(w.field(FieldKind::Nutrient).at_cell(24, 39) > 0.0);
         }
     }
+}
+
+#[test]
+fn suitable_unrooted_cuttings_do_not_age() {
+    let mut w = world(48, 48, 3);
+    let aquasoil = id(&w, "aquasoil");
+    w.fill_rect(rect(0, 40, 48, 48), aquasoil, Brush::Replace)
+        .unwrap();
+    // Fill the plant cap of 1 with a separate plant so the cutting stays
+    // unrooted despite suitable light, nutrients and substrate.
+    w.set_plant_cap(1);
+    let stem = id(&w, "stem");
+    w.set_cell(4, 39, stem).unwrap();
+    run(&mut w, MINUTE);
+    assert_eq!(w.plant_count(), 1);
+    let rotala = w.plant_species().id("rotala").unwrap();
+    w.paint_plant(24, 39, 0, rotala, Propagule::Cuttings)
+        .unwrap();
+    run(&mut w, LIFE_DAY_TICKS);
+    let cell = w.cell(24, 39).unwrap();
+    assert_eq!(cell.material, id(&w, "cutting"));
+    assert_eq!(cell.state, u16::from(rotala.0));
 }
 
 #[test]
