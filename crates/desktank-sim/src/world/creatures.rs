@@ -544,6 +544,7 @@ struct Kind {
     /// Shrimp species (`*_shrimp`): graze sponge filters (DV4) and vulnerable
     /// to unguarded intakes when small (DV3).
     is_shrimp: bool,
+    grazes_algae: bool,
     /// Where it rests at night (see [`night`]).
     rests: RestSpot,
     /// Its body on the edges, and on a pane (head right) if it has pane
@@ -722,6 +723,7 @@ impl Creatures {
                 food_as: s.food_as,
                 live_prey,
                 eats_live: live_prey != [0; 4],
+                grazes_algae: s.grazes_algae,
                 is_shrimp: s.name.ends_with("_shrimp"),
                 rests: s.rests,
                 side: (w, h),
@@ -782,6 +784,19 @@ impl Creatures {
         foods.sort_unstable();
         foods.dedup();
         foods
+    }
+}
+
+/// Density levels scraped off the film by one bite.
+const FILM_BITE: u8 = 4;
+
+fn nibble_film(coat: u8) -> u8 {
+    use super::algae::DENSITY_MASK;
+    let left = (coat & DENSITY_MASK).saturating_sub(FILM_BITE);
+    if left == 0 {
+        0
+    } else {
+        (coat & !DENSITY_MASK) | left
     }
 }
 
@@ -1826,6 +1841,13 @@ impl World {
     }
 
     fn edible_cell(&self, k: &Kind, index: usize) -> bool {
+        self.edible_material_cell(k, index)
+            || (k.grazes_algae
+                && self.algae.coat[index] != 0
+                && self.algae_water(index).next().is_some())
+    }
+
+    fn edible_material_cell(&self, k: &Kind, index: usize) -> bool {
         let cell = self.cells[index];
         k.edible[usize::from(cell.material.0)]
             && (self.plants.part(cell.material).is_none() || self.palatable_plant(cell.state))
@@ -1838,7 +1860,7 @@ impl World {
     /// Keeps `c` heading for food while hungry: a new search when its food
     /// has gone, and every [`SEARCH_EVERY`] ticks for something closer.
     fn choose_food(&self, k: &Kind, c: &mut Creature, hungry: bool) {
-        if !hungry || self.life.food_cells() == 0 {
+        if !hungry || (self.life.food_cells() == 0 && (!k.grazes_algae || self.algae.coated == 0)) {
             c.food = None;
             return;
         }
@@ -2025,25 +2047,30 @@ impl World {
     /// Eats one food cell within the species' reach of the body, if there
     /// is one.
     fn eat(&mut self, k: &Kind, c: &mut Creature) -> bool {
-        let Some(b) = body(k, c.turn, c.x, c.y, self.width, self.height) else {
+        let Some(reach) = self.feeding_reach(k, c) else {
             return false;
-        };
-        let reach = Rect {
-            x0: b.x0.saturating_sub(k.reach),
-            y0: b.y0.saturating_sub(k.reach),
-            x1: (b.x1 + k.reach).min(self.width),
-            y1: (b.y1 + k.reach).min(self.height),
         };
         for y in reach.y0..reach.y1 {
             for x in reach.x0..reach.x1 {
-                if self.edible_cell(k, y * self.width + x) {
+                if self.edible_material_cell(k, y * self.width + x) {
                     self.eat_cell(c, x, y);
                     return true;
                 }
             }
         }
-        (k.eats_corpses && self.bite_corpse(reach, c))
+        (k.grazes_algae && self.graze_algae(reach, c))
+            || (k.eats_corpses && self.bite_corpse(reach, c))
             || (k.is_shrimp && self.graze_sponge(reach, c))
+    }
+
+    fn feeding_reach(&self, k: &Kind, c: &Creature) -> Option<Rect> {
+        let b = body(k, c.turn, c.x, c.y, self.width, self.height)?;
+        Some(Rect {
+            x0: b.x0.saturating_sub(k.reach),
+            y0: b.y0.saturating_sub(k.reach),
+            x1: (b.x1 + k.reach).min(self.width),
+            y1: (b.y1 + k.reach).min(self.height),
+        })
     }
 
     fn eat_cell(&mut self, c: &mut Creature, x: usize, y: usize) {
@@ -2057,9 +2084,79 @@ impl World {
             self.graze_plant(cell.state);
         }
         self.write_cell(x, y, to, &mut None);
+        Self::feed_bite(c);
+    }
+
+    fn graze_algae(&mut self, reach: Rect, c: &mut Creature) -> bool {
+        if self.algae.coated != 0 {
+            for y in reach.y0..reach.y1 {
+                for x in reach.x0..reach.x1 {
+                    let i = y * self.width + x;
+                    let coat = self.algae.coat[i];
+                    if coat != 0
+                        && self
+                            .algae_water(i)
+                            .any(|j| reach.contains(j % self.width, j / self.width))
+                    {
+                        self.write_coat(i, nibble_film(coat));
+                        Self::feed_bite(c);
+                        return true;
+                    }
+                }
+            }
+        }
+        self.graze_glass(reach, c)
+    }
+
+    fn feed_bite(c: &mut Creature) {
         c.satiety = c.satiety.saturating_add(BITE).min(FULL);
         c.energy = c.energy.saturating_add(BITE_ENERGY).min(ENERGY_RESERVE);
         c.eaten += 1;
+    }
+
+    fn graze_glass(&mut self, reach: Rect, c: &mut Creature) -> bool {
+        use crate::field::FIELD_SCALE;
+
+        if self.algae.glass == 0 || reach.is_empty() {
+            return false;
+        }
+        let band = c.band();
+        let fw = self.width.div_ceil(FIELD_SCALE);
+        for fy in reach.y0 / FIELD_SCALE..=(reach.y1 - 1) / FIELD_SCALE {
+            let algae = &mut self.algae;
+            let glass = if band == 0 || band == DEPTH_BANDS - 1 {
+                let pane = if band == 0 {
+                    &mut algae.front
+                } else {
+                    &mut algae.back
+                };
+                pane[fy * fw + reach.x0 / FIELD_SCALE..=fy * fw + (reach.x1 - 1) / FIELD_SCALE]
+                    .iter_mut()
+                    .find(|density| **density != 0)
+            } else {
+                None
+            };
+            let glass = glass.or_else(|| {
+                let sides = &mut algae.sides[fy];
+                let edge = if reach.x0 == 0 && sides[0] != 0 {
+                    0
+                } else if reach.x1 == self.width && sides[1] != 0 {
+                    1
+                } else {
+                    return None;
+                };
+                Some(&mut sides[edge])
+            });
+            if let Some(density) = glass {
+                let old = *density;
+                *density = old.saturating_sub(FILM_BITE);
+                let new = *density;
+                self.algae.glass_changed((old, new));
+                Self::feed_bite(c);
+                return true;
+            }
+        }
+        false
     }
 
     /// Shrimp biofilm grazing on an adjacent sponge filter's foam body (DV4):
@@ -2123,7 +2220,8 @@ impl World {
             )
         });
         for (ci, list) in self.life.food_lists().iter().enumerate() {
-            if list.is_empty() {
+            let film = k.grazes_algae.then(|| &self.algae.by_chunk[ci]);
+            if list.is_empty() && film.is_none_or(std::collections::BTreeSet::is_empty) {
                 continue;
             }
             // Skip whole chunks out of range (or no closer than the best).
@@ -2137,7 +2235,7 @@ impl World {
             if gx * gx + gy * gy > limit {
                 continue;
             }
-            for &i in list {
+            for &i in list.iter().chain(film.into_iter().flatten()) {
                 if !self.edible_cell(k, i as usize) {
                     continue;
                 }
@@ -3088,6 +3186,65 @@ mod tests {
             shoals * 5 < roams * 4,
             "shoaling {shoals}, peaceful {roams}"
         );
+    }
+
+    #[test]
+    fn glass_grazing_reaches_the_nearby_wall_or_pane() {
+        use crate::FieldKind;
+        use crate::field::FIELD_SCALE;
+
+        let mut w = World::new(
+            WorldConfig {
+                width: 32,
+                height: 32,
+                water_level: 1.0,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        for y in (0..w.height()).step_by(FIELD_SCALE) {
+            for x in (0..w.width()).step_by(FIELD_SCALE) {
+                w.add_to_field(FieldKind::Nutrient, x, y, 1.0);
+            }
+        }
+        w.catch_up(600);
+        let nerite = w.species().id("nerite").unwrap();
+        let id = w.add_creature(nerite, 3, 16).unwrap();
+        let mut c = w.creature(id).unwrap().clone();
+        let centre = Rect {
+            x0: 12,
+            y0: 12,
+            x1: 14,
+            y1: 14,
+        };
+        let block = 5; // Field column 1, row 1.
+        c.z = z_of(3);
+        assert!(!w.graze_algae(centre, &mut c));
+        for (band, front) in [(0, true), (DEPTH_BANDS - 1, false)] {
+            let before = if front {
+                w.front_glass_algae()[block]
+            } else {
+                w.back_glass_algae()[block]
+            };
+            assert!(before >= FILM_BITE);
+            c.z = z_of(band);
+            assert!(w.graze_algae(centre, &mut c));
+            let after = if front {
+                w.front_glass_algae()[block]
+            } else {
+                w.back_glass_algae()[block]
+            };
+            assert_eq!(before - after, FILM_BITE);
+        }
+        c.z = z_of(3);
+        for (i, (x0, x1)) in [(0, 2), (30, 32)].into_iter().enumerate() {
+            let before = w.side_glass_algae()[1][i];
+            assert!(before >= FILM_BITE);
+            assert!(w.graze_algae(Rect { x0, x1, ..centre }, &mut c));
+            assert_eq!(before - w.side_glass_algae()[1][i], FILM_BITE);
+        }
+        assert_eq!(c.eaten(), 4);
     }
 
     fn dimorphic_tank(female_art: &str) -> World {

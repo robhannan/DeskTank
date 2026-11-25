@@ -1,0 +1,19 @@
+# D28 · Algae as a surface coat
+
+Algae grows as a translucent film on submerged substrate, rock, driftwood
+and all four glass surfaces. The film leaves the water volume available for
+creatures, plants and the current. It follows each surface cell as a rigid
+body moves or rotates. D24 epiphytes occupy grid cells and can detach when
+their support moves.
+
+Each world cell has a coat byte with a four-bit variety and a four-bit
+density. Green film uses variety 1. Varieties 2–15 are reserved for
+[#369](https://github.com/robhannan/DeskTank/issues/369). Glass densities
+use the fields' 1/8 resolution, with front and back planes and one strip
+per side wall. The front pane is capped at 5 of 15 density levels so the
+tank contents stay visible. See the [ecosystem rules](../spec/world.md#23-ecosystem-d3)
+for growth, competition and decay.
+
+Format version 16 saves the four density layers. Earlier algae cells
+become water on load, since a cell of the old material could touch several
+different surfaces. Legacy material ID 76 stays reserved for those saves.

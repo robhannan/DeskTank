@@ -85,10 +85,29 @@ impl World {
                 break;
             }
             let i = i as usize;
-            if self.edible_cell(k, i) {
+            if self.edible_material_cell(k, i) {
                 remaining -= wait;
                 c.satiety = c.satiety.saturating_sub(wait);
                 self.eat_cell(c, i % self.width, i / self.width);
+                eaten += 1;
+            }
+        }
+        if k.grazes_algae
+            && (self.algae.coated > 0 || self.algae.glass > 0)
+            && let Some(reach) = self.feeding_reach(k, c)
+        {
+            loop {
+                let wait = c.satiety.saturating_sub(FULL - BITE).max(1);
+                if c.energy == ENERGY_RESERVE || remaining < wait {
+                    break;
+                }
+                let satiety = c.satiety;
+                c.satiety = c.satiety.saturating_sub(wait);
+                if !self.graze_algae(reach, c) {
+                    c.satiety = satiety;
+                    break;
+                }
+                remaining -= wait;
                 eaten += 1;
             }
         }

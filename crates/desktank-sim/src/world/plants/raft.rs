@@ -39,7 +39,7 @@
 
 use super::super::World;
 use super::super::bodies::{GRAVITY, MAX_SPEED, ONE, REST_SPEED, REST_TICKS, steps};
-use crate::grid::{Cell, Rect};
+use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::MovementClass;
 use crate::plants::Part;
@@ -528,9 +528,9 @@ impl World {
                 .zip((i / w).checked_add_signed(sy))
                 .map_or(i, |(x, y)| y * w + x)
         };
-        let new: Vec<(usize, Cell)> = members
+        let new = members
             .iter()
-            .map(|&i| (shifted(i), self.cells[i]))
+            .map(|&i| (shifted(i), self.cells[i], 0))
             .collect();
         *members = self.carry(members, new);
         if let Some(p) = self.plants.table.get_mut(&id) {

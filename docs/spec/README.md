@@ -2,6 +2,7 @@
 
 - **Roadmap, work packages, follow-ups and open questions** live in [GitHub Issues & Milestones](https://github.com/robhannan/DeskTank/issues) (filtered by `work-package`, `follow-up`, and `decision` labels).
 - **Decisions (ADRs)** live in [`docs/decisions/`](../decisions/) (one file per decision; add a new numbered file rather than editing an existing one).
+  - [D28 · Algae as a surface coat](../decisions/0028-algae-as-a-surface-coat.md)
 - **Technical notes & platform learnings** live in [`docs/notes/`](../notes/).
 - 🔍 marks technical claims to verify on real hardware, or against primary docs, before the work package that relies on them starts.
 

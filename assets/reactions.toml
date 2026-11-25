@@ -108,29 +108,3 @@ rate = 0.01
 material = "dead_plant"
 after = 120.0
 into = "detritus"
-
-# Algae: spores settle where the water holds excess nutrients and light,
-# the film creeps over substrate, rock and wood, and it dies back once the
-# nutrients fall below the same level.
-[[spawn]]
-material = "algae"
-on = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]
-rate = 0.2
-when = [{ field = "nutrient", above = 0.6 }, { field = "light", above = 0.15 }]
-
-[[grow]]
-material = "algae"
-into = ["water"]
-makes = "algae"
-dirs = ["up", "down", "left", "right"]
-touching = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]
-p = 0.03
-needs = [{ field = "nutrient", above = 0.6 }, { field = "light", above = 0.15 }]
-consume = { field = "nutrient", amount = 0.005 }
-
-[[wilt]]
-material = "algae"
-into = "water"
-p = 0.01
-unless = { field = "nutrient", above = 0.6 }
-attached = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]

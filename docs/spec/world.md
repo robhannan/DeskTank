@@ -266,7 +266,7 @@ matter, aren't offered):
 | Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
 | Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders); live foods (live bloodworms) are creatures offered from Food › Live (§2.4 *Live food*, D25) |
 | Care | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), waste and **detritus** (waste, dead plant matter and corpses sink and become detritus, which slowly disintegrates into nutrients) |
-| Plants › Algae | algae (nuisance; grows with excess light and nutrients); plant species (moss among them, from T6b) are palette items of their own under Plants, pouring their seeds, cuttings, fragments, runners or buds (§2.7); eggs (one material per breeding species, which hatch into fry) aren't offered |
+| Plants | plant species (including moss), pouring their seeds, cuttings, fragments, runners or buds (§2.7). Algae grows naturally as a surface film (§2.3, D28) |
 | Chaos *(hidden behind a setting, off by default)* | acid (dissolves substrate and plants), magma (boils water into steam bubbles and cools into rock), dye (tints the water), salt (harms freshwater life), blight (spreads through plants) |
 
 Plants are structures of cells: roots, stems, leaves. A plant grows by
@@ -288,11 +288,11 @@ probability `p` per second while one of its `unless` needs fails or it
 touches none of `attached`. `[[spawn]]`: a rate of attempts per second
 per 64 columns, each at a random column's first non-fluid cell; if it is
 one of `on` and the water cell above meets `when`, the material appears
-there (algae spores). `when`/`needs`/`unless` take one condition or a
+there. `when`/`needs`/`unless` take one condition or a
 list of up to 4. Materials gained `opacity` (0–1, how much light a cell
 blocks; plant tissue 0.3–0.5) for the light field. Seeds and cuttings
 are powders that root when resting on substrate; stems, leaves, roots,
-moss and algae are solid; dead plant matter is a powder that becomes
+and moss are solid; dead plant matter is a powder that becomes
 detritus after 120 s. Keep-probabilities `(1 − p)^(1/20)` come from a
 Newton-iteration root with plain arithmetic, not `powf`, so every
 target computes the same bits.
@@ -332,12 +332,20 @@ target computes the same bits.
   - **Moss** grows over rock and driftwood only (each new cell must touch
     one), needs little (nutrient > 0.05, light > 0.05), and falls off as
     dead plant matter when it touches neither.
-  - **Algae** spores settle on substrate, rock and wood where the water
-    above has nutrient > 0.6 and light > 0.15 (0.2 attempts per second
-    per 64 columns); the film creeps over those surfaces under the same
-    conditions and dies back (to water) once nutrient ≤ 0.6. Aquasoil
-    alone buffers to 0.4, so only excess nutrients grow algae. *Coverage*
-    is the fraction of columns whose top non-fluid cell is algae.
+  - **Algae** grows as a translucent coat on submerged sand, gravel,
+    clown vomit gravel, aquasoil, rock and driftwood, and on the front
+    pane, back wall and both side walls (D28). Establishment, creep and
+    thickening require adjacent water with nutrient > 0.6 and light >
+    0.15. Existing film recedes when nutrient ≤ 0.6 or its surface dries.
+    Aquasoil alone buffers nutrient to 0.4. Healthy plant cells slow growth
+    and exclude film at the water-quality plant threshold (20 healthy
+    plant cells per 1000 water cells). At that threshold existing film
+    recedes twice as fast. Growth rates and thresholds live in
+    `assets/fields.toml` (`[algae]`). Film updates sample coarse field blocks,
+    including during catch-up, and leave material chunks asleep. Coat on
+    solid surfaces attenuates light below in proportion to its density.
+    Grazers scrape density off reachable surfaces and nearby glass.
+    *Coverage* is the fraction of columns with a coated top non-fluid cell.
   - **Water quality** (`World::ecosystem`, 0–1, computed on demand): 1,
     minus up to 0.6 as the mean nutrient over water cells rises from 0.5
     to 1.5, minus up to 0.4 as waste, detritus and dead plant matter reach
@@ -347,11 +355,11 @@ target computes the same bits.
     `desktank window`, `[[water_change]]` in scripts): the nutrient and
     CO₂ fields lose 50% and waste, detritus, dead plant matter and uneaten
     sinking food are siphoned out.
-  - *Overfeeding, measured:* a 320×180 sand tank given 40 pinches of
-    pellets (about 1500) over 10 minutes reaches a mean nutrient of 0.8
-    as the food rots; algae covers 28–35% of the substrate at 20 minutes
-    and all of it at 30. A water change halves the nutrients to 0.4 and
-    the algae is gone (< 1%) 10 minutes later.
+  - *Overfeeding, measured:* a 320×180 sand tank (seed 0) given 40 pinches
+    of pellets (about 1500) over 10 minutes reaches a mean nutrient of
+    0.53 at 20 minutes and 0.80 at 30 minutes. Film covers 48.4% of the
+    substrate at 20 minutes and 100% at 30 minutes. Ten minutes after a
+    water change, mean nutrient is 0.40 and substrate coverage is 0%.
   - **Day and night** (`desktank_sim::daylight`): the host injects the
     local time of day; it tints the drawn tank (untinted 07:30–19:30, warm
     dawn and dusk ramps, blue moonlight overnight) and nothing else, so

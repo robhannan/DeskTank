@@ -2,11 +2,12 @@
 //! world's own state here, each part's in its module (`bodies`, `life`,
 //! `plants`, `creatures`).
 
+use super::algae::{DENSITY_MASK, FRONT_CAP};
 use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17};
 use crate::species::SpeciesId;
 
 impl World {
@@ -106,6 +107,67 @@ impl World {
         let mut w = Self::from_v14(s.base, materials)?;
         w.load_rest(&s.rest)?;
         Ok(w)
+    }
+
+    /// The world as a version 17 snapshot.
+    pub(crate) fn to_v17(&self) -> v17::Save {
+        v17::Save {
+            base: self.to_v16(),
+            coat: runs(self.coat().iter().copied()),
+            front: runs(self.front_glass_algae().iter().copied()),
+            back: runs(self.back_glass_algae().iter().copied()),
+            sides: runs(self.side_glass_algae().iter().copied()),
+        }
+    }
+
+    /// A world restored from a version 17 snapshot, on `materials`.
+    pub(crate) fn from_v17(s: v17::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let mut world = Self::from_v16(s.base, materials)?;
+        let coat = unrun(&s.coat, world.cells.len(), "the surface coat")?;
+        let front = unrun(&s.front, world.algae.front.len(), "the front glass film")?;
+        let back = unrun(&s.back, world.algae.back.len(), "the back wall film")?;
+        let sides = unrun(&s.sides, world.algae.sides.len(), "the side wall film")?;
+        if front.iter().any(|&v| v > FRONT_CAP)
+            || back
+                .iter()
+                .chain(sides.iter().flatten())
+                .any(|&v| v > DENSITY_MASK)
+        {
+            return Err(SaveError::Invalid(
+                "glass film exceeds its density cap".into(),
+            ));
+        }
+        for (i, v) in coat.into_iter().enumerate().filter(|&(_, v)| v != 0) {
+            // Exposure changes when objects move, so an otherwise eligible
+            // cell may be temporarily dry or buried between field updates.
+            if v & DENSITY_MASK == 0 || v >> 4 == 0 || !world.algae_surface(world.cells[i]) {
+                return Err(SaveError::Invalid(format!("invalid film on cell {i}")));
+            }
+            world.write_coat(i, v);
+        }
+        world.algae.glass = front
+            .iter()
+            .chain(&back)
+            .chain(sides.iter().flatten())
+            .filter(|&&v| v != 0)
+            .count();
+        world.algae.front = front;
+        world.algae.back = back;
+        world.algae.sides = sides;
+        Ok(world)
+    }
+
+    /// The old material disappears into water. A legacy cell represented
+    /// volume in the water and could touch several different surfaces.
+    pub(crate) fn migrate_algae(&mut self) {
+        let (Some(algae), Some(water)) = (self.legacy_algae, self.life.water) else {
+            return;
+        };
+        for i in 0..self.cells.len() {
+            if self.cells[i].material == algae {
+                self.write_cell(i % self.width, i / self.width, water, &mut None);
+            }
+        }
     }
 
     /// A world restored from a pre-v11 snapshot: resets driftwood cells'

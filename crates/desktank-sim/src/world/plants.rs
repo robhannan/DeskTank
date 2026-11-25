@@ -546,6 +546,18 @@ impl World {
             .sum()
     }
 
+    /// Plant abundance weighted by health, at the water-quality threshold.
+    #[allow(clippy::cast_precision_loss)] // Cells and parts are bounded by the grid.
+    pub(super) fn algae_plant_competition(&self, water: usize) -> f32 {
+        let healthy_cells: f32 = self
+            .plants
+            .table
+            .values()
+            .map(|p| p.health * p.parts.iter().sum::<u32>() as f32)
+            .sum();
+        (healthy_cells * 1000.0 / (water.max(1) as f32 * self.life.eco.quality.plant_full)).min(1.0)
+    }
+
     /// Bumped whenever a plant is added or removed, its health tint
     /// changes or its base moves (renderers re-upload the plant texture,
     /// and the bands of a plant whose base moved, on a change).
@@ -1095,6 +1107,7 @@ impl World {
             return;
         };
         for &i in cells {
+            self.write_coat(i, 0);
             self.cells[i] = Cell::new(dead, variant(self.seed, self.tick, i));
             self.mark_changed(i % self.width, i / self.width);
         }
@@ -1493,6 +1506,7 @@ impl World {
             return;
         };
         let (x, y) = (i % self.width, i / self.width);
+        self.write_coat(i, 0);
         self.cells[i] = Cell {
             material,
             variant: plant_variant(variant(self.seed, self.tick, i), position),
@@ -1801,6 +1815,7 @@ impl World {
         }
         let at = spots[self.life.rng.next_u32() as usize % spots.len()];
         let (x, y) = (at % self.width, at / self.width);
+        self.write_coat(at, 0);
         self.cells[at] = Cell {
             material: seed,
             variant: variant(self.seed, self.tick, at),

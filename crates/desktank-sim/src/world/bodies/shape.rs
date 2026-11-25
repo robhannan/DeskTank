@@ -282,6 +282,67 @@ impl Shape {
         }
     }
 
+    /// Pairs each occupied cell of a raster with a distinct reference
+    /// bitmap cell. The nearest inverse-mapped centres keep their identity
+    /// where possible. At oblique angles several centres can map into the
+    /// same bitmap cell, so pair the remaining cells in bitmap order.
+    pub(super) fn raster_cell_ids(
+        &self,
+        anchor: (i64, i64),
+        angle: i64,
+        cells: impl Iterator<Item = (i64, i64)>,
+    ) -> Vec<usize> {
+        use std::collections::BTreeSet;
+
+        if angle == 0 {
+            return cells
+                .filter_map(|(x, y)| {
+                    let x = usize::try_from(x - anchor.0).ok()?;
+                    let y = usize::try_from(y - anchor.1).ok()?;
+                    Some(y * self.w + x)
+                })
+                .collect();
+        }
+        let pc = (anchor.0 * ONE + self.com.0, anchor.1 * ONE + self.com.1);
+        let mut vacant: BTreeSet<_> = self
+            .grid
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &v)| (v != 0).then_some(i))
+            .collect();
+        let mut projected: Vec<_> = cells
+            .enumerate()
+            .map(|(i, (x, y))| {
+                let (u, v) = rotate(x * ONE + ONE / 2 - pc.0, y * ONE + ONE / 2 - pc.1, -angle);
+                (v + self.com.1, u + self.com.0, i)
+            })
+            .collect();
+        let mut ids = vec![usize::MAX; projected.len()];
+        for &(v, u, i) in &projected {
+            let pair = usize::try_from(u.div_euclid(ONE))
+                .ok()
+                .zip(usize::try_from(v.div_euclid(ONE)).ok());
+            if let Some((x, y)) = pair
+                && x < self.w
+                && y < self.h
+                && vacant.remove(&(y * self.w + x))
+            {
+                ids[i] = y * self.w + x;
+            }
+        }
+        // Sort by projected bitmap row, then column, then sub-cell offset.
+        projected.sort_unstable_by_key(|&(v, u, i)| (v.div_euclid(ONE), u, v, i));
+        let mut vacant = vacant.into_iter();
+        for (_, _, i) in projected {
+            if ids[i] == usize::MAX
+                && let Some(id) = vacant.next()
+            {
+                ids[i] = id;
+            }
+        }
+        ids
+    }
+
     /// Resets every occupied cell's stored variant to 0 (dry driftwood),
     /// used when migrating pre-v11 saves.
     pub(super) fn reset_variants_to_dry(&mut self) {

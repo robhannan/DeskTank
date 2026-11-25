@@ -484,13 +484,13 @@ impl World {
             return;
         };
         let w = self.width;
-        let new: Vec<(usize, u8, u16)> = b
+        let new: Vec<_> = b
             .cells
             .iter()
             .filter_map(|&i| {
                 let j = self.index(to_i64(i % w) + dx, to_i64(i / w) + dy)?;
                 let mask = self.masks.get(&i).copied().unwrap_or(FULL_MASK);
-                Some((j, self.cells[i].variant, mask))
+                Some((j, self.cells[i].variant, mask, self.algae.coat[i]))
             })
             .collect();
         if new.len() != b.cells.len() {
@@ -613,9 +613,45 @@ impl World {
             if !probe.free() {
                 continue;
             }
-            let new: Vec<(usize, u8, u16)> = cells
+            let coat = if self.algae.coated > 0 && b.cells.iter().any(|&i| self.algae.coat[i] != 0)
+            {
+                let before = b.shape.raster_cell_ids(
+                    b.anchor,
+                    b.drawn,
+                    b.cells
+                        .iter()
+                        .map(|&i| (to_i64(i % self.width), to_i64(i / self.width))),
+                );
+                let after = b.shape.raster_cell_ids(
+                    anchor,
+                    drawn,
+                    cells.iter().map(|&(x, y, _, _)| (x, y)),
+                );
+                let coat: std::collections::BTreeMap<_, _> = before
+                    .into_iter()
+                    .zip(&b.cells)
+                    .filter_map(|(id, &i)| {
+                        (self.algae.coat[i] != 0).then_some((id, self.algae.coat[i]))
+                    })
+                    .collect();
+                after
+                    .into_iter()
+                    .map(|id| coat.get(&id).copied().unwrap_or(0))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let new = cells
                 .iter()
-                .filter_map(|&(x, y, v, m)| Some((self.index(x, y - lift)?, v, m)))
+                .enumerate()
+                .filter_map(|(i, &(x, y, v, m))| {
+                    Some((
+                        self.index(x, y - lift)?,
+                        v,
+                        m,
+                        coat.get(i).copied().unwrap_or(0),
+                    ))
+                })
                 .collect();
             self.relocate(id, new);
             if let Some(b) = self.bodies.get_mut(&id) {
@@ -633,10 +669,10 @@ impl World {
     }
 
     /// Moves body `id` onto the cells `new` (index, variant, outline
-    /// mask), as many as it has. The fluid in cells it enters goes to the
+    /// mask, coat), as many as it has. The fluid in cells it enters goes to the
     /// cells it leaves, paired top row first, so air stays above water:
     /// every cell is conserved.
-    pub(super) fn relocate(&mut self, id: u16, new: Vec<(usize, u8, u16)>) {
+    pub(super) fn relocate(&mut self, id: u16, new: Vec<(usize, u8, u16, u8)>) {
         let Some(b) = self.bodies.get_mut(&id) else {
             return;
         };
@@ -647,7 +683,7 @@ impl World {
         for &k in &old {
             self.masks.remove(&k);
         }
-        for &(k, _, m) in &new {
+        for &(k, _, m, _) in &new {
             if m != self.masks.get(&k).copied().unwrap_or(FULL_MASK) {
                 self.mark_changed(k % self.width, k / self.width);
             }
@@ -655,13 +691,13 @@ impl World {
         }
         let new = new
             .into_iter()
-            .map(|(k, v, _)| {
+            .map(|(k, v, _, coat)| {
                 let cell = Cell {
                     material,
                     variant: v & !GLUED_VARIANT_BIT,
                     state: id,
                 };
-                (k, cell)
+                (k, cell, coat)
             })
             .collect();
         let cells = self.carry(&old, new);
@@ -673,25 +709,25 @@ impl World {
     }
 
     /// Moves an object whose cells are `old` (ascending indices) onto
-    /// `new` (index, cell), as many as it has: a rigid body, or a floater
+    /// `new` (index, cell, coat), as many as it has: a rigid body, or a floater
     /// (T6c part 2). The fluid in cells it enters goes to the cells it
     /// leaves, paired top row first, so air stays above water: every cell
     /// is conserved. Returns its new cell indices, ascending.
     pub(in crate::world) fn carry(
         &mut self,
         old: &[usize],
-        mut new: Vec<(usize, Cell)>,
+        mut new: Vec<(usize, Cell, u8)>,
     ) -> Vec<usize> {
         new.sort_unstable_by_key(|c| c.0);
         let (mut entered, mut left) = (Vec::new(), Vec::new());
         let (mut i, mut j) = (0, 0);
         while i < old.len() || j < new.len() {
             match (old.get(i), new.get(j)) {
-                (Some(&o), Some(&(nw, _))) if o == nw => {
+                (Some(&o), Some(&(nw, _, _))) if o == nw => {
                     i += 1;
                     j += 1;
                 }
-                (Some(&o), Some(&(nw, _))) if o < nw => {
+                (Some(&o), Some(&(nw, _, _))) if o < nw => {
                     left.push(o);
                     i += 1;
                 }
@@ -699,7 +735,7 @@ impl World {
                     left.push(o);
                     i += 1;
                 }
-                (_, Some(&(nw, _))) => {
+                (_, Some(&(nw, _, _))) => {
                     entered.push(nw);
                     j += 1;
                 }
@@ -707,7 +743,8 @@ impl World {
             }
         }
         let displaced: Vec<_> = entered.iter().map(|&e| self.cells[e]).collect();
-        for &(k, cell) in &new {
+        for &(k, cell, coat) in &new {
+            self.write_coat(k, coat);
             if self.cells[k] != cell {
                 self.cells[k] = cell;
                 self.moved[k] = self.stamp;
@@ -715,6 +752,7 @@ impl World {
             }
         }
         for (&k, &c) in left.iter().zip(&displaced) {
+            self.write_coat(k, 0);
             self.cells[k] = c;
             self.moved[k] = self.stamp;
             self.mark_changed(k % self.width, k / self.width);
@@ -736,4 +774,56 @@ pub(in crate::world) fn steps(off: i64) -> i64 {
 /// The drawn angle for `angle`: the nearest raster step.
 fn raster_angle(angle: i64) -> i64 {
     ((angle + RASTER_STEP / 2).div_euclid(RASTER_STEP) * RASTER_STEP).rem_euclid(TURN)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Brush, MaterialTable, Rect, WorldConfig};
+
+    #[test]
+    fn coat_follows_a_falling_rock_through_oblique_and_right_angle_rotations() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 64,
+                height: 64,
+                water_level: 1.0,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        w.fill_rect(
+            Rect {
+                x0: 28,
+                y0: 16,
+                x1: 35,
+                y1: 19,
+            },
+            rock,
+            Brush::Replace,
+        )
+        .unwrap();
+        let id = w.body_at(28, 16).unwrap().0;
+        assert!(w.set_algae_coat(28, 16, 15));
+        assert!(w.set_algae_coat(34, 18, 9));
+        for _ in 0..8 {
+            w.tick();
+        }
+        let b = &w.bodies[&id];
+        let (x, y) = b.anchor;
+        assert!(y > 16, "free rock fell");
+        let at = |w: &World, x, y| w.coat()[w.index(x, y).unwrap()];
+        assert_eq!(at(&w, x, y) & 0xf, 15);
+        assert_eq!(at(&w, x + 6, y + 2) & 0xf, 9);
+        for _ in 0..2 {
+            w.bodies.get_mut(&id).unwrap().spin = TURN / 8;
+            assert!(w.turn(id, None));
+            assert_eq!(w.ecosystem().algae_cells, 2);
+        }
+        let (x, y) = w.bodies[&id].anchor;
+        assert_eq!(at(&w, x + 4, y - 2) & 0xf, 15);
+        assert_eq!(at(&w, x + 2, y + 4) & 0xf, 9);
+    }
 }
