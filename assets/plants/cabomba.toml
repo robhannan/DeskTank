@@ -3,6 +3,7 @@
 # and drops leaves soon when shaded or starved; broken pieces root easily.
 id = 5
 name = "cabomba"
+scientific_name = "Cabomba caroliniana"
 palette = "plants/stem"
 description = "A fast, feathery stem plant that needs fairly strong light."
 form = "stem"

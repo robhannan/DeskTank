@@ -1,5 +1,7 @@
 id = 23
 name = "ramshorn_snail"
+scientific_name = "Planorbella duryi"
+description = "A flat-coiled snail that grazes algae and detritus across surfaces."
 palette = "invertebrates/snails"
 zone = "surfaces"
 depth = [0.0, 1.0]

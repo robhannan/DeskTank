@@ -1,5 +1,7 @@
 id = 17
 name = "angelfish"
+scientific_name = "Pterophyllum scalare"
+description = "A tall cichlid with pointed fins that defends a patch of mid-water."
 palette = "fish/centrepiece"
 zone = "mid"
 depth = [0.18, 0.8]

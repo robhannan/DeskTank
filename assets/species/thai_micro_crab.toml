@@ -6,6 +6,8 @@
 # two cells away.
 id = 7
 name = "thai_micro_crab"
+scientific_name = "Limnopilos naiyanetri"
+description = "A tiny crab with long, fine legs that crawls over surfaces."
 palette = "invertebrates/shrimp"
 zone = "surfaces"
 depth = [0.0, 1.0]

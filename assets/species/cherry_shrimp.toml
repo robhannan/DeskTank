@@ -6,6 +6,8 @@
 # her tail when berried.
 id = 5
 name = "cherry_shrimp"
+scientific_name = "Neocaridina davidi"
+description = "A small, colourful shrimp that picks over the bottom and makes short hops."
 palette = "invertebrates/shrimp"
 zone = "bottom"
 depth = [0.72, 1.0]

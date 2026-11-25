@@ -1,5 +1,7 @@
 id = 18
 name = "pea_puffer"
+scientific_name = "Carinotetraodon travancoricus"
+description = "A tiny spotted puffer that defends its territory and hunts small prey."
 palette = "fish/centrepiece"
 zone = "mid"
 depth = [0.2, 0.8]

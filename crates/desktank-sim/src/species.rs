@@ -226,6 +226,10 @@ pub struct Species {
     pub id: SpeciesId,
     /// Unique name, e.g. `"neon_tetra"`.
     pub name: String,
+    /// Scientific name shown on the species card.
+    pub scientific_name: String,
+    /// Short description shown on the species card.
+    pub description: String,
     /// The zone it lives in.
     pub zone: Zone,
     /// The band of the water column it keeps to, as fractions from the
@@ -338,6 +342,86 @@ pub struct Species {
 }
 
 impl Species {
+    /// Food materials, scavenging and prey size for a species card.
+    #[must_use]
+    pub fn describe_diet(&self, materials: &MaterialTable) -> String {
+        let mut items: Vec<_> = self
+            .diet
+            .iter()
+            .filter_map(|&id| materials.get(id))
+            .map(|material| material.name.replace('_', " "))
+            .collect();
+        if self.eats_corpses {
+            items.push("corpses".to_owned());
+        }
+        if let Some(cm) = self.prey_cm {
+            items.push(format!("prey up to {cm} cm"));
+        }
+        if items.is_empty() {
+            return if self.live_food {
+                "none (live food)"
+            } else {
+                "none"
+            }
+            .to_owned();
+        }
+        items.join(", ")
+    }
+
+    /// Temperament, habitat, habits and breeding mode for a species card.
+    #[must_use]
+    pub fn describe_behaviour(&self) -> String {
+        let temperament = if self.live_food {
+            "live food"
+        } else {
+            match self.temperament {
+                Temperament::Schooling => "schooling",
+                Temperament::Peaceful => "peaceful",
+                Temperament::Territorial => "territorial",
+            }
+        };
+        let zone = match self.zone {
+            Zone::Surface => "surface swimmer",
+            Zone::Mid => "mid-water swimmer",
+            Zone::Bottom => "bottom dweller",
+            Zone::Surfaces => "surface crawler",
+        };
+        let mut items = vec![temperament, zone];
+        items.extend(
+            [
+                (self.burrow_every.is_some(), "burrows"),
+                (self.hop_every.is_some(), "hops"),
+                (self.rests == RestSpot::Never, "nocturnal"),
+                (self.home_carpet.is_some(), "plants a home"),
+                (self.glow.is_some(), "glows at night"),
+            ]
+            .into_iter()
+            .filter_map(|(present, habit)| present.then_some(habit)),
+        );
+        if let Some(breeding) = self.breeding {
+            items.push(match breeding.mode {
+                BreedingMode::Livebearer => "livebearer",
+                BreedingMode::Eggs => "egg layer",
+            });
+        }
+        items.join(", ")
+    }
+
+    /// Minimum water depth, surface air and territory for a species card.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // Tank depths are small enough to retain half-centimetres.
+    pub fn describe_requirements(&self) -> String {
+        let depth_cm = self.min_depth as f32 / CELLS_PER_CM;
+        let mut items = vec![format!("min depth {depth_cm} cm")];
+        if self.breathes_air {
+            items.push("needs surface air".to_owned());
+        }
+        if let Some(cm) = self.territory_cm {
+            items.push(format!("territory {cm} cm"));
+        }
+        items.join(", ")
+    }
+
     /// Whether it is a pet the palette, `spawn` and stocking offer: neither
     /// cheat-only nor live food.
     #[must_use]
@@ -471,6 +555,8 @@ pub enum SpeciesError {
 struct SpeciesDef {
     id: u8,
     name: String,
+    scientific_name: String,
+    description: String,
     zone: Zone,
     depth: [f32; 2],
     #[serde(default = "every_band")]
@@ -737,6 +823,12 @@ fn validate(
         name: d.name.clone(),
         reason,
     };
+    if d.scientific_name.trim().is_empty() {
+        return Err(invalid("scientific_name must not be empty"));
+    }
+    if d.description.trim().is_empty() {
+        return Err(invalid("description must not be empty"));
+    }
     let [top, bottom] = d.depth;
     if !(0.0..=1.0).contains(&top) || !(0.0..=1.0).contains(&bottom) || top >= bottom {
         return Err(invalid(
@@ -917,6 +1009,8 @@ fn validate(
     Ok(Species {
         id: SpeciesId(d.id),
         name: d.name.clone(),
+        scientific_name: d.scientific_name.clone(),
+        description: d.description.clone(),
         zone: d.zone,
         depth: d.depth,
         bands: d.bands,
@@ -1265,6 +1359,8 @@ mod tests {
     const OK: &str = r##"
         id = 9
         name = "test_fish"
+        scientific_name = "Piscis fictus"
+        description = "A small fish for species tests."
         zone = "mid"
         depth = [0.2, 0.6]
         min_depth = 10
@@ -1289,6 +1385,120 @@ mod tests {
              "aaaa....aaaa", "aaaa....aaaa", "aaaa....aaaa", "aaaa....aaaa"],
         ]
     "##;
+
+    #[test]
+    fn builtin_species_have_card_text() {
+        let materials = materials();
+        let table = SpeciesTable::builtin_for(&materials).unwrap();
+        for species in table.iter() {
+            assert!(
+                !species.scientific_name.trim().is_empty(),
+                "{}",
+                species.name
+            );
+            assert!(!species.description.trim().is_empty(), "{}", species.name);
+            assert!(
+                !species.describe_diet(&materials).is_empty(),
+                "{}",
+                species.name
+            );
+            assert!(!species.describe_behaviour().is_empty(), "{}", species.name);
+            assert!(
+                !species.describe_requirements().is_empty(),
+                "{}",
+                species.name
+            );
+        }
+    }
+
+    #[test]
+    fn blank_card_metadata_is_invalid() {
+        let materials = materials();
+        for (field, value, expected_reason) in [
+            (
+                "scientific_name",
+                "Piscis fictus",
+                "scientific_name must not be empty",
+            ),
+            (
+                "description",
+                "A small fish for species tests.",
+                "description must not be empty",
+            ),
+        ] {
+            for blank in ["", "   \\t"] {
+                let source = OK.replace(
+                    &format!("{field} = \"{value}\""),
+                    &format!("{field} = \"{blank}\""),
+                );
+                assert!(matches!(
+                    SpeciesTable::from_toml_sources(&[&source], &materials),
+                    Err(SpeciesError::Invalid { reason, .. }) if reason == expected_reason
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn species_cards_describe_simulation_traits() {
+        let materials = materials();
+        let table = SpeciesTable::builtin_for(&materials).unwrap();
+        for (name, diet, behaviour, requirements) in [
+            (
+                "neon_tetra",
+                "flake food, bloodworm",
+                "schooling, mid-water swimmer, egg layer",
+                "min depth 12 cm",
+            ),
+            (
+                "betta",
+                "flake food, bloodworm, sinking pellet, prey up to 2.5 cm",
+                "territorial, surface swimmer, egg layer",
+                "min depth 16 cm, needs surface air, territory 15 cm",
+            ),
+            (
+                "kuhli_loach",
+                "sinking pellet, bloodworm",
+                "peaceful, bottom dweller, burrows, nocturnal, egg layer",
+                "min depth 6 cm",
+            ),
+            (
+                "cherry_shrimp",
+                "algae, detritus, algae wafer, sinking pellet, flake food",
+                "peaceful, bottom dweller, hops, livebearer",
+                "min depth 6 cm",
+            ),
+            (
+                "live_bloodworm",
+                "none (live food)",
+                "live food, bottom dweller",
+                "min depth 2 cm",
+            ),
+            (
+                "blinker",
+                "flake food, sinking pellet, bloodworm, algae wafer, algae, detritus, dead plant, corpses, prey up to 1.5 cm",
+                "peaceful, mid-water swimmer, glows at night",
+                "min depth 24 cm",
+            ),
+        ] {
+            let species = table.get(table.id(name).unwrap()).unwrap();
+            assert_eq!(species.describe_diet(&materials), diet, "{name}");
+            assert_eq!(species.describe_behaviour(), behaviour, "{name}");
+            assert_eq!(species.describe_requirements(), requirements, "{name}");
+        }
+    }
+
+    #[test]
+    fn species_card_formats_half_centimetre_depth_and_empty_diet() {
+        let materials = materials();
+        let source = OK
+            .replace("min_depth = 10", "min_depth = 11")
+            .replace("diet = [\"flake_food\"]", "diet = []");
+        let table = SpeciesTable::from_toml_sources(&[&source], &materials).unwrap();
+        let species = table.iter().next().unwrap();
+        assert_eq!(species.describe_requirements(), "min depth 5.5 cm");
+        assert_eq!(species.describe_diet(&materials), "none");
+    }
 
     #[test]
     #[allow(clippy::many_single_char_names)]
@@ -1553,6 +1763,8 @@ mod tests {
                 r##"
                 id = 9
                 name = "big"
+                scientific_name = "Piscis magnus"
+                description = "A fish with a large sprite."
                 zone = "mid"
                 depth = [0.2, 0.6]
                 min_depth = 10

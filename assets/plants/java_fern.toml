@@ -3,6 +3,7 @@
 # fronds. Cut pieces of the rhizome live on as fragments.
 id = 16
 name = "java_fern"
+scientific_name = "Microsorum pteropus"
 palette = "plants/moss"
 description = "A hardy epiphyte on rock and wood with tall, pointed lance-shaped fronds."
 form = "epiphyte"

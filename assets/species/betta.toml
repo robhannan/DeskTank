@@ -2,6 +2,8 @@
 # surface and gulps air there. Eats flakes, bloodworms and pellets.
 id = 3
 name = "betta"
+scientific_name = "Betta splendens"
+description = "A colourful, territorial fish that cruises near the surface on flowing fins."
 palette = "fish/centrepiece"
 zone = "surface"
 depth = [0.0, 0.3]

@@ -4,6 +4,8 @@
 # water (not with the neons) and takes flakes and bloodworms.
 id = 10
 name = "harlequin_rasbora"
+scientific_name = "Trigonostigma heteromorpha"
+description = "A coppery schooling fish with a bold black wedge near its tail."
 palette = "fish/schooling"
 zone = "mid"
 depth = [0.3, 0.7]

@@ -5,6 +5,8 @@
 # faster than the cherries.
 id = 6
 name = "amano_shrimp"
+scientific_name = "Caridina multidentata"
+description = "A translucent shrimp that grazes algae and picks through the substrate."
 palette = "invertebrates/shrimp"
 zone = "bottom"
 depth = [0.68, 1.0]

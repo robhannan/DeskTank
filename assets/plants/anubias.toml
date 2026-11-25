@@ -4,6 +4,7 @@
 # plants; it falls off if what holds it is gone.
 id = 15
 name = "anubias"
+scientific_name = "Anubias barteri var. nana"
 palette = "plants/moss"
 description = "A slow, hardy low-light epiphyte with broad dark-green leaves on a creeping rhizome."
 form = "epiphyte"

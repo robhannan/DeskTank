@@ -1,5 +1,7 @@
 id = 20
 name = "bristlenose_pleco"
+scientific_name = "Ancistrus cirrhosus"
+description = "A bristle-snouted catfish that grazes algae after dark."
 palette = "fish/cleanup"
 zone = "surfaces"
 depth = [0.0, 1.0]

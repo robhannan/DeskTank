@@ -2,6 +2,8 @@
 # takes flakes and bloodworms.
 id = 1
 name = "neon_tetra"
+scientific_name = "Paracheirodon innesi"
+description = "A small schooling fish with a bright blue stripe and a red tail stripe."
 palette = "fish/schooling"
 zone = "mid"
 # The band of the water column it keeps to: 0 is the surface, 1 the floor.
