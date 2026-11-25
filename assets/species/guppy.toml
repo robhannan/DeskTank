@@ -13,14 +13,17 @@ min_depth = 20
 # Real-world body length in cm without the tail (real males 1.5–3.5 cm),
 # at two cells per cm.
 length_cm = 3.0
+# A female is larger and deeper: about 4.5 cm without her small tail
+# (female_frames below).
+female_length_cm = 4.5
 # Lifespan and age at maturity in real days (about 2 years; mature at about
 # 3 months), on the life clock: a day per 10 world minutes
 # (LIFE_DAY_SECONDS).
 lifespan_days = 730
 maturity_days = 90
-# Longest prey in cm: guppies eat fry, their own included, and
-# shrimplets (T9 part 2).
-prey_cm = 1.2
+# Longest prey in cm: guppies eat fry, their own included (a newborn
+# female is a third of her 4.5 cm), and shrimplets (T9 part 2).
+prey_cm = 1.6
 breathes_air = false
 temperament = "peaceful"
 speed = 4.5
@@ -59,7 +62,7 @@ colours = { o = "#4a8af0", t = "#2f6ee0", y = "#7fb0ff", c = "#1a3a9a", r = "#24
 # Facing right; two texels per cell side. The body is 10 texels (5 cells)
 # from the tail's base to the snout, the fan tail 8 more: a 9x4-cell
 # sprite, 4.5 cm with the tail. Four frames: the tail fans and flexes.
-colours = { s = "#b8c4c8", g = "#7e8e98", o = "#ff7a2c", b = "#2f74e0", n = "#151a22", w = "#e8eef0", t = "#ff6430", y = "#ffb347", c = "#3d6ee8", d = "#4aa0c0", k = "#0c1016", e = "#ffffff", r = "#e2531f", m = "#9ccaf0", a = "#d7e0e3", h = "#ffc070" }
+colours = { s = "#b8c4c8", g = "#7e8e98", o = "#ff7a2c", b = "#2f74e0", n = "#151a22", w = "#e8eef0", t = "#ff6430", y = "#ffb347", c = "#3d6ee8", d = "#4aa0c0", k = "#0c1016", e = "#ffffff", r = "#e2531f", m = "#9ccaf0", a = "#d7e0e3", h = "#ffc070", G = "#6a4a26", O = "#a8803e", f = "#dcdccc", p = "#bcb498", q = "#e8e2cc", u = "#a09878", v = "#d2ccb0", x = "#6e6650", z = "#f0ead8" }
 frames = [
     [
         "ytty..............",
@@ -102,125 +105,136 @@ frames = [
         "ytty..............",
     ],
 ]
-# A female (dimorphic, T9 part 2): plain silver-olive with no patches, a
-# deeper body 6.5 cells (3.25 cm) long, a small rounded tail in her
-# strain's colour and the dark gravid spot; the same size and frame count.
+# A female (dimorphic, issue #315): clearly larger and deeper than the
+# male, 4.5 cm from snout to tail base and a 1.5 cm fan tail in her
+# strain's colour (the tail keys t, y and r, so every strain recolours
+# it). Warm translucent silver-beige with a highlight along the back, a
+# scale lattice and a faint lateral line; a pale gravid belly with a
+# silver streak and the dark gravid spot above the anal fin; a big eye
+# with a silver ring; clear dorsal and anal fins with rays. Her body keys
+# (v u q p z x f w G O a) are shared by every strain. Traced from the
+# lower fish of Wikimedia Commons "Trinidadian guppy (Poecilia reticulata)
+# male and female.png" (CC BY 4.0,
+# https://commons.wikimedia.org/wiki/File:Trinidadian_guppy_(Poecilia_reticulata)_male_and_female.png),
+# mirrored and de-rotated 12.5 degrees; shaded in the house style. A
+# 12x4-cell sprite (24x8 coarse texels); four frames: the tail sways and
+# the fins ripple.
 female_frames = [
     [
-        "..................",
-        "...........gg.....",
-        ".yy.....ggggggg...",
-        "yttt..ggsssssssek.",
-        "ytttsgssssssssskks",
-        "yttt.gswwwwnwwwws.",
-        ".yy....wwwwww.....",
-        "..................",
+        "........................",
+        "..........ff............",
+        ".yrrr....xvvxxxxxxxxx...",
+        "rrrrrrxxxqqqqqqqqqqqqxxx",
+        "ytrrrtxxqvvvvvvvvvvvvqkx",
+        "rrrttr..xxvvvvzvzvzvxx..",
+        ".yrrr.....ffxxxxxxxx....",
+        "...........f............",
     ],
     [
-        "..................",
-        "...........gg.....",
-        "..yy....ggggggg...",
-        ".yttt.ggsssssssek.",
-        ".tttsgssssssssskks",
-        ".yttt.gswwwwnwwws.",
-        "..yy...wwwwww.....",
-        "..................",
+        "........................",
+        "..........ff............",
+        ".........xvvxxxxxxxxx...",
+        "..rrrrxxxqqqqqqqqqqqqxxx",
+        ".yrrrtxxqvvvvvvvvvvvvqkx",
+        ".rrttr..xxvvvvzvzvzvxx..",
+        ".ytrr.....ffxxxxxxxx....",
+        "..y.......ff............",
     ],
     [
-        "..................",
-        "...........gg.....",
-        ".yy.....ggggggg...",
-        "yttt..ggsssssssek.",
-        "ytttsgssssssssskks",
-        "yttt.gswwwwnwwwws.",
-        ".yy....wwwwww.....",
-        "..................",
+        "........................",
+        "..........ff............",
+        ".yrrr....xvvxxxxxxxxx...",
+        "rrrrrrxxxqqqqqqqqqqqqxxx",
+        "ytrrrtxxqvvvvvvvvvvvvqkx",
+        "rrrttr..xxvvvvzvzvzvxx..",
+        ".yrrr.....ffxxxxxxxx....",
+        "...........f............",
     ],
     [
-        "..................",
-        "...........gg.....",
-        "..yy....ggggggg...",
-        ".yttt.ggsssssssek.",
-        ".tttsgssssssssskks",
-        ".yttt.gswwwwnwwws.",
-        "..yy...wwwwww.....",
-        "..................",
+        "..........f.............",
+        "..y.......ff............",
+        ".ytrr....xvvxxxxxxxxx...",
+        ".rrrrrxxxqqqqqqqqqqqqxxx",
+        ".yrrrtxxqvvvvvvvvvvvvqkx",
+        ".rrttr..xxvvvvzvzvzvxx..",
+        "..yrr.....ffxxxxxxxx....",
+        "...........f............",
     ],
 ]
-# Her four poses at four texels per cell side (36x16): placeholder art,
-# her base frames doubled until she is drawn finely.
+
+# Her four poses at four texels per cell side (48x16).
 female_fine_frames = [
     [
-        "....................................",
-        "....................................",
-        "......................gggg..........",
-        "......................gggg..........",
-        "..yyyy..........gggggggggggggg......",
-        "..yyyy..........gggggggggggggg......",
-        "yytttttt....ggggsssssssssssssseekk..",
-        "yytttttt....ggggsssssssssssssseekk..",
-        "yyttttttssggsssssssssssssssssskkkkss",
-        "yyttttttssggsssssssssssssssssskkkkss",
-        "yytttttt..ggsswwwwwwwwnnwwwwwwwwss..",
-        "yytttttt..ggsswwwwwwwwnnwwwwwwwwss..",
-        "..yyyy........wwwwwwwwwwww..........",
-        "..yyyy........wwwwwwwwwwww..........",
-        "....................................",
-        "....................................",
+        "................................................",
+        "....................uu..........................",
+        "...................uuuuu........................",
+        "...................uuuuuuu......................",
+        "....yrrr............ufuvvvxxxxxxxxxxxxxx........",
+        "..rrrtttrrr....xxxxxvvvqqqqqqqqqqqqqqqqqxxxx....",
+        ".yyttrrrrttrxxxqqqqqqqqvpvqvpvqvpvqvpvqvqqqqaa..",
+        ".rrrrrrrrrttqqqqvqpqvqpvvvpvvvpvvvpvvvpvvqpaekax",
+        "yytttttrrrttqvqvpvpvpvpvpvpvpvpvpvvvvvvvvvvakkax",
+        "rrrrrrrrrrttxvvvpvvvpvvvpvvwwwwwwwvvpvvvpvzvaax.",
+        "rytttrrrtttr.xxxxxxvvvpvvvpvvzvzvzvzvzvzvzvxx...",
+        "yyrrrtttttr........xxvvvvvzvzvOvzvzvzvzvzxx.....",
+        ".rrttttttr...........uuvpxvzOGGzzzzzzxxxx.......",
+        "..yyrrrrr............uuuu.xxxxxxxxxxx...........",
+        "...y.................ufu........................",
+        "......................u.........................",
     ],
     [
-        "....................................",
-        "....................................",
-        "......................gggg..........",
-        "......................gggg..........",
-        "....yyyy........gggggggggggggg......",
-        "....yyyy........gggggggggggggg......",
-        "..yytttttt..ggggsssssssssssssseekk..",
-        "..yytttttt..ggggsssssssssssssseekk..",
-        "..ttttttssggsssssssssssssssssskkkkss",
-        "..ttttttssggsssssssssssssssssskkkkss",
-        "..yytttttt..ggsswwwwwwwwnnwwwwwwss..",
-        "..yytttttt..ggsswwwwwwwwnnwwwwwwss..",
-        "....yyyy......wwwwwwwwwwww..........",
-        "....yyyy......wwwwwwwwwwww..........",
-        "....................................",
-        "....................................",
+        "................................................",
+        ".....................u..........................",
+        "...................uuuuu........................",
+        "...................uuuuuuu......................",
+        "....................ufuvvvxxxxxxxxxxxxxx........",
+        ".....yrrrr.....xxxxxvvvqqqqqqqqqqqqqqqqqxxxx....",
+        "....yrrrrtrrxxxqqqqqqqqvpvqvpvqvpvqvpvqvqqqqaa..",
+        "...rrrrrrrttqqqqvqpqvqpvvvpvvvpvvvpvvvpvvqpaekax",
+        "..yytttrrrttqvqvpvpvpvpvpvpvpvpvpvvvvvvvvvvakkax",
+        "..rrrrrrrrttxvvvpvvvpvvvpvvwwwwwwwvvpvvvpvzvaax.",
+        "..yytrrrtttr.xxxxxxvvvpvvvpvvzvzvzvzvzvzvzvxx...",
+        ".yrrrtttttr........xxvvvvvzvzvOvzvzvzvzvzxx.....",
+        "..rytttttr...........uuvpxvzOGGzzzzzzxxxx.......",
+        "..yytttrr............uuuu.xxxxxxxxxxx...........",
+        "...yrrr..............ufuu.......................",
+        ".....................uuu........................",
     ],
     [
-        "....................................",
-        "....................................",
-        "......................gggg..........",
-        "......................gggg..........",
-        "..yyyy..........gggggggggggggg......",
-        "..yyyy..........gggggggggggggg......",
-        "yytttttt....ggggsssssssssssssseekk..",
-        "yytttttt....ggggsssssssssssssseekk..",
-        "yyttttttssggsssssssssssssssssskkkkss",
-        "yyttttttssggsssssssssssssssssskkkkss",
-        "yytttttt..ggsswwwwwwwwnnwwwwwwwwss..",
-        "yytttttt..ggsswwwwwwwwnnwwwwwwwwss..",
-        "..yyyy........wwwwwwwwwwww..........",
-        "..yyyy........wwwwwwwwwwww..........",
-        "....................................",
-        "....................................",
+        "................................................",
+        "....................uu..........................",
+        "...................uuuuu........................",
+        "...................uuuuuuu......................",
+        "....yrrr............ufuvvvxxxxxxxxxxxxxx........",
+        "..rrrtttrrr....xxxxxvvvqqqqqqqqqqqqqqqqqxxxx....",
+        ".yyttrrrrttrxxxqqqqqqqqvpvqvpvqvpvqvpvqvqqqqaa..",
+        ".rrrrrrrrrttqqqqvqpqvqpvvvpvvvpvvvpvvvpvvqpaekax",
+        "yytttttrrrttqvqvpvpvpvpvpvpvpvpvpvvvvvvvvvvakkax",
+        "rrrrrrrrrrttxvvvpvvvpvvvpvvwwwwwwwvvpvvvpvzvaax.",
+        "rytttrrrtttr.xxxxxxvvvpvvvpvvzvzvzvzvzvzvzvxx...",
+        "yyrrrtttttr........xxvvvvvzvzvOvzvzvzvzvzxx.....",
+        ".rrttttttr...........uuvpxvzOGGzzzzzzxxxx.......",
+        "..yyrrrrr............uuuu.xxxxxxxxxxx...........",
+        "...y.................ufu........................",
+        "......................u.........................",
     ],
     [
-        "....................................",
-        "....................................",
-        "......................gggg..........",
-        "......................gggg..........",
-        "....yyyy........gggggggggggggg......",
-        "....yyyy........gggggggggggggg......",
-        "..yytttttt..ggggsssssssssssssseekk..",
-        "..yytttttt..ggggsssssssssssssseekk..",
-        "..ttttttssggsssssssssssssssssskkkkss",
-        "..ttttttssggsssssssssssssssssskkkkss",
-        "..yytttttt..ggsswwwwwwwwnnwwwwwwss..",
-        "..yytttttt..ggsswwwwwwwwnnwwwwwwss..",
-        "....yyyy......wwwwwwwwwwww..........",
-        "....yyyy......wwwwwwwwwwww..........",
-        "....................................",
-        "....................................",
+        "................................................",
+        "...................uuu..........................",
+        "...................uuuuu........................",
+        "...yrrr............uuuuuuu......................",
+        "...yyttrrr..........ufuvvvxxxxxxxxxxxxxx........",
+        "..rrrtttttr....xxxxxvvvqqqqqqqqqqqqqqqqqxxxx....",
+        "..yytrrrrttrxxxqqqqqqqqvpvqvpvqvpvqvpvqvqqqqaa..",
+        "..rrrrrrrrttqqqqvqpqvqpvvvpvvvpvvvpvvvpvvqpaekax",
+        ".yyttttrrrttqvqvpvpvpvpvpvpvpvpvpvvvvvvvvvvakkax",
+        "..rrrrrrrrttxvvvpvvvpvvvpvvwwwwwwwvvpvvvpvzvaax.",
+        "..yytrrrtttr.xxxxxxvvvpvvvpvvzvzvzvzvzvzvzvxx...",
+        "..rrrtttttr........xxvvvvvzvzvOvzvzvzvzvzxx.....",
+        "...yyttttr...........uuvpxvzOGGzzzzzzxxxx.......",
+        "....yrrrr............uuuu.xxxxxxxxxxx...........",
+        ".....................uuu........................",
+        "................................................",
     ],
 ]
 # The palette icon, at one pixel per cell.

@@ -1,7 +1,9 @@
 # A cherry shrimp, Neocaridina davidi (placeholder art, D11): a small red
-# shrimp 1.5–4 cm long (males small and slim, females larger and solid
-# red; drawn at a typical 2.5 cm) that picks over the substrate for algae, mulm
-# and fallen food, and kicks off the bottom in short hops now and then.
+# shrimp 1.5–4 cm long that picks over the substrate for algae, mulm and
+# fallen food, and kicks off the bottom in short hops now and then. The male
+# is smaller, slim and paler (drawn at 2.5 cm); the female is larger, deeper in
+# the abdomen and solid red (3 cm), and carries her eggs yellow-orange under
+# her tail when berried.
 id = 5
 name = "cherry_shrimp"
 palette = "invertebrates/shrimp"
@@ -9,8 +11,10 @@ zone = "bottom"
 depth = [0.72, 1.0]
 min_depth = 12
 # Real-world body length in cm, nose to tail without the antennae; the
-# sprite is drawn at two cells per cm.
+# sprite is drawn at two cells per cm. A male is about 2.5 cm.
 length_cm = 2.5
+# A female is larger: about 3 cm (female_frames below).
+female_length_cm = 3.0
 # Lifespan and age at maturity in real days (1–2 years; mature at 2–3
 # months), on the life clock: a day per 10 world minutes (LIFE_DAY_SECONDS).
 lifespan_days = 550
@@ -24,9 +28,10 @@ swim_every = 30.0
 hop_every = 6.0
 diet = ["algae", "detritus", "algae_wafer", "sinking_pellet", "flake_food"]
 
-# The female carries her eggs under her tail ("berried") for about 30
-# days and releases tiny shrimplets (real broods of 20–30). Broods are
-# scaled down for a desktop tank; days are on the life clock.
+# The female carries her eggs under her tail ("berried", carrying_frames
+# below) for about 30 days and releases tiny shrimplets (real broods of
+# 20–30). Broods are scaled down for a desktop tank; days are on the life
+# clock.
 [breeding]
 mode = "livebearer"
 days = 30
@@ -57,42 +62,40 @@ name = "yellow"
 colours = { r = "#e0b020", h = "#f4d660", d = "#a87a10", a = "#f0d070", l = "#c49418", m = "#7a5408", s = "#eac23a", w = "#fff4cc" }
 
 [sprite]
-# Facing right; two texels per cell side. The body is 10 texels (5 cells,
-# 2.5 cm at two cells per cm) from tail fan to rostrum, with the antennae
-# reaching 2 texels past it: a 6x2-cell sprite. Traced from a side-on
-# photo: a comma that tapers front to back. The carapace domes up steeply
-# behind the eye to its highest point over its rear; the abdomen's back
-# steps down a segment at a time to a narrow tail stalk and a flared,
-# upturned tail fan; the underside is nearly straight, with walking legs
-# under the carapace and swimmerets under the abdomen; the head is lower
-# than the hump, with a short pointed rostrum at eye level. Outlined in a
-# dark shade of the body, never black. Four frames: the legs step while
-# the tail fan and antennae flick.
-colours = { r = "#d42a2e", h = "#f06a5e", d = "#9c1a24", k = "#1a0c0c", a = "#ec7a78", l = "#b52430", w = "#ffd6cc", m = "#7a121c", s = "#e34a44" }
+# Facing right; two texels per cell side. The male: 2.5 cm from tail fan
+# to rostrum, with the antennae past it: a 6x2-cell sprite (24x8 fine
+# texels). Traced from the owner's "Sexing Shrimp" chart: an almost
+# straight, triangular profile, smaller and paler than the female, the
+# carapace rising to the rostrum behind the eye, the abdomen tapering to a
+# thin tail fan, with walking legs that touch the sprite's bottom row and
+# swimmerets under the abdomen. Outlined in a dark shade of the body, never
+# black. Four frames: the legs step while the tail fan and antennae flick.
+# Eggs use their own colour keys (y, u, z) that no morph recolours.
+colours = { a = "#ec7a78", d = "#9c1a24", h = "#f06a5e", k = "#1a0c0c", l = "#b52430", m = "#7a121c", r = "#d42a2e", s = "#e34a44", u = "#c9801c", w = "#ffd6cc", y = "#f4a830", z = "#ffd878" }
 frames = [
     [
-        "d..rrrhhd.aa",
-        "ddrrrrsrkda.",
-        "..drrrrld..a",
-        "....l.l.l...",
+        ".........rr.",
+        "..ssssssk.rr",
+        ".lllllllr.r.",
+        ".....rr.r...",
     ],
     [
-        "d..rrrhhd.aa",
-        "ddrrrrsrkda.",
-        "..drrrrld..a",
-        ".....l.ll...",
+        ".........rr.",
+        "..ssssssk.r.",
+        "llllllllr.rr",
+        ".....rr.rr..",
     ],
     [
-        "...rrrhhd.a.",
-        "ddrrrrsrkdaa",
-        "d.drrrrld...",
-        "....l.l.l...",
+        ".........rr.",
+        "..ssssssk.rr",
+        ".lllllllr.r.",
+        ".....rr.r...",
     ],
     [
-        "...rrrhhd.a.",
-        "ddrrrrsrkdaa",
-        "d.drrrrld...",
-        ".....l.ll...",
+        ".........rr.",
+        "..ssssssk.rr",
+        ".lllllllrr..",
+        "......r.r...",
     ],
 ]
 # The palette icon, at one pixel per cell.
@@ -106,43 +109,193 @@ icon = [
 # display scales divisible by four.
 fine_frames = [
     [
-        "............ddddd.....aa",
-        "dd....ddddddhhhhhd..aa..",
-        "shddddhhshshhsssskdd....",
-        "ddddrlrrrrrrrrrrrrd.aa..",
-        "....ddddllllllllld....aa",
-        ".......lddddddddd.......",
-        ".........ll.l.l.l.......",
-        "...........l.l.l.l......",
+        "........................",
+        "...................rr...",
+        ".............llllkl.rr..",
+        "...llllllllllaaaal..rrr.",
+        ".lllllllaaaaarrrl....r..",
+        "........llllllllrr......",
+        "........r.r.rr...r......",
+        "...........rrr...r......",
     ],
     [
-        "............ddddd.....aa",
-        "dd....ddddddhhhhhd..aa..",
-        "shddddhhshshhsssskdd....",
-        "ddddrlrrrrrrrrrrrrd.aa..",
-        "....ddddllllllllld....aa",
-        "......l.ddddddddd.......",
-        "........ll..l.l.ll......",
-        "............l.l.l.......",
+        "........................",
+        "...................rr...",
+        ".............llllkl.r...",
+        "...llllllllllaaaal..rr..",
+        ".lllllllaaaaarrrl....rr.",
+        "........llllllllrr......",
+        "........r.r.rr...r......",
+        "...........r.r...rr.....",
     ],
     [
-        "............ddddd....aa.",
-        "......ddddddhhhhhd..a...",
-        "ddddddhhshshhsssskdd....",
-        "shddrlrrrrrrrrrrrrd.a...",
-        "dd..ddddllllllllld...aa.",
-        ".......lddddddddd......a",
-        ".........ll.l.l.l.......",
-        "...........l.l.l.l......",
+        "........................",
+        "...................rr...",
+        ".............llllkl.rr..",
+        "...llllllllllaaaal..rrr.",
+        ".lllllllaaaaarrrl....r..",
+        "........llllllllrr......",
+        "........r.r.rr...r......",
+        "...........rrr...r......",
     ],
     [
-        "............ddddd....aa.",
-        "......ddddddhhhhhd..a...",
-        "ddddddhhshshhsssskdd....",
-        "shddrlrrrrrrrrrrrrd.a...",
-        "dd..ddddllllllllld...aa.",
-        "......l.ddddddddd......a",
-        "........ll..l.l.ll......",
-        "............l.l.l.......",
+        "........................",
+        "...................rr...",
+        ".............llllkl.rr..",
+        "...llllllllllaaaal...rr.",
+        ".lllllllaaaaarrrl.......",
+        "........llllllllrrr.....",
+        "..........r.rr...r......",
+        "............rr...r......",
+    ],
+]
+
+# The female (dimorphic, issue #315): larger (3 cm), stronger and darker
+# red, with the curved back and rounded belly lobe under the middle of the
+# abdomen from the owner's "Sexing Shrimp" chart; drawn with the same colour
+# keys as the male so every morph recolours her. A 7x2-cell sprite (14x4
+# coarse texels, 28x8 fine); four frames.
+female_frames = [
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        ".mmmmhhmmml...",
+        ".....mmllll...",
+    ],
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        "mmmmmhhmmmlld.",
+        ".....mmllll...",
+    ],
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        ".mmmmhhmmml...",
+        ".....mmllll...",
+    ],
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        ".mmmmhhmmml...",
+        ".....mmllll...",
+    ],
+]
+
+# Her four poses at four texels per cell side (28x8).
+female_fine_frames = [
+    [
+        ".......................dd...",
+        "................mmmmkmmdd...",
+        "....mmmmmmmmmmmmhhhhhm..ddd.",
+        "..mmhhhhhhhhhhhhrrllm....dd.",
+        "mmmmmmmdldrdrdrdllmmll......",
+        ".......mmdldldlmmmll.l......",
+        "........lmmmmmmll..ll.......",
+        ".............ll.l...l.......",
+    ],
+    [
+        ".......................dd...",
+        "................mmmmkmmdd...",
+        "....mmmmmmmmmmmmhhhhhm..dd..",
+        "..mmhhhhhhhhhhhhrrllm....dd.",
+        "mmmmmmmdldrdrdrdllmmll...d..",
+        ".......mmdldldlmmmll.ll.....",
+        "........lmmmmmmll.lll.......",
+        "..........l..l..l...l.......",
+    ],
+    [
+        ".......................dd...",
+        "................mmmmkmmdd...",
+        "....mmmmmmmmmmmmhhhhhm..ddd.",
+        "..mmhhhhhhhhhhhhrrllm....dd.",
+        "mmmmmmmdldrdrdrdllmmll......",
+        ".......mmdldldlmmmll.l......",
+        "........lmmmmmmll..ll.......",
+        ".............ll.l...l.......",
+    ],
+    [
+        ".......................dd...",
+        "................mmmmkmmddd..",
+        "....mmmmmmmmmmmmhhhhhm..ddd.",
+        ".mmmhhhhhhhhhhhhrrllm.......",
+        ".mmmmmmdldrdrdrdllmml.......",
+        ".......mmdldldlmmmllll......",
+        "........lmmmmmmll..lll......",
+        "..............lll....l......",
+    ],
+]
+
+# The same female berried: a cluster of yellow-orange eggs (keys y, u, z,
+# which no morph recolours, with a darker rim so they show on every morph)
+# under the abdomen, where the chart's Eggs row holds them.
+carrying_frames = [
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        ".mmmmhhmmml...",
+        "....yyyllll...",
+    ],
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        "mmmmmhhmmmlld.",
+        "....yyyllll...",
+    ],
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        ".mmmmhhmmml...",
+        "....yyyllll...",
+    ],
+    [
+        ".........rkmd.",
+        ".rrrrrrrrhm.dd",
+        ".mmmmhhmmml...",
+        "....yyyllll...",
+    ],
+]
+
+# Her berried poses at four texels per cell side (28x8).
+carrying_fine_frames = [
+    [
+        ".......................dd...",
+        "................mmmmkmmdd...",
+        "....mmmmmmmmmmmmhhhhhm..ddd.",
+        "..mmhhhhhhhhhhhhrrllm....dd.",
+        "mmmmmmmdldrdrdrdllmmll......",
+        ".......uyzldldlmmmll.l......",
+        "........uyzyyyzll..ll.......",
+        ".........uuuuuu.l...l.......",
+    ],
+    [
+        ".......................dd...",
+        "................mmmmkmmdd...",
+        "....mmmmmmmmmmmmhhhhhm..dd..",
+        "..mmhhhhhhhhhhhhrrllm....dd.",
+        "mmmmmmmdldrdrdrdllmmll...d..",
+        ".......uyzldldlmmmll.ll.....",
+        "........uyzyyyzll.lll.......",
+        ".........uuuuuu.l...l.......",
+    ],
+    [
+        ".......................dd...",
+        "................mmmmkmmdd...",
+        "....mmmmmmmmmmmmhhhhhm..ddd.",
+        "..mmhhhhhhhhhhhhrrllm....dd.",
+        "mmmmmmmdldrdrdrdllmmll......",
+        ".......uyzldldlmmmll.l......",
+        "........uyzyyyzll..ll.......",
+        ".........uuuuuu.l...l.......",
+    ],
+    [
+        ".......................dd...",
+        "................mmmmkmmddd..",
+        "....mmmmmmmmmmmmhhhhhm..ddd.",
+        ".mmmhhhhhhhhhhhhrrllm.......",
+        ".mmmmmmdldrdrdrdllmml.......",
+        ".......uyzldldlmmmllll......",
+        "........uyzyyyzll..lll......",
+        ".........uuuuuull....l......",
     ],
 ]
