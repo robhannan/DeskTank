@@ -1503,8 +1503,10 @@ mod tests {
     fn bad_algae_varieties_are_rejected() {
         let t = MaterialTable::builtin().unwrap();
         let try_fields = |from: &str, to: &str| {
-            assert!(FIELDS.contains(from), "{from}");
-            Ecology::from_toml("", &FIELDS.replacen(from, to, 1), &t, true).map(|_| ())
+            // Git may check the file out with CRLF line endings (Windows).
+            let fields = FIELDS.replace("\r\n", "\n");
+            assert!(fields.contains(from), "{from}");
+            Ecology::from_toml("", &fields.replacen(from, to, 1), &t, true).map(|_| ())
         };
         for (from, to, why) in [
             ("id = 2\n", "id = 1\n", "a repeated id"),

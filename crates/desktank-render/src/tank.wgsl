@@ -696,41 +696,29 @@ fn value_noise(q: vec2<f32>) -> f32 {
 
 // Crisp round spots, at most one in each square of a loose lattice (a little
 // over two cells across), with a chance that rises with the density, a random
-// centre and a random size. The rim is the dark shade, the middle the light
-// one, with a bright pixel at the top left. Alpha 1 inside a spot, else 0.
+// size and a random centre that keeps it inside its square. The rim is the
+// dark shade, the middle the light one, with a bright pixel at the top left.
+// Alpha 1 inside a spot, else 0. No loop: Chrome 68's SwiftShader miscompiled
+// one that looked into the neighbouring squares.
 fn algae_spots(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>) -> vec4<f32> {
     let tpc = texel_density();
-    let size = 5 * tpc / 2;
-    let reach = f32(tpc) * 0.7 + 0.5;
-    let home = vec2<i32>(floor(vec2<f32>(p) / f32(size)));
-    let here = vec2<f32>(p) + 0.5;
-    // A spot centred in a neighbouring square can spill over its edge.
-    let near = vec2<i32>(
-        select(select(0, 1, here.x > f32((home.x + 1) * size) - reach), -1, here.x < f32(home.x * size) + reach),
-        select(select(0, 1, here.y > f32((home.y + 1) * size) - reach), -1, here.y < f32(home.y * size) + reach),
-    );
-    for (var i = 0; i < 4; i += 1) {
-        let cell = home + vec2<i32>(select(0, near.x, (i & 1) == 1), select(0, near.y, i >= 2));
-        let h = hash(cell + vec2<i32>(31, 7));
-        if f32(h & 255u) / 255.0 >= density * 0.8 {
-            continue;
-        }
-        let centre = vec2<f32>(cell * size)
-            + vec2<f32>(f32((h >> 8u) % u32(size)) + 0.5, f32((h >> 12u) % u32(size)) + 0.5);
-        let radius = f32(tpc) * (0.4 + 0.25 * f32((h >> 16u) & 3u) / 3.0) + 0.3;
-        let off = here - centre;
-        let d2 = dot(off, off);
-        if d2 > radius * radius {
-            continue;
-        }
-        let into = clamp(d2 / (radius * radius), 0.0, 1.0);
-        var rgb = mix(light, dark, smoothstep(0.35, 0.95, into));
-        if off.x < -0.5 && off.y < -0.5 && d2 > 0.5 && into < 0.75 {
-            rgb = min(rgb * 1.25 + vec3<f32>(0.04), vec3<f32>(1.0));
-        }
-        return vec4<f32>(rgb, 1.0);
+    let size = f32(5 * tpc / 2);
+    let home = floor(vec2<f32>(p) / size);
+    let h = hash(vec2<i32>(home) + vec2<i32>(31, 7));
+    let radius = f32(tpc) * (0.4 + 0.25 * f32((h >> 24u) & 3u) / 3.0) + 0.3;
+    let span = max(size - 2.0 * radius, 0.0);
+    let pick = vec2<f32>(f32((h >> 8u) & 255u), f32((h >> 16u) & 255u)) / 255.0;
+    let off = vec2<f32>(p) + 0.5 - (home * size + radius + pick * span);
+    let d2 = dot(off, off);
+    if f32(h & 255u) / 255.0 >= density * 0.8 || d2 > radius * radius {
+        return vec4<f32>(0.0);
     }
-    return vec4<f32>(0.0);
+    let into = clamp(d2 / (radius * radius), 0.0, 1.0);
+    var rgb = mix(light, dark, smoothstep(0.35, 0.95, into));
+    if off.x < -0.5 && off.y < -0.5 && d2 > 0.5 && into < 0.75 {
+        rgb = min(rgb * 1.25 + vec3<f32>(0.04), vec3<f32>(1.0));
+    }
+    return vec4<f32>(rgb, 1.0);
 }
 
 // A fine speckle of single texels over a faint haze. Alpha is the speckle's
@@ -3066,7 +3054,8 @@ fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
     if sprite_skipped(v) {
         discard;
     }
-    return sprite_colour(v, hidden_by_plant(v.pos.xy, v.depth));
+    let c = sprite_colour(v, hidden_by_plant(v.pos.xy, v.depth));
+    return sprite_out(c.rgb, c.a, v.pos.xy);
 }
 
 @fragment
@@ -3074,7 +3063,9 @@ fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
     if sprite_skipped(v) {
         discard;
     }
-    return sprite_colour(v, hidden_by_leaf(v.pos.xy, v.depth));
+    // The split grid draws the front film in its own pass.
+    let c = sprite_colour(v, hidden_by_leaf(v.pos.xy, v.depth));
+    return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
 @fragment
@@ -3083,7 +3074,8 @@ fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
     if sprite_skipped(v) || v.look.x > 2.5 {
         discard;
     }
-    return sprite_colour(v, hidden_by_stem(v.pos.xy, v.depth));
+    let c = sprite_colour(v, hidden_by_stem(v.pos.xy, v.depth));
+    return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
 // Sprite fragments drawn without looking at plants: under the palette
@@ -3104,7 +3096,7 @@ fn sprite_skipped(v: SpriteOut) -> bool {
 }
 
 // A sprite fragment's colour that sprite_skipped kept, `hidden` if a nearer
-// plant covers it.
+// plant covers it, before the front film and encoding (straight alpha).
 fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
     let p = floor(v.local);
     let texel = vec2<i32>(v.frame.xy + p);
@@ -3120,13 +3112,13 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         if a <= 0.0 {
             discard;
         }
-        return sprite_out(v.glow.rgb, a, v.pos.xy);
+        return vec4<f32>(v.glow.rgb, a);
     }
     if v.look.x > 2.5 {
         // A device's placement ghost (D27): see-through over everything,
         // red where it doesn't fit.
         let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
-        return sprite_out(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint, 0.55, v.pos.xy);
+        return vec4<f32>(min(t.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint, 0.55);
     }
     if covered || (v.look.x < 1.5 && v.look.y > 0.5 && hidden_by_substrate(v.pos.xy)) {
         discard;
@@ -3159,7 +3151,7 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
             lit = mix(lit, fringe.rgb * view.daylight.rgb, fringe.a);
         }
     }
-    return sprite_out(lit, 1.0, v.pos.xy);
+    return vec4<f32>(lit, 1.0);
 }
 
 fn sprite_out(rgb: vec3<f32>, alpha: f32, pos: vec2<f32>) -> vec4<f32> {
