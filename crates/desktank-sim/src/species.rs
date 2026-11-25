@@ -2078,8 +2078,9 @@ mod tests {
     /// A morph or female colour set that recolours the sprite must also
     /// recolour the keys only its fine art uses, or a blue shrimp drawn
     /// finely would keep the red sprite's shading. Listed keys are colours
-    /// every strain shares (the guppy's pale belly and dorsal sheen, and the
-    /// female's iris; the cherry shrimp's eggs).
+    /// every strain shares (the guppy's pale belly, front body outline and
+    /// scale shade, eye glint, and the female's body/iris keys; the cherry
+    /// shrimp's eggs).
     #[test]
     fn recolours_cover_the_keys_only_fine_art_uses() {
         let keys = |frames: &[Vec<String>]| -> BTreeSet<char> {
@@ -2110,7 +2111,7 @@ mod tests {
                 let over: BTreeSet<char> =
                     colours.keys().filter_map(|k| k.chars().next()).collect();
                 let shared: &[char] = match d.name.as_str() {
-                    "guppy" => &['a', 'm', 'e', 'p', 'u', 'w', 'G', 'O'],
+                    "guppy" => &['D', 'S', 'a', 'e', 'p', 'u', 'w', 'G', 'O'],
                     // The berried shrimp's eggs, which no morph recolours.
                     "cherry_shrimp" => &['y', 'u', 'z'],
                     _ => &[],
