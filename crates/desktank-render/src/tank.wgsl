@@ -330,10 +330,6 @@ fn grid_post(rgb_in: vec3<f32>, cell: vec2<f32>) -> vec3<f32> {
     return rgb;
 }
 
-fn grid_film_post(rgb: vec3<f32>, grid_pos: vec2<f32>, cell: vec2<f32>) -> vec3<f32> {
-    return grid_post(front_over(rgb, grid_pos, vec3<f32>(1.0)), cell);
-}
-
 // True during the magnifier pass when `pos` lies outside the circular glass
 // lens (snapped to the bezel's pixel-art grid so the rim meets the glass
 // cleanly with no gaps). Always false in the main pass (`view.lens.z == 0`).
@@ -410,6 +406,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             bg = vec4<f32>(water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine)), water_opacity());
         } else {
             bg = ground(at, ground_texel, quarter);
+            let fringe = water_fringe(at, ground_texel, quarter);
+            bg = vec4<f32>(mix(bg.rgb, fringe.rgb, fringe.a), bg.a);
         }
         if overlay_enabled() && plant_alpha > 0.0 {
             // Match the split passes: blend in the attachment's colour space.
@@ -420,7 +418,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         rgb = mix(bg.rgb, plant_rgb, plant_alpha);
         alpha = bg.a;
     }
-    return layer_out(grid_film_post(rgb, grid_pos, cell), alpha);
+    return layer_out(grid_post(front_over(rgb, grid_pos, vec3<f32>(1.0)), cell), alpha);
 }
 
 // The split grid (`GpuOptions::split_grid`, for GPUs that can't compile
@@ -458,11 +456,43 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         } else if src.swayed_away || overlay_enabled() {
             let fine = FINE_PLANTS && fine_scale();
             let rgb = water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine));
-            return layer_out(grid_film_post(rgb, grid_pos, cell), water_opacity());
+            return layer_out(grid_post(rgb, cell), water_opacity());
         }
     }
     let bg = ground(at, ground_texel, quarter);
-    return layer_out(grid_film_post(bg.rgb, grid_pos, cell), bg.a);
+    return layer_out(grid_post(bg.rgb, cell), bg.a);
+}
+
+// Pass 2, drawn only while a coat shows: the coat's strands over the water
+// fs_ground drew (fs_main adds them in ground's place). Alone they would take
+// fs_ground past Chrome 68's register limit. The blend keeps the water's alpha.
+@fragment
+fn fs_fringe(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if view.algae.x <= 0.0 || outside_lens(pos.xy) || hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
+        discard;
+    }
+    let at = vec2<i32>(cell);
+    let texel = textureLoad(cells, at, 0);
+    let quarter = quarter_of(grid_pos, cell);
+    var ground_texel = texel;
+    let src = grid_source(grid_pos, at, texel, quarter);
+    if (src.part >= 0 && !src.from_sway) || src.swayed_away {
+        let nbr = behind_cell(at, quarter);
+        if nbr.x < 0 {
+            discard;
+        }
+        ground_texel = textureLoad(cells, nbr, 0);
+    }
+    let fringe = water_fringe(at, ground_texel, quarter);
+    if fringe.a <= 0.0 {
+        discard;
+    }
+    return vec4<f32>(out(grid_post(fringe.rgb, cell)).rgb * water_opacity(), fringe.a);
 }
 
 // Passes 2 and 3: plant art in leafy parts (fs_leaves) and the others
@@ -528,7 +558,7 @@ fn plant_pass_colour(pos: vec2<f32>, src: GridSource, pt: vec4<f32>, band: f32) 
     if alpha <= 0.0 {
         discard;
     }
-    return vec4<f32>(out(grid_film_post(rgb, grid_pos, cell)).rgb, alpha);
+    return vec4<f32>(out(grid_post(rgb, cell)).rgb, alpha);
 }
 
 // Palette alpha holds the ground style in the low seven bits and rigidity in bit 7.
@@ -684,6 +714,23 @@ fn coat_fringe(at: vec2<i32>, quarter: vec2<i32>, fine: bool, depth: f32) -> vec
     }
     let green = film_green(f32((grain >> 2u) & 7u) / 7.0);
     return vec4<f32>(depth_cue(green, film.y), film.x * 0.23);
+}
+
+// The strands over a cell that ground() draws as water, as ground()
+// resolves its style (a device footprint below the surface is water).
+fn water_fringe(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
+    if view.algae.x <= 0.0 || view.scale < 2.0 {
+        return vec4<f32>(0.0);
+    }
+    var mat = i32(round(t.r * 255.0));
+    if (material_flags(t) & 127) == STYLE_DEVICE {
+        mat = max(i32(round(select(view.plant_parts.w, view.plant_parts2.w, f32(at.y) < view.surface_row))), 0);
+    }
+    let base_v = i32(u32(round(t.g * 255.0)) & 1u);
+    if (i32(round(textureLoad(palette, vec2<i32>(mat, base_v), 0).a * 255.0)) & 127) != STYLE_WATER {
+        return vec4<f32>(0.0);
+    }
+    return coat_fringe(at, quarter, FINE_PLANTS && fine_scale(), -1.0);
 }
 
 fn glass_density(grid_pos: vec2<f32>) -> vec4<f32> {
@@ -1203,10 +1250,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             rgb = surface_ripple(rgb, at, quarter, fine, false);
         }
         rgb = mix(rgb, rear.rgb, rear.a);
-        if style == STYLE_WATER {
-            let fringe = coat_fringe(at, quarter, fine, -1.0);
-            rgb = mix(rgb, fringe.rgb, fringe.a);
-        }
         return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), ground_opacity(style));
     }
 

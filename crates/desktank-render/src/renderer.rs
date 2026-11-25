@@ -674,7 +674,7 @@ impl Renderer {
             multiview_mask: None,
         });
         let front_pass = self.algae.front_film_visible
-            && (!self.format.is_srgb() || overlay_water_alpha.is_some());
+            && (!front_in_layers(self.format, gpu.split_grid) || overlay_water_alpha.is_some());
         self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
         if let Some(ml) = lens_layout {
             pass.set_scissor_rect(
@@ -711,9 +711,16 @@ impl Renderer {
             &self.coarse_pipelines
         };
         pass.set_bind_group(0, bind_group, &[]);
-        for p in &pipelines.grid {
+        for (i, p) in pipelines.grid.iter().enumerate() {
             pass.set_pipeline(p);
             pass.draw(0..3, 0..1);
+            if let Some(fringe) = &pipelines.fringe
+                && i == 0
+                && self.algae.coat_visible
+            {
+                pass.set_pipeline(fringe);
+                pass.draw(0..3, 0..1);
+            }
         }
         if self.sprite_count > 0 {
             pass.set_vertex_buffer(0, self.instances.slice(..));
@@ -1181,8 +1188,21 @@ fn fine_scale(scale: u32) -> bool {
 #[derive(Debug)]
 struct Pipelines {
     grid: Vec<wgpu::RenderPipeline>,
+    /// The split grid's coat strands (`fs_fringe`), drawn after `fs_ground`
+    /// only while a coat shows.
+    fringe: Option<wgpu::RenderPipeline>,
     sprites: Vec<wgpu::RenderPipeline>,
 }
+
+/// `fs_fringe` blends the strands' colour and keeps the water's alpha.
+const FRINGE_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendState::ALPHA_BLENDING.color,
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
 
 /// The grid's fragment entry points: `fs_main`, or with the split grid
 /// `fs_ground` and then the plant passes, which blend over it.
@@ -1261,11 +1281,12 @@ fn create_pipelines(
     } else {
         (GRID_ENTRIES, SPRITE_ENTRIES)
     };
+    let in_layers = f64::from(front_in_layers(format, gpu.split_grid));
     let level = |fine: bool| {
         let suffix = if fine { "" } else { " (coarse plants)" };
         let constants = [
             ("FINE_PLANTS", f64::from(fine)),
-            ("FRONT_IN_LAYERS", f64::from(format.is_srgb())),
+            ("FRONT_IN_LAYERS", in_layers),
         ];
         Pipelines {
             grid: grid_entries
@@ -1276,18 +1297,18 @@ fn create_pipelines(
                     pipeline(&format!("tank {entry}{suffix}"), entry, blend, &constants)
                 })
                 .collect(),
+            fringe: gpu.split_grid.then(|| {
+                let label = format!("tank fs_fringe{suffix}");
+                pipeline(&label, "fs_fringe", Some(FRINGE_BLEND), &constants)
+            }),
             sprites: sprite_entries
                 .iter()
                 .map(|entry| {
                     // Sprites blend only a glow's halo (alpha below 1); every
                     // other sprite fragment is opaque or discarded.
                     let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
-                    pipeline(
-                        &format!("sprites {entry}{suffix}"),
-                        entry,
-                        blend,
-                        &constants,
-                    )
+                    let label = format!("sprites {entry}{suffix}");
+                    pipeline(&label, entry, blend, &constants)
                 })
                 .collect(),
         }
@@ -1305,6 +1326,13 @@ fn create_pipelines(
         &[],
     );
     ([level(true), level(false)], [lens_frame, front_film])
+}
+
+/// Whether the grid and sprites apply the front film before encoding into
+/// an sRGB `format` (see `FRONT_IN_LAYERS` in `tank.wgsl`). The split grid
+/// has no room for it in `fs_ground`, so it draws the film's own pass.
+fn front_in_layers(format: wgpu::TextureFormat, split_grid: bool) -> bool {
+    format.is_srgb() && !split_grid
 }
 
 /// The sRGB-encoded backdrop and the overlay water opacity (-1 for opaque mode).
