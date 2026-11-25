@@ -2110,7 +2110,7 @@ mod tests {
                 let over: BTreeSet<char> =
                     colours.keys().filter_map(|k| k.chars().next()).collect();
                 let shared: &[char] = match d.name.as_str() {
-                    "guppy" => &['a', 'm', 'e', 'p', 'u', 'w', 'G', 'O'],
+                    "guppy" => &['D', 'S', 'a', 'e', 'p', 'u', 'w', 'G', 'O'],
                     // The berried shrimp's eggs, which no morph recolours.
                     "cherry_shrimp" => &['y', 'u', 'z'],
                     _ => &[],
