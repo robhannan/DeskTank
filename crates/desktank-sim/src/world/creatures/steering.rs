@@ -477,12 +477,14 @@ impl World {
             return (x, c.y, k.top);
         }
         if let Some(i) = c.food {
-            let i = i as usize;
-            return (
-                centre_of(to_i64(i % self.width)),
-                centre_of(to_i64(i / self.width)),
-                k.top,
-            );
+            let (x, mut y) = self.food_centre(i);
+            if k.zone != Zone::Bottom && self.is_floating_leaf(i) {
+                // Bite from below. A leaf can sit above the waterline or
+                // beside a solid leaf in the same band.
+                let reach = i32::try_from(k.reach).unwrap_or(0);
+                y += extent(k, c.turn).1 * ONE / 2 + reach * ONE;
+            }
+            return (x, y, k.top);
         }
         // A chase (a betta driving off a rival) comes before the cursor.
         if let Some(target) = self.chase_target(k, c) {

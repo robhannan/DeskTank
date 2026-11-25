@@ -127,6 +127,8 @@ const FULL: u16 = 120 * TICKS_PER_SECOND as u16;
 const BITE: u16 = 30 * TICKS_PER_SECOND as u16;
 /// A hungry creature looks for closer food every this many ticks.
 const SEARCH_EVERY: u64 = 10;
+/// Slower surface-leaf searches after giving up on food near the waterline.
+const FLOAT_RETRY_EVERY: u64 = 5 * TICKS_PER_SECOND as u64;
 /// How far a creature notices food, in cells.
 const FOOD_SENSE: i64 = 160;
 /// How far from where it is asked for a creature is added, in cells.
@@ -1795,6 +1797,10 @@ impl World {
             && (self.plants.part(cell.material).is_none() || self.palatable_plant(cell.state))
     }
 
+    fn is_floating_leaf(&self, i: u32) -> bool {
+        self.plants.part(self.cells[i as usize].material) == Some(Part::Float)
+    }
+
     /// Keeps `c` heading for food while hungry: a new search when its food
     /// has gone, and every [`SEARCH_EVERY`] ticks for something closer.
     fn choose_food(&self, k: &Kind, c: &mut Creature, hungry: bool) {
@@ -2068,6 +2074,14 @@ impl World {
         let (cx, cy) = (i64::from(c.x >> 8), i64::from(c.y >> 8));
         let sense2 = FOOD_SENSE * FOOD_SENSE;
         let mut best: Option<(i64, u32)> = None;
+        // A fish blocked at the surface can otherwise flip between distant
+        // cells of the same mat. Give it a stretch of wandering or following
+        // loose food between leaf retries. Use the remembered row since a
+        // floating leaf may have moved off the ignored cell.
+        let skip_float = c.food.is_none()
+            && c.ignore
+                .is_some_and(|i| i as usize / self.width <= self.surface_row + 1)
+            && !(self.tick + u64::from(c.id.0)).is_multiple_of(FLOAT_RETRY_EVERY);
         let ignored = c.ignore.map(|i| {
             (
                 to_i64(i as usize % self.width),
@@ -2100,6 +2114,9 @@ impl World {
                 if ignored.is_some_and(|(ix, iy)| {
                     (fx - ix).abs() <= IGNORE_REACH && (fy - iy).abs() <= IGNORE_REACH
                 }) {
+                    continue;
+                }
+                if skip_float && self.is_floating_leaf(i) {
                     continue;
                 }
                 if !near_home(k, c, fx) {
@@ -3288,6 +3305,73 @@ mod tests {
         c.ignore = Some(near);
         let next = w.nearest_food(&k, &c).unwrap();
         assert!(xy(next).0 > 40, "the far flake next: {:?}", xy(next));
+    }
+
+    #[test]
+    fn blocked_surface_food_does_not_crowd_out_loose_food_before_retry() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 80,
+                height: 40,
+                seed: 1,
+                water_level: 0.8,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let leaf = w.materials().id("floating_leaf").unwrap();
+        let flake = w.materials().id("flake_food").unwrap();
+        let surf = w.surface_row;
+        w.set_cell(30, surf, leaf).unwrap();
+        w.set_cell(50, surf + 12, flake).unwrap();
+        w.tick(); // Register the food cells.
+        let guppy = w.species().id("guppy").unwrap();
+        let id = w.add_creature(guppy, 30, to_i64(surf + 8)).unwrap();
+        let k = *w.kind(guppy).unwrap();
+        let mut c = w.creature(id).unwrap().clone();
+        let nearest = w.nearest_food(&k, &c).unwrap();
+        assert!(w.is_floating_leaf(nearest));
+
+        // The previous target is gone and the next leaf is far enough from
+        // it to pass the ordinary local ignore filter.
+        c.ignore = Some(u32::try_from((surf - 1) * w.width + 24).unwrap());
+        w.tick = SEARCH_EVERY - u64::from(id.0);
+        w.choose_food(&k, &mut c, true);
+        let loose = c.food.unwrap();
+        assert_eq!(w.cells[loose as usize].material, flake);
+
+        c.food = None;
+        w.tick = FLOAT_RETRY_EVERY - u64::from(id.0);
+        w.choose_food(&k, &mut c, true);
+        assert_eq!(c.food, Some(nearest));
+    }
+
+    #[test]
+    fn swimming_to_a_surface_leaf_targets_a_body_position_in_biting_reach() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 80,
+                height: 40,
+                seed: 1,
+                water_level: 0.8,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let leaf = w.materials().id("floating_leaf").unwrap();
+        let surf = w.surface_row;
+        w.set_cell(30, surf - 1, leaf).unwrap();
+        let guppy = w.species().id("guppy").unwrap();
+        let id = w.add_creature(guppy, 30, to_i64(surf + 8)).unwrap();
+        let k = *w.kind(guppy).unwrap();
+        let mut c = w.creature(id).unwrap().clone();
+        c.food = Some(u32::try_from((surf - 1) * w.width + 30).unwrap());
+        let mut rng = chunk_stream(w.seed, w.tick, CREATURE_STREAM + u64::from(id.0));
+        let (tx, ty, _) = w.steering_target(&k, &mut c, None, &mut rng);
+        assert!(w.fits(&k, c.turn, tx, ty, c.band()));
+        (c.x, c.y) = (tx, ty);
+        assert!(w.eat(&k, &mut c));
+        assert_eq!(c.eaten(), 1);
     }
 
     #[test]
