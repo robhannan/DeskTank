@@ -63,6 +63,7 @@
 //!   hunter).
 //! - **Hunting, fleeing to cover, startling a school and territory** are in
 //!   [`pursuit`].
+//! - **Curiosity** draws some fish to the host cursor and nearby pours.
 //! - **Live food** (bloodworms) are creatures of a `live_food` species,
 //!   kept to [`MAX_LIVE_FOOD`] beside the population cap, eaten whole by
 //!   species whose diet holds the food they count as (see [`live`]).
@@ -284,6 +285,8 @@ pub struct Creature {
     pursuit: u16,
     /// Ticks of fright left: it flees to cover or away while above 0.
     fear: u16,
+    /// Transient response to the host cursor, omitted from saves like the cursor.
+    cursor_interest: steering::CursorInterest,
     /// Asleep for the night (see [`night`]).
     asleep: bool,
     /// Ticks it stays up after being woken at night (see [`night`]).
@@ -490,6 +493,7 @@ struct Kind {
     schooling: bool,
     shoaling: bool,
     shy: bool,
+    curious: bool,
     zone: Zone,
     breathes_air: bool,
     /// Stress per second once out of air (0: it doesn't breathe air).
@@ -664,6 +668,7 @@ impl Creatures {
                 schooling: s.temperament == Temperament::Schooling,
                 shoaling: s.temperament == Temperament::Shoaling,
                 shy: s.shy,
+                curious: s.curious,
                 zone: s.zone,
                 breathes_air: s.breathes_air,
                 air_stress: breathing::air_stress(s.air_tolerance_seconds),
@@ -767,8 +772,8 @@ impl Creatures {
 }
 
 impl World {
-    /// Sets the pointer cell fish avoid. A missing or out-of-tank pointer
-    /// disables avoidance. Hosts supply this input only when enabled.
+    /// Sets the pointer cell fish react to. A missing or out-of-tank pointer
+    /// disables the reaction. Hosts supply this input only when enabled.
     pub fn set_creature_cursor(&mut self, cell: Option<(i64, i64)>) {
         self.creatures.cursor = cell
             .filter(|&(x, y)| {
@@ -968,6 +973,7 @@ impl World {
             quarry: None,
             pursuit: 0,
             fear: 0,
+            cursor_interest: steering::CursorInterest::Idle,
             asleep: false,
             woken: 0,
         };
@@ -1099,7 +1105,7 @@ impl World {
     }
 
     /// The creatures, corpses and life settings as saved (T8, T9). The
-    /// host's cursor isn't saved.
+    /// host's cursor and the fish's interest in it aren't saved.
     pub(super) fn save_creatures(&self) -> v9::Creatures {
         let cr = &self.creatures;
         v9::Creatures {
@@ -1296,6 +1302,7 @@ impl World {
                 quarry: quarry.map(CreatureId),
                 pursuit,
                 fear,
+                cursor_interest: steering::CursorInterest::Idle,
                 asleep: false,
                 woken: 0,
             });
@@ -1653,6 +1660,10 @@ impl World {
         let sponge = self.sponge_graze_target(&k, c, hungry);
 
         let (tx, ty, speed) = self.steering_target(&k, c, sponge, &mut rng);
+        if speed == 0 {
+            (c.vx, c.vy) = (0, 0);
+            return (c.x, c.y, c.facing_left, c.turn) != before;
+        }
         // A walker's swim takes over from wandering, not from food, sponge
         // grazing, or fright.
         if let Some(swim) = swim.filter(|_| c.food.is_none() && sponge.is_none() && c.fear == 0) {
@@ -1662,40 +1673,7 @@ impl World {
             }
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
-        steer(&k, c, tx, ty, speed, speed > k.cruise);
-        // Walkers keep a downward bias even on long, nearly horizontal
-        // routes. A one-row step lets them follow a sloping sand bed.
-        // Hoppers (shrimp) kick upwards now and then and sink back, except
-        // while climbing/perching on a sponge filter to graze its foam (DV4).
-        let mut bottom_walking = false;
-        if k.zone == Zone::Bottom && sponge.is_none() {
-            let hopping = self.hopping(&k, c);
-            bottom_walking = !hopping;
-            c.vy = if hopping {
-                -k.top
-            } else if k.live {
-                // Live food sinks faster than it crawls.
-                live::SINK
-            } else {
-                k.cruise
-            };
-        }
-        self.apply_current(c, bottom_walking);
-
-        // Move, sliding along whatever blocks one axis; a plant in the way
-        // sends it to another band.
-        let mut moved = self.try_move(&k, c);
-        if moved == Move::Dodging {
-            c.dodging += 1;
-            // A dodge that doesn't clear the plant in time is given up.
-            if c.dodging > DODGE_TICKS {
-                moved = Move::Blocked;
-                c.tz = z_of(c.band());
-            }
-        }
-        if moved != Move::Dodging {
-            c.dodging = 0;
-        }
+        let moved = self.step_toward(&k, c, (tx, ty, speed), sponge.is_none());
         if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
             c.food = None;
         } else if moved != Move::Moved {
@@ -1715,6 +1693,53 @@ impl World {
         }
         update_facing(c, sponge);
         (c.x, c.y, c.facing_left, c.turn) != before
+    }
+
+    /// Steer, apply the current and step, giving up a blocked depth dodge
+    /// once it has had time to clear the obstacle.
+    fn step_toward(
+        &self,
+        k: &Kind,
+        c: &mut Creature,
+        target: (i32, i32, i32),
+        walking: bool,
+    ) -> Move {
+        let (tx, ty, speed) = target;
+        steer(k, c, tx, ty, speed, speed > k.cruise);
+        // Walkers keep a downward bias even on long, nearly horizontal
+        // routes. A one-row step lets them follow a sloping sand bed.
+        // Hoppers (shrimp) kick upwards now and then and sink back, except
+        // while climbing/perching on a sponge filter to graze its foam (DV4).
+        let mut bottom_walking = false;
+        if k.zone == Zone::Bottom && walking {
+            let hopping = self.hopping(k, c);
+            bottom_walking = !hopping;
+            c.vy = if hopping {
+                -k.top
+            } else if k.live {
+                // Live food sinks faster than it crawls.
+                live::SINK
+            } else {
+                k.cruise
+            };
+        }
+        self.apply_current(c, bottom_walking);
+
+        // Move, sliding along whatever blocks one axis; a plant in the way
+        // sends it to another band.
+        let mut moved = self.try_move(k, c);
+        if moved == Move::Dodging {
+            c.dodging += 1;
+            // A dodge that doesn't clear the plant in time is given up.
+            if c.dodging > DODGE_TICKS {
+                moved = Move::Blocked;
+                c.tz = z_of(c.band());
+            }
+        }
+        if moved != Move::Dodging {
+            c.dodging = 0;
+        }
+        moved
     }
 
     /// Whether a hopping walker is in the kick of a hop this tick. Each
@@ -2126,11 +2151,7 @@ impl World {
         };
         let y = span(y0, y1, rng);
         (c.tx, c.ty) = (centre_of(x), centre_of(y));
-        // A restless one keeps a target 50% as long as a placid one, and
-        // never past the range.
-        let (lo, hi) = RETARGET_TICKS;
-        let linger = u32::try_from(q.percent(salt::RESTLESS, 50, 100)).unwrap_or(100);
-        c.retarget = lo + rng.next_u32() % (hi - lo) * linger / 100;
+        c.retarget = self.wander_span(c, rng);
         // Every other target or so, a new band too.
         let (front, back) = k.bands;
         let pick = rng.next_u32();
@@ -2141,20 +2162,18 @@ impl World {
         if k.shoaling
             && let Some((tx, ty)) = self.shoal_target(k, c, rng)
         {
-            // The random spans exclude the upper cell, or use their
-            // midpoint when the body is too large for the span.
-            let clamp = |v: i32, lo, hi| {
-                if lo < hi {
-                    v.clamp(centre_of(lo), centre_of(hi - 1))
-                } else {
-                    centre_of(i64::midpoint(lo, hi))
-                }
-            };
-            c.tx = clamp(tx, x0, x1);
+            c.tx = clamp_target(tx, x0, x1);
             if k.zone != Zone::Bottom {
-                c.ty = clamp(ty, zone_rows.0, zone_rows.1);
+                c.ty = clamp_target(ty, zone_rows.0, zone_rows.1);
             }
         }
+    }
+
+    /// A restless one keeps a target for less time than a placid one.
+    fn wander_span(&self, c: &Creature, rng: &mut Pcg32) -> u32 {
+        let (lo, hi) = RETARGET_TICKS;
+        let linger = u32::try_from(self.quirks(c).percent(salt::RESTLESS, 50, 100)).unwrap_or(100);
+        lo + rng.next_u32() % (hi - lo) * linger / 100
     }
 
     /// A target near a random shoalmate, or the nearest one if straying.
@@ -2447,6 +2466,16 @@ pub(crate) fn default_band(seed: u64, id: u32, bands: (u8, u8)) -> u8 {
     front + u8::try_from(h % n).unwrap_or(0)
 }
 
+/// Clamp to a wander span, which excludes its upper cell. A body too
+/// large for the span aims at the midpoint.
+fn clamp_target(value: i32, lo: i64, hi: i64) -> i32 {
+    if lo < hi {
+        value.clamp(centre_of(lo), centre_of(hi - 1))
+    } else {
+        centre_of(i64::midpoint(lo, hi))
+    }
+}
+
 /// The fixed-point centre of cell `v`, clamped well inside `i32`.
 fn centre_of(v: i64) -> i32 {
     let v = v.clamp(-(1 << 20), 1 << 20);
@@ -2631,6 +2660,105 @@ mod tests {
             let mut rng = chunk_stream(world.seed, world.tick, CREATURE_STREAM);
             let (target, _, speed) = world.steering_target(&kind, &mut fish, None, &mut rng);
             assert_eq!(target < fish.x && speed == kind.top, shy);
+        }
+    }
+
+    fn puffer_world() -> (World, CreatureId) {
+        let mut world = World::new(
+            WorldConfig {
+                width: 120,
+                height: 64,
+                seed: 1,
+                water_level: 0.95,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        world.set_easy_mode(true);
+        let puffer = world.species().id("pea_puffer").unwrap();
+        let id = world.add_creature(puffer, 40, 25).unwrap();
+        (world, id)
+    }
+
+    #[test]
+    fn a_curious_puffer_approaches_the_cursor_instead_of_fleeing() {
+        let (mut world, id) = puffer_world();
+        let mut fish = world.creature(id).unwrap().clone();
+        let mut kind = world.grown_kind(&fish).unwrap();
+        assert!(kind.curious);
+        let length = i64::from(kind.w);
+        let mut rng = chunk_stream(world.seed, world.tick, CREATURE_STREAM);
+        for separation in [5, 2] {
+            let px = 40 + separation * length;
+            world.set_creature_cursor(Some((px, 25)));
+            (fish.tx, fish.ty, fish.retarget) = (centre_of(20), fish.y, 10);
+            let (tx, ty, speed) = world.steering_target(&kind, &mut fish, None, &mut rng);
+            let stop = i32::try_from(length).unwrap() * ONE * 3 / 2;
+            assert_eq!((tx, ty, speed), (centre_of(px) - stop, fish.y, kind.cruise));
+        }
+        kind.curious = false;
+        let (tx, _, speed) = world.steering_target(&kind, &mut fish, None, &mut rng);
+        assert!(tx < fish.x);
+        assert_eq!(speed, kind.top);
+    }
+
+    #[test]
+    fn a_curious_puffer_hovers_then_loses_interest() {
+        let (mut world, id) = puffer_world();
+        let kind = world.grown_kind(world.creature(id).unwrap()).unwrap();
+        let px = 40 + i64::from(3 * kind.w);
+        let cursor_x = centre_of(px);
+        let cursor_y = centre_of(25);
+        let length = i64::from(kind.w * ONE);
+        world.set_creature_cursor(Some((px, 25)));
+        let distance = |world: &World| {
+            let fish = world.creature(id).unwrap();
+            dist(fish.x - cursor_x, fish.y - cursor_y)
+        };
+        for _ in 0..16 * TICKS_PER_SECOND {
+            world.tick();
+            assert!(distance(&world) > length);
+        }
+        assert!(distance(&world) <= 2 * length);
+        let fish = world.creature(id).unwrap();
+        assert!(!fish.facing_left);
+        assert_eq!((fish.vx, fish.vy), (0, 0));
+        for _ in 0..14 * TICKS_PER_SECOND {
+            world.tick();
+        }
+        assert!(distance(&world) > 2 * length);
+    }
+
+    #[test]
+    fn a_curious_puffer_investigates_nearby_non_food_pours() {
+        for (species, material, separation, expected) in [
+            ("pea_puffer", "sand", 20, true),
+            ("pea_puffer", "sand", 24, true),
+            ("pea_puffer", "sand", 25, false),
+            ("pea_puffer", "bloodworm", 20, false),
+            ("common_goldfish", "sand", 20, false),
+        ] {
+            let (mut world, puffer) = puffer_world();
+            let id = if species == "pea_puffer" {
+                puffer
+            } else {
+                world.remove_creature(puffer);
+                let species = world.species().id(species).unwrap();
+                world.add_creature(species, 40, 25).unwrap()
+            };
+            // Past tick 0, where `held_until` 0 still counts as held.
+            world.tick += 1;
+            let material = world.materials().id(material).unwrap();
+            let x = 40 + separation;
+            assert!(world.paint(x, 25, 0, material, Brush::Replace).unwrap() > 0);
+            let fish = world.creature(id).unwrap();
+            assert_eq!(fish.ty, centre_of(25));
+            if expected {
+                assert_eq!(fish.tx, centre_of(x));
+                assert!((RETARGET_TICKS.0..RETARGET_TICKS.1).contains(&fish.retarget));
+            } else {
+                assert_eq!((fish.tx, fish.retarget), (fish.x, 0));
+            }
         }
     }
 

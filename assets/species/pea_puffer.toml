@@ -10,6 +10,7 @@ length_cm = 3.0
 lifespan_days = 1460
 maturity_days = 150
 temperament = "territorial"
+curious = true
 speed = 3.0
 max_speed = 9.0
 diet = ["bloodworm"]

@@ -1,5 +1,5 @@
 //! Creature species, loaded from TOML (SPEC §2.4, D8): size, depth zone,
-//! surface needs, speed, diet and placeholder pixel art (D11).
+//! surface needs, personality, speed, diet and placeholder pixel art (D11).
 //!
 //! Each species is one file in `assets/species/`. Its sprite is pixel art
 //! written as rows of characters, one per texel, with a colour key; the
@@ -254,6 +254,8 @@ pub struct Species {
     pub temperament: Temperament,
     /// Whether it seeks cover and startles easily.
     pub shy: bool,
+    /// Whether it investigates the cursor and nearby pours.
+    pub curious: bool,
     /// Cruising speed, cells per second.
     pub speed: f32,
     /// Top speed (chasing food), cells per second.
@@ -575,6 +577,8 @@ struct SpeciesDef {
     temperament: Temperament,
     #[serde(default)]
     shy: bool,
+    #[serde(default)]
+    curious: bool,
     speed: f32,
     max_speed: f32,
     diet: Vec<String>,
@@ -837,6 +841,9 @@ fn validate(
     if d.description.trim().is_empty() {
         return Err(invalid("description must not be empty"));
     }
+    if d.shy && d.curious {
+        return Err(invalid("shy and curious cannot both be true"));
+    }
     let [top, bottom] = d.depth;
     if !(0.0..=1.0).contains(&top) || !(0.0..=1.0).contains(&bottom) || top >= bottom {
         return Err(invalid(
@@ -1027,6 +1034,7 @@ fn validate(
         air_tolerance_seconds: d.air_tolerance_seconds.unwrap_or(0),
         temperament: d.temperament,
         shy: d.shy,
+        curious: d.curious,
         speed: d.speed,
         max_speed: d.max_speed,
         diet,
@@ -1529,6 +1537,26 @@ mod tests {
         }
         let bad = OK.replace("min_depth = 10", "min_depth = 10\nshy = 1");
         assert!(species(&bad).is_err());
+    }
+
+    #[test]
+    fn curious_defaults_to_false_and_cannot_be_combined_with_shy() {
+        let m = materials();
+        let species = |source: &str| SpeciesTable::from_toml_sources(&[source], &m);
+        assert!(!species(OK).unwrap().get(SpeciesId(9)).unwrap().curious);
+        let parse =
+            |fields| species(&OK.replace("min_depth = 10", &format!("min_depth = 10\n{fields}")));
+        for (fields, expected) in [("curious = true", true), ("curious = false", false)] {
+            assert_eq!(
+                parse(fields).unwrap().get(SpeciesId(9)).unwrap().curious,
+                expected
+            );
+        }
+        assert!(parse("curious = 1").is_err());
+        assert!(matches!(
+            parse("curious = true\nshy = true"),
+            Err(SpeciesError::Invalid { reason, .. }) if reason.contains("shy and curious")
+        ));
     }
 
     #[test]

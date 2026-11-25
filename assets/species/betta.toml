@@ -30,6 +30,7 @@ breathes_air = true
 # frog's.
 air_tolerance_seconds = 900
 temperament = "territorial"
+curious = true
 # Radius in cm of the territory an adult claims where it settles: it
 # patrols it and drives other fish out (and other males of its own kind).
 territory_cm = 15.0

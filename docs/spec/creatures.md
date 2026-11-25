@@ -27,7 +27,7 @@
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Seven species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Eight species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp), `swim_every` (seconds between a
@@ -38,8 +38,10 @@
   moves the grains it displaces onto spoil heaps beside it and draws them
   back over its body, conserving the substrate), `bands` (the depth bands it
   keeps to, front and back, D21; every band by default), `rests` (where
-  it rests at night, *Night* below) and `shy` (seeks cover and startles
-  easily, false by default). Every species also gives its
+  it rests at night, *Night* below), `shy` (seeks cover and startles
+  easily, false by default), and `curious` (investigates the cursor and
+  nearby pours, false by default). A species can enable only one of
+  `shy` and `curious`. Every species also gives its
   real-world body length, `length_cm` (nose to tail without antennae or
   an outsized fin tail such as a male guppy's; a crab's carapace), and is drawn at a shared 2 cells per cm, so species
   sit at true relative sizes: Thai micro crab 0.5 cm (legs spanning
@@ -293,6 +295,14 @@
     the keeper pours something it does not eat within 12 cells. It holds
     still if already in cover, seeks cover, or runs away as when hunted.
     It avoids an enabled cursor within five body lengths.
+  - **Curiosity.** Pea puffers, bettas and fancy goldfish swim towards an
+    enabled cursor within six grown body lengths. They cruise to about
+    one and a half lengths away and hover facing it. Fleeing, surfacing
+    for air and feeding take priority. After 20 world seconds of
+    interest in the same cursor cell, the fish ignores the cursor for
+    30 world seconds. An awake, calm curious fish also heads toward a
+    pour within 24 cells if it cannot eat the material, using its usual
+    wander timer.
   - **Cover.** A creature is in cover with 4 plant cells within 2 bands
     of its own inside 2 cells of its body. A predator neither sees nor
     strikes prey in cover.
