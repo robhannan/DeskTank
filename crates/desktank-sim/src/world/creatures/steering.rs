@@ -346,8 +346,10 @@ impl World {
         // A slot reaches 3.5 lengths from its head: keep it to the rows
         // that hold the whole body in the species' zone and the columns
         // that hold it inside the side walls, as a wander target is, so a
-        // follower near an edge isn't led out of its band or the tank.
-        tx = school::clamp_to_walls(tx, k.w, self.width);
+        // follower near an edge isn't led out of its band or the tank. A
+        // place beyond a side wall folds back off it (see
+        // `school::fold_to_walls`) rather than pinning there.
+        tx = school::fold_to_walls(tx, k.w, self.width);
         let (top, bottom) = zone(k, self.surface_row, self.height);
         let hh = i64::from(k.h / 2);
         let (y0, y1) = (to_i64(top) + hh, to_i64(bottom) - hh - 1);
