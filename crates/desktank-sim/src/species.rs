@@ -256,6 +256,8 @@ pub struct Species {
     pub shy: bool,
     /// Whether it investigates the cursor and nearby pours.
     pub curious: bool,
+    /// Tail-flips away from larger approaching swimmers.
+    pub skittish: bool,
     /// Cruising speed, cells per second.
     pub speed: f32,
     /// Top speed (chasing food), cells per second.
@@ -579,6 +581,8 @@ struct SpeciesDef {
     shy: bool,
     #[serde(default)]
     curious: bool,
+    #[serde(default)]
+    skittish: bool,
     speed: f32,
     max_speed: f32,
     diet: Vec<String>,
@@ -844,6 +848,11 @@ fn validate(
     if d.shy && d.curious {
         return Err(invalid("shy and curious cannot both be true"));
     }
+    if d.skittish && (d.zone != Zone::Bottom || d.hop_every.is_none()) {
+        return Err(invalid(
+            "only bottom walkers with hop_every can be skittish",
+        ));
+    }
     let [top, bottom] = d.depth;
     if !(0.0..=1.0).contains(&top) || !(0.0..=1.0).contains(&bottom) || top >= bottom {
         return Err(invalid(
@@ -1035,6 +1044,7 @@ fn validate(
         temperament: d.temperament,
         shy: d.shy,
         curious: d.curious,
+        skittish: d.skittish,
         speed: d.speed,
         max_speed: d.max_speed,
         diet,
@@ -1537,6 +1547,35 @@ mod tests {
         }
         let bad = OK.replace("min_depth = 10", "min_depth = 10\nshy = 1");
         assert!(species(&bad).is_err());
+    }
+
+    #[test]
+    fn skittish_defaults_to_false_and_requires_a_bottom_hopper() {
+        let m = materials();
+        let parse = |zone: &str, fields: &str| {
+            let source = OK
+                .replace("zone = \"mid\"", &format!("zone = \"{zone}\""))
+                .replace("min_depth = 10", &format!("min_depth = 10\n{fields}"));
+            SpeciesTable::from_toml_sources(&[&source], &m)
+        };
+        for (zone, fields, expected) in [
+            ("mid", "", false),
+            ("mid", "skittish = false", false),
+            ("bottom", "hop_every = 5.0\nskittish = true", true),
+        ] {
+            let table = parse(zone, fields).unwrap();
+            assert_eq!(table.get(SpeciesId(9)).unwrap().skittish, expected);
+        }
+        assert!(parse("bottom", "hop_every = 5.0\nskittish = 1").is_err());
+        for (zone, fields) in [
+            ("mid", "hop_every = 5.0\nskittish = true"),
+            ("bottom", "skittish = true"),
+        ] {
+            assert!(matches!(
+                parse(zone, fields),
+                Err(SpeciesError::Invalid { reason, .. }) if reason.contains("skittish")
+            ));
+        }
     }
 
     #[test]
