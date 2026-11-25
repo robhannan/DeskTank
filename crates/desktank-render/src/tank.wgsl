@@ -406,8 +406,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             bg = vec4<f32>(water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine)), water_opacity());
         } else {
             bg = ground(at, ground_texel, quarter);
-            let fringe = water_fringe(at, ground_texel, quarter);
-            bg = vec4<f32>(mix(bg.rgb, fringe.rgb, fringe.a), bg.a);
+            var under = 1.0;
+            let film = ground_film(at, ground_texel, quarter, &under);
+            bg = vec4<f32>(mix(bg.rgb, film.rgb, film.a), bg.a);
         }
         if overlay_enabled() && plant_alpha > 0.0 {
             // Match the split passes: blend in the attachment's colour space.
@@ -455,7 +456,7 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             ground_texel = textureLoad(cells, nbr, 0);
         } else if src.swayed_away || overlay_enabled() {
             let fine = FINE_PLANTS && fine_scale();
-            let rgb = water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine));
+            let rgb = water_bg(at, quarter, fine, vec4<f32>(0.0));
             return layer_out(grid_post(rgb, cell), water_opacity());
         }
     }
@@ -463,12 +464,12 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return layer_out(grid_post(bg.rgb, cell), bg.a);
 }
 
-// Pass 2, drawn only while a coat shows: the coat's strands over the water
-// fs_ground drew (fs_main adds them in ground's place). Alone they would take
-// fs_ground past Chrome 68's register limit. The blend keeps the water's alpha.
+// Pass 2, drawn only while a coat or rear or side film shows: the algae over
+// what fs_ground drew (ground_film), which would take fs_ground past Chrome
+// 68's register limit. The blend keeps the ground's alpha.
 @fragment
-fn fs_fringe(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    if view.algae.x <= 0.0 || outside_lens(pos.xy) || hud_at(pos.xy).a > 0.5 {
+fn fs_ground_film(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if (view.algae.x <= 0.0 && view.algae.y <= 0.0) || outside_lens(pos.xy) || hud_at(pos.xy).a > 0.5 {
         discard;
     }
     let grid_pos = (pos.xy - view.offset) / view.scale;
@@ -483,16 +484,24 @@ fn fs_fringe(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let src = grid_source(grid_pos, at, texel, quarter);
     if (src.part >= 0 && !src.from_sway) || src.swayed_away {
         let nbr = behind_cell(at, quarter);
-        if nbr.x < 0 {
+        if nbr.x >= 0 {
+            ground_texel = textureLoad(cells, nbr, 0);
+        } else if src.swayed_away || overlay_enabled() {
+            let film = rear_film_behind(at, quarter, FINE_PLANTS && fine_scale());
+            if film.a <= 0.0 {
+                discard;
+            }
+            return vec4<f32>(out(grid_post(film.rgb, cell)).rgb * water_opacity(), film.a);
+        } else {
             discard;
         }
-        ground_texel = textureLoad(cells, nbr, 0);
     }
-    let fringe = water_fringe(at, ground_texel, quarter);
-    if fringe.a <= 0.0 {
+    var under = 1.0;
+    let film = ground_film(at, ground_texel, quarter, &under);
+    if film.a <= 0.0 {
         discard;
     }
-    return vec4<f32>(out(grid_post(fringe.rgb, cell)).rgb * water_opacity(), fringe.a);
+    return vec4<f32>(out(grid_post(film.rgb, cell)).rgb * under, film.a);
 }
 
 // Passes 2 and 3: plant art in leafy parts (fs_leaves) and the others
@@ -716,21 +725,82 @@ fn coat_fringe(at: vec2<i32>, quarter: vec2<i32>, fine: bool, depth: f32) -> vec
     return vec4<f32>(depth_cue(green, film.y), film.x * 0.23);
 }
 
-// The strands over a cell that ground() draws as water, as ground()
-// resolves its style (a device footprint below the surface is water).
-fn water_fringe(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
-    if view.algae.x <= 0.0 || view.scale < 2.0 {
+// `top` blended over `bottom` as one layer (straight alpha).
+fn film_over(top: vec4<f32>, bottom: vec4<f32>) -> vec4<f32> {
+    let a = top.a + bottom.a * (1.0 - top.a);
+    if a <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>((top.rgb * top.a + bottom.rgb * bottom.a * (1.0 - top.a)) / a, a);
+}
+
+// The algae over what ground() draws for texel `t` at `(at, quarter)`: the
+// rear glass film wherever water shows (but not behind bubbles), the coat
+// where a host's surface shows (as ground() trims sand, gravel, aquasoil,
+// detritus, stone and wood) and its strands over water. fs_main blends it
+// over ground(); the split grid draws it in fs_ground_film, since fs_ground
+// has no registers to spare. `under` gets the opacity of what it lies over.
+fn ground_film(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>, under: ptr<function, f32>) -> vec4<f32> {
+    *under = 1.0;
+    if view.algae.x <= 0.0 && view.algae.y <= 0.0 {
         return vec4<f32>(0.0);
     }
     var mat = i32(round(t.r * 255.0));
-    if (material_flags(t) & 127) == STYLE_DEVICE {
+    let v = u32(round(t.g * 255.0));
+    let flags = material_flags(t);
+    let raw_style = flags & 127;
+    if raw_style == STYLE_DEVICE {
         mat = max(i32(round(select(view.plant_parts.w, view.plant_parts2.w, f32(at.y) < view.surface_row))), 0);
     }
-    let base_v = i32(u32(round(t.g * 255.0)) & 1u);
-    if (i32(round(textureLoad(palette, vec2<i32>(mat, base_v), 0).a * 255.0)) & 127) != STYLE_WATER {
+    let rigid = (flags & 128) != 0;
+    let host = rigid || raw_style == STYLE_SAND || raw_style == STYLE_GRAVEL || raw_style == STYLE_AQUASOIL;
+    if view.scale < 2.0 {
+        let s = i32(round(textureLoad(palette, vec2<i32>(mat, i32(v)), 0).a * 255.0)) & 127;
+        if s == STYLE_WATER || s == STYLE_FERTILISER {
+            *under = ground_opacity(s);
+            return rear_film_at(at, at, vec2<f32>(at) + 0.5);
+        }
+        return select(vec4<f32>(0.0), host_coat(at, at, rigid, !rigid), host);
+    }
+    let fine = FINE_PLANTS && fine_scale();
+    let sub = quarter / 2;
+    let p = select(at * 2 + sub, at * 4 + quarter, fine);
+    let rear = rear_film_at(at, p, vec2<f32>(at) + (vec2<f32>(quarter) + 0.5) * 0.25);
+    let style = i32(round(textureLoad(palette, vec2<i32>(mat, i32(v & 1u)), 0).a * 255.0)) & 127;
+    if style == STYLE_WATER || style == STYLE_FERTILISER {
+        *under = ground_opacity(style);
+        if style == STYLE_FERTILISER {
+            return rear;
+        }
+        return film_over(coat_fringe(at, quarter, fine, -1.0), rear);
+    }
+    let row = select(sub.y, quarter.y, fine);
+    var shows = true;
+    if style == STYLE_SAND {
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
+        let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
+        shows = row >= loose_top(open_up, open_l, open_r, at, quarter, fine);
+    } else if style == STYLE_GRAVEL || style == STYLE_AQUASOIL {
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        shows = row >= loose_top_at(at, mat, open_up, quarter, fine);
+    } else if style == STYLE_ROCK || style == STYLE_DRIFTWOOD {
+        let own = outline_of(t);
+        shows = own == 0xffffu || rigid_drawn(at, mat, own, quarter, fine);
+    } else if style == STYLE_DETRITUS {
+        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+        shows = !is_water(at + vec2<i32>(0, -1)) || row >= loose_top_at(at, mat, open_up, quarter, fine);
+    } else {
         return vec4<f32>(0.0);
     }
-    return coat_fringe(at, quarter, FINE_PLANTS && fine_scale(), -1.0);
+    if !shows {
+        *under = water_opacity();
+        return rear;
+    }
+    if !host || style == STYLE_DETRITUS {
+        return vec4<f32>(0.0);
+    }
+    return host_coat(at, p, rigid, !rigid);
 }
 
 fn glass_density(grid_pos: vec2<f32>) -> vec4<f32> {
@@ -1169,14 +1239,8 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
     let fine = FINE_PLANTS && fine_scale();
     let sub = quarter / 2;
     let p = select(at * 2 + sub, at * 4 + quarter, fine);
-    let grid_pos = vec2<f32>(at) + select((vec2<f32>(quarter) + 0.5) * 0.25, vec2<f32>(0.5), flat);
-    // Share the sample with trimmed substrate, rigid outlines and bubbles.
-    let rear = rear_film_at(at, select(p, at, flat), grid_pos);
-    let rigid = (flags & 128) != 0;
-    var film = vec4<f32>(0.0);
-    if rigid || raw_style == STYLE_SAND || raw_style == STYLE_GRAVEL || raw_style == STYLE_AQUASOIL {
-        film = host_coat(at, select(p, at, flat), rigid, !rigid);
-    }
+    // ground_film draws the algae over all of this.
+    let rear = vec4<f32>(0.0);
     if flat {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
         let s = i32(round(c.a * 255.0)) & 127;
@@ -1185,11 +1249,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         var rgb = c.rgb * (1.0 - view.depth_dim * depth * tinted);
         if s == STYLE_WATER || s == STYLE_AIR {
             rgb = surface_ripple(rgb, at, vec2<i32>(1, 1), false, s == STYLE_AIR);
-        }
-        if s == STYLE_WATER || s == STYLE_FERTILISER {
-            rgb = mix(rgb, rear.rgb, rear.a);
-        } else {
-            rgb = mix(rgb, film.rgb, film.a);
         }
         return vec4<f32>(rgb, ground_opacity(s));
     }
@@ -1249,7 +1308,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if style == STYLE_WATER {
             rgb = surface_ripple(rgb, at, quarter, fine, false);
         }
-        rgb = mix(rgb, rear.rgb, rear.a);
         return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), ground_opacity(style));
     }
 
@@ -1309,7 +1367,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             k = k * 0.93;
         }
         let rgb = clamp(base * tint * k, vec3<f32>(0.0), vec3<f32>(1.0));
-        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
+        return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_GRAVEL {
@@ -1420,7 +1478,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             pebble_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
         }
         let rgb = clamp(pebble_base * warm * k, vec3<f32>(0.0), vec3<f32>(1.0));
-        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
+        return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_AQUASOIL {
@@ -1474,7 +1532,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             k = k * 0.95;
         }
         let rgb = clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
-        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
+        return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_ROCK {
@@ -1523,7 +1581,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             }
         }
         let rgb = clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
-        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
+        return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_DRIFTWOOD {
@@ -1575,7 +1633,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             }
         }
         let rgb = clamp(wood_base * k, vec3<f32>(0.0), vec3<f32>(1.0));
-        return vec4<f32>(mix(rgb, film.rgb, film.a), 1.0);
+        return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_BUBBLE {

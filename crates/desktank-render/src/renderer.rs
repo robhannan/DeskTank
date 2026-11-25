@@ -714,11 +714,11 @@ impl Renderer {
         for (i, p) in pipelines.grid.iter().enumerate() {
             pass.set_pipeline(p);
             pass.draw(0..3, 0..1);
-            if let Some(fringe) = &pipelines.fringe
+            if let Some(film) = &pipelines.ground_film
                 && i == 0
-                && self.algae.coat_visible
+                && (self.algae.coat_visible || self.algae.rear_film_visible)
             {
-                pass.set_pipeline(fringe);
+                pass.set_pipeline(film);
                 pass.draw(0..3, 0..1);
             }
         }
@@ -1188,14 +1188,14 @@ fn fine_scale(scale: u32) -> bool {
 #[derive(Debug)]
 struct Pipelines {
     grid: Vec<wgpu::RenderPipeline>,
-    /// The split grid's coat strands (`fs_fringe`), drawn after `fs_ground`
-    /// only while a coat shows.
-    fringe: Option<wgpu::RenderPipeline>,
+    /// The split grid's algae over the ground (`fs_ground_film`), drawn after
+    /// `fs_ground` only while a coat or a rear or side film shows.
+    ground_film: Option<wgpu::RenderPipeline>,
     sprites: Vec<wgpu::RenderPipeline>,
 }
 
-/// `fs_fringe` blends the strands' colour and keeps the water's alpha.
-const FRINGE_BLEND: wgpu::BlendState = wgpu::BlendState {
+/// `fs_ground_film` blends the algae's colour and keeps the ground's alpha.
+const FILM_BLEND: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendState::ALPHA_BLENDING.color,
     alpha: wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::Zero,
@@ -1297,9 +1297,9 @@ fn create_pipelines(
                     pipeline(&format!("tank {entry}{suffix}"), entry, blend, &constants)
                 })
                 .collect(),
-            fringe: gpu.split_grid.then(|| {
-                let label = format!("tank fs_fringe{suffix}");
-                pipeline(&label, "fs_fringe", Some(FRINGE_BLEND), &constants)
+            ground_film: gpu.split_grid.then(|| {
+                let label = format!("tank fs_ground_film{suffix}");
+                pipeline(&label, "fs_ground_film", Some(FILM_BLEND), &constants)
             }),
             sprites: sprite_entries
                 .iter()
