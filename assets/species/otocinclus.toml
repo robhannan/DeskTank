@@ -1,5 +1,6 @@
-# An otocinclus (placeholder art, D11): a small grey-brown sucker-mouth
-# catfish with a dark stripe from snout to tail. It clings to the glass,
+# A zebra otocinclus (Otocinclus cocama): a small creamy-ivory sucker-mouth
+# catfish with bold dark charcoal-brown vertical bars, a warm peach throat, a
+# tall sweeping dorsal fin and a deeply forked tail. It clings to the glass,
 # plants and rock as a surface crawler, like the nerite, rasping off algae
 # films and mulm as it goes.
 id = 11
@@ -30,109 +31,114 @@ brood = [2, 6]
 rest_days = 30
 
 [sprite]
-# Facing right, belly and sucker mouth down; two texels per cell side. 14
-# texels (7 cells, 3.5 cm) from tail to snout: a 7x3-cell sprite, odd on
-# both sides, so a quarter turn on the glass never leaves it on half
-# cells. Four frames: the fins paddle and the tail flicks.
-colours = { g = "#9c8f74", d = "#6a5f4c", s = "#2a2520", w = "#d9cfb6", m = "#4a4238", f = "#b7aa8c", k = "#0c1016", e = "#ffffff", o = "#c9a95a", h = "#b8ab8e", n = "#5a5040", c = "#c8bda2" }
+# Traced from the owner's zebra otocinclus (Otocinclus cocama) reference photo
+# (straightened and flipped right), shaded in the house style: dark-shade
+# outline, alternating ivory/charcoal zebra saddles, horizontal silvery side
+# pectoral over a shaded belly, translucent olive-cream fins with explicit
+# rays, and a compact dark eye with silver brow highlight. Facing right, belly
+# and sucker mouth down; two texels per cell side (14x6 coarse, 28x12 fine).
+# 7x3 cells (3.5 cm at two cells per cm), odd on both sides, so a quarter turn
+# on the glass never leaves it on half cells. Four frames: the forked tail
+# sweeps up and down, the dorsal flexes, and the ventral fins paddle.
+colours = { g = "#ddd3b6", h = "#f2ebd2", c = "#a89d82", o = "#625842", s = "#262119", d = "#4e4332", w = "#e8dec4", p = "#e2ae80", m = "#a67c58", a = "#827862", f = "#cfd6c6", l = "#e8eee0", n = "#8c9582", r = "#4d5244", k = "#0c1016", i = "#cfd9d2", e = "#ffffff" }
 frames = [
     [
-        "......dd......",
-        "d...dggdggdd..",
-        "dggdgggggggek.",
-        "sssssssssssskg",
-        "dg.wwwwwwwwwwm",
-        "....f.f...f...",
+        "..............",
+        ".......fr.....",
+        "fr....gsgsgg..",
+        ".frggsgsggikds",
+        "frr..f.faagmm.",
+        ".......f..f...",
     ],
     [
-        "......dd......",
-        "....dggdggdd..",
-        "dggdgggggggek.",
-        "sssssssssssskg",
-        "dg.wwwwwwwwwwm",
-        ".....f.f...f..",
+        "..............",
+        ".......fr.....",
+        ".r....gsgsgg..",
+        ".frggsgsggikds",
+        "frr..f..gaapm.",
+        "f.......f..f..",
     ],
     [
-        "......dd......",
-        "d...dggdggdd..",
-        "dggdgggggggek.",
-        "sssssssssssskg",
-        "dg.wwwwwwwwwwm",
-        "....f.f...f...",
+        "..............",
+        ".......fr.....",
+        "fr....gsgsgg..",
+        ".frggsgsggikds",
+        "frr..f.faagmm.",
+        ".......f..f...",
     ],
     [
-        "......dd......",
-        "d...dggdggdd..",
-        "dggdgggggggek.",
-        "sssssssssssskg",
-        ".g.wwwwwwwwwwm",
-        "...f.f...f....",
+        "..............",
+        "......fr......",
+        "fr....gsgsgg..",
+        ".frggsgsggikds",
+        ".rr....fagamm.",
+        ".......f.f....",
     ],
 ]
 # The palette icon, at one pixel per cell.
 icon = [
-    "d.ddgd.",
-    "ssssssk",
-    "d.wwwwm",
+    "r..rg..",
+    ".sgsgks",
+    "r..f.pp",
 ]
 
 # The same four poses at four texels per cell side (28x12), used at
 # display scales divisible by four.
 fine_frames = [
     [
-        ".............hgd............",
-        "............gdggd...........",
-        "gdd.....ghhhhhhhhhhhhhhg....",
-        "dhdd...ngddggddggddggddoog..",
-        "dddddgddgggdnggdnggdngoekog.",
-        "ddggdggggggdgggdgggdggokkoh.",
-        "ssskksssssssssssssssssssssgg",
-        ".dskkssssssssssssssssssssggg",
-        "dhggggwwwcwwwcwwwcwwwcwwwwmm",
-        "gdd...ffwwwwwwwwwwwwwwwwwnmm",
-        "........ff..ff......ff......",
-        "........f...f.......f.......",
+        "............................",
+        ".............nr.............",
+        ".............nnnr...........",
+        "..............nnnr..........",
+        ".l............fshshsd.......",
+        ".nrrr.....shshhscsgsshiid...",
+        "..rfnshshhsgsggsgscssdekdd..",
+        "...rrsgscsscsgcslllllwkkppds",
+        "..rnrsoaadsoaaadcaaccpmmmwm.",
+        ".nrr.....nf....ff..ffn......",
+        "ln.............fn..fn.......",
+        "...............n............",
     ],
     [
-        ".............hgd............",
-        "............gdggd...........",
-        "........ghhhhhhhhhhhhhhg....",
-        ".......ngddggddggddggddoog..",
-        "gdd..gddgggdnggdnggdngoekog.",
-        "dhggdggggggdgggdgggdggokkoh.",
-        "ssskksssssssssssssssssssssgg",
-        ".dskkssssssssssssssssssssggg",
-        "dhggggwwwcwwwcwwwcwwwcwwwwmm",
-        "gdd...ffwwwwwwwwwwwwwwwwwnmm",
-        "..........ff..ff......ff....",
-        "..........f...f.......f.....",
+        "............................",
+        ".............nr.............",
+        ".............nnnr...........",
+        "..............nnnr..........",
+        "..............fshshsd.......",
+        ".lrr......shshhscsgsshiid...",
+        "..rnrshshhsgsggsgscssdekdd..",
+        "...rrsgscsscsgcslllllwkkppds",
+        "...fnsoaadscaaadcaaccpmmmwm.",
+        "..rrr.....fn...ff..nff......",
+        ".lr............ff...nf......",
+        "................f...........",
     ],
     [
-        ".............hgd............",
-        "............gdggd...........",
-        "gdd.....ghhhhhhhhhhhhhhg....",
-        "dhdd...ngddggddggddggddoog..",
-        "dddddgddgggdnggdnggdngoekog.",
-        "ddggdggggggdgggdgggdggokkoh.",
-        "ssskksssssssssssssssssssssgg",
-        ".dskkssssssssssssssssssssggg",
-        "dhggggwwwcwwwcwwwcwwwcwwwwmm",
-        "gdd...ffwwwwwwwwwwwwwwwwwnmm",
-        "........ff..ff......ff......",
-        "........f...f.......f.......",
+        "............................",
+        ".............nr.............",
+        ".............nnnr...........",
+        "..............nnnr..........",
+        ".l............fshshsd.......",
+        ".nrrr.....shshhscsgsshiid...",
+        "..rfnshshhsgsggsgscssdekdd..",
+        "...rrsgscsscsgcslllllwkkppds",
+        "..rnrsoaadsoaaadcaaccpmmmwm.",
+        ".nrr.....nf....ff..ffn......",
+        "ln.............fn..fn.......",
+        "...............n............",
     ],
     [
-        ".............hgd............",
-        "............gdggd...........",
-        "gdd.....ghhhhhhhhhhhhhhg....",
-        "dhdd...ngddggddggddggddoog..",
-        "dddddgddgggdnggdnggdngoekog.",
-        "ddggdggggggdgggdgggdggokkoh.",
-        "ssskksssssssssssssssssssssgg",
-        "gdskkssssssssssssssssssssggg",
-        "..ggggwwwcwwwcwwwcwwwcwwwwmm",
-        "......ffwwwwwwwwwwwwwwwwwnmm",
-        "......ff..ff......ff........",
-        "......f...f.......f.........",
+        "............................",
+        ".............nnr............",
+        ".............nnfr...........",
+        ".l............nnnr..........",
+        ".nrr..........nshshsd.......",
+        "..rnr.....shshhscsgsshiid...",
+        "...ffshshhsgsggsgscssdekdd..",
+        "...rrsgscsscsgcslllllwkkppds",
+        "..rnrsoaadsoaaadcaaccmmmmwm.",
+        ".nrr.....nf....ff..ff.......",
+        "...............f...fn.......",
+        "...............n............",
     ],
 ]
