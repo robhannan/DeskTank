@@ -80,9 +80,28 @@ impl World {
     /// The swim `c` is in this tick, if any.
     pub(super) fn swim(&self, k: &Kind, c: &Creature) -> Option<Swim> {
         let (phase, h) = window(self.seed, self.tick, c, k.swim_every, SWIM_TICKS, SWIM_SALT)?;
-        (h % SWIM_ODDS == 0).then_some(Swim {
+        if h % SWIM_ODDS != 0 {
+            return None;
+        }
+        let mut dir = if (h >> 8) & 1 == 0 { 1 } else { -1 };
+        if k.shoaling && k.zone == Zone::Surfaces {
+            let mut offset = 0;
+            let mut count = 0;
+            for m in &self.creatures.school[usize::from(c.species.0)] {
+                if m.id != c.id {
+                    offset += i64::from(m.x) - i64::from(c.x);
+                    count += 1;
+                }
+            }
+            let length = self.kind(c.species).map_or(k.w, |g| g.size_of(c.female).0) * ONE;
+            // Compare with the mean without rounding or dividing by zero.
+            if offset.abs() > i64::from(3 * length) * count {
+                dir = if offset > 0 { 1 } else { -1 };
+            }
+        }
+        Some(Swim {
             rising: phase < SWIM_TICKS / 2,
-            dir: if (h >> 8) & 1 == 0 { 1 } else { -1 },
+            dir,
         })
     }
 

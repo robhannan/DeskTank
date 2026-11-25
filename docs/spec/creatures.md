@@ -7,7 +7,7 @@
     (`description`);
   - size;
   - zone: surface, mid-water, bottom or surfaces;
-  - temperament: schooling, peaceful or territorial;
+  - temperament: schooling, shoaling, peaceful or territorial;
   - diet: which food and which materials it grazes, such as algae and
     detritus, and which plant species (by their palatability, §2.7);
   - lifespan and maturity age;
@@ -52,6 +52,10 @@
     with the lead's pace, splitting now and then into groups that travel
     apart (a sub-lead each) and rejoining, with followers always aiming
     inside the zone and the side walls;
+  - shoaling for shoalers: each wanders on its own and often picks a
+    target near a mate of its own stage (young with young, adults with
+    adults). A straggler aims near its closest such mate. Surface
+    crawlers head towards their mates on short swims when far away;
   - zone preference;
   - bottom-walking for corydoras and shrimp, with short swims now and
     then for bottom dwellers that can swim, and burrowing into loose
@@ -277,6 +281,7 @@
     mate's, and runs the way that mate is heading. Each looks every 3–8
     ticks (its own reaction time), so the fright ripples outward through
     the school, fading as it goes, rather than reaching every fish at once.
+    A loose shoal doesn't pass a fright on.
   - **Cover.** A creature is in cover with 4 plant cells within 2 bands
     of its own inside 2 cells of its body. A predator neither sees nor
     strikes prey in cover.

@@ -117,6 +117,8 @@ impl RestSpot {
 pub enum Temperament {
     /// Swims in a group of its own kind.
     Schooling,
+    /// Wanders in a loose group of its own kind, with no lead.
+    Shoaling,
     /// Gets on with everyone.
     Peaceful,
     /// Defends a patch of the tank.
@@ -376,6 +378,7 @@ impl Species {
         } else {
             match self.temperament {
                 Temperament::Schooling => "schooling",
+                Temperament::Shoaling => "shoaling",
                 Temperament::Peaceful => "peaceful",
                 Temperament::Territorial => "territorial",
             }
@@ -1465,7 +1468,7 @@ mod tests {
             (
                 "kuhli_loach",
                 "sinking pellet, bloodworm",
-                "peaceful, bottom dweller, burrows, nocturnal, egg layer",
+                "shoaling, bottom dweller, burrows, nocturnal, egg layer",
                 "min depth 6 cm",
             ),
             (
@@ -1504,6 +1507,16 @@ mod tests {
         let species = table.iter().next().unwrap();
         assert_eq!(species.describe_requirements(), "min depth 5.5 cm");
         assert_eq!(species.describe_diet(&materials), "none");
+    }
+
+    #[test]
+    fn parses_shoaling_temperament() {
+        let source = OK.replace("temperament = \"peaceful\"", "temperament = \"shoaling\"");
+        let table = SpeciesTable::from_toml_sources(&[&source], &materials()).unwrap();
+        assert_eq!(
+            table.get(SpeciesId(9)).unwrap().temperament,
+            Temperament::Shoaling
+        );
     }
 
     #[test]
@@ -1587,7 +1600,7 @@ mod tests {
             assert!(frog.air_tolerance_seconds * 4 <= betta.air_tolerance_seconds);
         }
         let guppy = t.get(t.id("guppy").unwrap()).unwrap();
-        assert_ne!(guppy.temperament, Temperament::Schooling);
+        assert_eq!(guppy.temperament, Temperament::Shoaling);
         let rasbora = t.get(t.id("harlequin_rasbora").unwrap()).unwrap();
         assert_eq!(
             (rasbora.zone, rasbora.temperament),

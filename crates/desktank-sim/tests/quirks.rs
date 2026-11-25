@@ -40,7 +40,7 @@ fn range(values: &[f32]) -> (f32, f32) {
 #[test]
 fn roamers_swim_at_their_own_speeds_and_depths() {
     for seed in [3, 41] {
-        let (mut w, ids) = stocked(seed, "guppy", 6);
+        let (mut w, ids) = stocked(seed, "fancy_goldfish", 6);
         let ticks = 12_000;
         let mut travelled = vec![0.0; ids.len()];
         let mut depth = vec![0.0; ids.len()];

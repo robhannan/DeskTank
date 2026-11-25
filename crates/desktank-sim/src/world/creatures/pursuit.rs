@@ -442,9 +442,8 @@ impl World {
         let grown = self.kind(c.species).map_or(k.w, |g| g.size_of(c.female).0);
         let reach = i64::from(STARTLE_REACH * grown * ONE / 2);
         let mut loudest: Option<&super::Schoolmate> = None;
-        for m in &self.creatures.school {
-            if m.species == c.species
-                && m.id != c.id
+        for m in &self.creatures.school[usize::from(c.species.0)] {
+            if m.id != c.id
                 && m.fear > STARTLE_HOP
                 && loudest.is_none_or(|l| m.fear > l.fear)
                 && dist(m.x - c.x, m.y - c.y) <= reach
