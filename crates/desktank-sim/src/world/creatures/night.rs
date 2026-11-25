@@ -25,6 +25,8 @@
 //!   [`WOKEN_TICKS`] (two minutes: long enough to eat) before settling
 //!   again.
 //!
+//! The same pour hook makes awake curious fish investigate nearby non-food.
+//!
 //! Sleep and the woken counter are saved (format version 15) and hashed
 //! only while set, so a tank by day hashes as before.
 
@@ -37,8 +39,12 @@ use super::{
 use crate::daylight::MINUTES_PER_DAY;
 use crate::material::MaterialId;
 use crate::plants::Part;
+use crate::rng::chunk_stream;
 use crate::save::{SaveError, v15};
 use crate::species::RestSpot;
+
+/// Distance in fixed point from a curious fish's centre to a pour's centre.
+const POUR_INTEREST_REACH: i64 = 24 * ONE as i64;
 
 /// The earliest bedtime, in minutes after midnight (21:00, as the tank
 /// light dims towards night).
@@ -250,7 +256,8 @@ impl World {
     /// The keeper poured `material` over the disc at `(x, y)`, `radius`
     /// cells: at night it wakes every creature that eats it (they were
     /// fed) and every creature near the pour (disturbed). A nearby pour
-    /// that isn't food also frightens an awake shy creature.
+    /// that isn't food also frightens an awake shy creature or draws an
+    /// awake, calm curious one to investigate.
     pub(in crate::world) fn disturb_creatures(
         &mut self,
         x: i64,
@@ -259,6 +266,7 @@ impl World {
         material: MaterialId,
     ) {
         let reach = i64::from(radius) + DISTURB_REACH;
+        let (px, py) = (centre_of(x), centre_of(y));
         let mut list = core::mem::take(&mut self.creatures.list);
         for c in &mut list {
             let Some(k) = self.grown_kind(c) else {
@@ -266,9 +274,25 @@ impl World {
             };
             let wake = !k.live && k.rests != RestSpot::Never && self.night_for(c);
             let fed = k.edible[usize::from(material.0)];
-            // Netted or burrowed, it can't run: a pour doesn't frighten it.
+            // Netted or burrowed, it can't move: a pour neither frightens
+            // nor draws it.
             let held = c.held_until >= self.tick || self.sunk_depth(c) > 0;
             let startle = k.shy && !c.asleep && !fed && !held;
+            if k.curious
+                && !c.asleep
+                && !held
+                && c.fear == 0
+                && !fed
+                && dist(c.x - px, c.y - py) <= POUR_INTEREST_REACH
+            {
+                (c.tx, c.ty) = self.clamp_to_swim_zone(&k, c, px, py);
+                let mut rng = chunk_stream(
+                    self.seed,
+                    self.tick,
+                    (super::CREATURE_STREAM + u64::from(c.id.0)) ^ super::steering::POUR_SALT,
+                );
+                c.retarget = self.wander_span(c, &mut rng);
+            }
             if !(wake || startle) {
                 continue;
             }
@@ -278,7 +302,7 @@ impl World {
             };
             let nearby = near(x, b.x0, b.x1) && near(y, b.y0, b.y1);
             if startle && nearby {
-                self.frighten(&k, c, centre_of(x), centre_of(y), true);
+                self.frighten(&k, c, px, py, true);
             }
             if wake && (fed || nearby) {
                 c.wake();

@@ -1,12 +1,13 @@
-//! Species-specific steering in cell space. None of these probes edits the grid.
+//! Species-specific steering in cell space, including curious fish approaching
+//! the host cursor. None of these probes edits the grid.
 
 use rand_pcg::Pcg32;
 
 use super::quirks::Quirks;
 
 use super::{
-    Creature, FEET, Kind, ONE, REACHED, World, Zone, body, centre_of, dist, extent, school, to_i64,
-    zone,
+    Creature, FEET, Kind, ONE, REACHED, TICKS_PER_SECOND, World, Zone, body, centre_of,
+    clamp_target, dist, extent, school, to_i64, zone,
 };
 use crate::rng::splitmix64;
 
@@ -17,6 +18,27 @@ const SPONGE_GRAZE_SENSE: i64 = 96;
 const SPONGE_PERCH_TICKS: u64 = 200;
 /// Salt for deterministic sponge-perch selection.
 const SPONGE_PERCH_SALT: u64 = 0x7370_6f6e_6765;
+
+const CURSOR_SENSE_LENGTHS: i64 = 6;
+const CURSOR_INTEREST_TICKS: u64 = 20 * TICKS_PER_SECOND as u64;
+const CURSOR_COOLDOWN_TICKS: u64 = 30 * TICKS_PER_SECOND as u64;
+/// The approach eases in and holds within a fraction of a cell of its target.
+const CURSOR_ARRIVAL: i64 = ONE as i64 / 8;
+
+/// Salt for a curious fish's interest rhythm, and for its pour linger draw.
+const CURSOR_INTEREST_SALT: u64 = 0x6375_7269_6f75;
+pub(super) const POUR_SALT: u64 = 0x706f_7572;
+
+/// Whether a curious fish is interested in the cursor this tick: for
+/// [`CURSOR_INTEREST_TICKS`] of every interest-and-cool-down cycle, at a
+/// phase of its own. It is worked out from the tick, not kept, so a saved
+/// and reloaded tank watches and loses interest exactly as before.
+pub(super) fn interested(seed: u64, id: super::CreatureId, tick: u64) -> bool {
+    let period = CURSOR_INTEREST_TICKS + CURSOR_COOLDOWN_TICKS;
+    let phase = splitmix64(seed ^ CURSOR_INTEREST_SALT ^ u64::from(id.0).wrapping_mul(0x9e37_79b9))
+        % period;
+    (tick + phase) % period < CURSOR_INTEREST_TICKS
+}
 
 impl World {
     /// One pixel step at the species' cruising speed. Trace the contour
@@ -209,6 +231,7 @@ impl World {
         best.map(|(_, t)| t)
     }
 
+    /// Target centre and speed. Zero speed means hovering in place.
     pub(super) fn steering_target(
         &self,
         k: &Kind,
@@ -225,7 +248,9 @@ impl World {
             c.retarget -= 1;
         }
 
-        if let Some((px, py)) = self.creatures.cursor {
+        if !k.curious
+            && let Some((px, py)) = self.creatures.cursor
+        {
             let (mut dx, dy) = (c.x - px, c.y - py);
             if dist(dx, dy) < cursor_reach(k) {
                 if dx == 0 && (dy == 0 || k.zone == Zone::Bottom) {
@@ -256,7 +281,13 @@ impl World {
                 k.top,
             );
         }
+        // A chase (a betta driving off a rival) comes before the cursor.
         if let Some(target) = self.chase_target(k, c) {
+            return target;
+        }
+        if k.curious
+            && let Some(target) = self.curious_cursor_target(k, c)
+        {
             return target;
         }
         if k.schooling {
@@ -271,6 +302,41 @@ impl World {
             if k.zone == Zone::Bottom { c.y } else { c.ty },
             k.cruise,
         )
+    }
+
+    /// Aim along the line from the cursor to the fish, one and a half
+    /// grown body lengths away from the cursor.
+    fn curious_cursor_target(&self, k: &Kind, c: &mut Creature) -> Option<(i32, i32, i32)> {
+        let (px, py) = self.creatures.cursor?;
+        let (dx, dy) = (c.x - px, c.y - py);
+        let distance = dist(dx, dy);
+        let length = i64::from(k.w * ONE);
+        if distance > CURSOR_SENSE_LENGTHS * length || !interested(self.seed, c.id, self.tick) {
+            return None;
+        }
+        let stop = 3 * length / 2;
+        if distance > stop {
+            let offset = |axis| i32::try_from(i64::from(axis) * stop / distance).unwrap_or(0);
+            let (tx, ty) = self.clamp_to_swim_zone(k, c, px + offset(dx), py + offset(dy));
+            if dist(tx - c.x, ty - c.y) > CURSOR_ARRIVAL {
+                return Some((tx, ty, k.cruise));
+            }
+        }
+        c.face_along(-dx, -dy);
+        Some((c.x, c.y, 0))
+    }
+
+    /// Body centres inside the depth zone and glass, using the wander bounds.
+    pub(super) fn clamp_to_swim_zone(&self, k: &Kind, c: &Creature, x: i32, y: i32) -> (i32, i32) {
+        let (top, bottom) = zone(k, self.surface_row, self.height);
+        let (hw, hh) = (i64::from(k.w / 2 + 1), i64::from(k.h / 2));
+        let x = clamp_target(x, hw, to_i64(self.width) - hw);
+        let y = if k.zone == Zone::Bottom {
+            c.y
+        } else {
+            clamp_target(y, to_i64(top) + hh, to_i64(bottom) - hh)
+        };
+        (x, y)
     }
 
     /// The school's heads wander (its lead, and a sub-lead while it is
@@ -362,4 +428,25 @@ impl World {
 pub(super) fn cursor_reach(k: &Kind) -> i64 {
     let lengths = if k.shy { 5 } else { 3 };
     i64::from(lengths * k.w * ONE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curious_interest_lasts_twenty_seconds_in_every_fifty_at_each_fishs_own_phase() {
+        let period = CURSOR_INTEREST_TICKS + CURSOR_COOLDOWN_TICKS;
+        let mut starts = std::collections::BTreeSet::new();
+        for id in 1..20 {
+            let id = crate::world::creatures::CreatureId(id);
+            let on = (0..period).filter(|&t| interested(7, id, t)).count();
+            assert_eq!(on as u64, CURSOR_INTEREST_TICKS);
+            let start =
+                (0..period).find(|&t| interested(7, id, t) && !interested(7, id, t + period - 1));
+            starts.insert(start);
+        }
+        // The fish don't all lose interest at once.
+        assert!(starts.len() > 10, "{starts:?}");
+    }
 }
