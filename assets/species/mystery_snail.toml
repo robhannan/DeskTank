@@ -1,5 +1,7 @@
 id = 22
 name = "mystery_snail"
+scientific_name = "Pomacea diffusa"
+description = "A round-shelled snail that grazes algae as it crawls over surfaces."
 palette = "invertebrates/snails"
 zone = "surfaces"
 depth = [0.0, 1.0]

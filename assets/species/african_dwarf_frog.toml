@@ -1,5 +1,7 @@
 id = 24
 name = "african_dwarf_frog"
+scientific_name = "Hymenochirus boettgeri"
+description = "A small aquatic frog that paddles up for gulps of air."
 palette = "amphibians"
 zone = "mid"
 depth = [0.0, 1.0]

@@ -3,6 +3,7 @@
 # and lean water and is slow to suffer, but slow to grow.
 id = 6
 name = "bacopa"
+scientific_name = "Bacopa caroliniana"
 palette = "plants/stem"
 description = "A slow, undemanding stem plant with thick, fleshy leaves."
 form = "stem"

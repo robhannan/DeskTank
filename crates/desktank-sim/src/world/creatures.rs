@@ -2361,6 +2361,8 @@ mod tests {
         let source = r##"
             id = 0
             name = "test_fish"
+            scientific_name = "Piscis fictus"
+            description = "A small fish for creature tests."
             zone = "mid"
             depth = [0.2, 0.6]
             min_depth = 2

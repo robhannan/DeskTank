@@ -1,5 +1,7 @@
 id = 25
 name = "axolotl"
+scientific_name = "Ambystoma mexicanum"
+description = "A bottom-dwelling salamander with feathery gills and a taste for small prey."
 palette = "amphibians"
 zone = "bottom"
 depth = [0.7, 1.0]

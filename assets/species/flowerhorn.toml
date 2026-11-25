@@ -1,5 +1,7 @@
 id = 19
 name = "flowerhorn"
+scientific_name = "Amphilophus hybrid"
+description = "A large hybrid cichlid with a rounded forehead and a fiercely defended territory."
 palette = "fish/centrepiece"
 zone = "mid"
 depth = [0.2, 0.88]

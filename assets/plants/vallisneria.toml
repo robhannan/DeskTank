@@ -3,6 +3,7 @@
 # it spreads quickly by runners that root a new plant every few cells.
 id = 9
 name = "vallisneria"
+scientific_name = "Vallisneria spiralis"
 palette = "plants/rosette"
 description = "Tall ribbon blades that reach for the surface; spreads fast by runners."
 form = "rosette"

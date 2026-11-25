@@ -6,6 +6,7 @@
 # it along the bottom. A piece broken off rounds into a ball of its own.
 id = 17
 name = "marimo"
+scientific_name = "Aegagropila linnaei"
 palette = "plants/moss"
 description = "A slow, velvety ball of algae that lies loose on the bottom."
 form = "ball"

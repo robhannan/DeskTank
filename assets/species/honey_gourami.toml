@@ -5,6 +5,8 @@
 # keeps to itself. Eats flakes, bloodworms and pellets.
 id = 8
 name = "honey_gourami"
+scientific_name = "Trichogaster chuna"
+description = "A small honey-coloured fish that swims near the surface and gulps air."
 palette = "fish/centrepiece"
 zone = "surface"
 depth = [0.0, 0.5]

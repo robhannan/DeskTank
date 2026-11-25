@@ -3,6 +3,7 @@
 # substrate. Wants good light and grows faster with CO₂.
 id = 10
 name = "dwarf_hairgrass"
+scientific_name = "Eleocharis acicularis"
 palette = "plants/carpet"
 description = "A lawn of fine grassy tufts spreading by short runners."
 form = "carpet"

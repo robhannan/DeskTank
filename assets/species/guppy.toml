@@ -6,6 +6,8 @@
 # schooling. Eats flakes and bloodworms, and fry.
 id = 9
 name = "guppy"
+scientific_name = "Poecilia reticulata"
+description = "A small livebearing fish whose males sport bright fan tails."
 palette = "fish/schooling"
 zone = "mid"
 depth = [0.1, 0.55]

@@ -1,5 +1,7 @@
 id = 26
 name = "common_frog"
+scientific_name = "Rana temporaria"
+description = "A mottled frog that stays near the surface and snaps up small prey."
 palette = "amphibians"
 zone = "surface"
 depth = [0.0, 0.45]
