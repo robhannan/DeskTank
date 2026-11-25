@@ -27,7 +27,7 @@
   air-breather like the betta), guppy (*Poecilia reticulata*, the
   livebearer, with female frames since T9 part 2), harlequin rasbora
   (*Trigonostigma heteromorpha*, a second schooler) and otocinclus (a
-  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Nine species keys extend the list above: `reach`
+  sucker-mouth catfish that crawls surfaces like the nerite). Common goldfish, fancy goldfish, angelfish, pea puffer and flowerhorn are also available. Bettas have heritable red, royal blue and copper colours. Bristlenose plecos and both mystery and ramshorn snails graze submerged surfaces. Kuhli loaches and axolotls forage on the bed; axolotls have heritable wild, leucistic and golden albino colours. African dwarf frogs cross the water column to breathe, while common frogs stay near the surface. Ten species keys extend the list above: `reach`
   (cells past the body it eats from, default 1; the crab's filter-feeding
   fans reach 2), `hop_every` (seconds between a bottom walker's short
   hops off the substrate, for shrimp), `swim_every` (seconds between a
