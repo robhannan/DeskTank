@@ -5,7 +5,7 @@
 # goldfish: eats almost anything, grows big and is very messy.
 id = 14
 name = "blinker"
-scientific_name = "Carassius trioculus"
+scientific_name = "Carassius auratus springfieldus"
 description = "A three-eyed mutant goldfish that glows after dark."
 zone = "mid"
 depth = [0.15, 0.9]
