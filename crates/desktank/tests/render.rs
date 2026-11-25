@@ -345,11 +345,14 @@ fn blinker_scene_matches_reference_by_day_and_night() {
 /// The split grid with what only some frames show: swaying plants (a
 /// neighbour's leaf drawn over a cell, or a cell's own leaf swayed away)
 /// at both plant-art levels, and the field overlay and night tint, which
-/// the plant passes apply before blending over the ground.
+/// the plant passes apply before blending over the ground; and the algae
+/// coat, whose strands over water the split grid draws in a pass of their
+/// own, with the front film drawn after the sprites.
 #[test]
 fn split_grid_matches_one_pass_with_sway_and_overlays() {
     for (scene, size, time, extra) in [
         ("depth", SIZE_X4, None, &["--sway"][..]),
+        ("algae_film", SIZE_X4, None, &[][..]),
         (
             "plant_floaters",
             SIZE,
