@@ -323,7 +323,12 @@ target computes the same bits.
     into dead plant matter at 1% per second while nutrient ≤ 0.02 or
     light ≤ 0.05. *Measured N:* a fed (aquasoil bed) and lit cutting grows
     185–235 cells in 10 simulated minutes (seeds 0–5, 160×120 tank); the
-    acceptance test requires N = 150.
+    acceptance test requires N = 150. Under unsuitable rooting conditions,
+    propagules using the cutting material quietly accumulate rot progress
+    in the high byte of their cell state. They become dead plant matter
+    after about 7.5 minutes (within one in-tank day, 600 s), then decay to
+    detritus and release nutrients as the detritus breaks down. Seeds
+    retain their species id in the low byte and do not rot.
   - **Moss** grows over rock and driftwood only (each new cell must touch
     one), needs little (nutrient > 0.05, light > 0.05), and falls off as
     dead plant matter when it touches neither.

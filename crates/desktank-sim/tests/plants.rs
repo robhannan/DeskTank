@@ -7,7 +7,8 @@
 )]
 
 use desktank_sim::{
-    Brush, FieldKind, MaterialId, MaterialTable, Propagule, Rect, World, WorldConfig,
+    Brush, FieldKind, LIFE_DAY_SECONDS, LIFE_DAY_TICKS, MaterialId, MaterialTable, Propagule,
+    RANDOM_TICK_BUDGET, Rect, World, WorldConfig, save,
 };
 
 /// Plant cells a fed and lit cutting grows in 10 simulated minutes, at
@@ -80,17 +81,148 @@ fn a_fed_and_lit_plant_grows_at_least_n_cells_in_10_minutes() {
 }
 
 #[test]
-fn unfed_or_unlit_cuttings_dont_grow() {
-    // Sand holds no nutrients.
-    let mut w = planted(1, "sand", 12, 80);
-    run(&mut w, 5 * MINUTE);
-    assert_eq!(count(&w, PLANT), 0);
-    assert_eq!(count(&w, &["cutting"]), 1);
-    // Fed but in the dark under a glued lid.
-    let mut w = planted(1, "aquasoil", 12, 80);
-    lid(&mut w);
-    run(&mut w, 5 * MINUTE);
-    assert_eq!(count(&w, PLANT), 0);
+fn unsuitable_cuttings_rot_within_one_day() {
+    for (name, method, substrate, shaded) in [
+        ("hygrophila", Propagule::Cuttings, "sand", false),
+        ("hygrophila", Propagule::Cuttings, "aquasoil", true),
+        ("java_moss", Propagule::Fragments, "aquasoil", false),
+        ("vallisneria", Propagule::Runners, "sand", false),
+        ("duckweed", Propagule::Buds, "sand", true),
+    ] {
+        let mut w = world(48, 48, 1);
+        let bed = id(&w, substrate);
+        w.fill_rect(rect(0, 40, 48, 48), bed, Brush::Replace)
+            .unwrap();
+        if shaded {
+            lid(&mut w);
+        }
+        let species = w.plant_species().id(name).unwrap();
+        w.paint_plant(24, 39, 0, species, method).unwrap();
+        run(&mut w, 5 * MINUTE);
+        assert_eq!(w.plant_count(), 0, "{name}");
+        assert_eq!(count(&w, &["cutting"]), 1, "{name}");
+        let dead = id(&w, "dead_plant");
+        let found_dead = (5 * MINUTE..LIFE_DAY_TICKS).any(|_| {
+            w.tick();
+            w.cell(24, 39).unwrap().material == dead
+        });
+        assert!(found_dead, "{name} did not rot within one in-tank day");
+        assert_eq!(w.plant_count(), 0, "{name}");
+
+        if substrate == "sand" && name == "hygrophila" {
+            let detritus = id(&w, "detritus");
+            let water = id(&w, "water");
+            let became_detritus = (0..3 * MINUTE).any(|_| {
+                w.tick();
+                w.cell(24, 39).unwrap().material == detritus
+            });
+            assert!(became_detritus, "dead plant did not decay to detritus");
+            let dissolved = (0..4 * MINUTE).any(|_| {
+                w.tick();
+                w.cell(24, 39).unwrap().material == water
+            });
+            assert!(dissolved, "detritus did not dissolve into water");
+            assert_eq!(count(&w, &["detritus", "dead_plant", "cutting"]), 0);
+            assert!(w.field(FieldKind::Nutrient).at_cell(24, 39) > 0.0);
+        }
+    }
+}
+
+#[test]
+fn suitable_unrooted_cuttings_do_not_age() {
+    let mut w = world(48, 48, 3);
+    let aquasoil = id(&w, "aquasoil");
+    w.fill_rect(rect(0, 40, 48, 48), aquasoil, Brush::Replace)
+        .unwrap();
+    // Fill the plant cap of 1 with a separate plant so the cutting stays
+    // unrooted despite suitable light, nutrients and substrate.
+    w.set_plant_cap(1);
+    let stem = id(&w, "stem");
+    w.set_cell(4, 39, stem).unwrap();
+    run(&mut w, MINUTE);
+    assert_eq!(w.plant_count(), 1);
+    let rotala = w.plant_species().id("rotala").unwrap();
+    w.paint_plant(24, 39, 0, rotala, Propagule::Cuttings)
+        .unwrap();
+    run(&mut w, LIFE_DAY_TICKS);
+    let cell = w.cell(24, 39).unwrap();
+    assert_eq!(cell.material, id(&w, "cutting"));
+    assert_eq!(cell.state, u16::from(rotala.0));
+}
+
+#[test]
+fn seeds_wait_and_catch_up_rots_cuttings() {
+    let mut w = world(48, 32, 2);
+    let sand = id(&w, "sand");
+    w.fill_rect(rect(0, 24, 48, 32), sand, Brush::Replace)
+        .unwrap();
+    let seed = id(&w, "seed");
+    let cutting = id(&w, "cutting");
+    w.set_cell(16, 23, seed).unwrap();
+    w.set_cell(32, 23, cutting).unwrap();
+    w.catch_up(LIFE_DAY_SECONDS);
+    assert_eq!(w.cell(32, 23).unwrap().material, id(&w, "dead_plant"));
+    run(&mut w, LIFE_DAY_TICKS + MINUTE);
+    let seed_cell = w.cell(16, 23).unwrap();
+    assert_eq!(seed_cell.material, seed);
+    assert_eq!(seed_cell.state, 0);
+}
+
+#[test]
+fn a_dense_cutting_bed_ages_without_waking_chunks() {
+    let mut w = world(256, 24, 4);
+    let sand = id(&w, "sand");
+    w.fill_rect(rect(0, 20, 256, 24), sand, Brush::Replace)
+        .unwrap();
+    let moss = w.plant_species().id("java_moss").unwrap();
+    for y in 18..20 {
+        for x in 0..256 {
+            w.paint_plant(x, y, 0, moss, Propagule::Fragments).unwrap();
+        }
+    }
+    assert!(count(&w, &["cutting"]) > RANDOM_TICK_BUDGET);
+    run(&mut w, MINUTE);
+    let age = w.cell(128, 19).unwrap().state >> 8;
+    for _ in MINUTE..5 * MINUTE {
+        w.tick();
+        assert_eq!(w.awake_chunks(), 0);
+        assert!(w.random_tick_stats().visited <= RANDOM_TICK_BUDGET);
+    }
+    assert!(w.cell(128, 19).unwrap().state >> 8 > age);
+    for _ in 5 * MINUTE..LIFE_DAY_TICKS {
+        w.tick();
+        assert!(w.random_tick_stats().visited <= RANDOM_TICK_BUDGET);
+    }
+    assert_eq!(count(&w, &["cutting"]), 0);
+    assert_eq!(w.plant_count(), 0);
+}
+
+#[test]
+fn saved_cuttings_keep_species_and_rot_timing() {
+    let mut w = world(24, 24, 5);
+    let sand = id(&w, "sand");
+    w.fill_rect(rect(0, 16, 24, 24), sand, Brush::Replace)
+        .unwrap();
+    let rotala = w.plant_species().id("rotala").unwrap();
+    w.paint_plant(12, 15, 0, rotala, Propagule::Cuttings)
+        .unwrap();
+    run(&mut w, 4 * MINUTE);
+    let cell = w.cell(12, 15).unwrap();
+    assert_eq!(cell.material, id(&w, "cutting"));
+    assert_eq!(cell.state.to_le_bytes()[0], rotala.0);
+    assert!(cell.state >> 8 > 0);
+    let mut loaded = save::decode(&save::encode(&w), MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(loaded.cell(12, 15), Some(cell));
+    assert_eq!(loaded.state_hash(), w.state_hash());
+    let dead = id(&w, "dead_plant");
+    let rotted = (4 * MINUTE..LIFE_DAY_TICKS).any(|_| {
+        w.tick();
+        loaded.tick();
+        assert_eq!(loaded.cell(12, 15), w.cell(12, 15));
+        w.cell(12, 15).unwrap().material == dead
+    });
+    assert!(rotted);
+    assert_eq!(loaded.state_hash(), w.state_hash());
 }
 
 /// Glues a slab of rock across the top two field rows of water, which
