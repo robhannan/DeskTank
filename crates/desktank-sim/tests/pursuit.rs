@@ -145,15 +145,17 @@ fn fry_left(seed: u64, planted: bool) -> usize {
 #[test]
 fn fry_hiding_in_plants_survive_more_often() {
     let (mut open, mut planted) = (0, 0);
-    for seed in 1..=6 {
+    // Sixteen tanks: guppy fry shoal (with fry), drawing each other out
+    // of cover now and then, so six tanks left the margin to chance.
+    for seed in 1..=16 {
         let (o, p) = (fry_left(seed, false), fry_left(seed, true));
         eprintln!("seed {seed}: {o} of 6 fry left in the open, {p} among plants");
         open += o;
         planted += p;
     }
-    assert!(open < 36, "the guppy ate no fry in the open");
+    assert!(open < 16 * 6, "the guppy ate no fry in the open");
     assert!(
-        planted >= open + 6,
+        planted >= open + 6 && planted >= 2 * open,
         "{planted} fry left among plants, {open} in the open"
     );
 }
