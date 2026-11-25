@@ -206,10 +206,11 @@ impl World {
         let before = (c.x, c.y, c.facing_left);
         match k.zone {
             Zone::Surfaces => {
-                // It holds its face; one that fell asleep mid-swim sinks
-                // until it touches something it can hold.
+                // It holds its face (or its pane); one that fell asleep
+                // mid-swim sinks until it touches something it can hold.
                 (c.vx, c.vy) = (0, 0);
-                if !self.on_surface(k, c.turn, c.x, c.y, c.band())
+                if c.pane == super::Pane::Off
+                    && !self.on_surface(k, c.turn, c.x, c.y, c.band())
                     && self.fits(k, c.turn, c.x, c.y + ONE, c.band())
                 {
                     c.y += ONE;

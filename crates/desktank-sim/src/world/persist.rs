@@ -6,7 +6,7 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16};
 use crate::species::SpeciesId;
 
 impl World {
@@ -84,6 +84,21 @@ impl World {
             base: self.to_v14(),
             rest: self.save_rest(),
         }
+    }
+
+    /// The world as a version 16 snapshot.
+    pub(crate) fn to_v16(&self) -> v16::Save {
+        v16::Save {
+            base: self.to_v15(),
+            panes: self.save_panes(),
+        }
+    }
+
+    /// A world restored from a version 16 snapshot, on `materials`.
+    pub(crate) fn from_v16(s: v16::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let mut w = Self::from_v15(s.base, materials)?;
+        w.load_panes(&s.panes)?;
+        Ok(w)
     }
 
     /// A world restored from a version 15 snapshot, on `materials`.
