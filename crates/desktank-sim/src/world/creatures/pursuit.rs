@@ -43,8 +43,8 @@
 //! - **Skittishness.** A calm, awake bottom hopper tail-flips away from an
 //!   approaching larger swimmer within three of its grown lengths (at least
 //!   six cells before applying boldness). It kicks backwards and up at
-//!   double top speed for [`FLIP_TICKS`], holds its facing, then sinks and
-//!   ignores threats for [`FLIP_REST`].
+//!   double top speed for half a second, holds its facing, then sinks and
+//!   ignores threats for 2 s.
 //! - **Cover.** A creature is in cover when [`COVER_CELLS`] plant cells
 //!   within [`COVER_BANDS`] of its band lie within [`COVER_REACH`] cells of
 //!   its body. A predator neither sees nor strikes prey in cover.
