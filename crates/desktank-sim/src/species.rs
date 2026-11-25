@@ -1468,7 +1468,7 @@ mod tests {
             (
                 "kuhli_loach",
                 "sinking pellet, bloodworm",
-                "peaceful, bottom dweller, burrows, nocturnal, egg layer",
+                "shoaling, bottom dweller, burrows, nocturnal, egg layer",
                 "min depth 6 cm",
             ),
             (
