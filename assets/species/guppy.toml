@@ -39,10 +39,10 @@ brood = [3, 8]
 rest_days = 7
 
 # Colour strains (SPEC §2.4, D13), in allele order (append only: saves
-# keep the index). The sprite is the wild type: orange and blue patches and
-# an orange tail; the fancy strains recolour the tail and patches, and
-# crossing them reverts to wild. A morph's colours replace the sprite's by
-# key.
+# keep the index). The sprite is the wild type: iridescent silver-aqua front,
+# royal-blue rear body and an orange-and-black mosaic tail with a pale cream
+# rim; the fancy strains recolour the tail and dorsal fin, and crossing them
+# reverts to wild. A morph's colours replace the sprite's by key.
 [genetics]
 wildtype = "wild"
 sprite = "wild"
