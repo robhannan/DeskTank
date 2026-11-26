@@ -30,12 +30,21 @@
 //! rigid ones (whose state is their body id, D17) none. Reactions may involve rigid
 //! cells: their conversions go through the body bookkeeping.
 
+use std::sync::Arc;
+
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::field::{FIELD_DT, FIELD_SCALE, FieldKind, MAX_DIFFUSION};
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::world::TICKS_PER_SECOND;
+
+mod variety;
+
+pub use variety::{AlgaeLook, AlgaeStyle};
+pub(crate) use variety::{
+    Conditions, HOST_FRONT_GLASS, HOST_HARDSCAPE, HOST_REAR_GLASS, HOST_SUBSTRATE, Variety, Verdict,
+};
 
 /// Longest decay time, in seconds (ages are `u16` ticks).
 pub const MAX_DECAY_TIME: f32 = 3000.0;
@@ -328,7 +337,8 @@ impl Default for FiltrationDef {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AlgaeDef {
-    surfaces: Vec<String>,
+    substrate: Vec<String>,
+    hardscape: Vec<String>,
     nutrient: f32,
     light: f32,
     seed_rate: f32,
@@ -336,6 +346,8 @@ struct AlgaeDef {
     growth_rate: f32,
     die_back_rate: f32,
     co2_boost: f32,
+    #[serde(default)]
+    variety: Vec<variety::VarietyDef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -615,18 +627,64 @@ pub struct BubblerConfig {
     pub rate: f32,
 }
 
-/// Surface film thresholds and density changes per world second.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Surface film: where it grows, and its varieties (D28, #369).
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AlgaeConfig {
+    /// Every material a coat can cover.
     pub surfaces: MaterialSet,
-    pub nutrient: f32,
-    pub light: f32,
-    pub seed_rate: f32,
-    pub creep_rate: f32,
-    pub growth_rate: f32,
-    pub die_back_rate: f32,
+    /// The rigid ones (rock, driftwood); the rest of `surfaces` is substrate.
+    pub hardscape: MaterialSet,
     /// Plant competition grows by this fraction per unit of CO₂ in a block.
     pub co2_boost: f32,
+    /// In file order.
+    pub varieties: Vec<Variety>,
+    /// The index in `varieties` plus one, by variety id (0 = none).
+    index: [u8; 16],
+}
+
+impl AlgaeConfig {
+    pub fn variety(&self, id: u8) -> Option<&Variety> {
+        let slot = *self.index.get(usize::from(id))?;
+        self.varieties.get(usize::from(slot).checked_sub(1)?)
+    }
+
+    /// The variety named `name`.
+    pub fn by_name(&self, name: &str) -> Option<&Variety> {
+        self.varieties.iter().find(|v| v.name == name)
+    }
+
+    /// Bits by variety id: those that grow on `host` (a `HOST_*` bit).
+    pub fn hosted(&self, host: u8) -> u16 {
+        self.varieties
+            .iter()
+            .filter(|v| v.hosts & host != 0)
+            .fold(0, |mask, v| mask | 1 << v.id)
+    }
+
+    /// The highest-priority variety among the bits of `mask`; the first in
+    /// file order among equals.
+    pub fn best(&self, mask: u16) -> Option<&Variety> {
+        self.varieties
+            .iter()
+            .filter(|v| mask & (1 << v.id) != 0)
+            .fold(None, |best: Option<&Variety>, v| {
+                best.filter(|b| b.priority >= v.priority).or(Some(v))
+            })
+    }
+
+    /// Bits by variety id: those that grow, and those that only wait, in
+    /// `c`.
+    pub fn verdicts(&self, c: Conditions) -> (u16, u16) {
+        let (mut grow, mut dormant) = (0, 0);
+        for v in &self.varieties {
+            match v.verdict(c) {
+                Verdict::Grow => grow |= 1 << v.id,
+                Verdict::Dormant => dormant |= 1 << v.id,
+                Verdict::Fade => {}
+            }
+        }
+        (grow, dormant)
+    }
 }
 
 /// The resolved reaction table, processes, field and device settings for
@@ -653,7 +711,7 @@ pub struct Ecology {
     pub quality: QualityConfig,
     /// Mechanical and biological filtration (DV3).
     pub filtration: FiltrationConfig,
-    pub(crate) algae: Option<AlgaeConfig>,
+    pub(crate) algae: Option<Arc<AlgaeConfig>>,
 }
 
 impl Ecology {
@@ -716,7 +774,7 @@ impl Ecology {
             algae: f
                 .algae
                 .as_ref()
-                .map(|d| algae(d, materials, strict))
+                .map(|d| algae(d, materials, strict).map(Arc::new))
                 .transpose()?,
         };
         for (name, d) in [("nutrient", eco.nutrient), ("co2", eco.co2)] {
@@ -1158,22 +1216,46 @@ fn algae(
     if !(d.co2_boost.is_finite() && d.co2_boost >= 0.0) {
         return Err(invalid(&what, "co2_boost must be finite and >= 0"));
     }
-    let surfaces = set(&d.surfaces, materials, strict)?;
+    let substrate = set(&d.substrate, materials, strict)?;
+    let hardscape = set(&d.hardscape, materials, strict)?;
+    let mut surfaces = substrate;
+    for m in materials.iter().filter(|m| hardscape.contains(m.id)) {
+        if substrate.contains(m.id) {
+            return Err(invalid(
+                &what,
+                "a surface is substrate or hardscape, not both",
+            ));
+        }
+        surfaces.insert(m.id);
+    }
     if materials
         .iter()
         .any(|m| surfaces.contains(m.id) && m.class.is_fluid())
     {
         return Err(invalid(&what, "surfaces must be non-fluid"));
     }
+    let varieties = variety::resolve(
+        &d.variety,
+        variety::Defaults {
+            nutrient: d.nutrient,
+            light: d.light,
+            seed_rate: d.seed_rate,
+            creep_rate: d.creep_rate,
+            growth_rate: d.growth_rate,
+            die_back_rate: d.die_back_rate,
+        },
+    )?;
+    let mut index = [0; 16];
+    for (i, v) in varieties.iter().enumerate() {
+        // At most 15 varieties, each with a distinct id.
+        index[usize::from(v.id)] = u8::try_from(i + 1).unwrap_or(u8::MAX);
+    }
     Ok(AlgaeConfig {
         surfaces,
-        nutrient: d.nutrient,
-        light: d.light,
-        seed_rate: d.seed_rate,
-        creep_rate: d.creep_rate,
-        growth_rate: d.growth_rate,
-        die_back_rate: d.die_back_rate,
+        hardscape,
         co2_boost: d.co2_boost,
+        varieties,
+        index,
     })
 }
 
@@ -1367,6 +1449,98 @@ mod tests {
         assert!(!algae.surfaces.contains(t.id("water").unwrap()));
         assert!(eco.water_change.siphon.contains(t.id("detritus").unwrap()));
         assert!(!eco.water_change.siphon.contains(t.id("sand").unwrap()));
+    }
+
+    #[test]
+    fn builtin_algae_varieties_say_where_and_when_they_grow() {
+        let t = MaterialTable::builtin().unwrap();
+        let eco = Ecology::builtin(&t).unwrap();
+        let algae = eco.algae.unwrap();
+        let id = |name: &str| algae.by_name(name).unwrap().id;
+        assert_eq!(
+            ["green_film", "diatoms", "green_spot", "green_dust"].map(id),
+            [1, 2, 3, 4]
+        );
+        assert!(algae.hardscape.contains(t.id("driftwood").unwrap()));
+        assert!(!algae.hardscape.contains(t.id("sand").unwrap()));
+        assert!(algae.surfaces.contains(t.id("aquasoil").unwrap()));
+        // Neither spots nor dust grow on the bed; the film and diatoms do.
+        let bed = algae.hosted(HOST_SUBSTRATE);
+        assert_eq!(bed, 1 << 1 | 1 << 2);
+        assert_eq!(algae.hosted(HOST_HARDSCAPE), 0b11110);
+        assert_eq!(algae.hosted(HOST_FRONT_GLASS), 0b11110);
+        assert_eq!(algae.hosted(HOST_REAR_GLASS), 0b11110);
+        let at = |nutrient, light, co2, maturity| {
+            algae.verdicts(Conditions {
+                nutrient,
+                light,
+                co2,
+                maturity,
+            })
+        };
+        let bits = |ids: &[u8]| ids.iter().fold(0u16, |m, &i| m | 1 << i);
+        // A young tank in dim, rich water, no CO₂: film and diatoms grow.
+        // Spots need strong light to start, but don't recede without it.
+        assert_eq!(at(1.2, 0.5, 0.0, 0.0), (bits(&[1, 2]), bits(&[3])));
+        // The same once its filter has matured: film only.
+        assert_eq!(at(1.2, 0.5, 0.0, 1.0), (bits(&[1]), bits(&[3])));
+        // Bright and without CO₂: spots and film (and not diatoms).
+        assert_eq!(at(1.2, 0.9, 0.0, 0.0), (bits(&[1, 3]), 0));
+        // Lean water at middling light, young: film and dust.
+        assert_eq!(at(0.8, 0.5, 0.0, 0.0), (bits(&[1, 4]), bits(&[3])));
+        // CO₂ rules out spots and dust.
+        assert_eq!(at(0.8, 0.9, 1.0, 0.0), (bits(&[1]), 0));
+        // Too dark to grow: dormant, not receding.
+        assert_eq!(at(1.2, 0.1, 0.0, 0.0), (0, bits(&[1, 2, 3])));
+        // Too little nutrient: everything recedes.
+        assert_eq!(at(0.5, 0.9, 0.0, 0.0), (0, 0));
+        // The priority picks the specialist over the film.
+        assert_eq!(algae.best(bits(&[1, 3])).unwrap().name, "green_spot");
+        assert_eq!(algae.best(bits(&[1, 2, 4])).unwrap().name, "diatoms");
+    }
+
+    #[test]
+    fn bad_algae_varieties_are_rejected() {
+        let t = MaterialTable::builtin().unwrap();
+        let try_fields = |from: &str, to: &str| {
+            // Git may check the file out with CRLF line endings (Windows).
+            let fields = FIELDS.replace("\r\n", "\n");
+            assert!(fields.contains(from), "{from}");
+            Ecology::from_toml("", &fields.replacen(from, to, 1), &t, true).map(|_| ())
+        };
+        for (from, to, why) in [
+            ("id = 2\n", "id = 1\n", "a repeated id"),
+            ("id = 2\n", "id = 16\n", "an id past 15"),
+            ("name = \"diatoms\"", "name = \"Diatoms\"", "a bad name"),
+            (
+                "hosts = [\"hardscape\", \"front_glass\", \"rear_glass\"]\nlight = { min = 0.68 }",
+                "hosts = []\nlight = { min = 0.68 }",
+                "no hosts",
+            ),
+            (
+                "\"rear_glass\"]\nresistance = 0",
+                "\"moon\"]\nresistance = 0",
+                "an unknown host",
+            ),
+            (
+                "resistance = 100",
+                "resistance = 101",
+                "resistance past 100",
+            ),
+            ("dark = \"#3f8a2f\"", "dark = \"green\"", "a bad colour"),
+            ("strength = 0.95", "strength = 0.0", "no strength"),
+            (
+                "light = { min = 0.68 }",
+                "light = { min = 0.9, max = 0.8 }",
+                "an empty range",
+            ),
+            ("growth_rate = 0.03", "growth_rate = 0.0", "a zero rate"),
+        ] {
+            assert!(try_fields(from, to).is_err(), "{why}");
+        }
+        // The same file with no varieties at all.
+        let bare = FIELDS.split("[[algae.variety]]").next().unwrap();
+        assert!(Ecology::from_toml("", bare, &t, true).is_err());
     }
 
     #[test]

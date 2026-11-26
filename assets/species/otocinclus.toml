@@ -23,6 +23,9 @@ max_speed = 3.0
 # Would rather stay on the bottom, but lifts off for a short swim now and then.
 swim_every = 30.0
 diet = ["algae", "detritus", "algae_wafer"]
+# Zebra otocinclus rasp diatoms off almost at once and take the soft green
+# film; the hard spots and the dust are beyond them (percent of a full bite).
+grazing = { diatoms = 100, green_film = 70, green_spot = 0, green_dust = 0 }
 
 # Rarely spawns in a tank; eggs on leaves hatch in 2–3 days.
 # Broods are scaled down for a desktop tank; days are on the life clock.

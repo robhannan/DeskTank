@@ -29,7 +29,7 @@ pub use device::{
     CLOG_FLOW_FLOOR, Device, DeviceArt, DeviceError, DeviceId, DeviceKind, DeviceKinds,
     DeviceStatus, MAX_DEVICES, Mount, RinseKind,
 };
-pub use ecology::{Ecology, EcologyError};
+pub use ecology::{AlgaeLook, AlgaeStyle, Ecology, EcologyError};
 pub use field::{Field, FieldKind};
 pub use grid::{Cell, Rect};
 pub use material::{
@@ -48,16 +48,16 @@ pub use species::{
     TEXELS_PER_CELL,
 };
 pub use world::{
-    BAND_REACH, BITE_ENERGY, BREED_CHECK_SECONDS, BodyId, BodyInfo, Brush, CHUNK_SIZE,
-    COLOUR_PER_SECOND, CONCEIVE_ODDS, CORPSE_SINK, CatchUp, Clutch, Corpse, Creature, CreatureCard,
-    CreatureId, DEFAULT_CREATURE_CAP, DEPTH_BANDS, DRIFTWOOD_AIR_DROP, DRIFTWOOD_DRY_DIV,
-    DRIFTWOOD_SOAK_EVERY, DeathCause, ENERGY_RESERVE, Ecosystem, FULL_MASK, LIFE_DAY_SECONDS,
-    LIFE_DAY_TICKS, LIVE_FOOD_BITES, LifeStage, MAX_CATCH_UP_SECONDS, MAX_CLUTCHES, MAX_CORPSES,
-    MAX_CREATURE_CAP, MAX_LIVE_FOOD, MAX_NAME_CHARS, MAX_PLANTS, MAX_SIDE, MAX_UPDATES_PER_TICK,
-    MUTATION_PER_MILLE, PEARL_CO2, PEARL_HEALTH, PEARL_LIGHT, PEARL_MAX_PER_SECOND, PINCH,
-    POOR_QUALITY, PREY_ENERGY, Pane, PlantId, PlantInfo, RANDOM_TICK_BUDGET, REVERSION_PER_MILLE,
-    ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, RandomTickStats, SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT,
-    STRIKE_ODDS, TICKS_PER_SECOND, TINT_STEPS, Traits, UPDATE_SECONDS, UnmetNeed, World,
-    WorldConfig, WorldError, catch_up_seconds, clean_name, disc_mask, night, pursuit, quarter_bit,
-    tint_step,
+    ALGAE_DENSITY_MASK, BAND_REACH, BITE_ENERGY, BREED_CHECK_SECONDS, BodyId, BodyInfo, Brush,
+    CHUNK_SIZE, COLOUR_PER_SECOND, CONCEIVE_ODDS, CORPSE_SINK, CatchUp, Clutch, Corpse, Creature,
+    CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DEPTH_BANDS, DRIFTWOOD_AIR_DROP,
+    DRIFTWOOD_DRY_DIV, DRIFTWOOD_SOAK_EVERY, DeathCause, ENERGY_RESERVE, Ecosystem, FULL_MASK,
+    GlassPane, LIFE_DAY_SECONDS, LIFE_DAY_TICKS, LIVE_FOOD_BITES, LifeStage, MAX_CATCH_UP_SECONDS,
+    MAX_CLUTCHES, MAX_CORPSES, MAX_CREATURE_CAP, MAX_LIVE_FOOD, MAX_NAME_CHARS, MAX_PLANTS,
+    MAX_SIDE, MAX_UPDATES_PER_TICK, MUTATION_PER_MILLE, PEARL_CO2, PEARL_HEALTH, PEARL_LIGHT,
+    PEARL_MAX_PER_SECOND, PINCH, POOR_QUALITY, PREY_ENERGY, Pane, PlantId, PlantInfo,
+    RANDOM_TICK_BUDGET, REVERSION_PER_MILLE, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, RandomTickStats,
+    SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT, STRIKE_ODDS, TICKS_PER_SECOND, TINT_STEPS, Traits,
+    UPDATE_SECONDS, UnmetNeed, World, WorldConfig, WorldError, catch_up_seconds, clean_name,
+    disc_mask, night, pursuit, quarter_bit, tint_step,
 };

@@ -334,9 +334,13 @@ target computes the same bits.
     dead plant matter when it touches neither.
   - **Algae** grows as a translucent coat on submerged sand, gravel,
     clown vomit gravel, aquasoil, rock and driftwood, and on the front
-    pane, back wall and both side walls (D28). Establishment, creep and
-    thickening require adjacent water with nutrient > 0.6 and light >
-    0.15. Existing film recedes when nutrient ≤ 0.6 or its surface dries.
+    pane, back wall and both side walls (D28). It comes in
+    [varieties](#algae-varieties-369) that each have their own hosts,
+    conditions, look and grazers. Establishment, creep and thickening
+    need adjacent water with the variety's conditions (the generic green
+    film: nutrient > 0.6 and light > 0.15). Existing film recedes when
+    its variety's conditions fail (for the green film, nutrient ≤ 0.6) or
+    its surface dries.
     Aquasoil alone buffers nutrient to 0.4. Healthy plant cells slow growth
     and exclude film at the water-quality plant threshold (20 healthy
     plant cells per 1000 water cells). At that threshold existing film
@@ -352,7 +356,8 @@ target computes the same bits.
     live rate (a catch-up shorter than one cycle of groups updates only
     some blocks). Coat on
     solid surfaces attenuates light below in proportion to its density.
-    Grazers scrape density off reachable surfaces and nearby glass.
+    Grazers scrape density off reachable surfaces and nearby glass, as
+    well as their diet says for each variety.
     *Coverage* is the fraction of columns with a coated top non-fluid cell.
   - **Water quality** (`World::ecosystem`, 0–1, computed on demand): 1,
     minus up to 0.6 as the mean nutrient over water cells rises from 0.5
@@ -372,3 +377,61 @@ target computes the same bits.
     local time of day; it tints the drawn tank (untinted 07:30–19:30, warm
     dawn and dusk ramps, blue moonlight overnight) and nothing else, so
     plants grow at any hour and the hour never wakes a chunk.
+
+#### Algae varieties (#369)
+
+Each coat byte and each glass block holds one variety (a four-bit id) and a
+density. The varieties are data: `[[algae.variety]]` entries in
+`assets/fields.toml` give each its id, `priority`, `hosts` (substrate,
+hardscape, front glass, rear glass: the back wall and both side walls),
+the conditions it grows in, its growth and die-back rates, how hard
+grazers find it (`resistance`) and its look. The conditions are ranges on
+fields the tank already has: the block's nutrient, CO₂ and light, and the
+filters' biological maturity (`World::filter_bio_capacity`: 0 with no
+filter or a new one, 1 once cycled; filters mature over seven life days).
+No new field was added.
+
+- Where a variety's conditions hold in a block it *grows* there; where
+  they fail its coat *recedes*; where only its light is below the minimum
+  it waits, neither growing nor receding.
+- A bare cell takes the highest-priority variety that can grow on its
+  host in the adjacent water. A neighbour's variety that can also grow
+  there and ranks as high creeps in instead, at the creep rate.
+- `hosts` gate where a variety starts. A coated cell or glass block keeps
+  its variety and grows on its conditions alone, so a change to a
+  variety's hosts applies to new coat only.
+- A coated cell keeps its variety. Varieties never overwrite each other:
+  a variety only gives way once its own coat has receded to bare.
+- Algae is not in the palette; it only spawns naturally.
+
+| Variety (id) | Hosts | Grows when | Real cause (Green Aqua guide) | Grazed by |
+| --- | --- | --- | --- | --- |
+| Green film (1) | everything | nutrient > 0.6, light > 0.15; lowest priority, so where no other variety fits | General algae from light and ammonia (nitrate and phosphate "not the main culprits" at ordinary levels) | every grazer: snails, pleco and crabs fully, amano shrimp 80%, otocinclus 70%, cherry shrimp 60% |
+| Brown diatoms (2) | substrate, hardscape, both panes | nutrient > 0.9, light ≤ 0.68, maturity ≤ 0.5: a young tank with rich water in dim light | New tank (ammonia, silicates from sand, gravel, stone and tap water), or old non-CO₂ tank with weak light; disappears as nitrifying bacteria establish | otocinclus (fully), shrimp, snails, pleco |
+| Green spot (3) | hardscape, both panes | light > 0.68, CO₂ ≤ 0.3, nutrient > 0.6: strong light with little CO₂ | Strong light with low phosphate and/or CO₂; "the algae of healthy aquariums"; slow, sticks hard | nerite a little (35%); no one else |
+| Green dust (4) | hardscape, both panes (never substrate) | CO₂ ≤ 0.3, nutrient in (0.6, 0.9], light > 0.3, maturity ≤ 0.8: lean water and little CO₂ in a young tank | "Mainly low CO₂ and low nutrients", more often in new tanks; not on plants | almost no one: nerite 15%, pleco 20%, other grazers 10% |
+
+How the guide's chemistry maps onto the existing fields, so the Full mode
+nitrogen cycle (above) can replace these stand-ins:
+
+| Guide cause | Simple-mode stand-in | Full-mode field to use |
+| --- | --- | --- |
+| Ammonia (new tank, disturbed substrate, decay) | filter maturity low, nutrient high (waste and food become nutrient) | ammonia |
+| Nitrate | nutrient (the one pool; high enough means plants are not starved) | nitrate |
+| Phosphate (deficiency drives green spot) | CO₂ low in strong light | phosphate |
+| Silicate (diatoms) | young tank, via diatoms' hosts and maturity | silicate released by new sand, gravel and stone |
+| CO₂ (low or uneven drives threads and spots) | the CO₂ field's level in the block | CO₂, with its fluctuation |
+| Light | the light field in the block | unchanged |
+| Flow (strong favours brush algae, weak favours hair and staghorn) | not used by the films | the 2D current, for the later threads and tufts |
+
+Grazers take each variety at the percentage of a full bite their species
+sets (`grazing` in `assets/species/*.toml`, see
+[creatures](creatures.md)); a variety a species has no entry for is taken
+at 100 − the variety's `resistance`. Zero means the creature ignores it
+and does not look for it. A smaller bite feeds that percentage of a full
+one, and scrapes that share of a full bite's four density levels rounded
+to whole levels, at least one: up to 37% scrapes one, 38% to 62% two.
+
+The brown, green and dusty looks are drawn in `tank.wgsl`, from a baked
+atlas on the split grid; see [architecture](architecture.md). The threads, tufts and green-water
+varieties of the issue follow in later increments.

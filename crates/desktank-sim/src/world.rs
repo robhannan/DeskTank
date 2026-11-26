@@ -18,6 +18,7 @@ use crate::material::{GLUED_VARIANT_BIT, MAX_RUN, MaterialId, MaterialTable, Mov
 use crate::plants::{PlantSpeciesId, Propagule, plant_variant};
 use crate::rng::{chunk_stream, splitmix64};
 use crate::species::SpeciesId;
+pub use algae::{ALGAE_DENSITY_MASK, GlassPane};
 use bodies::Body;
 pub use bodies::{BodyId, BodyInfo, DRIFTWOOD_AIR_DROP, DRIFTWOOD_DRY_DIV, DRIFTWOOD_SOAK_EVERY};
 
@@ -317,7 +318,8 @@ impl World {
             .collect();
         let ecology =
             Ecology::builtin_for(&materials).map_err(|e| WorldError::Ecology(e.to_string()))?;
-        let (creatures, foods) = Creatures::builtin(&materials, water, air)?;
+        let (creatures, foods) =
+            Creatures::builtin(&materials, ecology.algae.as_deref(), water, air)?;
         let plants = Plants::new(&materials)?;
         let devices = devices::Devices::new(&materials)?;
         let life = Life::new(

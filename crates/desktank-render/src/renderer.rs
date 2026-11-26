@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use desktank_sim::{FieldKind, Part, World};
 
+use crate::algae;
 use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, Magnifier, MagnifierLayout, PaletteLayout};
 use crate::layout::Layout;
@@ -18,8 +19,9 @@ use crate::{Gpu, timer::GpuTimer};
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (192 base + 16 ripple vec4s).
-const VIEW_BYTES: u64 = 192 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (192 base, 16
+/// ripple vec4s and two vec4s of look for each algae variety id).
+const VIEW_BYTES: u64 = 192 + (desktank_sim::MAX_DEVICES as u64) * 16 + 16 * 2 * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -130,7 +132,7 @@ impl Renderer {
         ];
         let hud = create_hud(d);
         let (fields, flow, fields_size) = create_fields(d, world);
-        let algae = AlgaeTextures::new(d, grid, fields_size);
+        let algae = AlgaeTextures::new(gpu, grid, fields_size, world);
         let atlas = Atlas::build(world.species(), world.device_kinds());
         let atlas_texture = create_atlas(gpu, &atlas);
         let instances = d.create_buffer(&wgpu::BufferDescriptor {
@@ -154,10 +156,10 @@ impl Renderer {
             &flow,
             &algae.coat,
             &algae.glass,
+            &algae.look_atlas,
         ];
-        let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures, &algae.sampler);
-        let lens_bind_group =
-            create_bind_group(d, &bind_layout, &lens_view_buffer, textures, &algae.sampler);
+        let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
+        let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
         let ([pipelines, coarse_pipelines], [lens_frame, front_film]) =
             create_pipelines(gpu, &bind_layout, format);
         Self {
@@ -252,21 +254,12 @@ impl Renderer {
             &self.flow,
             &self.algae.coat,
             &self.algae.glass,
+            &self.algae.look_atlas,
         ];
-        self.bind_group = create_bind_group(
-            d,
-            &self.bind_layout,
-            &self.view_buffer,
-            textures,
-            &self.algae.sampler,
-        );
-        self.lens_bind_group = create_bind_group(
-            d,
-            &self.bind_layout,
-            &self.lens_view_buffer,
-            textures,
-            &self.algae.sampler,
-        );
+        self.bind_group = create_bind_group(d, &self.bind_layout, &self.view_buffer, textures);
+        self.lens_bind_group =
+            create_bind_group(d, &self.bind_layout, &self.lens_view_buffer, textures);
+        self.algae.set_looks(gpu, world);
         self.reset_world();
     }
 
@@ -564,6 +557,7 @@ impl Renderer {
             0.0,
         ])
         .chain(ripple_slots.into_iter().flatten())
+        .chain(self.algae.looks.into_iter().flatten())
         .flat_map(f32::to_le_bytes)
         .collect()
     }
@@ -740,7 +734,12 @@ impl Renderer {
 struct AlgaeTextures {
     coat: wgpu::Texture,
     glass: wgpu::Texture,
-    sampler: wgpu::Sampler,
+    /// Per variety id, in the `View` uniform: the dark colour and style,
+    /// then the light colour and strength.
+    looks: [[f32; 4]; 32],
+    /// The split grid's baked patterns and colours (`algae.rs`), or a
+    /// placeholder texel for the one-pass grid.
+    look_atlas: wgpu::Texture,
     coat_version: Option<u64>,
     glass_version: Option<u64>,
     coat_visible: bool,
@@ -749,23 +748,50 @@ struct AlgaeTextures {
 }
 
 impl AlgaeTextures {
-    fn new(d: &wgpu::Device, grid: (u32, u32), fields: (u32, u32)) -> Self {
+    fn new(gpu: &Gpu, grid: (u32, u32), fields: (u32, u32), world: &World) -> Self {
+        let d = &gpu.device;
         let [coat, glass] = Self::textures(d, grid, fields);
-        let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("glass film"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        Self {
+        let size = if gpu.split_grid { algae::SIZE } else { (1, 1) };
+        let look_atlas =
+            create_grid_texture(d, "algae looks", size, wgpu::TextureFormat::Rgba8Unorm);
+        if gpu.split_grid {
+            let rect = desktank_sim::Rect {
+                x0: 0,
+                y0: 0,
+                x1: 2 * algae::TILE as usize,
+                y1: algae::TILE as usize,
+            };
+            write_rect(gpu, &look_atlas, rect, &algae::bake_patterns(), 4);
+        }
+        let mut textures = Self {
             coat,
             glass,
-            sampler,
+            looks: [[0.0; 4]; 32],
+            look_atlas,
             coat_version: None,
             glass_version: None,
             coat_visible: false,
             rear_film_visible: false,
             front_film_visible: false,
+        };
+        textures.set_looks(gpu, world);
+        textures
+    }
+
+    /// Takes `world`'s variety looks into the view uniform, or the atlas's
+    /// colour columns for the split grid.
+    fn set_looks(&mut self, gpu: &Gpu, world: &World) {
+        self.looks = algae_looks(world);
+        if gpu.split_grid {
+            let x0 = 2 * algae::TILE as usize;
+            let rect = desktank_sim::Rect {
+                x0,
+                y0: 0,
+                x1: x0 + 2,
+                y1: algae::VARIETIES,
+            };
+            let colours = algae::colours(world.algae_looks());
+            write_rect(gpu, &self.look_atlas, rect, &colours, 4);
         }
     }
 
@@ -812,7 +838,7 @@ impl AlgaeTextures {
                 .zip(sides)
             {
                 for (&front, &back) in front.iter().zip(back) {
-                    scratch.extend([front, back, left, right].map(|v| v * 17));
+                    scratch.extend([front, back, left, right]);
                 }
             }
             let rect = desktank_sim::Rect {
@@ -824,6 +850,20 @@ impl AlgaeTextures {
             write_rect(gpu, &self.glass, rect, scratch, 4);
         }
     }
+}
+
+/// How each algae variety is drawn, by variety id: two vec4s, the dark
+/// shade and style, then the light shade and strength.
+fn algae_looks(world: &World) -> [[f32; 4]; 32] {
+    let mut looks = [[0.0; 4]; 32];
+    for look in world.algae_looks().filter(|l| l.id < 16) {
+        let at = usize::from(look.id) * 2;
+        let [dr, dg, db] = look.dark;
+        let [lr, lg, lb] = look.light;
+        looks[at] = [dr, dg, db, f32::from(look.style as u8)];
+        looks[at + 1] = [lr, lg, lb, look.strength];
+    }
+    looks
 }
 
 fn create_view_buffer(d: &wgpu::Device, label: &str) -> wgpu::Buffer {
@@ -1050,7 +1090,7 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, wgpu::Textu
     (texture, flow, size)
 }
 
-/// The shared view, eleven textures and the glass film's linear sampler.
+/// The shared view and twelve textures.
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
     let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
         binding,
@@ -1086,24 +1126,18 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
             texture_entry(8, false),
             texture_entry(9, false),
             texture_entry(10, false),
-            texture_entry(11, true),
-            wgpu::BindGroupLayoutEntry {
-                binding: 12,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
+            texture_entry(11, false),
+            texture_entry(12, false),
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–11 and the sampler.
+/// The bind group: `view` at binding 0, then `textures` at 1–12.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 11],
-    glass_sampler: &wgpu::Sampler,
+    textures: [&wgpu::Texture; 12],
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {
@@ -1116,10 +1150,6 @@ fn create_bind_group(
             resource: wgpu::BindingResource::TextureView(v),
         });
     }
-    entries.push(wgpu::BindGroupEntry {
-        binding: 12,
-        resource: wgpu::BindingResource::Sampler(glass_sampler),
-    });
     d.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tank"),
         layout,
@@ -1188,8 +1218,8 @@ fn fine_scale(scale: u32) -> bool {
 #[derive(Debug)]
 struct Pipelines {
     grid: Vec<wgpu::RenderPipeline>,
-    /// The split grid's algae over the ground (`fs_ground_film`), drawn after
-    /// `fs_ground` only while a coat or a rear or side film shows.
+    /// The split grid's algae over the ground (`fs_ground_film`), drawn after `fs_ground`
+    /// only while a coat or a rear or side film shows.
     ground_film: Option<wgpu::RenderPipeline>,
     sprites: Vec<wgpu::RenderPipeline>,
 }
@@ -1223,7 +1253,7 @@ fn create_pipelines(
     let d = &gpu.device;
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("tank.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shader_source(gpu.split_grid).into()),
     });
     let pipeline_layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("tank"),
@@ -1326,6 +1356,17 @@ fn create_pipelines(
         &[],
     );
     ([level(true), level(false)], [lens_frame, front_film])
+}
+
+/// `tank.wgsl` with the algae looks the split grid bakes or the one-pass
+/// grid works out (`algae.rs`).
+fn shader_source(split_grid: bool) -> String {
+    let looks = if split_grid {
+        include_str!("algae-baked.wgsl")
+    } else {
+        include_str!("algae-procedural.wgsl")
+    };
+    [include_str!("tank.wgsl"), looks].concat()
 }
 
 /// Whether the grid and sprites apply the front film before encoding into

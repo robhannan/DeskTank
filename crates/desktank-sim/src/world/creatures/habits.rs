@@ -62,9 +62,16 @@ impl World {
     /// is a shrimp (DV4).
     pub(super) fn anything_to_eat(&self, k: &Kind) -> bool {
         self.life.food_cells() > 0
-            || (k.grazes_algae && (self.algae.coated > 0 || self.algae.glass > 0))
+            || self.has_film_to_graze(k)
             || (k.eats_corpses && !self.creatures.corpses.is_empty())
             || (k.is_shrimp && self.has_grazeable_device())
+    }
+
+    /// Whether some film on a surface or the glass is of a variety `k`
+    /// grazes.
+    pub(super) fn has_film_to_graze(&self, k: &Kind) -> bool {
+        let edible = |v: u8| k.graze[usize::from(v)] != 0;
+        k.grazes() && (self.algae.any_glass_where(edible) || self.algae.any_coat_where(edible))
     }
 
     /// Whether a saved `home` suits a creature of kind `k`: none, or a cell

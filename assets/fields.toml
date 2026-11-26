@@ -78,10 +78,13 @@ clog_floor = 0.3
 maturity_days = 7.0
 waste_boost = 2.0
 
-# Natural surface film. Rates are density levels per world second, from
-# 0 (bare) to 15 (full density). Front glass stops at 5.
+# Natural surface film (D28, #369). Rates are density levels per world
+# second, from 0 (bare) to 15 (full density). Front glass stops at 5.
+# `nutrient`, `light` and the four rates are the defaults a variety
+# inherits; `co2_boost` is the plant competition's CO₂ term.
 [algae]
-surfaces = ["sand", "gravel", "clown_vomit_gravel", "aquasoil", "rock", "driftwood"]
+substrate = ["sand", "gravel", "clown_vomit_gravel", "aquasoil"]
+hardscape = ["rock", "driftwood"]
 nutrient = 0.6
 light = 0.15
 seed_rate = 0.012
@@ -91,3 +94,88 @@ die_back_rate = 0.06
 # Plants with CO₂ to work with outcompete film sooner: the plant competition
 # in a block is multiplied by 1 + co2_boost × the block's CO₂ level.
 co2_boost = 0.5
+
+# Varieties. Algae only spawns naturally, never from the palette.
+#
+# id          the coat byte's high nibble (1..=15)
+# priority    where several varieties would grow, the highest wins; a coated
+#             cell keeps its variety until it has died back to bare
+# hosts       substrate, hardscape, front_glass, rear_glass
+# nutrient, light, co2, maturity
+#             the conditions it grows in, from the block's fields and the
+#             filters' biological maturity (0 = none or new, 1 = cycled):
+#             above `min` and at most `max`. Outside them (or with the
+#             nutrient missing) its coat recedes; where only the
+#             light is below `min` it neither grows nor recedes. The light
+#             and nutrient `min` default to the [algae] values above.
+# seed_rate, creep_rate, growth_rate, die_back_rate
+#             override the [algae] defaults
+# resistance  percent a grazer with no taste for it can't graze
+#             (a species' own [grazing] entry overrides it)
+# look        style (film, slime, spots, dust), the thin (`dark`) and thick
+#             (`light`) shades, and the opacity of the thickest coat
+#
+# The conditions stand in for the causes in the Green Aqua algae guide; the
+# table is in docs/spec/world.md §2.3.
+
+# The generic green film: any host, any water with nutrient and light.
+[[algae.variety]]
+id = 1
+name = "green_film"
+priority = 10
+hosts = ["substrate", "hardscape", "front_glass", "rear_glass"]
+resistance = 0
+look = { style = "film", dark = "#4a6621", light = "#8ca345", strength = 0.7 }
+
+# Brown diatoms: a slimy film of a new tank (rich in ammonia and silicates)
+# and dim light. It recedes as the filter matures. Otocinclus rasp it off
+# quickly.
+[[algae.variety]]
+id = 2
+name = "diatoms"
+priority = 35
+hosts = ["substrate", "hardscape", "front_glass", "rear_glass"]
+nutrient = { min = 0.9 }
+light = { max = 0.68 }
+maturity = { max = 0.5 }
+seed_rate = 0.016
+creep_rate = 0.08
+resistance = 0
+look = { style = "slime", dark = "#7b5324", light = "#cf9f52", strength = 0.8 }
+
+# Green spot algae: hard round spots on glass and hardscape under strong
+# light with little CO₂ (a stand-in for low phosphate). Slow, and stuck on:
+# only a nerite rasps a little off.
+[[algae.variety]]
+id = 3
+name = "green_spot"
+priority = 40
+hosts = ["hardscape", "front_glass", "rear_glass"]
+light = { min = 0.68 }
+co2 = { max = 0.3 }
+seed_rate = 0.006
+creep_rate = 0.02
+growth_rate = 0.03
+die_back_rate = 0.02
+resistance = 100
+look = { style = "spots", dark = "#3f8a2f", light = "#a8e262", strength = 0.95 }
+
+# Green dust algae: a dusty layer on glass and hardscape (never substrate)
+# at low CO₂ with moderate nutrients (a leaner tank than diatoms favour),
+# most often in a young or low-tech tank. Scraping only spreads it; almost
+# nothing grazes it.
+[[algae.variety]]
+id = 4
+name = "green_dust"
+priority = 30
+hosts = ["hardscape", "front_glass", "rear_glass"]
+nutrient = { max = 0.9 }
+light = { min = 0.3 }
+co2 = { max = 0.3 }
+maturity = { max = 0.8 }
+seed_rate = 0.01
+creep_rate = 0.05
+growth_rate = 0.08
+die_back_rate = 0.04
+resistance = 90
+look = { style = "dust", dark = "#5a9448", light = "#b3dc7c", strength = 0.85 }

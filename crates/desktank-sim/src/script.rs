@@ -120,6 +120,12 @@ pub enum ScriptError {
         /// The species name.
         species: String,
     },
+    /// A `[[film]]` entry names an algae variety the tank doesn't have.
+    #[error("unknown algae variety {0:?}")]
+    UnknownAlgae(String),
+    /// A `[[film]]` density outside 1 to 15.
+    #[error("film density {0} is not 1 to 15")]
+    FilmDensity(u8),
     /// A `[[creature]]` entry asks for more creatures than a tank holds.
     #[error("count {0} is more than a tank holds")]
     TooMany(u32),
@@ -153,6 +159,9 @@ pub struct Script {
     /// Timed creature additions.
     #[serde(default, rename = "creature")]
     pub creatures: Vec<AddCreatures>,
+    /// Timed algae films, for scenes: in play algae only grows by itself.
+    #[serde(default, rename = "film")]
+    pub films: Vec<Film>,
 }
 
 impl Default for Script {
@@ -165,6 +174,7 @@ impl Default for Script {
             places: Vec::new(),
             water_changes: Vec::new(),
             creatures: Vec::new(),
+            films: Vec::new(),
         }
     }
 }
@@ -229,6 +239,46 @@ pub struct Pour {
     /// Glue the body a rigid pour makes.
     #[serde(default)]
     pub glued: bool,
+}
+
+/// Where a `[[film]]` goes.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FilmOn {
+    /// The substrate and hardscape cells in the rectangle.
+    Surface,
+    /// The field blocks of the front pane the rectangle touches.
+    Front,
+    /// The back wall blocks the rectangle touches.
+    Back,
+    /// The left wall blocks the rectangle touches.
+    Left,
+    /// The right wall blocks the rectangle touches.
+    Right,
+}
+
+/// One `[[film]]` entry: a variety's coat at a density, set on every
+/// eligible cell or block in a rectangle (the density is clamped to what the
+/// surface allows).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Film {
+    /// Tick to set it on.
+    #[serde(default)]
+    pub tick: u64,
+    /// The variety's name, as in `assets/fields.toml`.
+    pub variety: String,
+    /// Where it goes.
+    pub on: FilmOn,
+    /// The rectangle `[x0, y0, x1, y1]` in cells; `x1` and `y1` are excluded.
+    pub rect: [usize; 4],
+    /// Density, 1 to 15.
+    #[serde(default = "full_density")]
+    pub density: u8,
+}
+
+fn full_density() -> u8 {
+    15
 }
 
 /// One `[[place]]` entry.
@@ -351,6 +401,9 @@ impl Script {
         if let Some(c) = script.creatures.iter().find(|c| c.count > MAX_COUNT) {
             return Err(ScriptError::TooMany(c.count));
         }
+        if let Some(f) = script.films.iter().find(|f| !(1..=15).contains(&f.density)) {
+            return Err(ScriptError::FilmDensity(f.density));
+        }
         Ok(script)
     }
 
@@ -391,6 +444,36 @@ impl Script {
 pub struct Player<'a> {
     script: &'a Script,
     bodies: Vec<Option<BodyId>>,
+}
+
+/// Sets a `[[film]]` on every eligible cell or block of its rectangle.
+fn place_film(world: &mut World, f: &Film) -> Result<(), ScriptError> {
+    let id = world
+        .algae_variety(&f.variety)
+        .ok_or_else(|| ScriptError::UnknownAlgae(f.variety.clone()))?;
+    let [x0, y0, x1, y1] = f.rect;
+    let pane = match f.on {
+        FilmOn::Surface => None,
+        FilmOn::Front => Some(crate::GlassPane::Front),
+        FilmOn::Back => Some(crate::GlassPane::Back),
+        FilmOn::Left => Some(crate::GlassPane::Left),
+        FilmOn::Right => Some(crate::GlassPane::Right),
+    };
+    if let Some(pane) = pane {
+        let scale = crate::field::FIELD_SCALE;
+        for fy in y0 / scale..y1.div_ceil(scale) {
+            for fx in x0 / scale..x1.div_ceil(scale) {
+                world.set_algae_glass(pane, fx, fy, id, f.density);
+            }
+        }
+    } else {
+        for y in y0..y1 {
+            for x in x0..x1 {
+                world.set_algae_variety(x, y, id, f.density);
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Player<'_> {
@@ -453,6 +536,9 @@ impl Player<'_> {
             {
                 world.set_anchored(id, true);
             }
+        }
+        for f in self.script.films.iter().filter(|f| f.tick == tick) {
+            place_film(world, f)?;
         }
         for c in self.script.creatures.iter().filter(|c| c.tick == tick) {
             let species = world
@@ -551,6 +637,84 @@ mod tests {
         let s = Script::parse(SCRIPT).unwrap();
         assert_eq!(s.pours[0].radius, 2);
         assert_eq!(s.pours[0].brush, BrushName::Pour);
+    }
+
+    #[test]
+    fn films_set_coats_and_glass_of_a_named_variety() {
+        let script = Script::parse(
+            r#"
+            [world]
+            width = 32
+            height = 32
+            water_level = 1.0
+            [[pour]]
+            x = 16
+            y = 24
+            radius = 5
+            material = "rock"
+            brush = "replace"
+            glued = true
+            [[film]]
+            variety = "green_spot"
+            on = "surface"
+            rect = [0, 0, 32, 32]
+            density = 9
+            [[film]]
+            tick = 1
+            variety = "diatoms"
+            on = "front"
+            rect = [8, 8, 17, 16]
+            density = 15
+            [[film]]
+            tick = 1
+            variety = "green_dust"
+            on = "left"
+            rect = [0, 0, 1, 32]
+            density = 6
+            "#,
+        )
+        .unwrap();
+        let mut w = world(&script, 1);
+        script.run(&mut w, 2).unwrap();
+        let (spot, diatoms) = (
+            w.algae_variety("green_spot").unwrap(),
+            w.algae_variety("diatoms").unwrap(),
+        );
+        // Only the stone's exposed cells, none on the empty water.
+        assert!(w.coated_cells_of(spot) > 5);
+        assert_eq!(w.coated_cells(), w.coated_cells_of(spot));
+        assert!(w.coat().iter().all(|&v| v == 0 || v == spot << 4 | 9));
+        // The front pane's cap applies; the rectangle covers blocks 1..=2.
+        let front: Vec<_> = (0..4)
+            .map(|fy| {
+                (0..4)
+                    .map(|fx| w.front_glass_algae()[fy * 4 + fx])
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(front[1], [0, diatoms << 4 | 5, diatoms << 4 | 5, 0]);
+        assert_eq!(front[2], [0, 0, 0, 0]);
+        assert!(w.side_glass_algae().iter().all(|row| row[1] == 0));
+        assert_eq!(w.side_glass_algae()[2][0] & 15, 6);
+        // An unknown variety is an error.
+        let s = Script::parse("[[film]]\nvariety = \"purple\"\non = \"back\"\nrect = [0, 0, 8, 8]")
+            .unwrap();
+        assert!(matches!(
+            s.run(&mut world(&s, 1), 1),
+            Err(ScriptError::UnknownAlgae(_))
+        ));
+        assert!(
+            Script::parse("[[film]]\nvariety = \"diatoms\"\non = \"floor\"\nrect = [0, 0, 1, 1]")
+                .is_err()
+        );
+        for density in [0, 16] {
+            let src = format!(
+                "[[film]]\nvariety = \"diatoms\"\non = \"back\"\nrect = [0, 0, 8, 8]\ndensity = {density}"
+            );
+            assert!(
+                matches!(Script::parse(&src), Err(ScriptError::FilmDensity(d)) if d == density)
+            );
+        }
     }
 
     #[test]

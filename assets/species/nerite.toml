@@ -17,6 +17,9 @@ temperament = "peaceful"
 speed = 2.0
 max_speed = 2.0
 diet = ["algae", "detritus"]
+# The one grazer of the hard green spots, though not efficiently, and of a
+# little dust (percent of a full bite).
+grazing = { diatoms = 100, green_film = 100, green_spot = 35, green_dust = 15 }
 
 # Doesn't breed here: its eggs (white specks on hardscape) need
 # brackish water to hatch.

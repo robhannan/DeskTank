@@ -91,13 +91,14 @@ use rand_pcg::Pcg32;
 
 use super::plants::PlantDepth;
 use super::{TICKS_PER_SECOND, World, WorldError};
+use crate::ecology::AlgaeConfig;
 use crate::grid::Rect;
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable, MovementClass};
 use crate::plants::Part;
 use crate::rng::chunk_stream;
 use crate::save::{SaveError, v6, v9};
-use crate::species::{RestSpot, SpeciesId, SpeciesTable, Temperament, Zone};
+use crate::species::{RestSpot, Species, SpeciesId, SpeciesTable, Temperament, Zone};
 pub use breeding::{
     BREED_CHECK_SECONDS, CONCEIVE_ODDS, Clutch, MAX_CLUTCHES, MUTATION_PER_MILLE, PREY_ENERGY,
     REVERSION_PER_MILLE, SETTLE_TICKS, STRIKE_ODDS,
@@ -545,6 +546,9 @@ struct Kind {
     /// to unguarded intakes when small (DV3).
     is_shrimp: bool,
     grazes_algae: bool,
+    /// By algae variety id: how well it grazes the variety, in percent of a
+    /// full bite (0 ignores it).
+    graze: [u8; 16],
     /// Where it rests at night (see [`night`]).
     rests: RestSpot,
     /// Its body on the edges, and on a pane (head right) if it has pane
@@ -555,6 +559,11 @@ struct Kind {
 }
 
 impl Kind {
+    /// Whether it grazes some algae variety at all.
+    fn grazes(&self) -> bool {
+        self.graze.iter().any(|&percent| percent != 0)
+    }
+
     /// Adult body size for a sex. Call it on the species' base kind only:
     /// a grown kind (`grown_kind`) scales `w`/`h` but not `female_size`.
     fn size_of(&self, female: bool) -> (i32, i32) {
@@ -635,6 +644,7 @@ impl Creatures {
     pub(super) fn new(
         species: SpeciesTable,
         materials: &MaterialTable,
+        algae: Option<&AlgaeConfig>,
         water: MaterialId,
         air: MaterialId,
     ) -> Self {
@@ -724,6 +734,7 @@ impl Creatures {
                 live_prey,
                 eats_live: live_prey != [0; 4],
                 grazes_algae: s.grazes_algae,
+                graze: grazing(s, algae),
                 is_shrimp: s.name.ends_with("_shrimp"),
                 rests: s.rests,
                 side: (w, h),
@@ -769,13 +780,19 @@ impl Creatures {
     /// The built-in species, and the materials any of them eats.
     pub(super) fn builtin(
         materials: &MaterialTable,
+        algae: Option<&AlgaeConfig>,
         water: MaterialId,
         air: MaterialId,
     ) -> Result<(Self, Vec<MaterialId>), WorldError> {
         let species =
             SpeciesTable::builtin_for(materials).map_err(|e| WorldError::Species(e.to_string()))?;
+        if let Some(cfg) = algae {
+            species
+                .check_grazing(|name| cfg.by_name(name).is_some())
+                .map_err(|e| WorldError::Species(e.to_string()))?;
+        }
         let foods = Self::foods(&species);
-        Ok((Self::new(species, materials, water, air), foods))
+        Ok((Self::new(species, materials, algae, water, air), foods))
     }
 
     /// The materials any species eats.
@@ -787,12 +804,37 @@ impl Creatures {
     }
 }
 
-/// Density levels scraped off the film by one bite.
+/// Density levels scraped off the film by one full bite.
 const FILM_BITE: u8 = 4;
 
-fn nibble_film(coat: u8) -> u8 {
+/// How well species `s` grazes each algae variety, in percent of a full
+/// bite: its own `grazing` entry, else what the variety's resistance
+/// leaves. A species that doesn't graze algae ignores all of it.
+fn grazing(s: &Species, algae: Option<&AlgaeConfig>) -> [u8; 16] {
+    let mut graze = [0; 16];
+    if let Some(cfg) = algae.filter(|_| s.grazes_algae) {
+        for v in &cfg.varieties {
+            graze[usize::from(v.id)] = s
+                .grazing
+                .iter()
+                .find(|(name, _)| *name == v.name)
+                .map_or(100 - v.resistance, |&(_, percent)| percent);
+        }
+    }
+    graze
+}
+
+/// Density levels one bite of `percent` of a full bite scrapes off: at least
+/// one.
+fn bite_levels(percent: u8) -> u8 {
+    u8::try_from((u16::from(FILM_BITE) * u16::from(percent) + 50) / 100)
+        .unwrap_or(FILM_BITE)
+        .max(1)
+}
+
+fn nibble_film(coat: u8, percent: u8) -> u8 {
     use super::algae::DENSITY_MASK;
-    let left = (coat & DENSITY_MASK).saturating_sub(FILM_BITE);
+    let left = (coat & DENSITY_MASK).saturating_sub(bite_levels(percent));
     if left == 0 {
         0
     } else {
@@ -1842,8 +1884,8 @@ impl World {
 
     fn edible_cell(&self, k: &Kind, index: usize) -> bool {
         self.edible_material_cell(k, index)
-            || (k.grazes_algae
-                && self.algae.coat[index] != 0
+            || (self.algae.coat[index] != 0
+                && k.graze[usize::from(self.algae.coat[index] >> 4)] != 0
                 && self.algae_water(index).next().is_some())
     }
 
@@ -1860,7 +1902,10 @@ impl World {
     /// Keeps `c` heading for food while hungry: a new search when its food
     /// has gone, and every [`SEARCH_EVERY`] ticks for something closer.
     fn choose_food(&self, k: &Kind, c: &mut Creature, hungry: bool) {
-        if !hungry || (self.life.food_cells() == 0 && (!k.grazes_algae || self.algae.coated == 0)) {
+        if !hungry
+            || (self.life.food_cells() == 0
+                && !self.algae.any_coat_where(|v| k.graze[usize::from(v)] != 0))
+        {
             c.food = None;
             return;
         }
@@ -2058,7 +2103,7 @@ impl World {
                 }
             }
         }
-        (k.grazes_algae && self.graze_algae(reach, c))
+        (k.grazes_algae && self.graze_algae(k, reach, c))
             || (k.eats_corpses && self.bite_corpse(reach, c))
             || (k.is_shrimp && self.graze_sponge(reach, c))
     }
@@ -2084,37 +2129,47 @@ impl World {
             self.graze_plant(cell.state);
         }
         self.write_cell(x, y, to, &mut None);
-        Self::feed_bite(c);
+        Self::feed_bite(c, 100);
     }
 
-    fn graze_algae(&mut self, reach: Rect, c: &mut Creature) -> bool {
+    fn graze_algae(&mut self, k: &Kind, reach: Rect, c: &mut Creature) -> bool {
         if self.algae.coated != 0 {
             for y in reach.y0..reach.y1 {
                 for x in reach.x0..reach.x1 {
                     let i = y * self.width + x;
                     let coat = self.algae.coat[i];
+                    let percent = k.graze[usize::from(coat >> 4)];
                     if coat != 0
+                        && percent != 0
                         && self
                             .algae_water(i)
                             .any(|j| reach.contains(j % self.width, j / self.width))
                     {
-                        self.write_coat(i, nibble_film(coat));
-                        Self::feed_bite(c);
+                        self.write_coat(i, nibble_film(coat, percent));
+                        Self::feed_bite(c, percent);
                         return true;
                     }
                 }
             }
         }
-        self.graze_glass(reach, c)
+        self.graze_glass(k, reach, c)
     }
 
-    fn feed_bite(c: &mut Creature) {
-        c.satiety = c.satiety.saturating_add(BITE).min(FULL);
-        c.energy = c.energy.saturating_add(BITE_ENERGY).min(ENERGY_RESERVE);
+    /// A bite of `percent` of a full one: the satiety and energy it gives.
+    fn feed_bite(c: &mut Creature, percent: u8) {
+        let part = |full: u32| (full * u32::from(percent) / 100).max(1);
+        c.satiety = c
+            .satiety
+            .saturating_add(u16::try_from(part(u32::from(BITE))).unwrap_or(BITE))
+            .min(FULL);
+        c.energy = c
+            .energy
+            .saturating_add(part(BITE_ENERGY))
+            .min(ENERGY_RESERVE);
         c.eaten += 1;
     }
 
-    fn graze_glass(&mut self, reach: Rect, c: &mut Creature) -> bool {
+    fn graze_glass(&mut self, k: &Kind, reach: Rect, c: &mut Creature) -> bool {
         use crate::field::FIELD_SCALE;
 
         if self.algae.glass == 0 || reach.is_empty() {
@@ -2132,27 +2187,29 @@ impl World {
                 };
                 pane[fy * fw + reach.x0 / FIELD_SCALE..=fy * fw + (reach.x1 - 1) / FIELD_SCALE]
                     .iter_mut()
-                    .find(|density| **density != 0)
+                    .find(|film| **film != 0 && k.graze[usize::from(**film >> 4)] != 0)
             } else {
                 None
             };
             let glass = glass.or_else(|| {
                 let sides = &mut algae.sides[fy];
-                let edge = if reach.x0 == 0 && sides[0] != 0 {
+                let grazeable = |film: u8| film != 0 && k.graze[usize::from(film >> 4)] != 0;
+                let edge = if reach.x0 == 0 && grazeable(sides[0]) {
                     0
-                } else if reach.x1 == self.width && sides[1] != 0 {
+                } else if reach.x1 == self.width && grazeable(sides[1]) {
                     1
                 } else {
                     return None;
                 };
                 Some(&mut sides[edge])
             });
-            if let Some(density) = glass {
-                let old = *density;
-                *density = old.saturating_sub(FILM_BITE);
-                let new = *density;
+            if let Some(film) = glass {
+                let old = *film;
+                let percent = k.graze[usize::from(old >> 4)];
+                *film = nibble_film(old, percent);
+                let new = *film;
                 self.algae.glass_changed((old, new));
-                Self::feed_bite(c);
+                Self::feed_bite(c, percent);
                 return true;
             }
         }
@@ -2718,6 +2775,7 @@ mod tests {
         world.creatures = Creatures::new(
             species,
             &world.materials,
+            world.life.eco.algae.as_deref(),
             world.creatures.water,
             world.creatures.air,
         );
@@ -3157,6 +3215,7 @@ mod tests {
             world.creatures = Creatures::new(
                 species,
                 &world.materials,
+                world.life.eco.algae.as_deref(),
                 world.creatures.water,
                 world.creatures.air,
             );
@@ -3203,8 +3262,7 @@ mod tests {
 
     #[test]
     fn glass_grazing_reaches_the_nearby_wall_or_pane() {
-        use crate::FieldKind;
-        use crate::field::FIELD_SCALE;
+        use crate::world::algae::GlassPane;
 
         let mut w = World::new(
             WorldConfig {
@@ -3216,48 +3274,143 @@ mod tests {
             MaterialTable::builtin().unwrap(),
         )
         .unwrap();
-        for y in (0..w.height()).step_by(FIELD_SCALE) {
-            for x in (0..w.width()).step_by(FIELD_SCALE) {
-                w.add_to_field(FieldKind::Nutrient, x, y, 1.0);
-            }
+        let film = w.algae_variety("green_film").unwrap();
+        let block = 5; // Field column 1, row 1.
+        for (pane, fx, fy) in [
+            (GlassPane::Front, 1, 1),
+            (GlassPane::Back, 1, 1),
+            (GlassPane::Left, 0, 1),
+            (GlassPane::Right, 3, 1),
+        ] {
+            assert!(w.set_algae_glass(pane, fx, fy, film, 5));
         }
-        w.catch_up(600);
         let nerite = w.species().id("nerite").unwrap();
         let id = w.add_creature(nerite, 3, 16).unwrap();
         let mut c = w.creature(id).unwrap().clone();
+        let k = *w.kind(nerite).unwrap();
         let centre = Rect {
             x0: 12,
             y0: 12,
             x1: 14,
             y1: 14,
         };
-        let block = 5; // Field column 1, row 1.
         c.z = z_of(3);
-        assert!(!w.graze_algae(centre, &mut c));
+        assert!(!w.graze_algae(&k, centre, &mut c));
         for (band, front) in [(0, true), (DEPTH_BANDS - 1, false)] {
             let before = if front {
                 w.front_glass_algae()[block]
             } else {
                 w.back_glass_algae()[block]
             };
-            assert!(before >= FILM_BITE);
+            assert!(before & 15 >= FILM_BITE);
             c.z = z_of(band);
-            assert!(w.graze_algae(centre, &mut c));
+            assert!(w.graze_algae(&k, centre, &mut c));
             let after = if front {
                 w.front_glass_algae()[block]
             } else {
                 w.back_glass_algae()[block]
             };
-            assert_eq!(before - after, FILM_BITE);
+            assert_eq!((before & 15) - (after & 15), FILM_BITE);
+            assert_eq!(after >> 4, film, "the variety stays while any is left");
         }
         c.z = z_of(3);
         for (i, (x0, x1)) in [(0, 2), (30, 32)].into_iter().enumerate() {
             let before = w.side_glass_algae()[1][i];
-            assert!(before >= FILM_BITE);
-            assert!(w.graze_algae(Rect { x0, x1, ..centre }, &mut c));
-            assert_eq!(before - w.side_glass_algae()[1][i], FILM_BITE);
+            assert!(before & 15 >= FILM_BITE);
+            assert!(w.graze_algae(&k, Rect { x0, x1, ..centre }, &mut c));
+            assert_eq!((before & 15) - (w.side_glass_algae()[1][i] & 15), FILM_BITE);
         }
         assert_eq!(c.eaten(), 4);
+    }
+
+    #[test]
+    fn only_glass_film_of_a_variety_it_grazes_is_food() {
+        use crate::world::algae::GlassPane;
+        let mut w = World::new(
+            WorldConfig {
+                width: 32,
+                height: 32,
+                water_level: 1.0,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let oto = *w.kind(w.species().id("otocinclus").unwrap()).unwrap();
+        let spot = w.algae_variety("green_spot").unwrap();
+        let diatoms = w.algae_variety("diatoms").unwrap();
+        assert!(!w.has_film_to_graze(&oto));
+        // Green spot on the front pane: otocinclus won't touch it.
+        assert!(w.set_algae_glass(GlassPane::Front, 1, 1, spot, 3));
+        assert!(!w.has_film_to_graze(&oto));
+        assert!(!w.anything_to_eat(&oto));
+        // Diatoms on the back wall are food.
+        assert!(w.set_algae_glass(GlassPane::Back, 2, 1, diatoms, 3));
+        assert!(w.has_film_to_graze(&oto));
+        // And stop being food once cleared.
+        assert!(w.set_algae_glass(GlassPane::Back, 2, 1, diatoms, 0));
+        assert!(!w.has_film_to_graze(&oto));
+    }
+
+    #[test]
+    fn grazers_take_each_algae_variety_as_well_as_their_diet_says() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 32,
+                height: 32,
+                water_level: 1.0,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        let ledge = Rect {
+            x0: 8,
+            y0: 20,
+            x1: 16,
+            y1: 24,
+        };
+        w.fill_rect(ledge, rock, crate::Brush::Replace).unwrap();
+        let reach = Rect {
+            x0: 9,
+            y0: 19,
+            x1: 12,
+            y1: 22,
+        };
+        let varieties = ["diatoms", "green_film", "green_dust", "green_spot"];
+        // The density each grazer takes in one bite of each variety (0: it
+        // won't graze it), and whether the bite is a full one.
+        let table: [(&str, [u8; 4]); 5] = [
+            ("otocinclus", [4, 3, 0, 0]),
+            ("amano_shrimp", [4, 3, 0, 0]),
+            ("nerite", [4, 4, 1, 1]),
+            ("bristlenose_pleco", [4, 4, 1, 0]),
+            ("home_owning_crab", [4, 4, 1, 0]),
+        ];
+        for (name, takes) in table {
+            let species = w.species().id(name).unwrap();
+            let k = *w.kind(species).unwrap();
+            let creature = w.add_creature(species, 24, 27).unwrap();
+            for (variety, take) in varieties.into_iter().zip(takes) {
+                let id = w.algae_variety(variety).unwrap();
+                assert!(w.set_algae_variety(10, 20, id, 12), "{variety}");
+                let mut c = w.creature(creature).unwrap().clone();
+                c.satiety = 0;
+                let eaten = w.graze_algae(&k, reach, &mut c);
+                let left = w.coat()[20 * 32 + 10];
+                assert_eq!(eaten, take != 0, "{name} on {variety}");
+                assert_eq!(left & 15, 12 - take, "{name} on {variety}");
+                if take != 0 {
+                    assert_eq!(left >> 4, id);
+                    // A small bite feeds less than a full one.
+                    let full = k.graze[usize::from(id)] == 100;
+                    assert_eq!(c.satiety == BITE, full, "{name} on {variety}");
+                }
+                w.set_algae_variety(10, 20, id, 0);
+            }
+            w.remove_creature(creature);
+        }
     }
 
     fn dimorphic_tank(female_art: &str) -> World {
@@ -3306,6 +3459,7 @@ mod tests {
         world.creatures = Creatures::new(
             species,
             &world.materials,
+            world.life.eco.algae.as_deref(),
             world.creatures.water,
             world.creatures.air,
         );

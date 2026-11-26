@@ -264,8 +264,13 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
-    /// Whether it grazes the green film on surfaces and glass.
+    /// Whether it grazes the film on surfaces and glass.
     pub grazes_algae: bool,
+    /// How well it grazes each algae variety, by variety name, in percent
+    /// of a full bite (0 ignores it). A variety it has no entry for is
+    /// grazed as well as the variety is easy to graze (`resistance` in
+    /// `assets/fields.toml`). Empty unless [`Species::grazes_algae`].
+    pub grazing: Vec<(String, u8)>,
     /// Real-world body length in cm, nose to tail without antennae or an
     /// outsized fin tail such as a male guppy's (a crab's carapace), drawn
     /// at [`CELLS_PER_CM`]: the sprite is at least this long and adds only
@@ -618,6 +623,8 @@ struct SpeciesDef {
     speed: f32,
     max_speed: f32,
     diet: Vec<String>,
+    #[serde(default)]
+    grazing: std::collections::BTreeMap<String, u8>,
     length_cm: f32,
     female_length_cm: Option<f32>,
     #[serde(default = "default_reach")]
@@ -852,6 +859,25 @@ impl SpeciesTable {
         self.species.iter().find(|s| s.name == name).map(|s| s.id)
     }
 
+    /// Checks every species' `grazing` table names only varieties for
+    /// which `known` is true, so a misspelt key can't fall back silently to
+    /// the variety's default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the first species with an unknown key.
+    pub fn check_grazing(&self, known: impl Fn(&str) -> bool) -> Result<(), SpeciesError> {
+        for s in self.iter() {
+            if s.grazing.iter().any(|(name, _)| !known(name)) {
+                return Err(SpeciesError::Invalid {
+                    name: s.name.clone(),
+                    reason: "grazing names an unknown algae variety",
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// All species, ordered by ID.
     pub fn iter(&self) -> impl Iterator<Item = &Species> {
         self.species.iter()
@@ -972,6 +998,12 @@ fn validate(
     }
     if d.home_carpet.is_some() && d.zone != Zone::Bottom {
         return Err(invalid("only bottom walkers keep a home"));
+    }
+    if !d.grazing.is_empty() && !d.diet.iter().any(|food| food == "algae") {
+        return Err(invalid("only an algae grazer has a grazing table"));
+    }
+    if d.grazing.values().any(|&percent| percent > 100) {
+        return Err(invalid("grazing is a percentage, 0..=100"));
     }
     let mut diet = Vec::with_capacity(d.diet.len());
     for food in &d.diet {
@@ -1102,6 +1134,7 @@ fn validate(
         max_speed: d.max_speed,
         diet,
         grazes_algae: d.diet.iter().any(|food| food == "algae"),
+        grazing: d.grazing.iter().map(|(n, &p)| (n.clone(), p)).collect(),
         length_cm: d.length_cm,
         female_length_cm,
         reach: d.reach,
@@ -2230,6 +2263,49 @@ mod tests {
             assert!(
                 matches!(with(bad), Err(SpeciesError::Invalid { .. })),
                 "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_grazing_table_is_only_for_an_algae_grazer_and_a_percentage() {
+        let m = materials();
+        let with = |diet: &str, grazing: &str| {
+            SpeciesTable::from_toml_sources(
+                &[&OK.replace(
+                    "diet = [\"flake_food\"]",
+                    &format!("diet = {diet}\ngrazing = {grazing}"),
+                )],
+                &m,
+            )
+        };
+        let table = with(
+            "[\"flake_food\", \"algae\"]",
+            "{ diatoms = 100, green_spot = 0 }",
+        )
+        .unwrap();
+        let s = table.get(SpeciesId(9)).unwrap();
+        assert!(s.grazes_algae);
+        assert_eq!(
+            s.grazing,
+            [("diatoms".to_owned(), 100), ("green_spot".to_owned(), 0)]
+        );
+        let known = |name: &str| ["diatoms", "green_spot"].contains(&name);
+        assert!(table.check_grazing(known).is_ok());
+        let typo = with("[\"flake_food\", \"algae\"]", "{ diatom = 0 }").unwrap();
+        assert!(matches!(
+            typo.check_grazing(known),
+            Err(SpeciesError::Invalid { reason, .. }) if reason.contains("unknown algae variety")
+        ));
+        let plain = with("[\"flake_food\", \"algae\"]", "{}").unwrap();
+        assert!(plain.get(SpeciesId(9)).unwrap().grazes_algae);
+        for (diet, grazing) in [
+            ("[\"flake_food\"]", "{ diatoms = 100 }"),
+            ("[\"flake_food\", \"algae\"]", "{ diatoms = 101 }"),
+        ] {
+            assert!(
+                matches!(with(diet, grazing), Err(SpeciesError::Invalid { .. })),
+                "{diet} {grazing}"
             );
         }
     }

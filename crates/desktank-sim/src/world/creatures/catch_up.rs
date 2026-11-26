@@ -92,8 +92,7 @@ impl World {
                 eaten += 1;
             }
         }
-        if k.grazes_algae
-            && (self.algae.coated > 0 || self.algae.glass > 0)
+        if self.has_film_to_graze(k)
             && let Some(reach) = self.feeding_reach(k, c)
         {
             loop {
@@ -103,7 +102,7 @@ impl World {
                 }
                 let satiety = c.satiety;
                 c.satiety = c.satiety.saturating_sub(wait);
-                if !self.graze_algae(reach, c) {
+                if !self.graze_algae(k, reach, c) {
                     c.satiety = satiety;
                     break;
                 }

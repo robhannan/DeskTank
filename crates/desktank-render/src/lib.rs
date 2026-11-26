@@ -9,7 +9,7 @@
 //!
 //! The renderer stays within wgpu's WebGL2 downlevel limits (SPEC §3.5): no
 //! compute shaders, no storage buffers, `R8Unorm` / `Rgba8Unorm` textures
-//! read with `textureLoad` (nearest by construction; eight textures per
+//! read with `textureLoad` (nearest by construction; twelve textures per
 //! stage, under WebGL2's 16), and a device created
 //! with [`wgpu::Limits::downlevel_webgl2_defaults`].
 //!
@@ -17,6 +17,7 @@
 //! `desktank-platform` (SPEC §4.1).
 #![forbid(unsafe_code)]
 
+mod algae;
 mod gpu;
 mod grid;
 mod hud;

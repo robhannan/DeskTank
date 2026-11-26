@@ -1,0 +1,166 @@
+# D28, #369: the film varieties side by side. Brown diatoms (left) cover sand,
+# stone, wood and glass; green spot algae (middle) form hard round spots on
+# stone, wood and glass, and green dust algae (right) a dusty layer there.
+# The films are placed, not grown: in play algae only grows by itself.
+ticks = 320
+
+[world]
+water_level = 0.90
+
+[[pour]]
+repeat = 41
+x = 0
+y = 95
+dx = 4
+radius = 13
+material = "sand"
+
+[[pour]]
+x = 24
+y = 76
+radius = 9
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 78
+y = 76
+radius = 9
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 132
+y = 76
+radius = 9
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 8
+y = 74
+repeat = 6
+dx = 2
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 62
+y = 74
+repeat = 6
+dx = 2
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 116
+y = 74
+repeat = 6
+dx = 2
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+# Diatoms.
+[[film]]
+tick = 300
+variety = "diatoms"
+on = "surface"
+rect = [0, 60, 53, 90]
+density = 11
+
+[[film]]
+tick = 300
+variety = "diatoms"
+on = "back"
+rect = [0, 9, 53, 90]
+density = 9
+
+[[film]]
+tick = 300
+variety = "diatoms"
+on = "front"
+rect = [0, 40, 53, 90]
+density = 5
+
+[[film]]
+tick = 300
+variety = "diatoms"
+on = "left"
+rect = [0, 9, 8, 90]
+density = 12
+
+# Green spot algae.
+[[film]]
+tick = 300
+variety = "green_spot"
+on = "surface"
+rect = [53, 60, 107, 90]
+density = 12
+
+[[film]]
+tick = 300
+variety = "green_spot"
+on = "back"
+rect = [53, 9, 107, 90]
+density = 11
+
+[[film]]
+tick = 300
+variety = "green_spot"
+on = "front"
+rect = [53, 9, 107, 60]
+density = 5
+
+# Green dust algae.
+[[film]]
+tick = 300
+variety = "green_dust"
+on = "surface"
+rect = [107, 60, 160, 90]
+density = 12
+
+[[film]]
+tick = 300
+variety = "green_dust"
+on = "back"
+rect = [107, 9, 160, 90]
+density = 10
+
+[[film]]
+tick = 300
+variety = "green_dust"
+on = "front"
+rect = [107, 30, 160, 90]
+density = 5
+
+[[film]]
+tick = 300
+variety = "green_dust"
+on = "right"
+rect = [152, 9, 160, 90]
+density = 13
+
+[[creature]]
+tick = 310
+species = "neon_tetra"
+x = 20
+y = 36
+count = 4
+dx = 9
+
+[[creature]]
+tick = 310
+species = "guppy"
+x = 90
+y = 44
+count = 3
+dx = 14
