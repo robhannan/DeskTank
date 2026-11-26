@@ -64,12 +64,17 @@ pub fn current_user_sid() -> io::Result<String> {
             &raw mut needed,
         )
     };
+    if probe != 0 {
+        return Err(io::Error::other(
+            "GetTokenInformation succeeded unexpectedly for a zero-length buffer",
+        ));
+    }
     let error = io::Error::last_os_error();
     let too_small = error
         .raw_os_error()
         .and_then(|code| u32::try_from(code).ok())
         == Some(ERROR_INSUFFICIENT_BUFFER);
-    if probe != 0 || !too_small {
+    if !too_small {
         return Err(error);
     }
 

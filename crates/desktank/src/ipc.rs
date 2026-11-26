@@ -451,10 +451,13 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             create_runtime_dir(&dir).unwrap();
-            let listener = ListenerOptions::new()
-                .name(endpoint(&dir).unwrap())
-                .create_sync()
-                .unwrap();
+            let options = ListenerOptions::new().name(endpoint(&dir).unwrap());
+            #[cfg(windows)]
+            let options = {
+                use interprocess::os::windows::local_socket::ListenerOptionsExt as _;
+                options.security_descriptor(pipe_security_descriptor().unwrap())
+            };
+            let listener = options.create_sync().unwrap();
             let materials = Arc::new(MaterialTable::builtin().unwrap());
             let wake = Arc::new(|_request: Request, reply: Sender<Reply>| {
                 let _ = reply.send(Ok("test".to_owned()));
@@ -533,9 +536,20 @@ mod tests {
             .unwrap()
             .serialize(DACL, widestring::U16CStr::to_string_lossy)
             .unwrap();
-        assert!(text.starts_with("D:P("), "{text}");
+        let trustee = text
+            .strip_prefix("D:P(A;;GA;;;")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .unwrap_or_else(|| panic!("unexpected DACL: {text}"));
         assert_eq!(text.matches('(').count(), 1, "{text}");
-        assert!(text.contains(&sid), "{text}");
+        // Windows abbreviates the built-in local administrator SID (-500) to
+        // `LA` (and guest -501 to `LG`) when serialising back to SDDL.
+        let matches_current_user = trustee == sid
+            || (sid.ends_with("-500") && trustee == "LA")
+            || (sid.ends_with("-501") && trustee == "LG");
+        assert!(
+            matches_current_user,
+            "trustee {trustee} did not match {sid} in {text}"
+        );
     }
 
     #[test]
