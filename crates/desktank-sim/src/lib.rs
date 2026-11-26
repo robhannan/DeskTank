@@ -25,7 +25,7 @@ pub mod species;
 pub mod tools;
 mod world;
 
-pub use daylight::DaylightClock;
+pub use daylight::{DaylightClock, DaylightSchedule, PolarDaylight};
 pub use device::{
     CLOG_FLOW_FLOOR, Device, DeviceArt, DeviceError, DeviceId, DeviceKind, DeviceKinds,
     DeviceStatus, MAX_DEVICES, Mount, RinseKind,

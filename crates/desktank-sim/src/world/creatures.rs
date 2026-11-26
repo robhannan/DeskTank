@@ -602,6 +602,9 @@ pub(super) struct Creatures {
     /// Local time of day from the host, minutes after midnight (see
     /// [`night`]).
     minute: u16,
+    /// The day's bedtime and wake time from the host, not saved (see
+    /// [`night`]).
+    schedule: crate::daylight::DaylightSchedule,
     /// Reused start-of-tick snapshots by species, each in creature id order.
     school: Vec<Vec<Schoolmate>>,
     /// Whether a schooler is frightened enough this tick to startle its
@@ -771,6 +774,7 @@ impl Creatures {
             list: Vec::new(),
             cursor: None,
             minute: crate::daylight::NOON,
+            schedule: crate::daylight::DaylightSchedule::FIXED,
             school,
             scared: false,
             gaps: Vec::new(),
