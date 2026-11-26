@@ -51,15 +51,16 @@ pub const CARD_W: u32 = 144;
 /// Largest card image: its fixed width and the tallest any species needs.
 pub const CARD_MAX: (u32, u32) = (CARD_W, 176);
 
-/// Size of the HUD texture: the palette's region (at the top) and the
-/// card's region below it.
+/// Size of the HUD texture: the palette's region (at the top), the species
+/// card's region below it and the inspect card's below that
+/// ([`crate::inspect::TEXTURE_Y`]).
 pub const HUD_TEXTURE: (u32, u32) = (
     if hud::MAX_SIZE.0 > CARD_MAX.0 {
         hud::MAX_SIZE.0
     } else {
         CARD_MAX.0
     },
-    hud::MAX_SIZE.1 + CARD_MAX.1,
+    hud::MAX_SIZE.1 + 2 * CARD_MAX.1,
 );
 /// The row of the HUD texture where the card's region starts (its left edge
 /// is column 0).
@@ -80,7 +81,7 @@ const SPROUT_SCALE: u32 = 3;
 /// Text colours (the frame and background are the palette's).
 const TITLE: [u8; 3] = SELECTED;
 const LABEL: [u8; 3] = OPEN;
-const BODY: [u8; 3] = ICON_FG;
+pub(crate) const BODY: [u8; 3] = ICON_FG;
 const LATIN: [u8; 3] = [0x8f, 0xa6, 0xc0];
 
 /// The card as an RGBA image.
@@ -102,7 +103,19 @@ pub fn build(
     species: &SpeciesTable,
     plants: &PlantSpeciesTable,
 ) -> Option<CardImage> {
-    let mut page = Page::new();
+    build_tagged(card, materials, species, plants, None)
+}
+
+/// [`build`] with `tag` (a page number such as `2/2`) in the top-right
+/// corner, the heading wrapped clear of it.
+pub(crate) fn build_tagged(
+    card: Card,
+    materials: &MaterialTable,
+    species: &SpeciesTable,
+    plants: &PlantSpeciesTable,
+    tag: Option<&str>,
+) -> Option<CardImage> {
+    let mut page = Page::new(tag);
     match card {
         Card::Creature(id) => creature(&mut page, species.get(id)?, materials),
         Card::Plant(id) => plant(&mut page, plants.get(id)?, materials),
@@ -112,7 +125,7 @@ pub fn build(
 
 /// A name from its data id, as the palette and inspect card write it:
 /// `home_owning_crab` is "Home owning crab".
-fn display_name(name: &str) -> String {
+pub(crate) fn display_name(name: &str) -> String {
     let name = name.replace('_', " ");
     let mut chars = name.chars();
     chars.next().map_or_else(String::new, |first| {
@@ -165,21 +178,35 @@ fn plant(page: &mut Page, sp: &PlantSpecies, materials: &MaterialTable) {
     page.paragraph(&sp.description, BODY);
 }
 
-/// The card being drawn top to bottom into a [`CARD_MAX`]-sized image that
+/// A card being drawn top to bottom into a [`CARD_MAX`]-sized image that
 /// [`Page::finish`] crops.
-struct Page {
+pub(crate) struct Page {
     pixels: Vec<u8>,
     /// Top of the next thing to draw.
     y: u32,
+    /// Width the heading keeps clear of a corner tag, in pixels.
+    tag_width: u32,
 }
 
 impl Page {
-    fn new() -> Self {
+    /// An empty page, with `tag` in the label colour in its top-right
+    /// corner if given.
+    pub(crate) fn new(tag: Option<&str>) -> Self {
         let mut pixels = Vec::with_capacity((CARD_MAX.0 * CARD_MAX.1 * 4) as usize);
         for _ in 0..CARD_MAX.0 * CARD_MAX.1 {
             pixels.extend_from_slice(&[BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 255]);
         }
-        Self { pixels, y: PAD }
+        let mut page = Self {
+            pixels,
+            y: PAD,
+            tag_width: 0,
+        };
+        if let Some(tag) = tag {
+            let w = font::width(tag);
+            page.text(CARD_W - PAD - w, tag, LABEL);
+            page.tag_width = w + font::ADVANCE;
+        }
+        page
     }
 
     /// Width of the text area.
@@ -198,13 +225,15 @@ impl Page {
         }
     }
 
-    /// The name in the title colour and the Latin name under it.
-    fn heading(&mut self, name: &str, latin: &str) {
-        for line in font::wrap(name, Self::inner()) {
+    /// The name in the title colour and the Latin name (or another
+    /// subtitle; none if empty) under it, both clear of the corner tag.
+    pub(crate) fn heading(&mut self, name: &str, latin: &str) {
+        let width = Self::inner() - self.tag_width;
+        for line in font::wrap(name, width) {
             self.text(PAD, &line, TITLE);
             self.y += font::LINE;
         }
-        for line in font::wrap(latin, Self::inner()) {
+        for line in font::wrap(latin, width) {
             self.text(PAD, &line, LATIN);
             self.y += font::LINE;
         }
@@ -212,7 +241,7 @@ impl Page {
     }
 
     /// Wrapped text in `colour`.
-    fn paragraph(&mut self, text: &str, colour: [u8; 3]) {
+    pub(crate) fn paragraph(&mut self, text: &str, colour: [u8; 3]) {
         for line in font::wrap(text, Self::inner()) {
             self.text(PAD, &line, colour);
             self.y += font::LINE;
@@ -221,7 +250,7 @@ impl Page {
     }
 
     /// `label` in the label colour, then `text`, wrapped as one paragraph.
-    fn field(&mut self, label: &str, text: &str) {
+    pub(crate) fn field(&mut self, label: &str, text: &str) {
         let full = format!("{label} {text}");
         let label_len = label.chars().count();
         for (i, line) in font::wrap(&full, Self::inner()).iter().enumerate() {
@@ -309,7 +338,7 @@ impl Page {
     }
 
     /// Crops to the content and draws the frame.
-    fn finish(self) -> CardImage {
+    pub(crate) fn finish(self) -> CardImage {
         let wanted = self.y + PAD - PARA_GAP;
         let height = wanted.min(CARD_MAX.1);
         let row = (CARD_MAX.0 * 4) as usize;
@@ -590,7 +619,8 @@ mod tests {
     fn the_hud_texture_holds_both_regions() {
         assert!(HUD_TEXTURE.0 >= hud::MAX_SIZE.0 && HUD_TEXTURE.0 >= CARD_MAX.0);
         assert_eq!(TEXTURE_Y, hud::MAX_SIZE.1);
-        assert_eq!(HUD_TEXTURE.1, TEXTURE_Y + CARD_MAX.1);
+        assert_eq!(crate::inspect::TEXTURE_Y, TEXTURE_Y + CARD_MAX.1);
+        assert_eq!(HUD_TEXTURE.1, crate::inspect::TEXTURE_Y + CARD_MAX.1);
         // Within WebGL2's minimum 2048 texture side.
         assert!(HUD_TEXTURE.0 <= 2048 && HUD_TEXTURE.1 <= 2048);
     }

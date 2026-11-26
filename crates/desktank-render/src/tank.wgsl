@@ -54,6 +54,9 @@ struct View {
     // Card image size in card pixels (xy) and the row of the HUD texture
     // where the card's region starts (z; its left edge is column 0).
     card_size: vec4<f32>,
+    // In-tank inspect card: as `card` and `card_size`, for its own region.
+    inspect: vec4<f32>,
+    inspect_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
     // Day and night: a colour multiplier for the tank (rgb; 1 by day), and
@@ -247,8 +250,9 @@ struct GridSource {
     swayed_away: bool,
 };
 
-// The HUD pixel at `pos` if the species card or the palette is shown and
-// covers it (alpha above 0.5), else alpha 0; the card is on top. Every pass
+// The HUD pixel at `pos` if the species card, the palette or the inspect
+// card is shown and covers it (alpha above 0.5), else alpha 0; the species
+// card is on top, then the palette, then the inspect card. Every pass
 // that must leave the HUD alone (grid, plants, sprites, the lens frame)
 // asks this, so they can't disagree about what it covers.
 fn hud_at(pos: vec2<f32>) -> vec4<f32> {
@@ -262,6 +266,12 @@ fn hud_at(pos: vec2<f32>) -> vec4<f32> {
         let p = floor((pos - view.hud.xy) / view.hud.z);
         if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy) {
             return textureLoad(hud, vec2<i32>(p), 0);
+        }
+    }
+    if view.inspect.w > 0.5 {
+        let p = floor((pos - view.inspect.xy) / view.inspect.z);
+        if all(p >= vec2<f32>(0.0)) && all(p < view.inspect_size.xy) {
+            return textureLoad(hud, vec2<i32>(p) + vec2<i32>(0, i32(view.inspect_size.z)), 0);
         }
     }
     return vec4<f32>(0.0);

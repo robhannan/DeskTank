@@ -71,8 +71,8 @@
     where they differ), diet, behaviour, needs (or a plant's form and
     needs) and description, all from the species data. It is drawn in
     the canvas on every host from a second region of the HUD texture, in
-    a small CPU-built pixel font (`desktank_render::font`, meant for the
-    in-tank inspect card too), so it needs no new pipeline and is
+    a small CPU-built pixel font (`desktank_render::font`, shared with
+    the in-tank inspect card), so it needs no new pipeline and is
     WebGL2-safe. It is built only when
     the selection changes and costs nothing while nothing is selected.
     Above pixel scale 1 it covers at most half the canvas each way, so a
@@ -88,6 +88,22 @@
     subtle amber cast;
   - **net**: pick up and move a creature;
   - **inspect**: show a creature's card and name it.
+
+    Inspecting a creature or a plant pins the **inspect card** beside
+    it, drawn in the canvas: to its right (or left, nearer the right
+    glass), centred on it, following it as it swims and clamped inside
+    the tank. It has two pages, numbered in its top-right corner: page 1
+    is the live state (name, stage and sex, age, health, energy, colour
+    morph, days left carrying, an unmet need; a plant's age, health,
+    size by part and what holds it back), page 2 its species card.
+    A click on it turns the page; inspecting a cell or device removes
+    it, and it goes by itself when its creature or plant does. It is
+    drawn from a third HUD-texture region at half the cell scale
+    (at least 2, at most half the canvas each way), and the live page is
+    rebuilt only when its text changes, never per frame; nothing is
+    built or drawn while nothing is inspected. It needs only the tank
+    (`Tank::set_inspected`), so the screensaver and wallpaper can draw
+    it too once they have a way to open it.
 
   The tray menu also has quick actions: Feed (default food), Water
   change, and Pause.

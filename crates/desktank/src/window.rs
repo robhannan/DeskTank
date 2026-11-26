@@ -73,8 +73,8 @@ use desktank_platform::{
     PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats,
 };
 use desktank_render::{
-    BrushPreview, Card, Gpu, GpuOptions, Magnifier, Palette, PaletteHit, Tank, TankConfig,
-    TankSurface, wgpu,
+    BrushPreview, Card, Gpu, GpuOptions, Inspected, Magnifier, Palette, PaletteHit, Tank,
+    TankConfig, TankSurface, wgpu,
 };
 use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
@@ -82,8 +82,8 @@ use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, RinseKind, World,
-    WorldConfig,
+    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, PlantId, RinseKind,
+    World, WorldConfig,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -482,8 +482,8 @@ impl Running {
         self.tank.invalidate();
     }
 
-    /// The cell under the cursor, unless the cursor is over the palette
-    /// or the species card.
+    /// The cell under the cursor, unless the cursor is over the palette,
+    /// the species card or the inspect card.
     fn cursor_cell(&self) -> Option<(i64, i64)> {
         let (px, py) = self.cursor?;
         let size = self.surface.size();
@@ -494,6 +494,10 @@ impl Running {
             || self
                 .tank
                 .card_layout(size)
+                .is_some_and(|c| c.contains(px, py))
+            || self
+                .tank
+                .inspect_layout(size)
                 .is_some_and(|c| c.contains(px, py))
         {
             return None;
@@ -538,6 +542,14 @@ impl Running {
                 None if p.contains(px, py) => return,
                 None => {}
             }
+        }
+        // A click on the inspect card turns its page.
+        if let (Some((px, py)), Some(c)) = (self.cursor, self.tank.inspect_layout(size))
+            && c.contains(px, py)
+        {
+            let page = self.tank.inspect_page().turned();
+            self.tank.set_inspect_page(page);
+            return;
         }
         if let Some(cell) = self.cursor_cell() {
             let out = self.tools.press(self.tank.world_mut(), button, cell);
@@ -595,9 +607,8 @@ impl Running {
         self.window.set_title(&title);
     }
 
-    /// Reports an inspection or refused creature add in the title bar (the
-    /// window's card; a drawn one comes with the overlay, which has no title
-    /// bar).
+    /// Reports an inspection or refused creature add in the title bar, and
+    /// pins the drawn inspect card to an inspected creature or plant.
     fn show(&mut self, out: Outcome) {
         if let Outcome::Zoomed(_) = out {
             self.show_magnify();
@@ -631,8 +642,10 @@ impl Running {
             return;
         };
         // A new inspection replaces the last: N names only a creature
-        // shown now, and an open name field is for the one shown before.
+        // shown now, an open name field is for the one shown before, and
+        // the drawn card moves to this creature or plant (or goes).
         self.forget_inspected();
+        self.tank.set_inspected(Inspected::of(found));
         let text = match found {
             Inspection::Cell { x, y, material } => {
                 let name = self
@@ -679,25 +692,10 @@ impl Running {
                 )
             }
             Inspection::Plant { id, x, y, .. } => {
-                let world = self.tank.world();
-                let Some(p) = world.plant(id) else { return };
-                let name = world
-                    .plant_species()
-                    .get(p.species)
-                    .map_or("?", |s| s.name.as_str());
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ages ≥ 0
-                let age = p.age as u64;
-                let [roots, stem, leaves] = p.parts;
-                format!(
-                    "{name} #{}, {}m {:02}s old, health {:.0}%, {} cells \
-                     (roots {roots}, stem {stem}, leaves {leaves}), {} at ({x}, {y})",
-                    id.0,
-                    age / 60,
-                    age % 60,
-                    p.health * 100.0,
-                    p.size(),
-                    p.limit.describe(),
-                )
+                let Some(line) = plant_line(self.tank.world(), id, x, y) else {
+                    return;
+                };
+                line
             }
         };
         self.window.set_title(&format!("DeskTank — {text}"));
@@ -1563,6 +1561,28 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     let n = i64::try_from(n).unwrap_or(1).max(1);
     let at = i64::try_from(at).unwrap_or(0);
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
+}
+
+/// The inspect line for plant `id` under cell `(x, y)`.
+fn plant_line(world: &World, id: PlantId, x: usize, y: usize) -> Option<String> {
+    let p = world.plant(id)?;
+    let name = world
+        .plant_species()
+        .get(p.species)
+        .map_or("?", |s| s.name.as_str());
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ages ≥ 0
+    let age = p.age as u64;
+    let [roots, stem, leaves] = p.parts;
+    Some(format!(
+        "{name} #{}, {}m {:02}s old, health {:.0}%, {} cells \
+         (roots {roots}, stem {stem}, leaves {leaves}), {} at ({x}, {y})",
+        id.0,
+        age / 60,
+        age % 60,
+        p.health * 100.0,
+        p.size(),
+        p.limit.describe(),
+    ))
 }
 
 /// The inspect line for device `id` under cell `(x, y)`, including its mount (D27, DV3–DV7).
