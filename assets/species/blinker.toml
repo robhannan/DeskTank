@@ -24,7 +24,7 @@ max_speed = 7.0
 # Like a goldfish: every food, algae, mulm (detritus) and dead plant
 # matter, plus corpses. Not live plant parts (grazing them is a
 # follow-up), seeds, fertiliser or waste.
-diet = ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer", "algae", "detritus", "dead_plant"]
+diet = ["flake_food", "sinking_pellet", "bloodworm", "brine_shrimp", "algae_wafer", "algae", "detritus", "dead_plant"]
 eats_corpses = true
 # A hungry blinker swallows fry, juvenile shrimp and Thai micro crabs;
 # adult tetras, rasboras and shrimp are too big.

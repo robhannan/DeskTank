@@ -1,9 +1,9 @@
 //! Live food (SPEC §2.4 *Live food*): small living foods such as
-//! bloodworms, offered from the palette's Food › Live a pinch at a time.
+//! bloodworms and brine shrimp, offered from Food › Live a pinch at a time.
 //!
 //! - **Species.** A species with `live_food = "<material>"` is live food.
-//!   It moves by the usual systems (a bloodworm is a bottom walker that
-//!   sinks at [`SINK`] and wriggles over the bed) but is not stock:
+//!   Bloodworms sink at [`SINK`] and wriggle over the bed. Brine shrimp
+//!   swim in short bursts in midwater. Live food is not stock:
 //!   the palette's Creatures group, the `spawn` cheat and
 //!   `scene::stock` leave it out, it never breeds, and it doesn't count
 //!   against the population cap. At most [`MAX_LIVE_FOOD`] live foods are
@@ -29,7 +29,8 @@
 use rand_core::Rng as _;
 
 use super::{
-    BITE, BITE_ENERGY, Creature, CreatureId, ENERGY_RESERVE, FULL, Traits, World, WorldError,
+    BITE, BITE_ENERGY, Creature, CreatureId, ENERGY_RESERVE, FULL, Kind, TICKS_PER_SECOND, Traits,
+    World, WorldError,
 };
 use crate::grid::Rect;
 use crate::material::MaterialId;
@@ -52,6 +53,15 @@ const PINCH_SPREAD: u32 = 3;
 #[allow(clippy::cast_possible_wrap)]
 pub(super) const SINK: i32 = 6 * super::ONE / super::TICKS_PER_SECOND as i32;
 const PINCH_STREAM: u64 = (1 << 48) | (4 << 40);
+
+/// Midwater live food alternates a short kick with slow drift. Stagger
+/// the rhythm within a pinch and derive it from saved creature/world state.
+pub(super) fn swim_pace(k: &Kind, id: CreatureId, tick: u64) -> i32 {
+    const PERIOD: u64 = 2 * TICKS_PER_SECOND as u64;
+    const KICK: u64 = PERIOD / 4;
+    let phase = (tick % PERIOD + u64::from(id.0) * 13) % PERIOD;
+    if phase < KICK { k.top } else { k.cruise }
+}
 
 impl World {
     /// Live foods in the tank now (at most [`MAX_LIVE_FOOD`]).

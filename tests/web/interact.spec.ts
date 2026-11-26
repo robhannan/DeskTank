@@ -537,7 +537,7 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   const materials = await page.evaluate(() => window.desktank.tank.materials());
   const species = await page.evaluate(() => window.desktank.tank.species());
   const liveFoods = await page.evaluate(() => window.desktank.tank.liveFoods());
-  expect(liveFoods).toContain("live_bloodworm");
+  expect(liveFoods).toEqual(["live_bloodworm", "live_brine_shrimp"]);
   const path = (i: number) => cats[i].split("\t")[0];
   for (const [i, e] of entries.entries()) {
     const [kind, name] = e.split(" ");
@@ -637,9 +637,10 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await page.keyboard.press("g");
   await expect(tab("Food")).toHaveAttribute("aria-selected", "true");
   await expect(tab("Fish food")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("radio", { name: "Frozen brine shrimp" })).toBeVisible();
   await page.keyboard.press("h");
   await expect(tab("Live")).toHaveAttribute("aria-selected", "true");
-  await expect(radios).toHaveText(["Live bloodworms"]);
+  await expect(radios).toHaveText(["Live bloodworms", "Live brine shrimp"]);
   await page.keyboard.press("h");
   await expect(tab("Fish food")).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Shift+H");

@@ -30,7 +30,7 @@ breathes_air = false
 temperament = "shoaling"
 speed = 4.5
 max_speed = 9.0
-diet = ["flake_food", "bloodworm", "floating_leaf"]
+diet = ["flake_food", "bloodworm", "brine_shrimp", "floating_leaf"]
 
 # A livebearer: about 4 weeks' gestation (real broods of 20–50 fry).
 # Broods are scaled down for a desktop tank; days are on the life clock.

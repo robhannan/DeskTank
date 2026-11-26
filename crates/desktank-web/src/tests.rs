@@ -159,9 +159,12 @@ fn palette_categories_follow_the_sim() {
     );
     // Live food is in Food › Live, not Fish, and not a species the
     // palette stocks.
-    assert_eq!(t.live_foods(), ["live_bloodworm"]);
-    assert_eq!(cat("live_food live_bloodworm"), "food/live\tFood\tLive");
-    assert!(!t.species().contains(&"live_bloodworm".to_owned()));
+    assert_eq!(t.live_foods(), ["live_bloodworm", "live_brine_shrimp"]);
+    for live in t.live_foods() {
+        assert_eq!(cat(&format!("live_food {live}")), "food/live\tFood\tLive");
+        assert!(!t.species().contains(&live));
+    }
+    assert_eq!(cat("material brine_shrimp"), "food/fish\tFood\tFish food");
     // Plant slots carry their species' description for a tooltip.
     let about = t.palette_descriptions();
     assert_eq!(about.len(), cats.len());

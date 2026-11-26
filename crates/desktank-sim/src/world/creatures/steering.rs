@@ -502,11 +502,12 @@ impl World {
                 return target;
             }
         }
-        (
-            c.tx,
-            if k.zone == Zone::Bottom { c.y } else { c.ty },
-            k.cruise,
-        )
+        let speed = if k.live && k.zone == Zone::Mid {
+            super::live::swim_pace(k, c.id, self.tick)
+        } else {
+            k.cruise
+        };
+        (c.tx, if k.zone == Zone::Bottom { c.y } else { c.ty }, speed)
     }
 
     /// Aim along the line from the cursor to the fish, one and a half

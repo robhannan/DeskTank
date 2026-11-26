@@ -316,7 +316,7 @@ pub struct Species {
     /// The palette sub-category it is offered in (`palette = "fish/schooling"`),
     /// or `None` if the palette doesn't offer it (the cheat-only species).
     pub palette: Option<PalettePath>,
-    /// Live food (bloodworms; SPEC §2.4 *Live food*): offered from the
+    /// Live food (SPEC §2.4 *Live food*): offered from the
     /// Food palette category a pinch at a time, never stocked, bred or
     /// counted against the population cap. It is eaten whole by any
     /// species at least as long whose diet holds [`Species::food_as`],
@@ -795,6 +795,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/species/axolotl.toml"),
     include_str!("../../../assets/species/common_frog.toml"),
     include_str!("../../../assets/species/live_bloodworm.toml"),
+    include_str!("../../../assets/species/live_brine_shrimp.toml"),
 ];
 
 /// All species, ordered by ID.
@@ -1625,19 +1626,19 @@ mod tests {
         for (name, diet, behaviour, requirements) in [
             (
                 "neon_tetra",
-                "flake food, bloodworm",
+                "flake food, bloodworm, brine shrimp",
                 "schooling, mid-water swimmer, egg layer",
                 "min depth 12 cm",
             ),
             (
                 "betta",
-                "flake food, bloodworm, sinking pellet, prey up to 2.5 cm",
+                "flake food, bloodworm, brine shrimp, sinking pellet, prey up to 2.5 cm",
                 "territorial, surface swimmer, egg layer",
                 "min depth 16 cm, needs surface air, territory 15 cm",
             ),
             (
                 "kuhli_loach",
-                "sinking pellet, bloodworm",
+                "sinking pellet, bloodworm, brine shrimp",
                 "shoaling, bottom dweller, burrows, nocturnal, egg layer",
                 "min depth 6 cm",
             ),
@@ -1655,7 +1656,7 @@ mod tests {
             ),
             (
                 "blinker",
-                "flake food, sinking pellet, bloodworm, algae wafer, detritus, dead plant, algae, corpses, prey up to 1.5 cm",
+                "flake food, sinking pellet, bloodworm, brine shrimp, algae wafer, detritus, dead plant, algae, corpses, prey up to 1.5 cm",
                 "peaceful, mid-water swimmer, glows at night",
                 "min depth 24 cm",
             ),
@@ -1775,7 +1776,7 @@ mod tests {
     fn builtin_species_load() {
         let m = materials();
         let t = SpeciesTable::builtin_for(&m).unwrap();
-        assert_eq!(t.len(), 27);
+        assert_eq!(t.len(), 28);
         for name in [
             "neon_tetra",
             "corydoras",
@@ -1814,7 +1815,12 @@ mod tests {
         assert!(!worm.breathes_air && worm.air_tolerance_seconds == 0);
         assert_eq!(worm.zone, Zone::Bottom);
         assert!((1.0..=2.0).contains(&worm.length_cm));
-        assert_eq!(t.iter().filter(|s| s.live_food).count(), 1);
+        let shrimp = t.get(t.id("live_brine_shrimp").unwrap()).unwrap();
+        assert!(shrimp.live_food && !shrimp.stocked() && !shrimp.cheat_only);
+        assert_eq!(shrimp.food_as, m.id("brine_shrimp"));
+        assert!(shrimp.breeding.is_none() && shrimp.diet.is_empty());
+        assert_eq!(shrimp.zone, Zone::Mid);
+        assert_eq!(t.iter().filter(|s| s.live_food).count(), 2);
         let betta = t.get(t.id("betta").unwrap()).unwrap();
         assert!(betta.breathes_air);
         assert_eq!(betta.zone, Zone::Surface);

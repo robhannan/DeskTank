@@ -1254,9 +1254,15 @@ mod tests {
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
             (
                 "food/fish",
-                vec!["flake_food", "sinking_pellet", "bloodworm", "algae_wafer"],
+                vec![
+                    "flake_food",
+                    "sinking_pellet",
+                    "bloodworm",
+                    "algae_wafer",
+                    "brine_shrimp",
+                ],
             ),
-            ("food/live", vec!["live_bloodworm"]),
+            ("food/live", vec!["live_bloodworm", "live_brine_shrimp"]),
             (
                 "care",
                 vec!["root_tab", "liquid_fertiliser", "waste", "detritus"],

@@ -1,0 +1,9 @@
+# Frozen brine shrimp sinks and decays into detritus when uneaten.
+id = 34
+name = "brine_shrimp"
+palette = "food/fish"
+class = "powder"
+density = 1.4
+repose = 25.0
+passable = true
+colour = "#dcaa78"

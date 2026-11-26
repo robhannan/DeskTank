@@ -27,7 +27,7 @@ reach = 2
 # out: live plant parts, seeds and cuttings (it would eat its own carpet),
 # root tabs and liquid fertiliser (not food), and waste, which it would
 # otherwise eat straight back and so cancel its own bioload.
-diet = ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer", "algae", "detritus", "dead_plant"]
+diet = ["flake_food", "sinking_pellet", "bloodworm", "brine_shrimp", "algae_wafer", "algae", "detritus", "dead_plant"]
 eats_corpses = true
 # Very stinky: a dropping of waste every 4 seconds (15 a minute), where
 # every stocked species leaves none.

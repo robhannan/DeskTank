@@ -32,7 +32,7 @@ temperament = "peaceful"
 shy = true
 speed = 2.5
 max_speed = 6.0
-diet = ["flake_food", "bloodworm", "sinking_pellet"]
+diet = ["flake_food", "bloodworm", "brine_shrimp", "sinking_pellet"]
 
 # A bubble nester; eggs hatch in about a day.
 # Broods are scaled down for a desktop tank; days are on the life clock.

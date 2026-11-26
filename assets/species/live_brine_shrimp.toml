@@ -1,0 +1,98 @@
+# Adult brine shrimp (SPEC §2.4 Live food), about 1 cm long.
+id = 28
+name = "live_brine_shrimp"
+scientific_name = "Artemia salina"
+description = "A pale brine shrimp that kicks through open water in short bursts."
+palette = "food/live"
+live_food = "brine_shrimp"
+zone = "mid"
+depth = [0.2, 0.75]
+min_depth = 4
+length_cm = 1.0
+# A 20-world-minute lifespan, arriving at maturity (10 world minutes old).
+lifespan_days = 2
+maturity_days = 1
+temperament = "peaceful"
+speed = 0.5
+max_speed = 3.0
+diet = []
+
+[sprite]
+# Traced from NOAA's public-domain photograph "Artemia salina.jpg":
+# https://commons.wikimedia.org/wiki/File:Artemia_salina.jpg
+# Facing right, 6x4 coarse texels (3x2 cells), 12x8 fine texels. The
+# body spans about 1 cm. Four poses sweep the tail and leaf-like limbs.
+colours = { b = "#dcaa78", h = "#ffe1ae", d = "#8e5d49", l = "#d7b696", k = "#593a34", e = "#fff1d9" }
+frames = [
+    [
+        "......",
+        ".blb..",
+        ".bllk.",
+        "...l..",
+    ],
+    [
+        "......",
+        "..lb..",
+        ".bllk.",
+        "......",
+    ],
+    [
+        "......",
+        ".blb..",
+        ".bllk.",
+        "......",
+    ],
+    [
+        "......",
+        ".lbb..",
+        "..llk.",
+        "...ll.",
+    ],
+]
+icon = [
+    "..k",
+    "bhe",
+    ".ll",
+]
+fine_frames = [
+    [
+        "............",
+        "............",
+        "............",
+        "...bdbdbhl..",
+        ".bb.llllek..",
+        "....llll....",
+        "......l.....",
+        "............",
+    ],
+    [
+        "............",
+        "............",
+        "............",
+        "....dbdbhl..",
+        "..bhblllek..",
+        ".bb..lll....",
+        "............",
+        "............",
+    ],
+    [
+        "............",
+        "............",
+        "............",
+        "...bdbdbhl..",
+        ".bb.llllek..",
+        "....llll....",
+        "............",
+        "............",
+    ],
+    [
+        "............",
+        "............",
+        ".........l..",
+        ".bbbdbdbhl..",
+        "....llllek..",
+        ".....llll...",
+        ".......ll...",
+        "............",
+    ],
+]

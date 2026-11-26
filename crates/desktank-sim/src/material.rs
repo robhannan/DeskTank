@@ -219,6 +219,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/sinking_pellet.toml"),
     include_str!("../../../assets/materials/bloodworm.toml"),
     include_str!("../../../assets/materials/algae_wafer.toml"),
+    include_str!("../../../assets/materials/brine_shrimp.toml"),
     include_str!("../../../assets/materials/root_tab.toml"),
     include_str!("../../../assets/materials/liquid_fertiliser.toml"),
     include_str!("../../../assets/materials/waste.toml"),
