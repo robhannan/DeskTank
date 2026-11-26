@@ -93,13 +93,10 @@ directory for custom materials and species is a stretch goal.
   packed form; the shader reads it by texel and blends densities
   bilinearly only between blocks of the same variety. The look of each
   variety (style, two shades and a strength; the styles are film, slime,
-  spots and dust) comes from `assets/fields.toml`. The one-pass grid reads
-  it as two `vec4`s per variety id in the view uniform and works out the
-  slime and spot patterns per texel. The split grid (webOS, DX12) can't
-  afford that, so it reads the shades and the same patterns from a baked
-  `RGBA8` atlas (`algae.rs`, 482×240, uploaded once) that the one-pass grid
-  gets as a 1×1 placeholder (twelve textures). Both patterns repeat every
-  240 texels and round to the atlas's bytes, so the two grids agree. The back and sides tint the water behind the
+  spots and dust) comes from `assets/fields.toml`. Both the one-pass and
+  split grids read the shades and the 240-texel repeating spot and slime
+  patterns from a baked `RGBA8` atlas (`algae.rs`, 482×240, uploaded once;
+  twelve textures). The back and sides tint the water behind the
   contents, and the front blends over the submerged scene with at most
   25% opacity (spots and dust are sparse and keep to the same cap in
   proportion). On opaque sRGB targets the grid and sprites apply the same

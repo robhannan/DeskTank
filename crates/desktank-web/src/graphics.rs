@@ -55,7 +55,7 @@ impl Graphics {
     pub async fn open(
         canvas: HtmlCanvasElement,
         backend: String,
-        split_grid: bool,
+        split_grid: Option<bool>,
         srgb: bool,
     ) -> Result<Graphics, JsValue> {
         let options = (
