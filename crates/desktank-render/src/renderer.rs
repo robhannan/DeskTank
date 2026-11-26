@@ -555,7 +555,7 @@ impl Renderer {
                 surface_ripple_threshold,
             ],
             |p| {
-                let (w, h) = hud::image_size(p.tabs, p.subs, p.items);
+                let (w, h) = hud::image_size(p.tabs, p.subs, p.items, p.morphs);
                 [
                     p.origin.0 as f32,
                     p.origin.1 as f32,

@@ -1,10 +1,11 @@
 //! The interact overlay (SPEC §2.5): a small pixel-art palette in the top-left
 //! corner and the brush outline under the pointer.
 //!
-//! The palette is up to three rows of slots: the top tabs (each showing its
+//! The palette is up to four rows of slots: the top tabs (each showing its
 //! category's first item), the open tab's sub-tabs (only when it has more
-//! than one sub-category, each showing its first item) and the open
-//! sub-category's items. It is a tiny RGBA image built on the CPU when the
+//! than one sub-category, each showing its first item), the open
+//! sub-category's items and, under a selected multi-morph creature, its
+//! colour morphs. It is a tiny RGBA image built on the CPU when the
 //! selection or the open tabs change and drawn by the tank shader at an
 //! integer scale, so it adds one texture and no pipeline (WebGL2-safe, SPEC
 //! §3.5). Pixels outside the rows are transparent. Hosts hit-test clicks
@@ -21,9 +22,9 @@ const SLOT: u32 = 10;
 const GAP: u32 = 1;
 /// Palette pixels per row: its leading gap and its slots.
 const ROW: u32 = GAP + SLOT;
-/// Most rows: tabs, sub-tabs and items.
-const MAX_ROWS: u32 = 3;
-/// Largest palette image: the HUD texture's size (23 slots per row, three
+/// Most rows: tabs, sub-tabs, items and morphs.
+const MAX_ROWS: u32 = 4;
+/// Largest palette image: the HUD texture's size (23 slots per row, four
 /// rows).
 pub const MAX_SIZE: (u32, u32) = (256, MAX_ROWS * ROW + GAP);
 
@@ -65,6 +66,43 @@ const SPROUT: [&str; 8] = [
 ];
 pub(crate) const SEED: [u8; 3] = [0xc8, 0xa8, 0x5a];
 
+/// A selected multi-morph creature's morph row, as the host shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaletteMorphs {
+    /// The creature species whose morph icons the row shows.
+    pub species: desktank_sim::SpeciesId,
+    /// Number of morphs, one slot each.
+    pub count: usize,
+    /// Whether a leading slot stocks the morphs in turn (automatic).
+    pub cycle: bool,
+    /// The picked morph, or `None` for automatic stocking.
+    pub selected: Option<u8>,
+}
+
+impl PaletteMorphs {
+    /// Slots in the row: the morphs, plus the automatic slot if it cycles.
+    #[must_use]
+    pub fn slots(&self) -> usize {
+        self.count + usize::from(self.cycle)
+    }
+
+    /// The row's selected slot.
+    fn framed(&self) -> Option<usize> {
+        match (self.cycle, self.selected) {
+            (true, None) => Some(0),
+            (true, Some(m)) => Some(usize::from(m) + 1),
+            (false, m) => m.map(usize::from),
+        }
+    }
+
+    /// What slot `slot` shows: `None` for the automatic slot, else its
+    /// morph.
+    fn morph_at(&self, slot: usize) -> Option<u8> {
+        let morph = slot.checked_sub(usize::from(self.cycle))?;
+        Some(u8::try_from(morph).unwrap_or(u8::MAX))
+    }
+}
+
 /// The palette as the host shows it: the top tabs, the open tab's
 /// sub-tabs, the open sub-category's items and the selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +123,8 @@ pub struct Palette {
     /// there. Framed in the item row while its sub-category is open,
     /// marked on its sub-tab or tab when not.
     pub selected: Option<(usize, usize, usize)>,
+    /// The selected creature's morph row, shown under the items.
+    pub morphs: Option<PaletteMorphs>,
 }
 
 /// The brush outline to draw: centre cell and radius, as
@@ -219,8 +259,11 @@ pub enum PaletteHit {
     Tab(usize),
     /// A sub-tab of the open tab (second row, when shown).
     Sub(usize),
-    /// An item of the open sub-category (last row).
+    /// An item of the open sub-category.
     Item(usize),
+    /// A slot of the morph row (last row, when shown): the automatic slot
+    /// first if the species cycles.
+    Morph(usize),
 }
 
 /// Where the palette is drawn in a target, for hit tests.
@@ -234,17 +277,27 @@ pub struct PaletteLayout {
     pub tabs: usize,
     /// Number of sub-tabs (second row; 0: no sub-tab row).
     pub subs: usize,
-    /// Number of items in the open sub-category (last row).
+    /// Number of items in the open sub-category.
     pub items: usize,
+    /// Number of slots in the morph row (0: no morph row).
+    pub morphs: usize,
 }
 
 impl PaletteLayout {
-    /// Places a palette of `tabs` tabs, `subs` sub-tabs (0 for none) and
-    /// `items` items in the top-left of `target`, at the grid's cell scale
-    /// (at least 2) or smaller if it wouldn't fit.
+    /// Places a palette of `tabs` tabs, `subs` sub-tabs (0 for none),
+    /// `items` items and `morphs` morph slots (0 for none) in the top-left
+    /// of `target`, at the grid's cell scale (at least 2) or smaller if it
+    /// wouldn't fit.
     #[must_use]
-    pub fn fit(target: (u32, u32), grid: &Layout, tabs: usize, subs: usize, items: usize) -> Self {
-        let (w, _) = image_size(tabs, subs, items);
+    pub fn fit(
+        target: (u32, u32),
+        grid: &Layout,
+        tabs: usize,
+        subs: usize,
+        items: usize,
+        morphs: usize,
+    ) -> Self {
+        let (w, _) = image_size(tabs, subs, items, morphs);
         let mut scale = grid.scale.max(2);
         while scale > 1 && (w + 4) * scale > target.0 {
             scale -= 1;
@@ -255,6 +308,7 @@ impl PaletteLayout {
             tabs,
             subs,
             items,
+            morphs,
         }
     }
 
@@ -262,14 +316,14 @@ impl PaletteLayout {
     /// right of the shorter rows are transparent.
     #[must_use]
     pub fn size(&self) -> (u32, u32) {
-        let (w, h) = image_size(self.tabs, self.subs, self.items);
+        let (w, h) = image_size(self.tabs, self.subs, self.items, self.morphs);
         (w * self.scale, h * self.scale)
     }
 
     /// The palette pixel under target pixel `(px, py)`, if inside the
     /// bounding box.
     fn pixel(&self, px: f64, py: f64) -> Option<(u32, u32)> {
-        let (width, height) = image_size(self.tabs, self.subs, self.items);
+        let (width, height) = image_size(self.tabs, self.subs, self.items, self.morphs);
         let scale = f64::from(self.scale);
         let (x, y) = (
             (px - f64::from(self.origin.0)) / scale,
@@ -285,27 +339,41 @@ impl PaletteLayout {
     #[must_use]
     pub fn contains(&self, px: f64, py: f64) -> bool {
         self.pixel(px, py).is_some_and(|(x, y)| {
-            let row = (y / ROW).min(rows(self.subs) - 1);
+            let row = (y / ROW).min(self.rows() - 1);
             x < row_width(self.row(row).1)
         })
     }
 
-    /// What row `row` holds and how many slots.
-    fn row(&self, row: u32) -> (RowKind, usize) {
-        match (row, self.subs) {
-            (0, _) => (RowKind::Tabs, self.tabs),
-            (1, n) if n > 0 => (RowKind::Subs, n),
-            _ => (RowKind::Items, self.items),
-        }
+    /// Rows drawn.
+    fn rows(&self) -> u32 {
+        rows(self.subs, self.morphs)
     }
 
-    /// The tab, sub-tab or item under target pixel `(px, py)`, if any.
+    /// What row `row` holds and how many slots: the tabs, then the
+    /// sub-tabs if any, the items and the morphs if any.
+    fn row(&self, row: u32) -> (RowKind, usize) {
+        let mut kinds = [
+            (RowKind::Tabs, self.tabs),
+            (RowKind::Subs, self.subs),
+            (RowKind::Items, self.items),
+            (RowKind::Morphs, self.morphs),
+        ]
+        .into_iter()
+        .enumerate()
+        .filter(|&(i, (_, n))| i == 0 || i == 2 || n > 0)
+        .map(|(_, k)| k);
+        kinds
+            .nth(row as usize)
+            .unwrap_or((RowKind::Items, self.items))
+    }
+
+    /// The tab, sub-tab, item or morph under target pixel `(px, py)`, if any.
     #[must_use]
     pub fn hit(&self, px: f64, py: f64) -> Option<PaletteHit> {
         let (x, y) = self.pixel(px, py)?;
         let row = y / ROW;
         let slot = usize::try_from(x.checked_sub(GAP)? / ROW).ok()?;
-        let within = (x - GAP) % ROW < SLOT && y % ROW >= GAP && row < rows(self.subs);
+        let within = (x - GAP) % ROW < SLOT && y % ROW >= GAP && row < self.rows();
         let (kind, slots) = self.row(row);
         if !within || slot >= slots {
             return None;
@@ -314,6 +382,7 @@ impl PaletteLayout {
             RowKind::Tabs => PaletteHit::Tab(slot),
             RowKind::Subs => PaletteHit::Sub(slot),
             RowKind::Items => PaletteHit::Item(slot),
+            RowKind::Morphs => PaletteHit::Morph(slot),
         })
     }
 }
@@ -323,11 +392,13 @@ enum RowKind {
     Tabs,
     Subs,
     Items,
+    Morphs,
 }
 
-/// Rows drawn: two, or three with a sub-tab row.
-fn rows(subs: usize) -> u32 {
-    if subs > 0 { MAX_ROWS } else { MAX_ROWS - 1 }
+/// Rows drawn: tabs and items, plus a row for sub-tabs and one for morphs
+/// when there are any.
+fn rows(subs: usize, morphs: usize) -> u32 {
+    2 + u32::from(subs > 0) + u32::from(morphs > 0)
 }
 
 /// Width in palette pixels of a row of `slots` slots, capped at
@@ -337,19 +408,19 @@ fn row_width(slots: usize) -> u32 {
     (GAP + n.saturating_mul(ROW)).min(MAX_SIZE.0)
 }
 
-/// Palette image size in palette pixels: two rows, or three with sub-tabs
-/// (`subs` > 0), as wide as the longest.
+/// Palette image size in palette pixels: two rows, plus one with sub-tabs
+/// (`subs` > 0) and one with morphs (`morphs` > 0), as wide as the longest.
 #[must_use]
-pub fn image_size(tabs: usize, subs: usize, items: usize) -> (u32, u32) {
+pub fn image_size(tabs: usize, subs: usize, items: usize, morphs: usize) -> (u32, u32) {
     (
-        row_width(tabs.max(subs).max(items)),
-        (rows(subs) * ROW + GAP).min(MAX_SIZE.1),
+        row_width(tabs.max(subs).max(items).max(morphs)),
+        (rows(subs, morphs) * ROW + GAP).min(MAX_SIZE.1),
     )
 }
 
 /// One row of slots as [`build`] draws it.
 struct Row<'a> {
-    items: &'a [PaletteItem],
+    face: Face<'a>,
     /// The slot framed as open (tabs) or selected (items).
     framed: Option<usize>,
     /// The closed slot holding the selection, marked.
@@ -358,6 +429,64 @@ struct Row<'a> {
     colour: [u8; 3],
     /// The row's background.
     background: [u8; 3],
+}
+
+/// What a row's slots show.
+#[derive(Clone, Copy)]
+enum Face<'a> {
+    /// A palette item each.
+    Items(&'a [PaletteItem]),
+    /// A creature's morph icons (and the automatic slot).
+    Morphs(PaletteMorphs),
+}
+
+impl Face<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Face::Items(items) => items.len(),
+            Face::Morphs(m) => m.slots(),
+        }
+    }
+}
+
+/// The rows [`build`] draws, top to bottom.
+fn palette_rows(palette: &Palette) -> Vec<Row<'_>> {
+    let sel = palette.selected;
+    let in_open_tab = sel.filter(|&(t, _, _)| t == palette.open);
+    let in_open_sub = in_open_tab.filter(|&(_, s, _)| s == palette.open_sub);
+    let mut rows = vec![Row {
+        face: Face::Items(&palette.tabs),
+        framed: Some(palette.open),
+        holds: sel.map(|(t, _, _)| t),
+        colour: OPEN,
+        background: BACKGROUND,
+    }];
+    if !palette.subs.is_empty() {
+        rows.push(Row {
+            face: Face::Items(&palette.subs),
+            framed: Some(palette.open_sub),
+            holds: in_open_tab.map(|(_, s, _)| s),
+            colour: SUB_OPEN,
+            background: PANEL,
+        });
+    }
+    rows.push(Row {
+        face: Face::Items(&palette.items),
+        framed: in_open_sub.map(|(_, _, i)| i),
+        holds: None,
+        colour: SELECTED,
+        background: PANEL,
+    });
+    if let Some(m) = palette.morphs.filter(|m| m.slots() > 0) {
+        rows.push(Row {
+            face: Face::Morphs(m),
+            framed: m.framed(),
+            holds: None,
+            colour: SELECTED,
+            background: PANEL,
+        });
+    }
+    rows
 }
 
 /// Draws the palette as RGBA rows (alpha 255 = drawn, 0 = transparent).
@@ -370,7 +499,12 @@ pub fn build(
     plants: &PlantSpeciesTable,
     devices: &DeviceKinds,
 ) -> (Vec<u8>, (u32, u32)) {
-    let (w, h) = image_size(palette.tabs.len(), palette.subs.len(), palette.items.len());
+    let (w, h) = image_size(
+        palette.tabs.len(),
+        palette.subs.len(),
+        palette.items.len(),
+        palette.morphs.map_or(0, |m| m.slots()),
+    );
     let mut img = vec![0u8; (w * h * 4) as usize];
     let mut put = |x: u32, y: u32, c: [u8; 3]| {
         if x < w && y < h {
@@ -378,37 +512,12 @@ pub fn build(
             img[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
         }
     };
-    let sel = palette.selected;
-    let in_open_tab = sel.filter(|&(t, _, _)| t == palette.open);
-    let in_open_sub = in_open_tab.filter(|&(_, s, _)| s == palette.open_sub);
-    let mut rows = vec![Row {
-        items: &palette.tabs,
-        framed: Some(palette.open),
-        holds: sel.map(|(t, _, _)| t),
-        colour: OPEN,
-        background: BACKGROUND,
-    }];
-    if !palette.subs.is_empty() {
-        rows.push(Row {
-            items: &palette.subs,
-            framed: Some(palette.open_sub),
-            holds: in_open_tab.map(|(_, s, _)| s),
-            colour: SUB_OPEN,
-            background: PANEL,
-        });
-    }
-    rows.push(Row {
-        items: &palette.items,
-        framed: in_open_sub.map(|(_, _, i)| i),
-        holds: None,
-        colour: SELECTED,
-        background: PANEL,
-    });
+    let rows = palette_rows(palette);
     let last = rows.len() - 1;
     for (
         row,
         Row {
-            items,
+            face,
             framed,
             holds,
             colour: frame_colour,
@@ -420,11 +529,11 @@ pub fn build(
         // The row's background, including the gap under the last row.
         let bottom = if row == last { h - y0 } else { ROW };
         for y in 0..bottom {
-            for x in 0..row_width(items.len()) {
+            for x in 0..row_width(face.len()) {
                 put(x, y0 + y, background);
             }
         }
-        for (i, item) in items.iter().enumerate() {
+        for i in 0..face.len() {
             let Ok(n) = u32::try_from(i) else { break };
             let x0 = GAP + n * ROW;
             if x0 + SLOT > w {
@@ -443,7 +552,12 @@ pub fn build(
             }
             for y in 0..SLOT - 2 {
                 for x in 0..SLOT - 2 {
-                    let px = slot_pixel(*item, materials, species, plants, devices, x, y);
+                    let px = match face {
+                        Face::Items(items) => {
+                            slot_pixel(items[i], materials, species, plants, devices, x, y)
+                        }
+                        Face::Morphs(m) => morph_pixel(&m, i, species, x, y),
+                    };
                     put(x0 + 1 + x, top + 1 + y, px);
                 }
             }
@@ -465,6 +579,21 @@ pub fn build(
         }
     }
     (img, (w, h))
+}
+
+/// The automatic-stocking slot's icon: two chasing arrows.
+const CYCLE: [&str; 8] = [
+    ".####.#.", "#....###", "#.....#.", "#.......", ".......#", ".#.....#", "###....#", ".#.####.",
+];
+
+/// Pixel `(x, y)` of morph-row slot `slot`'s 8×8 face.
+fn morph_pixel(m: &PaletteMorphs, slot: usize, species: &SpeciesTable, x: u32, y: u32) -> [u8; 3] {
+    if let Some(morph) = m.morph_at(slot) {
+        crate::sprites::morph_icon(species, m.species, morph, x, y).unwrap_or(ICON_BG)
+    } else {
+        let ink = CYCLE[y as usize].as_bytes().get(x as usize) == Some(&b'#');
+        if ink { ICON_FG } else { ICON_BG }
+    }
 }
 
 /// Side of the sprout art in pixels.
@@ -555,6 +684,7 @@ fn slot_pixel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sprites;
 
     fn grid() -> Layout {
         Layout::fit((320, 180), (1280, 720))
@@ -562,19 +692,23 @@ mod tests {
 
     #[test]
     fn palette_sits_top_left_at_cell_scale() {
-        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 0, 4);
+        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 0, 4, 0);
         assert_eq!(p.scale, 4);
         assert_eq!(p.origin, (8, 8));
         assert_eq!(p.size(), ((1 + 9 * 11) * 4, 23 * 4));
         // A sub-tab row adds a row.
-        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 4);
+        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 4, 0);
         assert_eq!(p.size(), ((1 + 7 * 11) * 4, 34 * 4));
-        assert_eq!(image_size(7, 3, 4).1, MAX_SIZE.1);
+        assert_eq!(image_size(7, 3, 4, 0).1, 34);
+        // A morph row adds one too; with both the palette is MAX_SIZE tall.
+        assert_eq!(image_size(7, 0, 4, 5).1, 34);
+        assert_eq!(image_size(7, 3, 4, 5), (row_width(7), MAX_SIZE.1));
+        assert_eq!(MAX_SIZE, (256, 45));
     }
 
     #[test]
     fn hit_maps_pixels_to_tabs_and_items() {
-        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 0, 4);
+        let p = PaletteLayout::fit((1280, 720), &grid(), 9, 0, 4, 0);
         // Tab 0 spans palette x 1..11, y 1..11, i.e. target 12..52 (origin
         // 8, scale 4); item 0 is the row below, palette y 12..22.
         assert_eq!(p.hit(12.0, 12.0), Some(PaletteHit::Tab(0)));
@@ -598,7 +732,7 @@ mod tests {
 
     #[test]
     fn hit_maps_the_sub_tab_row() {
-        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 5);
+        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 5, 0);
         let row = |r: f64| 8.0 + 4.0 * (11.0 * r + 5.0);
         assert_eq!(p.hit(20.0, row(0.0)), Some(PaletteHit::Tab(0)));
         assert_eq!(p.hit(20.0, row(1.0)), Some(PaletteHit::Sub(0)));
@@ -613,7 +747,7 @@ mod tests {
 
     #[test]
     fn shrinks_to_fit_a_narrow_target() {
-        let p = PaletteLayout::fit((200, 100), &Layout::fit((50, 25), (200, 100)), 9, 0, 3);
+        let p = PaletteLayout::fit((200, 100), &Layout::fit((50, 25), (200, 100)), 9, 0, 3, 0);
         assert_eq!(p.scale, 1);
     }
 
@@ -636,13 +770,13 @@ mod tests {
             .max()
             .unwrap();
         let n = tree.len().max(subs).max(widest);
-        assert_eq!(image_size(tree.len(), subs, widest).0, row_width(n));
+        assert_eq!(image_size(tree.len(), subs, widest, 0).0, row_width(n));
         assert!(GAP + u32::try_from(n).unwrap() * ROW <= MAX_SIZE.0);
         // All nine tabs fit on one row, every one clickable, from the
         // window's minimum size (160 × 90) up.
         for target in [(160, 90), (320, 180), (1280, 720), (3840, 2160)] {
             let grid = Layout::fit((320, 180), target);
-            let p = PaletteLayout::fit(target, &grid, tree.len(), subs, widest);
+            let p = PaletteLayout::fit(target, &grid, tree.len(), subs, widest, 0);
             assert!(p.origin.0 + p.size().0 <= target.0, "{target:?}");
             let centre =
                 |slot: u32| f64::from(p.origin.0 + p.scale * (GAP + slot * ROW + SLOT / 2));
@@ -680,6 +814,7 @@ mod tests {
             open_sub: 0,
             items: vec![PaletteItem::Material(sand), PaletteItem::Tool(Tool::Net)],
             selected: Some((1, 0, 1)),
+            morphs: None,
         };
         let (img, (w, h)) = build(&palette, &mats, &species, &plants, &kinds);
         assert_eq!((w, h), (34, 23));
@@ -745,6 +880,153 @@ mod tests {
             palette.items = vec![PaletteItem::Tool(Tool::Plant(s))];
             assert_eq!(leaf(&palette), plants.get(s).unwrap().colour(), "{name}");
         }
+    }
+
+    #[test]
+    fn hit_maps_the_morph_row_below_the_items() {
+        // Tabs, items and morphs (no sub-tabs): the morph row is the third.
+        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 0, 5, 6);
+        assert_eq!(p.size(), ((1 + 7 * 11) * 4, 34 * 4));
+        let row = |r: f64| 8.0 + 4.0 * (11.0 * r + 5.0);
+        let col = |c: f64| 8.0 + 4.0 * (11.0 * c + 5.0);
+        assert_eq!(p.hit(col(0.0), row(1.0)), Some(PaletteHit::Item(0)));
+        assert_eq!(p.hit(col(0.0), row(2.0)), Some(PaletteHit::Morph(0)));
+        assert_eq!(p.hit(col(5.0), row(2.0)), Some(PaletteHit::Morph(5)));
+        assert_eq!(p.hit(col(6.0), row(2.0)), None, "past the morphs");
+        assert_eq!(p.hit(col(5.0), row(1.0)), None, "past the items");
+        assert_eq!(p.hit(20.0, 8.0 + 4.0 * 33.5), None, "bottom gap");
+        assert!(p.contains(col(5.0), row(2.0)));
+        assert!(!p.contains(col(6.5), row(2.0)));
+        assert!(p.contains(col(6.0), row(0.0)), "the tab row is wider");
+        assert!(p.contains(20.0, 8.0 + 4.0 * 33.5), "under the morph row");
+
+        // With sub-tabs too it is the fourth row, as tall as MAX_SIZE.
+        let p = PaletteLayout::fit((1280, 720), &grid(), 7, 3, 5, 6);
+        assert_eq!(p.size(), ((1 + 7 * 11) * 4, MAX_SIZE.1 * 4));
+        assert_eq!(p.hit(col(0.0), row(1.0)), Some(PaletteHit::Sub(0)));
+        assert_eq!(p.hit(col(4.0), row(2.0)), Some(PaletteHit::Item(4)));
+        assert_eq!(p.hit(col(5.0), row(3.0)), Some(PaletteHit::Morph(5)));
+        assert_eq!(p.hit(col(5.0), row(2.0)), None);
+        assert_eq!(p.hit(20.0, 8.0 + 4.0 * 44.5), None, "bottom gap");
+        assert!(p.contains(20.0, 8.0 + 4.0 * 44.5));
+        assert!(!p.contains(col(6.5), row(3.0)));
+    }
+
+    #[test]
+    fn the_biggest_palette_fits_the_hud_texture_in_webgl2() {
+        assert_eq!(MAX_SIZE.1, 4 * ROW + GAP);
+        assert!(crate::card::HUD_TEXTURE.1 < 2048);
+        assert!(crate::card::HUD_TEXTURE.0 >= MAX_SIZE.0);
+    }
+
+    #[test]
+    fn image_draws_the_morph_row_with_and_without_the_automatic_slot() {
+        let kinds = DeviceKinds::builtin().unwrap();
+        let mats = MaterialTable::builtin().unwrap();
+        let sand = mats.id("sand").unwrap();
+        let species = desktank_sim::SpeciesTable::builtin_for(&mats).unwrap();
+        let plants = PlantSpeciesTable::builtin_for(&mats).unwrap();
+        let cherry = species.id("cherry_shrimp").unwrap();
+        let count = species.get(cherry).unwrap().morphs.len();
+        assert!(count > 2);
+        let mut palette = Palette {
+            tabs: vec![PaletteItem::Material(sand), PaletteItem::Material(sand)],
+            open: 0,
+            subs: Vec::new(),
+            open_sub: 0,
+            items: vec![PaletteItem::Tool(Tool::AddCreature(cherry))],
+            selected: Some((0, 0, 0)),
+            morphs: Some(PaletteMorphs {
+                species: cherry,
+                count,
+                cycle: true,
+                selected: None,
+            }),
+        };
+        let rgb = |img: &[u8], w: u32, x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            [img[i], img[i + 1], img[i + 2]]
+        };
+        let alpha = |img: &[u8], w: u32, x: u32, y: u32| img[((y * w + x) * 4 + 3) as usize];
+        // The slot at `k` in the morph row (the third row) has its frame at
+        // x = 1 + 11k and its icon inside it, from y = 2 * 11 + 1.
+        let (y0, face_y0) = (2 * ROW + GAP, 2 * ROW + GAP + 1);
+        let slot_x = |k: u32| GAP + k * ROW;
+        let face = |img: &[u8], w: u32, k: u32| -> Vec<[u8; 3]> {
+            (0..SLOT - 2)
+                .flat_map(|y| (0..SLOT - 2).map(move |x| (x, y)))
+                .map(|(x, y)| rgb(img, w, slot_x(k) + 1 + x, face_y0 + y))
+                .collect()
+        };
+
+        // Cycling: slot 0 is the automatic icon (framed while no morph is
+        // picked), slot k the morph k - 1.
+        let (img, (w, h)) = build(&palette, &mats, &species, &plants, &kinds);
+        let slots = u32::try_from(count).unwrap() + 1;
+        assert_eq!((w, h), (row_width(count + 1), 3 * ROW + GAP));
+        assert_eq!(
+            rgb(&img, w, 0, 2 * ROW),
+            PANEL,
+            "the morph row is on the panel"
+        );
+        assert_eq!(rgb(&img, w, slot_x(0), y0), SELECTED, "automatic is framed");
+        assert_eq!(rgb(&img, w, slot_x(1), y0), FRAME);
+        let cycle_face = face(&img, w, 0);
+        let ink = |f: &[[u8; 3]]| f.iter().filter(|&&p| p == ICON_FG).count();
+        assert!(ink(&cycle_face) > 8, "a drawn icon");
+        assert!(cycle_face.iter().all(|&p| p == ICON_FG || p == ICON_BG));
+        for k in 1..slots {
+            let want: Vec<_> = (0..SLOT - 2)
+                .flat_map(|y| (0..SLOT - 2).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    sprites::morph_icon(&species, cherry, u8::try_from(k - 1).unwrap(), x, y)
+                        .unwrap_or(ICON_BG)
+                })
+                .collect();
+            assert_eq!(face(&img, w, k), want, "morph {}", k - 1);
+        }
+        assert_ne!(face(&img, w, 1), face(&img, w, 2), "morphs differ");
+        assert_eq!(alpha(&img, w, w - 1, h - 1), 255, "the bottom gap is drawn");
+
+        // Picking morph 1 frames the second picture slot, not the automatic.
+        palette.morphs = palette.morphs.map(|m| PaletteMorphs {
+            selected: Some(1),
+            ..m
+        });
+        let (img, (w, _)) = build(&palette, &mats, &species, &plants, &kinds);
+        assert_eq!(rgb(&img, w, slot_x(0), y0), FRAME);
+        assert_eq!(rgb(&img, w, slot_x(1), y0), FRAME);
+        assert_eq!(rgb(&img, w, slot_x(2), y0), SELECTED);
+
+        // Not cycling: slot k is morph k, and the default morph is framed.
+        palette.morphs = Some(PaletteMorphs {
+            species: cherry,
+            count,
+            cycle: false,
+            selected: Some(0),
+        });
+        let (img, (w, h)) = build(&palette, &mats, &species, &plants, &kinds);
+        assert_eq!(
+            (w, h),
+            (row_width(palette.tabs.len().max(count)), 3 * ROW + GAP)
+        );
+        assert_eq!(rgb(&img, w, slot_x(0), y0), SELECTED);
+        assert_eq!(rgb(&img, w, slot_x(1), y0), FRAME);
+        for k in 0..u32::try_from(count).unwrap() {
+            let want: Vec<_> = (0..SLOT - 2)
+                .flat_map(|y| (0..SLOT - 2).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    sprites::morph_icon(&species, cherry, u8::try_from(k).unwrap(), x, y)
+                        .unwrap_or(ICON_BG)
+                })
+                .collect();
+            assert_eq!(face(&img, w, k), want, "morph {k}");
+        }
+
+        // No morph row: back to the plain palette.
+        palette.morphs = None;
+        let (_, size) = build(&palette, &mats, &species, &plants, &kinds);
+        assert_eq!(size, (row_width(2), 2 * ROW + GAP));
     }
 
     #[test]

@@ -355,7 +355,10 @@ pub(crate) fn build(
         InspectPage::Live => Some(build_live(live, what.has_species_page())),
         InspectPage::Species => {
             let species = match what {
-                Inspected::Creature(id) => Card::Creature(world.creature(id)?.species()),
+                Inspected::Creature(id) => {
+                    let c = world.creature(id)?;
+                    Card::Creature(c.species(), Some(world.creature_morph(c)))
+                }
                 Inspected::Plant(id) => Card::Plant(world.plant(id)?.species),
                 Inspected::Device(_) | Inspected::Cell { .. } => return None,
             };
@@ -535,7 +538,7 @@ mod tests {
         assert_ne!(one, two);
         // Page 2 is the palette's species card with its page number.
         let plain = card::build(
-            Card::Creature(guppy),
+            Card::Creature(guppy, None),
             w.materials(),
             w.species(),
             w.plant_species(),
