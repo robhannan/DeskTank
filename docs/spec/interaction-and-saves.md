@@ -225,6 +225,8 @@
     - the surface and glass algae planes, each byte a variety and a
       density (version 17, D28, #369). Older saves replace algae material
       cells with water and start with bare surfaces;
+    - each creature's swim pitch (version 18, #98). Older saves start
+      with level swim poses;
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

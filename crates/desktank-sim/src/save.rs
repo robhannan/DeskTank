@@ -23,7 +23,7 @@
 //! `save::v9::Save` for 9, `save::v10::Save` for 10, `save::v11::Save` for 11,
 //! `save::v12::Save` for 12, `save::v13::Save` for 13, `save::v14::Save`
 //! for 14, `save::v15::Save` for 15, `save::v16::Save` for 16,
-//! `save::v17::Save` for 17).
+//! `save::v17::Save` for 17, `save::v18::Save` for 18).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -52,7 +52,8 @@
 //! the night and how long it stays up after being woken (version 15),
 //! the pane each creature crawls (version 16), and surface and glass algae
 //! film, each byte a variety and a density (version 17). Earlier algae
-//! material cells become water and surfaces start bare.
+//! material cells become water and surfaces start bare. Version 18 adds
+//! each creature's swim pitch. Older saves start with level swim poses.
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -111,6 +112,7 @@ pub(crate) mod v14;
 pub(crate) mod v15;
 pub(crate) mod v16;
 pub(crate) mod v17;
+pub(crate) mod v18;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -123,7 +125,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 17;
+pub const FORMAT_VERSION: u16 = 18;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -170,7 +172,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v17();
+    let snapshot = world.to_v18();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     wrap(FORMAT_VERSION, &raw)
@@ -201,6 +203,7 @@ fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
     let mut world = match version {
+        18 => World::from_v18(decode_snapshot(payload)?, materials)?,
         17 => World::from_v17(decode_snapshot(payload)?, materials)?,
         16 => World::from_v16(decode_snapshot(payload)?, materials)?,
         15 => World::from_v15(decode_snapshot(payload)?, materials)?,
@@ -396,6 +399,40 @@ pub(crate) fn unrun<T: Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v18_saves_and_hashes_swim_pitch_and_v17_starts_level() {
+        let materials = MaterialTable::builtin().unwrap();
+        let mut world = World::new(crate::WorldConfig::default(), materials.clone()).unwrap();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let nerite = world.species().id("nerite").unwrap();
+        world.add_creature(tetra, 32, 20).unwrap();
+        world.add_creature(nerite, 48, 30).unwrap();
+
+        let old = wrap(17, &postcard::to_allocvec(&world.to_v17()).unwrap());
+        let level = decode(&old, materials.clone()).unwrap();
+        assert_eq!(level.state_hash(), world.state_hash());
+        assert!(level.creatures().iter().all(|c| c.pitch() == 0));
+
+        let mut saved = world.to_v18();
+        saved.pitches[0] = -1;
+        let posed = World::from_v18(saved.clone(), materials.clone()).unwrap();
+        assert_ne!(posed.state_hash(), level.state_hash());
+        let bytes = encode(&posed);
+        assert_eq!(check(&bytes), Ok(18));
+        let loaded = decode(&bytes, materials.clone()).unwrap();
+        assert_eq!(loaded.creatures()[0].pitch(), -1);
+        assert_eq!(loaded.state_hash(), posed.state_hash());
+
+        for invalid in [vec![-1], vec![3, 0], vec![0, -1]] {
+            saved.pitches = invalid;
+            let bytes = wrap(18, &postcard::to_allocvec(&saved).unwrap());
+            assert!(matches!(
+                decode(&bytes, materials.clone()),
+                Err(SaveError::Invalid(_))
+            ));
+        }
+    }
 
     #[test]
     fn v15_and_v16_algae_material_migrates_to_water() {

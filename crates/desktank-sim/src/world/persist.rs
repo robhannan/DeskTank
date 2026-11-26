@@ -7,7 +7,7 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17};
+use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18};
 use crate::species::SpeciesId;
 
 impl World {
@@ -107,6 +107,19 @@ impl World {
         let mut w = Self::from_v14(s.base, materials)?;
         w.load_rest(&s.rest)?;
         Ok(w)
+    }
+
+    pub(crate) fn to_v18(&self) -> v18::Save {
+        v18::Save {
+            base: self.to_v17(),
+            pitches: self.save_pitches(),
+        }
+    }
+
+    pub(crate) fn from_v18(s: v18::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let mut world = Self::from_v17(s.base, materials)?;
+        world.load_pitches(&s.pitches)?;
+        Ok(world)
     }
 
     /// The world as a version 17 snapshot.

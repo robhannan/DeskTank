@@ -1285,11 +1285,11 @@ fn create_pipelines(
     });
     // Per instance: top-left cell, size, atlas origin, mirror and turn,
     // frame size, look and fine atlas origin (vec2 each), then depth and
-    // the night glow (vec4).
+    // the night glow and pitch rotation with upright body size (vec4s).
     let attributes = wgpu::vertex_attr_array![
         0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2,
         4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32,
-        8 => Float32x4
+        8 => Float32x4, 9 => Float32x4
     ];
     let instances = [Some(wgpu::VertexBufferLayout {
         array_stride: INSTANCE_BYTES,

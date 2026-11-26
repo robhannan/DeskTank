@@ -82,7 +82,10 @@ directory for custom materials and species is a stretch goal.
   are instanced sprites from an atlas. Their position is interpolated
   between ticks at screen-pixel precision, and sprites have two texels
   per cell side (D19), drawn at half the cell scale, so motion is smooth
-  while the art stays crisp. Sprites are sorted back to front by depth
+  while the art stays crisp. A pitched swimmer's instance covers the
+  rotated bounds. The shader maps each screen-aligned coarse or fine
+  texel back into the frame and samples it with nearest-neighbour lookup.
+  Sprites are sorted back to front by depth
   and carry it; an `R8` texture beside the cell texture holds each plant
   cell's depth band, and a sprite fragment over a covered texel of a
   nearer plant cell is discarded, so the plant the grid drew stays in

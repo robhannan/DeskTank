@@ -41,7 +41,8 @@
 //!   (the sprite's bottom row) rests on the face it holds: the floor
 //!   upright, a wall on its side, a ceiling upside down. Its body box turns
 //!   with it, so a 5×3 snail on a wall covers 3×5 cells. The turn is
-//!   creature state (hashed); swimmers and walkers stay upright.
+//!   creature state (hashed). Swimmers pitch their art in eighth turns
+//!   towards their velocity, leaving the collision box upright.
 //! - **Randomness** comes from a PCG stream per creature per tick, derived
 //!   from `(seed, tick, creature id)`, so it never depends on update order.
 //!   Each creature's own **quirks** (speed, mood, restlessness, favourite
@@ -251,6 +252,8 @@ pub struct Creature {
     /// Quarter turns clockwise (0..4): which way its foot points, see
     /// [`FEET`]. Only surface crawlers turn.
     turn: u8,
+    /// Swim pitch in eighth turns, negative nose-up, positive nose-down.
+    pitch: i8,
     /// Held in the net up to this tick (0: free).
     held_until: u64,
     /// Next tick when an air-breather must surface.
@@ -369,6 +372,13 @@ impl Creature {
     #[must_use]
     pub fn turn(&self) -> u8 {
         self.turn
+    }
+
+    /// Swim pitch in eighth turns (-2..=2), with negative for nose-up
+    /// and positive for nose-down, whichever way the sprite is mirrored.
+    #[must_use]
+    pub fn pitch(&self) -> i8 {
+        self.pitch
     }
 
     /// Food cells eaten so far.
@@ -1026,6 +1036,7 @@ impl World {
             ignore: None,
             facing_left: self.creatures.next_id % 2 == 1,
             turn: 0,
+            pitch: 0,
             held_until: 0,
             next_breath: self.tick + u64::from(self.creatures.next_id % 20),
             eaten: 0,
@@ -1265,6 +1276,31 @@ impl World {
         }
     }
 
+    pub(super) fn save_pitches(&self) -> Vec<i8> {
+        self.creatures.list.iter().map(Creature::pitch).collect()
+    }
+
+    pub(super) fn load_pitches(&mut self, pitches: &[i8]) -> Result<(), SaveError> {
+        if pitches.len() != self.creatures.list.len() {
+            return Err(SaveError::Invalid(
+                "swim pitch count differs from creature count".into(),
+            ));
+        }
+        for (c, &pitch) in self.creatures.list.iter_mut().zip(pitches) {
+            let can_pitch = self.creatures.kinds[usize::from(c.species.0)]
+                .as_ref()
+                .is_some_and(|k| !k.live && (k.swim_every > 0 || open_water(k.zone)));
+            if !(-2..=2).contains(&pitch) || (pitch != 0 && (!can_pitch || c.turn != 0)) {
+                return Err(SaveError::Invalid(format!(
+                    "creature {}: invalid swim pitch",
+                    c.id.0
+                )));
+            }
+            c.pitch = pitch;
+        }
+        Ok(())
+    }
+
     /// Restores the creatures, corpses and life settings from a save.
     #[allow(clippy::too_many_lines)] // one check per property
     pub(super) fn load_creatures(&mut self, saved: v9::Creatures) -> Result<(), SaveError> {
@@ -1360,6 +1396,7 @@ impl World {
                 ignore: c.ignore,
                 facing_left: c.facing_left,
                 turn: c.turn,
+                pitch: 0,
                 held_until: c.held_until,
                 next_breath: c.next_breath,
                 eaten: c.eaten,
@@ -1454,6 +1491,9 @@ impl World {
         for c in &self.creatures.list {
             h.write(&c.id.0.to_le_bytes());
             h.write(&[c.species.0, u8::from(c.facing_left), c.turn]);
+            if c.pitch != 0 {
+                h.write(&[b'^', c.pitch.to_le_bytes()[0]]);
+            }
             for v in [c.x, c.y, c.z, c.vx, c.vy, c.tx, c.ty, c.tz] {
                 h.write(&v.to_le_bytes());
             }
@@ -1593,9 +1633,8 @@ impl World {
             }
         }
         for c in &mut list {
-            let z = c.z;
-            // A shift in depth alone changes how it is drawn (D21).
-            changed |= self.update_creature(c) || c.z != z;
+            let pose = (c.z, c.pitch);
+            changed |= self.update_creature(c) || (c.z, c.pitch) != pose;
         }
         changed |= self.intake_suction(&mut list);
         self.creatures.list = list;
@@ -1697,6 +1736,7 @@ impl World {
         // else (see `bottom`).
         if k.burrow_every > 0 && self.burrow(&k, c, c.hungry()) {
             c.satiety = c.satiety.saturating_sub(1);
+            c.pitch = 0;
             return (c.x, c.y) != (before.0, before.1);
         }
         if self.unstick(&k, c) {
@@ -1721,6 +1761,7 @@ impl World {
                 return (c.x, c.y, c.facing_left, c.turn) != before;
             }
             if self.seek_pane(&k, c) {
+                c.pitch = 0;
                 return true;
             }
             if let Some(swim) = swim
@@ -1728,6 +1769,7 @@ impl World {
             {
                 return (c.x, c.y, c.facing_left, c.turn) != before;
             }
+            c.pitch = 0;
             self.crawl(&k, c);
             if hungry && self.anything_to_eat(&k) {
                 self.eat(&k, c);
@@ -1739,6 +1781,7 @@ impl World {
         self.choose_food(&k, c, hungry);
         let sponge = self.sponge_graze_target(&k, c, hungry);
         if sponge.is_none() && self.forage_climb(&k, c, hungry) {
+            c.pitch = 0;
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
         let (tx, ty, speed) = self.steering_target(&k, c, sponge, &mut rng);
@@ -1760,6 +1803,10 @@ impl World {
             }
             return (c.x, c.y, c.facing_left, c.turn) != before;
         }
+        let swimming = !k.live && open_water(k.zone);
+        if !swimming {
+            c.pitch = 0;
+        }
         let flipping = pursuit::flipping(&k, c);
         let moved = self.step_toward(&k, c, (tx, ty, speed), sponge.is_none(), flipping);
         if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
@@ -1779,7 +1826,9 @@ impl World {
                 }
             }
         }
-        if !flipping {
+        if swimming && moved == Move::Moved {
+            update_swim_heading(c);
+        } else if !swimming && !flipping {
             update_facing(c, sponge);
         }
         (c.x, c.y, c.facing_left, c.turn) != before
@@ -2575,10 +2624,6 @@ impl World {
     }
 }
 
-/// Accelerates `c` towards `(tx, ty)` at up to `speed`, slowing on
-/// arrival. While wandering vertical speed is held to half, as fish mostly
-/// swim level; `darting` (above cruising speed: after food, hunting or
-/// fleeing) lifts that.
 fn update_facing(c: &mut Creature, sponge: Option<(i32, i32, i32)>) {
     if c.vx > TURN_SPEED {
         c.facing_left = false;
@@ -2592,6 +2637,40 @@ fn update_facing(c: &mut Creature, sponge: Option<(i32, i32, i32)>) {
     }
 }
 
+fn open_water(zone: Zone) -> bool {
+    matches!(zone, Zone::Mid | Zone::Surface)
+}
+
+/// Track the heading with a speed dead zone and separate thresholds for
+/// entering and leaving each angle. The inequalities compare fixed-point
+/// slopes around tan(22.5°) and tan(67.5°).
+fn update_swim_heading(c: &mut Creature) {
+    let (x, y) = (c.vx.abs(), c.vy.abs());
+    // Below 3/256 cell per tick on both axes, keep the last heading.
+    if x.max(y) < 3 {
+        return;
+    }
+    let sign = if c.vy < 0 { -1 } else { 1 };
+    let previous = c.pitch * sign;
+    let steep = if previous == 2 { 4 } else { 5 };
+    let shallow = if previous > 0 { 3 } else { 2 };
+    let magnitude = if 2 * y > x * steep {
+        2
+    } else {
+        i8::from(y * shallow > x)
+    };
+    // At a vertical heading, tiny horizontal reversals would mirror the
+    // body without changing where the nose points.
+    if magnitude < 2 {
+        c.facing_left = c.vx < 0;
+    }
+    c.pitch = sign * magnitude;
+}
+
+/// Accelerates `c` towards `(tx, ty)` at up to `speed`, slowing on
+/// arrival. While wandering vertical speed is held to half, as fish mostly
+/// swim level; `darting` (above cruising speed: after food, hunting or
+/// fleeing) lifts that.
 fn steer(k: &Kind, c: &mut Creature, tx: i32, ty: i32, speed: i32, darting: bool) {
     let (dx, dy) = (i64::from(tx - c.x), i64::from(ty - c.y));
     let d = dist(tx - c.x, ty - c.y);
@@ -2766,6 +2845,91 @@ mod tests {
             let id = world.species().id(name).unwrap();
             assert_eq!(world.kind(id).unwrap().is_bottom_shrimp, grazes, "{name}");
         }
+    }
+
+    fn pitch_world() -> World {
+        World::new(
+            WorldConfig {
+                width: 96,
+                height: 64,
+                ..WorldConfig::default()
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_swimmer_pitches_towards_its_motion_but_a_crawler_keeps_its_turn() {
+        let mut world = pitch_world();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let nerite = world.species().id("nerite").unwrap();
+        let fish = world.add_creature(tetra, 48, 30).unwrap();
+        let snail = world.add_creature(nerite, 2, 40).unwrap();
+        let mut fish = world.creature(fish).unwrap().clone();
+        let mut snail = world.creature(snail).unwrap().clone();
+        // Give a lone tetra a diagonal wander target, clear of obstacles.
+        world.tick = 1;
+        (fish.tx, fish.ty, fish.retarget) = (fish.x + 12 * ONE, fish.y - 12 * ONE, 100);
+        (fish.vx, fish.vy) = (50, -50);
+        assert!(world.update_creature(&mut fish));
+        assert_eq!(fish.pitch(), -1);
+        assert!(!fish.facing_left());
+        assert_eq!(fish.turn(), 0);
+        // A snail can go straight up the glass without pitching.
+        (snail.turn, snail.vx, snail.vy) = (1, 0, -50);
+        world.update_creature(&mut snail);
+        assert_eq!(snail.pitch(), 0);
+        assert_eq!(snail.turn(), 1);
+    }
+
+    #[test]
+    fn swim_heading_ignores_threshold_jitter_and_holds_at_rest() {
+        let mut world = pitch_world();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let id = world.add_creature(tetra, 48, 30).unwrap();
+        let fish = world.creature_mut(id).unwrap();
+        fish.vx = -100;
+        for (vy, pitch) in [(-49, 0), (-51, -1), (-49, -1), (-51, -1), (-33, 0)] {
+            fish.vy = vy;
+            update_swim_heading(fish);
+            assert_eq!(fish.pitch(), pitch);
+            assert!(fish.facing_left());
+        }
+        for vx in [1, -1, 0] {
+            (fish.vx, fish.vy) = (vx, 100);
+            update_swim_heading(fish);
+            assert_eq!(fish.pitch(), 2);
+            assert!(fish.facing_left());
+        }
+        for (vx, vy) in [(0, 0), (1, -1)] {
+            (fish.vx, fish.vy) = (vx, vy);
+            update_swim_heading(fish);
+            assert_eq!(fish.pitch(), 2);
+            assert!(fish.facing_left());
+        }
+    }
+
+    #[test]
+    fn an_occasional_swimmer_pitches_in_its_swim_and_levels_on_landing() {
+        let mut world = pitch_world();
+        let cory = world.species().id("corydoras").unwrap();
+        let id = world.add_creature(cory, 48, 56).unwrap();
+        let mut fish = world.creature(id).unwrap().clone();
+        let kind = world.grown_kind(&fish).unwrap();
+        (fish.vx, fish.vy) = (40, -50);
+        let swim = bottom::Swim {
+            rising: true,
+            dir: 1,
+        };
+        assert!(world.swim_step(&kind, &mut fish, swim));
+        assert_eq!(fish.pitch(), -1);
+        world.tick = 1;
+        while world.swim(&kind, &fish).is_some() {
+            world.tick += 1;
+        }
+        world.update_creature(&mut fish);
+        assert_eq!(fish.pitch(), 0);
     }
 
     fn shy_world(shy: bool) -> World {
