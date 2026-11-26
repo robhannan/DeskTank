@@ -28,18 +28,18 @@ const MAX_ROWS: u32 = 3;
 pub const MAX_SIZE: (u32, u32) = (256, MAX_ROWS * ROW + GAP);
 
 /// Colours, sRGB.
-const BACKGROUND: [u8; 3] = [0x0b, 0x12, 0x1c];
-const FRAME: [u8; 3] = [0x2a, 0x36, 0x48];
-const SELECTED: [u8; 3] = [0xf4, 0xe9, 0xc8];
-const OPEN: [u8; 3] = [0x6f, 0xb3, 0xe0];
+pub(crate) const BACKGROUND: [u8; 3] = [0x0b, 0x12, 0x1c];
+pub(crate) const FRAME: [u8; 3] = [0x2a, 0x36, 0x48];
+pub(crate) const SELECTED: [u8; 3] = [0xf4, 0xe9, 0xc8];
+pub(crate) const OPEN: [u8; 3] = [0x6f, 0xb3, 0xe0];
 /// The open tab's panel: the sub-tab and item rows sit on it, and the open
 /// tab opens into it (no bottom edge), so the rows read as that tab's.
-const PANEL: [u8; 3] = [0x2b, 0x48, 0x66];
+pub(crate) const PANEL: [u8; 3] = [0x2b, 0x48, 0x66];
 /// The open sub-tab's frame: unlike the tabs' blue, so the two rows of
 /// categories don't read as one.
 const SUB_OPEN: [u8; 3] = [0x7f, 0xd6, 0xb0];
-const ICON_BG: [u8; 3] = [0x16, 0x22, 0x34];
-const ICON_FG: [u8; 3] = [0xd8, 0xe4, 0xf0];
+pub(crate) const ICON_BG: [u8; 3] = [0x16, 0x22, 0x34];
+pub(crate) const ICON_FG: [u8; 3] = [0xd8, 0xe4, 0xf0];
 
 /// 8×8 tool icons, `#` = ink.
 const SCOOP: [&str; 8] = [
@@ -63,7 +63,7 @@ const MAGNIFY: [&str; 8] = [
 const SPROUT: [&str; 8] = [
     "...##...", "..#s##..", ".##s.#..", "...s....", ".#.s.##.", "..#s#...", "...s....", ".oo.oo..",
 ];
-const SEED: [u8; 3] = [0xc8, 0xa8, 0x5a];
+pub(crate) const SEED: [u8; 3] = [0xc8, 0xa8, 0x5a];
 
 /// The palette as the host shows it: the top tabs, the open tab's
 /// sub-tabs, the open sub-category's items and the selection.
@@ -467,15 +467,24 @@ pub fn build(
     (img, (w, h))
 }
 
+/// Side of the sprout art in pixels.
+pub(crate) const SPROUT_SIDE: u32 = 8;
+
+/// Pixel `(x, y)` of the sprout art, in `colours` (leaf, stem); `None`
+/// where it is bare.
+pub(crate) fn sprout_ink(colours: Option<([u8; 3], [u8; 3])>, x: u32, y: u32) -> Option<[u8; 3]> {
+    let (leaf, stem) = colours.unwrap_or((ICON_FG, ICON_FG));
+    match SPROUT.get(y as usize)?.as_bytes().get(x as usize) {
+        Some(b'#') => Some(leaf),
+        Some(b's') => Some(stem),
+        Some(b'o') => Some(SEED),
+        _ => None,
+    }
+}
+
 /// Pixel `(x, y)` of a plant slot's face, in `colours` (leaf, stem).
 fn sprout(colours: Option<([u8; 3], [u8; 3])>, x: u32, y: u32) -> [u8; 3] {
-    let (leaf, stem) = colours.unwrap_or((ICON_FG, ICON_FG));
-    match SPROUT[y as usize].as_bytes().get(x as usize) {
-        Some(b'#') => leaf,
-        Some(b's') => stem,
-        Some(b'o') => SEED,
-        _ => ICON_BG,
-    }
+    sprout_ink(colours, x, y).unwrap_or(ICON_BG)
 }
 
 /// Pixel `(x, y)` of a slot's 8×8 face.
