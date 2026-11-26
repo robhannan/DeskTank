@@ -5,11 +5,12 @@ use core::time::Duration;
 use desktank_sim::{TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
+use crate::card::{self, Card, CardImage, CardLayout};
 use crate::grid::DirtyRects;
 use crate::hud::{self, BrushPreview, Magnifier, Palette, PaletteLayout};
 use crate::layout::Layout;
 use crate::pacing::{FrameRequest, Pacer};
-use crate::renderer::Renderer;
+use crate::renderer::{Overlay, Renderer};
 use crate::timer::GpuTimer;
 use crate::{Gpu, TankSurface};
 
@@ -101,6 +102,13 @@ pub struct Tank {
     palette: Option<Palette>,
     /// The palette image needs uploading.
     palette_dirty: bool,
+    /// The species card, if shown.
+    card: Option<Card>,
+    /// The card's image, built when it was set (`None` while no card is
+    /// shown or its species is unknown).
+    card_image: Option<CardImage>,
+    /// The card image needs uploading.
+    card_dirty: bool,
     /// The brush outline, if shown.
     cursor: Option<BrushPreview>,
     /// The device placement ghost and whether it fits (D27).
@@ -141,6 +149,9 @@ impl Tank {
             gpu_time: None,
             palette: None,
             palette_dirty: false,
+            card: None,
+            card_image: None,
+            card_dirty: false,
             cursor: None,
             ghost: None,
             magnifier: None,
@@ -278,6 +289,47 @@ impl Tank {
             self.palette_dirty = true;
             self.needs_frame = true;
         }
+    }
+
+    /// Shows (or with `None`, hides) the species card: a creature's or a
+    /// plant's data, drawn below the palette (or top-left without one) on
+    /// top of the tank. A change builds the card image once and asks for a
+    /// frame; setting the same card again costs nothing, and nothing is
+    /// built or drawn while it is `None`.
+    pub fn set_card(&mut self, card: Option<Card>) {
+        if self.card != card {
+            self.card = card;
+            self.card_image = card.and_then(|c| {
+                card::build(
+                    c,
+                    self.world.materials(),
+                    self.world.species(),
+                    self.world.plant_species(),
+                )
+            });
+            self.card_dirty = true;
+            self.needs_frame = true;
+        }
+    }
+
+    /// The species card set, if any.
+    #[must_use]
+    pub fn card(&self) -> Option<Card> {
+        self.card
+    }
+
+    /// Where the card is drawn in a `target`-pixel surface, for hit tests
+    /// (hosts swallow clicks on it); `None` if no card is shown, its species
+    /// is unknown or it doesn't fit the target even at scale 1.
+    #[must_use]
+    pub fn card_layout(&self, target: (u32, u32)) -> Option<CardLayout> {
+        let image = self.card_image.as_ref()?;
+        CardLayout::fit(
+            target,
+            &self.layout(target),
+            self.palette_layout(target).as_ref(),
+            image.size,
+        )
     }
 
     /// Shows (or hides) the brush outline. A change asks for a frame.
@@ -485,6 +537,7 @@ impl Tank {
         }
         self.dirty.mark_all();
         self.palette_dirty = true;
+        self.card_dirty = true;
         self.needs_frame = true;
         self.creatures_drawn = None;
         self.plants_drawn = None;
@@ -555,9 +608,11 @@ impl Tank {
             self.renderer = Some(Renderer::new(gpu, &self.world, format));
             self.dirty.mark_all();
             self.palette_dirty = true;
+            self.card_dirty = true;
         }
         let layout = self.layout(size);
         let palette = self.palette_layout(size);
+        let card = self.card_layout(size);
         let sway_on = self.sway_active();
         let ripples = self.world.surface_ripples();
         let has_current_ripples = self.world.has_surface_current_ripples();
@@ -603,6 +658,12 @@ impl Tank {
             }
             self.palette_dirty = false;
         }
+        if self.card_dirty {
+            if let Some(image) = &self.card_image {
+                renderer.upload_card(gpu, &image.pixels, image.size);
+            }
+            self.card_dirty = false;
+        }
 
         let mut encoder = gpu
             .device
@@ -622,7 +683,13 @@ impl Tank {
             sway_on,
             &ripples,
             surface_ripple_threshold,
-            (palette, self.cursor, self.magnifier, self.field_overlay),
+            Overlay {
+                palette,
+                card,
+                cursor: self.cursor,
+                magnifier: self.magnifier,
+                field: self.field_overlay,
+            },
             self.timer.as_ref(),
         );
         if let Some(t) = &self.timer {
@@ -912,6 +979,70 @@ mod tests {
             tank.set_overlay_water_alpha(input);
             assert!(!tank.frame_wanted());
         }
+    }
+
+    #[test]
+    fn settled_tank_draws_only_when_the_card_changes() {
+        let mut tank = settled_planted_tank();
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap());
+        let moss = Card::Plant(tank.world().plant_species().id("java_moss").unwrap());
+        // No card: nothing built, nothing to draw, no frame.
+        assert_eq!(tank.card(), None);
+        tank.set_card(None);
+        assert!(tank.card_image.is_none() && !tank.card_dirty);
+        assert_eq!(tank.card_layout((1280, 720)), None);
+        assert_eq!(count_frames(&mut tank, Duration::ZERO, 2), 0);
+
+        // A card builds its image once and asks for one frame.
+        tank.set_card(Some(guppy));
+        assert_eq!(tank.card(), Some(guppy));
+        assert!(tank.card_image.is_some() && tank.card_dirty);
+        assert!(tank.card_layout((1280, 720)).is_some());
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(2), 2), 1);
+
+        // The same card again rebuilds nothing, uploads nothing, asks for
+        // no frame.
+        tank.card_dirty = false;
+        let image = tank.card_image.clone();
+        tank.set_card(Some(guppy));
+        assert!(!tank.card_dirty);
+        assert_eq!(tank.card_image, image);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(4), 2), 0);
+
+        // Another card is a change; hiding it is another.
+        tank.set_card(Some(moss));
+        assert!(tank.card_dirty);
+        assert_ne!(tank.card_image, image);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 1), 1);
+        tank.set_card(None);
+        assert!(tank.card_image.is_none());
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(7), 1), 1);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(9), 2), 0);
+
+        // An unknown species shows nothing but is still a change.
+        tank.set_card(Some(Card::Creature(desktank_sim::SpeciesId(250))));
+        assert!(tank.card_image.is_none());
+        assert_eq!(tank.card_layout((1280, 720)), None);
+    }
+
+    #[test]
+    fn the_card_sits_below_the_palette_when_there_is_one() {
+        let mut tank = settled_planted_tank();
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap());
+        tank.set_card(Some(guppy));
+        let alone = tank.card_layout((1280, 720)).unwrap();
+        tank.set_palette(Some(Palette {
+            tabs: Vec::new(),
+            open: 0,
+            subs: Vec::new(),
+            open_sub: 0,
+            items: Vec::new(),
+            selected: None,
+        }));
+        let below = tank.card_layout((1280, 720)).unwrap();
+        let palette = tank.palette_layout((1280, 720)).unwrap();
+        assert!(below.origin.1 >= palette.origin.1 + palette.size().1);
+        assert!(below.origin.1 > alone.origin.1);
     }
 
     #[test]
