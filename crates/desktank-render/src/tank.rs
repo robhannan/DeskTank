@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::card::{self, Card, CardAnchor, CardImage, CardLayout};
 use crate::grid::DirtyRects;
 use crate::hud::{self, BrushPreview, Magnifier, Palette, PaletteLayout};
-use crate::inspect::{InspectCard, InspectPage, Inspected};
+use crate::inspect::{InspectCard, InspectPage, Inspected, ScreenRect};
 use crate::layout::Layout;
 use crate::pacing::{FrameRequest, Pacer};
 use crate::renderer::{Overlay, Renderer};
@@ -421,8 +421,49 @@ impl Tank {
     /// doesn't fit the target even at scale 1.
     #[must_use]
     pub fn inspect_layout(&self, target: (u32, u32)) -> Option<CardLayout> {
-        self.inspect
-            .layout(&self.world, target, &self.layout(target))
+        self.inspect.layout(
+            &self.world,
+            target,
+            &self.layout(target),
+            self.palette_layout(target).as_ref(),
+            self.card_min_scale,
+        )
+    }
+
+    /// Lets the viewer name creatures (the web's owner; every desktop
+    /// window): an unnamed creature's inspect card then offers the prompt
+    /// and its Name row can be clicked. Off by default, as a viewer's card
+    /// only shows a name that is there. A change rebuilds the image once.
+    pub fn set_inspect_naming(&mut self, allowed: bool) {
+        self.needs_frame |= self.inspect.set_can_name(&self.world, allowed);
+    }
+
+    /// Edits the inspected creature's name in the card: the Name row shows
+    /// `edit` (cut to [`desktank_sim::MAX_NAME_CHARS`] characters, control
+    /// characters dropped) with a caret at its end and a hint, on the live
+    /// page; `None` goes back to the name. The host owns the text and keys
+    /// (and naming the creature, [`desktank_sim::World::set_creature_name`]);
+    /// this only draws it. Ignored unless a creature is inspected and
+    /// [`Tank::set_inspect_naming`] allows it. A change rebuilds the image
+    /// once and asks for a frame, so call it when the text changes, not per
+    /// frame; the caret is steady, so a blink never asks for frames.
+    pub fn set_inspect_name_edit(&mut self, edit: Option<&str>) {
+        self.needs_frame |= self.inspect.set_name_edit(&self.world, edit);
+    }
+
+    /// The name being edited in the inspect card (as drawn), if any.
+    #[must_use]
+    pub fn inspect_name_edit(&self) -> Option<&str> {
+        self.inspect.name_edit()
+    }
+
+    /// Where the Name row of the inspect card is drawn in a `target`-pixel
+    /// surface, for hit tests (a click on it starts editing the name, not
+    /// turning the page); `None` unless naming is allowed and a creature's
+    /// live page is shown.
+    #[must_use]
+    pub fn inspect_name_rect(&self, target: (u32, u32)) -> Option<ScreenRect> {
+        self.inspect.name_rect(&self.inspect_layout(target)?)
     }
 
     /// Brings the inspect card up to date with the world (see
@@ -1226,6 +1267,57 @@ mod tests {
     }
 
     #[test]
+    fn the_inspect_card_and_the_species_card_share_one_scale() {
+        let world = World::new(
+            WorldConfig {
+                width: 320,
+                height: 180,
+                seed: 7,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let guppy = tank.world().species().id("guppy").unwrap();
+        let id = tank.world_mut().add_creature(guppy, 160, 90).unwrap();
+        tank.set_card(Some(Card::Creature(guppy, None)));
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        // A desktop canvas (cell scale 4), a DPR-3 phone's with the host's
+        // minimum, and a coarse small one.
+        for (target, min, scale) in [((1280, 720), 0, 4), ((1092, 614), 3, 3), ((512, 288), 0, 1)] {
+            tank.set_card_min_scale(min);
+            let species = tank.card_layout(target).unwrap().scale;
+            assert_eq!(species, scale, "{target:?}");
+            for page in [InspectPage::Live, InspectPage::Species] {
+                tank.set_inspect_page(page);
+                assert_eq!(
+                    tank.inspect_layout(target).unwrap().scale,
+                    species,
+                    "{target:?} {page:?}"
+                );
+            }
+        }
+        // With a palette in the canvas both are capped by its scale and still
+        // match.
+        tank.set_card_min_scale(0);
+        tank.set_palette(Some(Palette {
+            tabs: Vec::new(),
+            open: 0,
+            subs: Vec::new(),
+            open_sub: 0,
+            items: Vec::new(),
+            selected: None,
+            morphs: None,
+        }));
+        let target = (1280, 720);
+        let palette = tank.palette_layout(target).unwrap();
+        let species = tank.card_layout(target).unwrap().scale;
+        assert!(species <= palette.scale);
+        assert_eq!(tank.inspect_layout(target).unwrap().scale, species);
+    }
+
+    #[test]
     fn the_host_minimum_card_scale_enlarges_the_card_and_asks_for_one_frame() {
         let world = World::new(
             WorldConfig {
@@ -1258,6 +1350,104 @@ mod tests {
         // The same value again is free.
         tank.set_card_min_scale(3);
         assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 2), 0);
+    }
+
+    #[test]
+    fn naming_edits_the_name_row_and_rebuilds_the_card_only_when_the_text_changes() {
+        let mut tank = settled_planted_tank();
+        let guppy = tank.world().species().id("guppy").unwrap();
+        let id = tank.world_mut().add_creature(guppy, 16, 20).unwrap();
+        let target = (1280, 720);
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        // Naming is off until the host allows it: no prompt, nothing to
+        // click, and an edit is ignored.
+        assert_eq!(tank.inspect_name_rect(target), None);
+        let plain = tank.inspect.image.clone();
+        tank.set_inspect_name_edit(Some("Bub"));
+        assert_eq!(tank.inspect_name_edit(), None);
+        assert_eq!(tank.inspect.image, plain);
+
+        // Allowing it adds the prompt row, once, and the row's rect: on the
+        // card, under its heading, inside its width.
+        tank.inspect.dirty = false;
+        tank.set_inspect_naming(true);
+        assert!(tank.inspect.dirty);
+        assert_ne!(tank.inspect.image, plain);
+        let card = tank.inspect_layout(target).unwrap();
+        let row = tank.inspect_name_rect(target).unwrap();
+        assert!(row.origin.0 >= card.origin.0 && row.origin.1 > card.origin.1);
+        assert!(row.origin.0 + row.size.0 <= card.origin.0 + card.size().0);
+        assert!(row.origin.1 + row.size.1 < card.origin.1 + card.size().1);
+        assert!(row.contains(f64::from(row.origin.0) + 1.0, f64::from(row.origin.1) + 1.0));
+        assert!(!row.contains(f64::from(card.origin.0), f64::from(card.origin.1)));
+        tank.inspect.dirty = false;
+        tank.set_inspect_naming(true);
+        assert!(!tank.inspect.dirty, "the same setting rebuilds nothing");
+
+        // Editing rebuilds for each change of the text and for nothing else.
+        let prompt = tank.inspect.image.clone();
+        tank.set_inspect_name_edit(Some(""));
+        assert!(tank.inspect.dirty);
+        assert_eq!(tank.inspect_name_edit(), Some(""));
+        assert_ne!(tank.inspect.image, prompt);
+        tank.inspect.dirty = false;
+        tank.set_inspect_name_edit(Some(""));
+        assert!(!tank.inspect.dirty, "the same text rebuilds nothing");
+        tank.set_inspect_name_edit(Some("Bub"));
+        assert!(tank.inspect.dirty);
+        let typed = tank.inspect.image.clone();
+        tank.inspect.dirty = false;
+        // Ticks with the text unchanged rebuild nothing either.
+        for _ in 0..5 {
+            tank.step();
+        }
+        tank.set_inspect_name_edit(Some("Bub"));
+        assert!(!tank.inspect.dirty);
+        assert_eq!(tank.inspect.image, typed);
+        // Long text is cut to the cap and control characters are dropped.
+        let long = format!("{}\n", "x".repeat(desktank_sim::MAX_NAME_CHARS * 2));
+        tank.set_inspect_name_edit(Some(&long));
+        assert_eq!(
+            tank.inspect_name_edit().map(|t| t.chars().count()),
+            Some(desktank_sim::MAX_NAME_CHARS)
+        );
+        assert!(!tank.inspect.image.as_ref().unwrap().clipped);
+
+        // Editing shows the live page; the species page has no name row.
+        tank.set_inspect_name_edit(None);
+        tank.set_inspect_page(InspectPage::Species);
+        assert_eq!(tank.inspect_name_rect(target), None);
+        tank.set_inspect_name_edit(Some("Bub"));
+        assert_eq!(tank.inspect_page(), InspectPage::Live);
+        assert!(tank.inspect_name_rect(target).is_some());
+
+        // A name the world has is what the row shows once editing stops; a
+        // viewer, who may not name, sees it too, with no row to click.
+        tank.world_mut().set_creature_name(id, "Bubbles");
+        tank.set_inspect_name_edit(None);
+        assert_eq!(tank.inspect_name_edit(), None);
+        assert!(tank.inspect_name_rect(target).is_some());
+        tank.set_inspect_naming(false);
+        assert_eq!(tank.inspect_name_rect(target), None);
+        assert!(tank.inspect.image.is_some());
+
+        // Inspecting something else, or a plant, ends an edit.
+        tank.set_inspect_naming(true);
+        tank.set_inspect_name_edit(Some("x"));
+        tank.set_inspected(Some(Inspected::Cell { x: 5, y: 60 }));
+        assert_eq!(tank.inspect_name_edit(), None);
+        assert_eq!(tank.inspect_name_rect(target), None);
+        tank.set_inspect_name_edit(Some("x"));
+        assert_eq!(tank.inspect_name_edit(), None, "only creatures are named");
+
+        // The permission outlives the creature.
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        assert!(tank.world_mut().remove_creature(id));
+        tank.step();
+        assert_eq!(tank.inspected(), None);
+        let other = tank.world_mut().add_creature(guppy, 40, 20).unwrap();
+        tank.set_inspected(Some(Inspected::Creature(other)));
+        assert!(tank.inspect_name_rect(target).is_some());
     }
 
     #[test]

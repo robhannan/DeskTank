@@ -136,9 +136,7 @@ const inspectSr = $("inspect-sr");
 const cheatForm = $<HTMLFormElement>("cheat");
 const cheatInput = $<HTMLInputElement>("cheat-input");
 const cheatOut = $<HTMLOutputElement>("cheat-out");
-const nameForm = $<HTMLFormElement>("name");
 const nameInput = $<HTMLInputElement>("name-input");
-const nameOut = $<HTMLOutputElement>("name-out");
 const deviceActions = $("device-actions");
 const deviceRinseBtn = $<HTMLButtonElement>("device-rinse");
 const deviceHardRinseBtn = $<HTMLButtonElement>("device-hard-rinse");
@@ -412,6 +410,7 @@ function replaceTank(next: WebTank) {
   }
   tank?.free();
   tank = next;
+  tank.setNamingAllowed(owner && !handingOver);
   hiddenAt = owner && !handingOver && hidden ? Date.now() : null;
   tank.select(selected);
   tank.setZoom(zoom);
@@ -675,6 +674,7 @@ function showOwnership() {
   // A viewer's controls are inert: nothing it does would be saved.
   for (const el of document.querySelectorAll<HTMLElement>("[data-owner-only]")) el.inert = !active;
   capInput.disabled = !active;
+  tank?.setNamingAllowed(active);
   if (!active) {
     closeCheat();
     closeName();
@@ -838,6 +838,9 @@ function loop(now: number) {
   const t0 = performance.now();
   const flags = tank.frame(now);
   if (flags >> TICKS_SHIFT) tickMs = performance.now() - t0;
+  // The card follows its creature, and the name input follows the card
+  // (only when a frame was drawn: nothing moves otherwise).
+  if (flags & DREW && (inspected || !nameInput.disabled)) placeNameInput();
   if (!gpuErrorShown) showGpuError();
   if (flags & DREW) {
     if (!drewFirst) {
@@ -1271,14 +1274,17 @@ function announce(text: string) {
   inspectSr.textContent = text;
 }
 
-// Hides the name field and device actions once the inspect card has gone
+// Drops the name input and device actions once the inspect card has gone
 // (another tool's stroke can't remove it, but netting, death or a new
-// inspection can).
+// inspection can), and keeps the name input over the card's Name row.
 function syncInspectControls() {
-  if (tank.inspectPage() !== 0) return;
-  inspected = null;
-  closeName();
-  closeDeviceActions();
+  if (tank.inspectPage() === 0) {
+    inspected = null;
+    closeName();
+    closeDeviceActions();
+  } else {
+    placeNameInput();
+  }
 }
 
 // Shows a message (a refusal, a cheat's result, an error) in the readout
@@ -1361,27 +1367,93 @@ function runDeviceGuardToggle() {
   }
 }
 
-// The name field (SPEC §2.4, T9): shown with a creature's card for the
-// owner; N or a click focuses it, Enter names the creature (blank removes
-// its name), Escape closes it.
-function closeName() {
-  nameForm.hidden = true;
-  if (document.activeElement === nameInput) nameInput.blur();
+// Naming (SPEC §2.4, T9, §2.5) happens in the inspect card in the canvas:
+// its Name row shows the name, or while editing the text typed with a caret.
+// Text entry needs a real input so phone keyboards open, so nameInput sits,
+// invisible, over the row (placeNameInput) and a tap on the row focuses it.
+// Focus is editing: the tank draws what the input holds (it is told on each
+// input event, never per frame), Enter names the creature (blank removes its
+// name) and so does losing focus (a phone keyboard's Done), Escape cancels.
+
+// Whether the inspected creature can be named from here.
+function canName() {
+  return owner && !handingOver && inspected !== null && tank.inspectPage() !== 0;
 }
 
-function runName(e: SubmitEvent) {
-  e.preventDefault();
-  if (!owner || handingOver || !inspected) return closeName();
+// The shortest the name input is, in CSS pixels (a comfortable tap target).
+const NAME_INPUT_MIN_HEIGHT = 32;
+
+// Lays the name input over the card's Name row (canvas pixels to CSS
+// pixels), or switches it off where there is no row to type into.
+function placeNameInput() {
+  const rect = canName() ? tank.inspectNameRect() : [];
+  if (rect.length !== 4) {
+    closeName();
+    return;
+  }
+  const frame = canvas.getBoundingClientRect();
+  const wrap = canvas.parentElement!.getBoundingClientRect();
+  const [sx, sy] = [frame.width / canvas.width, frame.height / canvas.height];
+  // At least NAME_INPUT_MIN_HEIGHT tall, centred on the row and kept inside
+  // the canvas, so a finger can hit it even where the card's text is a few
+  // CSS pixels high.
+  const height = Math.min(Math.max(rect[3] * sy, NAME_INPUT_MIN_HEIGHT), frame.height);
+  const middle = (rect[1] + rect[3] / 2) * sy;
+  const top = Math.min(Math.max(middle - height / 2, 0), frame.height - height);
+  const box = [
+    frame.left - wrap.left - canvas.parentElement!.clientLeft + rect[0] * sx,
+    frame.top - wrap.top - canvas.parentElement!.clientTop + top,
+    rect[2] * sx,
+    height,
+  ].map((v) => `${v}px`);
+  const { style } = nameInput;
+  [style.left, style.top, style.width, style.height] = box;
+  nameInput.disabled = false;
+}
+
+// Starts editing the inspected creature's name (N, or a click or tap on the
+// row the input was not yet over).
+function startNaming() {
+  if (!canName()) return;
+  nameInput.value = inspected!.name;
+  // The card shows the live page for editing, so find the row first.
+  tank.setInspectNameEdit(nameInput.value);
+  placeNameInput();
+  nameInput.focus({ preventScroll: true });
+  nameInput.setSelectionRange(nameInput.value.length, nameInput.value.length);
+  kick();
+}
+
+// Stops editing without naming; the card shows the creature's name again.
+function cancelNaming() {
+  if (tank.inspectNameEditing()) {
+    tank.setInspectNameEdit(undefined);
+    kick();
+  }
+  nameInput.value = inspected?.name ?? "";
+}
+
+// Hides the name input (and cancels what was typed).
+function closeName() {
+  if (!tank) return;
+  cancelNaming();
+  if (document.activeElement === nameInput) nameInput.blur();
+  nameInput.disabled = true;
+}
+
+function runName() {
+  if (!canName()) return closeName();
   try {
-    inspected.name = tank.nameCreature(inspected.id, nameInput.value);
-    nameInput.value = inspected.name;
-    nameOut.textContent = inspected.name ? "Named · Enter renames · Esc closes" : "No name · Esc closes";
+    inspected!.name = tank.nameCreature(inspected!.id, nameInput.value);
+    tank.setInspectNameEdit(undefined);
+    nameInput.value = inspected!.name;
+    announce(creatureText(inspected!));
     nameInput.blur();
-    announce(creatureText(inspected));
     kick();
   } catch (err) {
-    nameOut.textContent = String(err);
+    flash(String(err));
     inspected = null;
+    closeName();
   }
 }
 
@@ -1433,7 +1505,7 @@ function runCheat(e: SubmitEvent) {
 }
 
 // Takes what inspect last found: the card shows it; this announces it and
-// opens the name field or device actions that act on it.
+// readies the name input or device actions that act on it.
 function showInspection() {
   const found = tank.takeInspection();
   if (!found) return;
@@ -1456,11 +1528,8 @@ function showInspection() {
     closeDeviceActions();
     inspected = { id: Number(rest[1]), parts: rest.slice(0, 12), name: rest.slice(12).join(" ") };
     announce(creatureText(inspected));
-    if (owner && !handingOver) {
-      nameInput.value = inspected.name;
-      nameOut.textContent = "N or click to name · Enter names it · Esc closes";
-      nameForm.hidden = false;
-    }
+    nameInput.value = inspected.name;
+    placeNameInput();
     return;
   } else {
     return;
@@ -1557,6 +1626,9 @@ const mouse: PointerHandler = {
   down(e) {
     const button = e.button === 2 ? SECONDARY : e.button === 0 ? PRIMARY : -1;
     if (button < 0) return;
+    // The name input is invisible over the Name row, so a click lands on it
+    // there; this catches one that doesn't (the row just moved).
+    if (button === PRIMARY && tank.nameRowAt(...canvasPoint(e))) return startNaming();
     canvas.setPointerCapture(e.pointerId);
     tank.pointerDown(button, ...canvasPoint(e));
   },
@@ -1634,10 +1706,15 @@ const touch: PointerHandler = {
       clearTimeout(gesture.timer);
       gesture.mode = "done";
     } else if (gesture.mode === "pending") {
-      // A tap: use the tool once where it landed.
+      // A tap: on the Name row it starts naming, else use the tool once
+      // where it landed.
       clearTimeout(gesture.timer);
-      tank.pointerDown(PRIMARY, ...gesture.start);
-      tank.pointerUp(PRIMARY);
+      if (tank.nameRowAt(...gesture.start)) {
+        startNaming();
+      } else {
+        tank.pointerDown(PRIMARY, ...gesture.start);
+        tank.pointerUp(PRIMARY);
+      }
       gesture.mode = "done";
     } else if (gesture.mode === "stroke" && e.pointerId === gesture.id) {
       tank.pointerUp(PRIMARY);
@@ -1665,7 +1742,10 @@ function endGestures() {
 
 function wireInput() {
   canvas.addEventListener("pointerdown", (e) => {
+    // Cancelling the press keeps the browser from moving focus, so a press
+    // elsewhere ends naming by hand.
     e.preventDefault();
+    if (document.activeElement === nameInput) nameInput.blur();
     handler(e).down(e);
     after();
   });
@@ -1764,15 +1844,35 @@ function wireInput() {
   });
   $("take-over").addEventListener("click", takeOver);
   cheatForm.addEventListener("submit", runCheat);
-  nameForm.addEventListener("submit", runName);
   deviceRinseBtn.addEventListener("click", () => runDeviceRinse("gentle"));
   deviceHardRinseBtn.addEventListener("click", () => runDeviceRinse("hard"));
   deviceReplaceBtn.addEventListener("click", () => runDeviceRinse("replace"));
   deviceGuardInput.addEventListener("change", runDeviceGuardToggle);
+  // The input mirrors into the card, so the page's shortcuts must not see
+  // its keys (the document handler skips inputs); Enter names, Escape cancels.
+  nameInput.addEventListener("focus", () => {
+    if (!canName()) return nameInput.blur();
+    tank.setInspectNameEdit(nameInput.value);
+    kick();
+  });
+  nameInput.addEventListener("input", () => {
+    tank.setInspectNameEdit(nameInput.value);
+    kick();
+  });
+  // Losing focus keeps what was typed (a phone keyboard's Done blurs);
+  // Escape cancels first, so its blur has nothing to keep.
+  nameInput.addEventListener("blur", () => {
+    if (canName() && tank.inspectNameEditing() && nameInput.value !== inspected!.name) runName();
+    else cancelNaming();
+  });
   nameInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      closeName();
+      cancelNaming();
+      nameInput.blur();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      runName();
     }
   });
   cheatInput.addEventListener("keydown", (e) => {
@@ -1808,10 +1908,9 @@ function wireInput() {
       tank.stepZoom(e.key === "-" ? -1 : 1);
       showZoom();
       kick();
-    } else if ((e.key === "n" || e.key === "N") && !nameForm.hidden) {
+    } else if ((e.key === "n" || e.key === "N") && canName()) {
       e.preventDefault();
-      nameInput.focus();
-      nameInput.select();
+      startNaming();
     } else if ((e.key === "x" || e.key === "X") && !e.repeat && tank.canFlipDevice()) {
       flipDevice();
     } else if (e.key === "f" || e.key === "F") {

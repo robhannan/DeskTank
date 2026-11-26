@@ -568,6 +568,61 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
 }
 
 #[test]
+fn the_name_row_is_clicked_to_name_not_to_turn_the_page() {
+    let mut t = paused();
+    t.select(slot(&t, "creature neon_tetra"));
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 60, 40);
+    t.pointer_up(PRIMARY);
+    // A viewer (naming not allowed) has no row: its whole card turns.
+    assert_eq!(t.inspect_name_rect(), Vec::<u32>::new());
+    assert!(!t.name_row_at(0.0, 0.0));
+    t.set_naming_allowed(true);
+    let row = t.inspect_name_rect();
+    assert_eq!(row.len(), 4);
+    let card = t.inspect_rect();
+    assert!(row[0] >= card[0] && row[1] > card[1]);
+    assert!(row[0] + row[2] <= card[0] + card[2] && row[1] + row[3] < card[1] + card[3]);
+    // A click on the row is the page's to handle: the page stays, and
+    // nothing else in the tank is touched.
+    let hash = t.state_hash();
+    let (x, y) = (f64::from(row[0] + 2), f64::from(row[1] + 2));
+    assert!(t.name_row_at(x, y));
+    assert_eq!(t.pointer_down(PRIMARY, x, y), 0);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 1);
+    assert_eq!(t.state_hash(), hash);
+    // Editing mirrors the typed text into the card; the same text twice,
+    // or blank, is no change of state; saving names the creature.
+    assert!(!t.inspect_name_editing());
+    t.set_inspect_name_edit(Some("Big Blue".to_owned()));
+    assert!(t.inspect_name_editing());
+    assert_eq!(t.creature_name(1).as_deref(), Some(""), "not named yet");
+    assert_eq!(t.name_creature(1, "Big Blue"), Ok("Big Blue".to_owned()));
+    t.set_inspect_name_edit(None);
+    assert!(!t.inspect_name_editing());
+    // A click elsewhere on the card still turns the page, and the species
+    // page has no name row.
+    let (x, y) = (f64::from(card[0] + 2), f64::from(card[1] + 2));
+    assert!(!t.name_row_at(x, y));
+    t.pointer_down(PRIMARY, x, y);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 2);
+    assert_eq!(t.inspect_name_rect(), Vec::<u32>::new());
+    // Starting to edit on that page shows page one again.
+    t.set_inspect_name_edit(Some(String::new()));
+    assert_eq!(t.inspect_page(), 1);
+    assert_eq!(t.inspect_name_rect().len(), 4);
+    // Another tool removes the card and the edit with it.
+    t.select(slot(&t, "tool net"));
+    assert_eq!(t.inspect_page(), 0);
+    assert!(!t.inspect_name_editing());
+    assert_eq!(t.inspect_name_rect(), Vec::<u32>::new());
+}
+
+#[test]
 fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     let mut t = paused();
     t.select(slot(&t, "creature neon_tetra"));

@@ -293,11 +293,10 @@
   set, and never change behaviour. The card (`World::creature_card`) shows
   the name, species, stage, sex, age in days of its life, health, energy,
   the morph it shows (for species with more than one) and the days a
-  carrying female has to go. The window shows the card in its title bar
-  and `N` opens a name field there for the creature last inspected; the
-  web shows it in its readout with a name field under it (`N` or a click
-  focuses it; owner tab only). A drawn in-tank card comes with the
-  overlay's interact mode (O5), which has no title bar.
+  carrying female has to go. Every host shows it in the in-canvas inspect
+  card (§2.5, `docs/spec/interaction-and-saves.md`), whose **Name** row
+  is where it is named: `N` or a click or tap on the row edits it there
+  (owner tab only on the web).
 - *Hunting and territory* (`desktank_sim::pursuit`; the strike itself is
   T9 part 2's predation, unchanged):
   - **Sensing.** Every 10 ticks (offset by its id) a creature looks round

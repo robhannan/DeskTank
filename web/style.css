@@ -270,7 +270,7 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
   color: var(--accent);
 }
 
-/* The inspect card: the readout and, for a creature, its name field. */
+/* The inspect card's screen-reader readout and device actions. */
 .card {
   position: absolute;
   left: 8px;
@@ -324,20 +324,30 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
 
 .cheat[hidden] { display: none; }
 
-.name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  padding: 4px 8px;
-  background: rgba(5, 11, 17, 0.85);
-  border: 2px solid var(--accent);
-  pointer-events: auto;
+/* The inspect card's Name row is drawn in the canvas; this input takes the
+   typing for it. Invisible (not display:none, so it focuses and a tap can
+   land on it) and laid over the row by main.ts. 16px keeps iOS from zooming. */
+.name-input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  opacity: 0;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  font: 16px sans-serif;
+  line-height: normal;
+  cursor: text;
+  z-index: 2;
 }
 
-.name[hidden] { display: none; }
-.name input { width: min(24ch, 50vw); font: inherit; }
-.name output { opacity: 0.85; }
+.name-input:disabled { pointer-events: none; }
 
 .device-actions {
   display: flex;

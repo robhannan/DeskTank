@@ -36,9 +36,10 @@
 //! carries a creature and, let go above the water, lifts it out; inspect
 //! shows its card beside it (T9: its name, species, stage, sex, age,
 //! health, energy, morph and how long a carrying female has to go, then
-//! its species). `N` then opens a name field for it in
-//! the title bar: Enter names it (a blank name removes it), Escape cancels.
-//! Names are saved with the tank. `--fish N` stocks the tank with N
+//! its species). Its card has a Name row: `N`, or a click on the row, edits
+//! the name in the card itself: Enter names it (a blank name removes it),
+//! Escape cancels (a click elsewhere does too). Names are saved with the
+//! tank. `--fish N` stocks the tank with N
 //! creatures to start with. Swimming creatures redraw the tank every tick
 //! (20 fps, under the cap) even when every chunk sleeps.
 //!
@@ -341,39 +342,22 @@ struct Running {
     closed_card: Option<Card>,
     /// Watches key presses for the code that opens the cheat field.
     konami: Konami,
-    /// The text field open in the title bar (cheat or name), if any.
+    /// The cheat field open in the title bar, if any.
     field: Option<TextField>,
     /// The creature inspect last showed, which `N` names; cleared when
     /// another tool is picked.
     inspected: Option<CreatureId>,
+    /// The name being typed into the inspected creature's card (drawn there
+    /// by the tank), if any.
+    naming: Option<String>,
     /// The device inspect last showed, which `R` rinses
     /// and `I` toggles the intake guard on.
     inspected_device: Option<DeviceId>,
 }
 
-/// A one-line text field in the title bar.
+/// The cheat's one-line text field in the title bar.
 struct TextField {
-    purpose: Purpose,
     line: String,
-}
-
-/// What a [`TextField`] is for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Purpose {
-    /// A cheat ([`desktank_sim::cheats`]).
-    Cheat,
-    /// A name for this creature.
-    Name(CreatureId),
-}
-
-impl Purpose {
-    /// Longest line it takes, in characters.
-    fn max_chars(self) -> usize {
-        match self {
-            Self::Cheat => cheats::MAX_LINE,
-            Self::Name(_) => MAX_NAME_CHARS,
-        }
-    }
 }
 
 impl Running {
@@ -450,9 +434,12 @@ impl Running {
             closed_card: None,
             konami: Konami::new(),
             field: None,
+            naming: None,
             inspected: None,
             inspected_device: None,
         };
+        // Every window can name creatures, in the inspect card.
+        s.tank.set_inspect_naming(true);
         // Open the tab and sub-category holding the starting material.
         (s.open, s.open_sub) = s.selection().map_or((0, 0), |(t, sub, _)| (t, sub));
         s.sync_overlay();
@@ -522,6 +509,17 @@ impl Running {
 
     fn pressed(&mut self, button: Button) {
         let size = self.surface.size();
+        // A click on the Name row edits the name; any other click ends it.
+        let on_name = self.cursor.is_some_and(|(px, py)| {
+            self.tank
+                .inspect_name_rect(size)
+                .is_some_and(|r| r.contains(px, py))
+        });
+        if on_name {
+            self.begin_naming();
+            return;
+        }
+        self.cancel_naming();
         // A click on the species card closes it.
         if let (Some((px, py)), Some(c)) = (self.cursor, self.tank.card_layout(size))
             && c.contains(px, py)
@@ -717,11 +715,12 @@ impl Running {
         // the drawn card moves to this creature or plant (or goes).
         self.forget_inspected();
         self.tank.set_inspected(Some(Inspected::of(found)));
-        // The card shows what was found; the title keeps only the keys.
+        // The card shows what was found (and offers the name); the title
+        // keeps only the keys that need it.
         let hint = match found {
             Inspection::Creature { id, .. } => {
                 self.inspected = Some(id);
-                Some("N names it")
+                None
             }
             Inspection::Device { id, .. } => {
                 self.inspected_device = Some(id);
@@ -735,38 +734,28 @@ impl Running {
         ));
     }
 
-    /// Shows the open text field in the title bar, after `note` (the last
+    /// Shows the open cheat field in the title bar, after `note` (the last
     /// cheat's error) if any.
     fn show_field(&self, note: Option<&str>) {
         let Some(field) = &self.field else { return };
         let note = note.map_or(String::new(), |n| format!("{n} · "));
         let line = &field.line;
-        let title = match field.purpose {
-            Purpose::Cheat => {
-                format!("DeskTank — {note}cheat: {line}_ (Enter runs, Esc closes)")
-            }
-            Purpose::Name(id) => {
-                let world = self.tank.world();
-                let species = world
-                    .creature(id)
-                    .and_then(|c| world.species().get(c.species()))
-                    .map_or("?".to_owned(), |s| s.name.replace('_', " "));
-                format!(
-                    "DeskTank — {note}name {species} #{}: {line}_ (Enter names it, Esc cancels)",
-                    id.0
-                )
-            }
-        };
-        self.window.set_title(&title);
+        self.window.set_title(&format!(
+            "DeskTank — {note}cheat: {line}_ (Enter runs, Esc closes)"
+        ));
     }
 
-    /// Gives a key press to the text fields first: an open field takes
-    /// every key, and the press completing the Konami code opens the cheat
-    /// field instead of doing its usual binding (A). Returns whether it
-    /// took it.
+    /// Gives a key press to the text fields first: an open field (or the
+    /// name being typed in the card) takes every key, and the press
+    /// completing the Konami code opens the cheat field instead of doing
+    /// its usual binding (A). Returns whether it took it.
     fn field_input(&mut self, event: &KeyEvent) -> bool {
         if self.field.is_some() {
             self.field_key(event);
+            return true;
+        }
+        if self.naming.is_some() {
+            self.name_key(event);
             return true;
         }
         if let Some(key) = konami_key(&event.logical_key)
@@ -774,28 +763,27 @@ impl Running {
             && !self.command()
             && self.konami.key(key, false)
         {
-            self.open_field(Purpose::Cheat, String::new());
+            self.open_field();
             return true;
         }
         false
     }
 
-    fn open_field(&mut self, purpose: Purpose, line: String) {
-        self.field = Some(TextField { purpose, line });
+    /// Opens the cheat field (ending a name being typed).
+    fn open_field(&mut self) {
+        self.cancel_naming();
+        self.field = Some(TextField {
+            line: String::new(),
+        });
         self.show_field(None);
     }
 
-    /// Forgets the creature or device inspect last showed, closing its name field.
+    /// Forgets the creature or device inspect last showed, ending a name
+    /// being typed for it.
     fn forget_inspected(&mut self) {
         self.inspected = None;
         self.inspected_device = None;
-        if self
-            .field
-            .as_ref()
-            .is_some_and(|f| matches!(f.purpose, Purpose::Name(_)))
-        {
-            self.field = None;
-        }
+        self.cancel_naming();
     }
 
     /// Rinses the device inspect last showed (`R` gentle, `Shift+R` hard).
@@ -831,17 +819,68 @@ impl Running {
         }
     }
 
-    /// Opens the name field for the creature inspect last showed (`N`),
-    /// holding its name so far.
-    fn open_name_field(&mut self) {
+    /// Starts editing the name of the creature inspect last showed (`N`,
+    /// or a click on the card's Name row), from its name so far; the card
+    /// shows the text with a caret.
+    fn begin_naming(&mut self) {
         let world = self.tank.world();
         if let Some(c) = self.inspected.and_then(|id| world.creature(id)) {
-            let (id, name) = (c.id(), c.name().unwrap_or("").to_owned());
-            self.open_field(Purpose::Name(id), name);
+            let name = c.name().unwrap_or("").to_owned();
+            self.tank.set_inspect_name_edit(Some(&name));
+            self.naming = Some(name);
         } else {
             self.inspected = None;
             self.window
                 .set_title("DeskTank — inspect a creature, then N names it");
+        }
+    }
+
+    /// Ends a name being typed without naming the creature.
+    fn cancel_naming(&mut self) {
+        if self.naming.take().is_some() {
+            self.tank.set_inspect_name_edit(None);
+        }
+    }
+
+    /// Takes a key press while a name is typed in the card: Enter names the
+    /// creature (a blank name removes it), Escape cancels, Backspace
+    /// deletes, and text is typed in up to [`MAX_NAME_CHARS`].
+    fn name_key(&mut self, event: &KeyEvent) {
+        let command = self.command();
+        let Some(line) = self.naming.as_mut() else {
+            return;
+        };
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => self.cancel_naming(),
+            Key::Named(NamedKey::Enter) => {
+                let line = line.clone();
+                self.cancel_naming();
+                if let Some(id) = self.inspected {
+                    if self.tank.world_mut().set_creature_name(id, &line).is_none() {
+                        self.inspected = None;
+                        self.window
+                            .set_title("DeskTank — that creature has left the tank");
+                    }
+                    // Redraw so the card shows the name, even while paused.
+                    self.tank.invalidate();
+                }
+            }
+            Key::Named(NamedKey::Backspace) => {
+                line.pop();
+                let line = line.clone();
+                self.tank.set_inspect_name_edit(Some(&line));
+            }
+            _ if command => {}
+            _ => {
+                let typed = event.text.as_ref().map_or("", |t| t.as_str());
+                for c in typed.chars().filter(|c| !c.is_control()) {
+                    if line.chars().count() < MAX_NAME_CHARS {
+                        line.push(c);
+                    }
+                }
+                let line = line.clone();
+                self.tank.set_inspect_name_edit(Some(&line));
+            }
         }
     }
 
@@ -850,9 +889,9 @@ impl Running {
         self.modifiers.control_key() || self.modifiers.super_key()
     }
 
-    /// Takes a key press while a text field is open: Enter runs the cheat
-    /// (closing the field if it ran) or names the creature, Escape closes
-    /// the field, Backspace deletes, and text is typed in.
+    /// Takes a key press while the cheat field is open: Enter runs the
+    /// cheat (closing the field if it ran), Escape closes the field,
+    /// Backspace deletes, and text is typed in.
     fn field_key(&mut self, event: &KeyEvent) {
         let command = self.command();
         let Some(field) = self.field.as_mut() else {
@@ -866,29 +905,16 @@ impl Running {
             Key::Named(NamedKey::Enter) => {
                 // Kept on failure, to fix a typo.
                 let line = field.line.clone();
-                match field.purpose {
-                    Purpose::Cheat => match cheats::run(self.tank.world_mut(), &line) {
-                        Ok(out) => {
-                            if out.cells_changed > 0 {
-                                self.tank.cells_edited();
-                            }
-                            self.field = None;
-                            self.window
-                                .set_title(&format!("DeskTank — cheat: {}", out.message));
+                match cheats::run(self.tank.world_mut(), &line) {
+                    Ok(out) => {
+                        if out.cells_changed > 0 {
+                            self.tank.cells_edited();
                         }
-                        Err(e) => self.show_field(Some(&e.to_string())),
-                    },
-                    Purpose::Name(id) => {
                         self.field = None;
-                        let world = self.tank.world_mut();
-                        let title = if world.set_creature_name(id, &line).is_some() {
-                            let card = world.creature_card(id).map(|c| c.summary());
-                            format!("DeskTank — {} · N renames it", card.unwrap_or_default())
-                        } else {
-                            "DeskTank — that creature has left the tank".to_owned()
-                        };
-                        self.window.set_title(&title);
+                        self.window
+                            .set_title(&format!("DeskTank — cheat: {}", out.message));
                     }
+                    Err(e) => self.show_field(Some(&e.to_string())),
                 }
             }
             Key::Named(NamedKey::Backspace) => {
@@ -897,10 +923,9 @@ impl Running {
             }
             _ if command => {}
             _ => {
-                let max = field.purpose.max_chars();
                 let typed = event.text.as_ref().map_or("", |t| t.as_str());
                 for c in typed.chars().filter(|c| !c.is_control()) {
-                    if field.line.chars().count() < max {
+                    if field.line.chars().count() < cheats::MAX_LINE {
                         field.line.push(c);
                     }
                 }
@@ -1449,7 +1474,7 @@ impl ApplicationHandler<Wake> for App {
                     Key::Character(c)
                         if c.eq_ignore_ascii_case("n") && !event.repeat && !s.command() =>
                     {
-                        s.open_name_field();
+                        s.begin_naming();
                     }
                     // R rinses the inspected filter (Shift+R hard rinse),
                     // M replaces its media, and I toggles its intake guard

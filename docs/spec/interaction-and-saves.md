@@ -107,14 +107,15 @@
     sets the way for the rest of the stroke. Glued cells are drawn with a
     subtle amber cast;
   - **net**: pick up and move a creature;
-  - **inspect**: show a creature's card and name it.
+  - **inspect**: show a creature's card and name it in the card.
 
     Inspecting pins the **inspect card** beside what it finds (a
     creature, plant, device or cell), drawn in the canvas: to its right
     (or left, nearer the right glass), centred on it, following it as it
     swims and clamped inside the tank. Page 1 is the live state: a
-    creature's name, stage and sex, age, health, energy, colour morph,
-    days left carrying and any unmet need; a plant's age, health, size
+    creature's species and number, its name (the **Name** row, below),
+    stage and sex, age, health, energy, colour morph, days left carrying
+    and any unmet need; a plant's age, health, size
     by part and what holds it back; a device's mount and, for a filter,
     flow, media load, maturity and intake guard (an air diffuser or a
     floor panel's connection otherwise); a cell's material and what kind
@@ -124,15 +125,45 @@
     have no encyclopedia entry yet, so theirs is one page. The next
     inspection moves the card, picking another tool removes it (so it
     can't catch that tool's clicks), and it goes by itself when its
-    creature, plant or device does. It is drawn from a third HUD-texture region at
-    half the cell scale (at least 2, at most half the canvas each way),
-    and the live page is rebuilt only when its text changes, never per
-    frame; nothing is built or drawn while nothing is inspected. It
+    creature, plant or device does.
+
+    **Naming happens in the card** on every host; there is no separate
+    name panel or title-bar name field. A creature's page 1 has a Name row
+    (in the card's pixel font and scale): its name or, where the host
+    allows naming (every desktop window; the web's owner tab, not a
+    viewer), the prompt "N or tap to name". A click or tap on the row,
+    or N, starts editing, with the card on page 1: the row shows the
+    text typed with a steady caret (no blink, so it never asks for
+    timed redraws) and the hint "Enter saves, Esc cancels". Enter names
+    the creature (a blank name removes it), Escape cancels, and a click
+    elsewhere ends it too (on the web, where the text box losing focus
+    ends it, what was typed is kept, so a phone keyboard's Done names
+    the creature); names are cut to 24 characters
+    (`MAX_NAME_CHARS`), which always fits the row on one line. A click on
+    the row doesn't turn the page; a click anywhere else on the card
+    does, and no click on the card reaches the tank. The tank only draws
+    the edit (`Tank::set_inspect_name_edit`; `Tank::inspect_name_rect`
+    is the row's hit rectangle, `Tank::set_inspect_naming` the host's
+    permission), and the image is rebuilt when the edit text changes.
+    The window reads the keys itself. The web has no name panel either:
+    text entry needs a real input so phone keyboards open, so an
+    invisible, focusable `<input>` (owner-only) is laid over the row,
+    following the card, and its value is mirrored into the tank on each
+    `input` event; a tap on the row focuses it (the input is at least 32
+    CSS pixels tall, centred on the row and clamped to the canvas, so a
+    phone's few-pixel row is still a tap target, and a tap on it never
+    turns the page), and its keys never reach the page's shortcuts.
+    Screen readers still hear the inspection and the new name.
+
+    The card is drawn from a third HUD-texture region at the species
+    card's scale (`card_scale`: both pages and the species card match on
+    a given canvas, including the host's minimum on a high-density
+    screen), dropped only if the card itself doesn't fit, and the live
+    page is rebuilt only when its text changes, never per frame; nothing is built or drawn while nothing is inspected. It
     needs only the tank (`Tank::set_inspected`), so the screensaver and
     wallpaper can draw it too once they have a way to open it. Nothing
     else repeats what it shows: the window's title bar keeps only the
-    keys that act on it (N names a creature; R, Shift+R, M and I for a
-    filter), and the web's readout line is left for messages (refusals,
+    keys that act on it (R, Shift+R, M and I for a filter), and the web's readout line is left for messages (refusals,
     cheat results), with the inspection read out to screen readers only.
 
   The tray menu also has quick actions: Feed (default food), Water
