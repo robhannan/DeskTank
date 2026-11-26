@@ -72,8 +72,11 @@
     A named pick sets the colour for every new placement of that species
     and updates its sprite in the species card.
 
-    Selecting a creature or plant shows its **species card** below the
-    palette (top-left on the web, whose palette is DOM): its name, Latin
+    Selecting a creature or plant shows its **species card** on the side
+    of the tank nearest the palette: directly below it where the palette
+    is drawn in the canvas, and in the bottom-left on the web, whose
+    palette is DOM below the canvas (the host tells the renderer which
+    edge its palette is on, top by default). The card shows its name, Latin
     name, sprite (male and female side by side where they are drawn
     differently; a sprout in a plant's colours), adult size (both sexes'
     where they differ), diet, behaviour, needs (or a plant's form and
@@ -83,8 +86,17 @@
     the in-tank inspect card), so it needs no new pipeline and is
     WebGL2-safe. It is built only when the species or morph selection
     changes and costs nothing while nothing is selected.
-    Above pixel scale 1 it covers at most half the canvas each way, so a
-    phone keeps most of the tank clear. Clicks on it never reach the
+    Every card is shown at one scale on a given canvas
+    (`desktank_render::card_scale`), chosen from the largest card rather
+    than the one being shown, so choosing another species never resizes
+    it: the largest scale (up to the palette's, or the cell scale, but at
+    least 2, or the host's minimum) at which the largest card fits the
+    canvas and, above pixel scale 1, covers at most half its width, so a
+    phone keeps most of the tank clear while the text stays readable.
+    Scales count canvas pixels, so on a high-density display 2 is too
+    small to read: the web host sets the minimum to its device-pixel
+    ratio rounded up (a phone at 3 gets scale 3 where it fits); desktop
+    hosts set none. Clicks on it never reach the
     tank; a click closes it until another species is selected.
 - **Tools:**
   - **pour** the selected material: left-drag, with the scroll wheel

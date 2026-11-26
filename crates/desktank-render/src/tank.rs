@@ -5,7 +5,7 @@ use core::time::Duration;
 use desktank_sim::{TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
-use crate::card::{self, Card, CardImage, CardLayout};
+use crate::card::{self, Card, CardAnchor, CardImage, CardLayout};
 use crate::grid::DirtyRects;
 use crate::hud::{self, BrushPreview, Magnifier, Palette, PaletteLayout};
 use crate::inspect::{InspectCard, InspectPage, Inspected};
@@ -110,6 +110,11 @@ pub struct Tank {
     card_image: Option<CardImage>,
     /// The card image needs uploading.
     card_dirty: bool,
+    /// The edge of the canvas a palette outside it is on (the card sits
+    /// nearest it when there is no palette in the canvas).
+    card_anchor: CardAnchor,
+    /// The host's minimum card scale (see [`Tank::set_card_min_scale`]).
+    card_min_scale: u32,
     /// The in-tank inspect card.
     inspect: InspectCard,
     /// The brush outline, if shown.
@@ -155,6 +160,8 @@ impl Tank {
             card: None,
             card_image: None,
             card_dirty: false,
+            card_anchor: CardAnchor::default(),
+            card_min_scale: 0,
             inspect: InspectCard::default(),
             cursor: None,
             ghost: None,
@@ -316,6 +323,45 @@ impl Tank {
         }
     }
 
+    /// Tells the tank which edge of the canvas the host's palette is on when
+    /// it is not drawn in the canvas (the web's DOM palette is below it):
+    /// the species card then sits on that side, bottom-left for
+    /// [`CardAnchor::Bottom`], rather than top-left (the default). With the
+    /// palette in the canvas the card stays directly below it. A change
+    /// asks for a frame; setting the same anchor again costs nothing.
+    pub fn set_card_anchor(&mut self, anchor: CardAnchor) {
+        if self.card_anchor != anchor {
+            self.card_anchor = anchor;
+            self.needs_frame = true;
+        }
+    }
+
+    /// The card anchor set.
+    #[must_use]
+    pub fn card_anchor(&self) -> CardAnchor {
+        self.card_anchor
+    }
+
+    /// Sets the smallest scale the species and inspect cards are drawn at,
+    /// where they fit (see [`crate::card_scale`]). Card scales count target
+    /// pixels, so on a high-density display (a phone at 3 device pixels per
+    /// CSS pixel) the default 2 is too small to read: the web host passes
+    /// its device-pixel ratio, rounded up. 0 (the default) changes nothing.
+    /// A change asks for a frame; setting the same value again costs
+    /// nothing.
+    pub fn set_card_min_scale(&mut self, scale: u32) {
+        if self.card_min_scale != scale {
+            self.card_min_scale = scale;
+            self.needs_frame = true;
+        }
+    }
+
+    /// The minimum card scale set.
+    #[must_use]
+    pub fn card_min_scale(&self) -> u32 {
+        self.card_min_scale
+    }
+
     /// The species card set, if any.
     #[must_use]
     pub fn card(&self) -> Option<Card> {
@@ -332,6 +378,8 @@ impl Tank {
             target,
             &self.layout(target),
             self.palette_layout(target).as_ref(),
+            self.card_anchor,
+            self.card_min_scale,
             image.size,
         )
     }
@@ -1175,6 +1223,85 @@ mod tests {
         assert_eq!(tank.inspect_layout(target), None);
         assert_eq!(tank.inspect_page(), InspectPage::Live);
         assert!(tank.frame_wanted());
+    }
+
+    #[test]
+    fn the_host_minimum_card_scale_enlarges_the_card_and_asks_for_one_frame() {
+        let world = World::new(
+            WorldConfig {
+                width: 320,
+                height: 180,
+                seed: 7,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap(), None);
+        tank.set_card(Some(guppy));
+        let req = tank.tick(Duration::ZERO);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        // A DPR-3 phone's canvas: the grid is at scale 2 and so is the card.
+        let target = (1092, 614);
+        assert_eq!(tank.layout(target).scale, 2);
+        assert_eq!(tank.card_min_scale(), 0);
+        assert_eq!(tank.card_layout(target).unwrap().scale, 2);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(2), 2), 0);
+
+        tank.set_card_min_scale(3);
+        assert_eq!(tank.card_min_scale(), 3);
+        assert_eq!(tank.card_layout(target).unwrap().scale, 3);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(4), 2), 1);
+
+        // The same value again is free.
+        tank.set_card_min_scale(3);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 2), 0);
+    }
+
+    #[test]
+    fn the_card_anchor_moves_the_card_and_asks_for_one_frame() {
+        let mut tank = settled_planted_tank();
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap(), None);
+        tank.set_card(Some(guppy));
+        let target = (1280, 720);
+        // Top-left by default.
+        assert_eq!(tank.card_anchor(), CardAnchor::Top);
+        let top = tank.card_layout(target).unwrap();
+        assert_eq!(top.origin, (2 * top.scale, 2 * top.scale));
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(2), 2), 1);
+
+        // Another anchor is one change: one frame, and the layout (which
+        // hit tests and drawing share) is now bottom-left.
+        tank.set_card_anchor(CardAnchor::Bottom);
+        assert_eq!(tank.card_anchor(), CardAnchor::Bottom);
+        let bottom = tank.card_layout(target).unwrap();
+        assert_eq!(bottom.scale, top.scale);
+        assert_eq!(bottom.origin.0, 2 * bottom.scale);
+        assert_eq!(
+            bottom.origin.1 + bottom.size().1 + 2 * bottom.scale,
+            target.1
+        );
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(4), 2), 1);
+
+        // The same anchor again is free.
+        tank.set_card_anchor(CardAnchor::Bottom);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 2), 0);
+
+        // A palette in the canvas still puts the card below it.
+        tank.set_palette(Some(Palette {
+            tabs: Vec::new(),
+            open: 0,
+            subs: Vec::new(),
+            open_sub: 0,
+            items: Vec::new(),
+            selected: None,
+            morphs: None,
+        }));
+        let palette = tank.palette_layout(target).unwrap();
+        let below = tank.card_layout(target).unwrap();
+        assert!(below.origin.1 >= palette.origin.1 + palette.size().1);
     }
 
     #[test]

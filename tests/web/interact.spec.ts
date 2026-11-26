@@ -501,6 +501,10 @@ test("a creature or plant shows its species card in the canvas; a click closes i
     const canvas = document.querySelector<HTMLCanvasElement>("#tank")!;
     return [canvas.width, canvas.height];
   });
+  // The palette is DOM, below the canvas, so the card is in the bottom-left,
+  // two card pixels in from the edges.
+  const cardScale = w / 144;
+  expect([x, y + h + 2 * cardScale]).toEqual([2 * cardScale, canvasSize[1]]);
   // It shows the card's background, #0b121c.
   const img = await decodePng(page, await page.locator("#tank").screenshot());
   const i = (Math.floor((cy / canvasSize[1]) * img.height) * img.width + Math.floor((cx / canvasSize[0]) * img.width)) * 4;
@@ -877,8 +881,9 @@ test("creature cap setting and refused spawn messages", async ({ page }) => {
   await expect(capInput).toHaveValue("60");
   await expect(capStock).toHaveText("(0/60)");
 
-  // Deep inside a solid block reports no room.
-  const [bx, by] = [Math.round(w * 0.15), Math.round(h * 0.8)];
+  // Deep inside a solid block reports no room (on the right: the species card
+  // is in the bottom-left).
+  const [bx, by] = [Math.round(w * 0.85), Math.round(h * 0.8)];
   await choose(page, "Rock");
   await page.locator("#brush").fill("24");
   await page.locator("#brush").dispatchEvent("input");

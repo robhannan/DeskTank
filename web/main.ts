@@ -393,6 +393,7 @@ function setCanvasSize([w, h]: Point) {
   if (canvas.width !== w) canvas.width = w;
   if (canvas.height !== h) canvas.height = h;
   tank?.resize(w, h);
+  tank?.setCardMinScale(Math.ceil(pixelRatio()));
   kick();
 }
 
@@ -414,6 +415,9 @@ function replaceTank(next: WebTank) {
   hiddenAt = owner && !handingOver && hidden ? Date.now() : null;
   tank.select(selected);
   tank.setZoom(zoom);
+  // Cards are drawn in device pixels: at least one canvas pixel per CSS pixel
+  // per card pixel, so a phone's text is readable.
+  tank.setCardMinScale(Math.ceil(pixelRatio()));
   showSettings();
   showCreatureCap(true);
   showZoom();

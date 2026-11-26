@@ -365,6 +365,20 @@ impl Page {
     }
 }
 
+/// Which edge of the canvas a host's out-of-canvas palette is on, so the
+/// species card can sit on the side nearest it. It matters only with no
+/// in-canvas palette: with one, the card sits directly below it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CardAnchor {
+    /// The palette is above the canvas, or there is none: the card is in
+    /// the top-left.
+    #[default]
+    Top,
+    /// The palette is below the canvas (the web's DOM palette): the card is
+    /// in the bottom-left.
+    Bottom,
+}
+
 /// Where the card is drawn in a target, for hit tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CardLayout {
@@ -377,42 +391,33 @@ pub struct CardLayout {
 }
 
 impl CardLayout {
-    /// Places a card image of `image` pixels in `target`. It takes the
-    /// palette's scale and sits just below it, left-aligned with it (two
-    /// palette pixels under it, as it is from the top), or, with no
-    /// palette, in the top-left at the grid's cell scale (at least 2). The
-    /// scale drops until the card fits inside `target` and, above scale 1,
-    /// covers at most half its width and half its height, so a small
-    /// canvas (a phone) keeps most of the tank clear; `None` if it doesn't
-    /// fit even at 1.
+    /// Places a card image of `image` pixels in `target`, at the scale
+    /// [`card_scale`] gives for it (`min_scale` is the host's minimum, see
+    /// there). With a palette it sits just below it, left-aligned with it
+    /// (two card pixels under it); with none, it sits in the top-left or,
+    /// for [`CardAnchor::Bottom`], the bottom-left, two card pixels in from
+    /// the edges.
+    ///
+    /// `image` only has to fit at that scale; `None` if it doesn't fit even
+    /// at 1.
     #[must_use]
     pub fn fit(
         target: (u32, u32),
         grid: &Layout,
         palette: Option<&PaletteLayout>,
+        anchor: CardAnchor,
+        min_scale: u32,
         image: (u32, u32),
     ) -> Option<Self> {
         if image.0 == 0 || image.1 == 0 {
             return None;
         }
-        let want = palette.map_or_else(|| grid.scale.max(2), |p| p.scale);
-        (1..=want).rev().find_map(|scale| {
-            let origin = palette.map_or((2 * scale, 2 * scale), |p| {
-                (p.origin.0, p.origin.1 + p.size().1 + 2 * scale)
-            });
-            let (w, h) = (
-                u64::from(image.0) * u64::from(scale),
-                u64::from(image.1) * u64::from(scale),
-            );
-            let fits = u64::from(origin.0) + w <= u64::from(target.0)
-                && u64::from(origin.1) + h <= u64::from(target.1);
-            let small =
-                scale == 1 || (2 * w <= u64::from(target.0) && 2 * h <= u64::from(target.1));
-            (fits && small).then_some(Self {
-                origin,
-                scale,
-                image,
-            })
+        let scale = card_scale(target, grid, palette, min_scale);
+        let origin = card_origin(target, palette, anchor, scale, image.1)?;
+        fits_at(target, origin, scale, image).then_some(Self {
+            origin,
+            scale,
+            image,
         })
     }
 
@@ -429,6 +434,69 @@ impl CardLayout {
         let (x, y) = (px - f64::from(self.origin.0), py - f64::from(self.origin.1));
         x >= 0.0 && y >= 0.0 && x < f64::from(w) && y < f64::from(h)
     }
+}
+
+/// The card's top-left in `target` at `scale` for a card `height` pixels
+/// tall: below the palette if there is one, else in the top-left or
+/// bottom-left. `None` if it would start off the target.
+fn card_origin(
+    target: (u32, u32),
+    palette: Option<&PaletteLayout>,
+    anchor: CardAnchor,
+    scale: u32,
+    height: u32,
+) -> Option<(u32, u32)> {
+    let margin = i64::from(2 * scale);
+    let (x, y) = match (palette, anchor) {
+        (Some(p), _) => (
+            i64::from(p.origin.0),
+            i64::from(p.origin.1) + i64::from(p.size().1) + margin,
+        ),
+        (None, CardAnchor::Top) => (margin, margin),
+        (None, CardAnchor::Bottom) => (
+            margin,
+            i64::from(target.1) - margin - i64::from(height) * i64::from(scale),
+        ),
+    };
+    Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?))
+}
+
+/// Whether a card image of `size` card pixels at `origin` and `scale` is
+/// inside `target`.
+fn fits_at(target: (u32, u32), origin: (u32, u32), scale: u32, size: (u32, u32)) -> bool {
+    i64::from(origin.0) + i64::from(size.0) * i64::from(scale) <= i64::from(target.0)
+        && i64::from(origin.1) + i64::from(size.1) * i64::from(scale) <= i64::from(target.1)
+}
+
+/// The one scale every card is drawn at in `target` (target pixels per card
+/// pixel): the largest up to `want` at which the biggest card
+/// ([`CARD_MAX`]) fits inside `target` and, above scale 1, covers at most
+/// half its width, so a small canvas (a phone) keeps most of the tank clear.
+/// `want` is the palette's scale, or the grid's cell scale without one
+/// (never under 2), or `min_scale` if that is more: the host's floor for a
+/// readable card, a high-density display (the web passes its device-pixel
+/// ratio) where 2 target pixels are too few to read. It is 1 where nothing
+/// larger fits; the species card and the inspect card both take it, so every
+/// card and page matches.
+#[must_use]
+pub fn card_scale(
+    target: (u32, u32),
+    grid: &Layout,
+    palette: Option<&PaletteLayout>,
+    min_scale: u32,
+) -> u32 {
+    let want = palette
+        .map_or(grid.scale, |p| p.scale)
+        .max(2)
+        .max(min_scale);
+    (2..=want)
+        .rev()
+        .find(|&scale| {
+            let half = 2 * u64::from(CARD_MAX.0) * u64::from(scale) <= u64::from(target.0);
+            half && card_origin(target, palette, CardAnchor::Top, scale, CARD_MAX.1)
+                .is_some_and(|origin| fits_at(target, origin, scale, CARD_MAX))
+        })
+        .unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -661,50 +729,220 @@ mod tests {
         Layout::fit((320, 180), (1280, 720))
     }
 
+    use CardAnchor::{Bottom, Top};
+
     #[test]
-    fn the_card_sits_below_the_palette_at_its_scale() {
-        let g = grid();
-        let p = PaletteLayout::fit((1280, 720), &g, 9, 0, 4, 0);
-        let c = CardLayout::fit((1280, 720), &g, Some(&p), (144, 80)).unwrap();
-        assert_eq!(c.scale, p.scale);
-        assert_eq!(c.origin.0, p.origin.0);
-        // The palette's bottom (8 + 23 * 4) and a 2-pixel gap at scale 4.
-        assert_eq!(c.origin.1, p.origin.1 + p.size().1 + 8);
-        assert_eq!(c.size(), (144 * 4, 80 * 4));
-        assert!(c.contains(f64::from(c.origin.0), f64::from(c.origin.1)));
-        assert!(c.contains(f64::from(c.origin.0 + 575), f64::from(c.origin.1 + 319)));
-        assert!(!c.contains(f64::from(c.origin.0 + 576), f64::from(c.origin.1)));
-        assert!(!c.contains(f64::from(c.origin.0) - 0.5, f64::from(c.origin.1)));
+    fn the_card_sits_below_the_palette_at_the_palettes_scale_when_it_fits() {
+        // A tall canvas, so the biggest card fits at the palette's scale 4.
+        let target = (1280, 1600);
+        let g = Layout::fit((320, 400), target);
+        let p = PaletteLayout::fit(target, &g, 9, 0, 4, 0);
+        assert_eq!(p.scale, 4);
+        for anchor in [Top, Bottom] {
+            let c = CardLayout::fit(target, &g, Some(&p), anchor, 0, (144, 80)).unwrap();
+            assert_eq!(c.scale, p.scale);
+            assert_eq!(c.origin.0, p.origin.0);
+            // The palette's bottom and a 2-pixel gap at scale 4.
+            assert_eq!(c.origin.1, p.origin.1 + p.size().1 + 8);
+            assert_eq!(c.size(), (144 * 4, 80 * 4));
+            assert!(c.contains(f64::from(c.origin.0), f64::from(c.origin.1)));
+            assert!(c.contains(f64::from(c.origin.0 + 575), f64::from(c.origin.1 + 319)));
+            assert!(!c.contains(f64::from(c.origin.0 + 576), f64::from(c.origin.1)));
+            assert!(!c.contains(f64::from(c.origin.0) - 0.5, f64::from(c.origin.1)));
+        }
     }
 
     #[test]
-    fn without_a_palette_the_card_takes_the_top_left_at_cell_scale() {
-        let c = CardLayout::fit((1280, 720), &grid(), None, (144, 80)).unwrap();
+    fn with_a_palette_the_card_scale_does_not_depend_on_the_card() {
+        let g = grid();
+        let p = PaletteLayout::fit((1280, 720), &g, 9, 0, 4, 0);
+        let scales: Vec<u32> = [(144, 40), (144, 80), (144, 176)]
+            .into_iter()
+            .map(|image| {
+                CardLayout::fit((1280, 720), &g, Some(&p), Top, 0, image)
+                    .unwrap()
+                    .scale
+            })
+            .collect();
+        assert!(scales.windows(2).all(|w| w[0] == w[1]), "{scales:?}");
+        assert!(scales[0] <= p.scale);
+    }
+
+    #[test]
+    fn without_a_palette_the_card_takes_the_top_left_below_cell_scale() {
+        // The biggest card (144×176) at the grid's 4 is 576 of 1280 columns
+        // and, with the 8-pixel margin, 712 of 720 rows: it fits.
+        let c = CardLayout::fit((1280, 720), &grid(), None, Top, 0, (144, 80)).unwrap();
         assert_eq!((c.scale, c.origin), (4, (8, 8)));
-        // A coarse grid still gets at least scale 2.
+        // A coarse grid still gets at least scale 2 where it fits.
         let g = Layout::fit((320, 180), (320, 180));
         assert_eq!(g.scale, 1);
-        let c = CardLayout::fit((320, 180), &g, None, (144, 100)).unwrap();
-        assert_eq!(c.scale, 1, "2 doesn't fit 100 rows plus margins in 180");
+        let c = CardLayout::fit((320, 180), &g, None, Top, 0, (144, 100)).unwrap();
+        assert_eq!(c.scale, 1, "2 doesn't fit 176 rows plus margins in 180");
         let c = CardLayout::fit(
-            (640, 360),
-            &Layout::fit((320, 180), (640, 360)),
+            (1280, 1440),
+            &Layout::fit((320, 360), (1280, 1440)),
             None,
+            Top,
+            0,
             (144, 80),
         )
         .unwrap();
-        assert_eq!((c.scale, c.origin), (2, (4, 4)));
+        assert_eq!((c.scale, c.origin), (4, (8, 8)));
     }
 
     #[test]
-    fn above_scale_1_the_card_covers_at_most_half_the_target() {
-        // 144×100 at the grid's 4 would be 400 of 720 rows: scale 3.
-        let c = CardLayout::fit((1280, 720), &grid(), None, (144, 100)).unwrap();
+    fn above_scale_1_the_biggest_card_covers_at_most_half_the_width() {
+        // 144 columns at 4 is 576 of 1280: under half. It may be taller than
+        // half the target (712 of 720 rows) as long as it fits.
+        let c = CardLayout::fit((1280, 720), &grid(), None, Top, 0, (144, 100)).unwrap();
+        assert_eq!(c.scale, 4);
+        // Too tall at 4 (720 rows don't fit in 700), so 3.
+        let c = CardLayout::fit((1280, 700), &grid(), None, Top, 0, (144, 100)).unwrap();
         assert_eq!(c.scale, 3);
         // A phone-sized canvas: scale 2 (288 of 512 columns) is too wide.
         let g = Layout::fit((128, 72), (512, 288));
-        let c = CardLayout::fit((512, 288), &g, None, (144, 100)).unwrap();
+        let c = CardLayout::fit((512, 288), &g, None, Top, 0, (144, 100)).unwrap();
         assert_eq!(c.scale, 1, "only scale 1 may cover more than half");
+    }
+
+    #[test]
+    fn every_card_gets_the_same_scale_on_a_phone() {
+        let t = tables();
+        let guppy = t.1.id("guppy").unwrap();
+        let goldfish = t.1.id("fancy_goldfish").unwrap();
+        let cards = every_card(&t);
+        let size = |card: Card| cards.iter().find(|c| c.1 == card).unwrap().2.size;
+        assert_ne!(
+            size(Card::Creature(guppy, None)).1,
+            size(Card::Creature(goldfish, None)).1,
+            "the guppy and the fancy goldfish differ in height"
+        );
+        // Canvases about the size of a phone's in device pixels (grid scale
+        // 2), from landscape down to a small window, bottom and top anchors.
+        for target in [
+            (1200, 800),
+            (850, 450),
+            (1000, 600),
+            (700, 380),
+            (600, 330),
+            (480, 270),
+        ] {
+            let grid = Layout::fit((target.0 / 2, target.1 / 2), target);
+            assert_eq!(grid.scale, 2, "{target:?}");
+            for anchor in [Top, Bottom] {
+                let scales: Vec<(String, Option<u32>)> = cards
+                    .iter()
+                    .map(|(name, _, image)| {
+                        let c = CardLayout::fit(target, &grid, None, anchor, 0, image.size);
+                        (name.clone(), c.map(|c| c.scale))
+                    })
+                    .collect();
+                let first = scales[0].1;
+                assert!(first.is_some(), "{target:?}: nothing fits");
+                assert!(
+                    scales.iter().all(|(_, s)| *s == first),
+                    "{target:?} {anchor:?}: {scales:?}"
+                );
+            }
+        }
+        // And at the sizes where the guppy used to drop a scale, the two
+        // match at 2: readable, 288 of 850 columns, 352 + 4 of 450 rows.
+        let target = (850, 450);
+        let grid = Layout::fit((425, 225), target);
+        let at = |card: Card| CardLayout::fit(target, &grid, None, Top, 0, size(card)).unwrap();
+        assert_eq!(at(Card::Creature(guppy, None)).scale, 2);
+        assert_eq!(at(Card::Creature(goldfish, None)).scale, 2);
+    }
+
+    #[test]
+    fn a_host_minimum_scale_raises_the_cap_where_the_card_fits() {
+        // A DPR-3 phone in landscape: about 1092×614 device pixels, grid
+        // scale 2 (the web's 2× zoom), so scale 2 is only 3 CSS pixels a row.
+        let target = (1092, 614);
+        let grid = Layout::fit((target.0 / 2, target.1 / 2), target);
+        assert_eq!(grid.scale, 2);
+        assert_eq!(card_scale(target, &grid, None, 0), 2);
+        // Min scale 3 gets scale 3: 432 of 1092 columns, 530 + 12 of 614 rows.
+        assert_eq!(card_scale(target, &grid, None, 3), 3);
+        for anchor in [Top, Bottom] {
+            let c = CardLayout::fit(target, &grid, None, anchor, 3, (144, 80)).unwrap();
+            assert_eq!(c.scale, 3);
+            let (w, h) = c.size();
+            assert!(c.origin.0 + w <= target.0 && c.origin.1 + h <= target.1);
+        }
+        // A minimum that doesn't fit is not forced: 4 is 576 of 1092
+        // columns, over half.
+        assert_eq!(card_scale(target, &grid, None, 4), 3);
+        // A portrait phone (390×844 at 3×): the minimum 3 is taken.
+        let portrait = (1170, 2532);
+        let g = Layout::fit((portrait.0 / 2, portrait.1 / 2), portrait);
+        assert_eq!(card_scale(portrait, &g, None, 3), 3);
+        // Where nothing but 1 fits, the minimum changes nothing.
+        let tiny = (200, 120);
+        let g = Layout::fit((100, 60), tiny);
+        assert_eq!(card_scale(tiny, &g, None, 3), 1);
+        // A host that sets none, or a desktop with a big grid scale, is as
+        // before.
+        let desk = (1280, 720);
+        assert_eq!(card_scale(desk, &Layout::fit((320, 180), desk), None, 0), 4);
+        assert_eq!(card_scale(desk, &Layout::fit((320, 180), desk), None, 2), 4);
+    }
+
+    #[test]
+    fn every_card_shares_the_scale_with_a_host_minimum_too() {
+        let t = tables();
+        let cards = every_card(&t);
+        for (target, min) in [((1092, 614), 3), ((1170, 2532), 3), ((1280, 720), 2)] {
+            let grid = Layout::fit((target.0 / 2, target.1 / 2), target);
+            let want = card_scale(target, &grid, None, min);
+            for anchor in [Top, Bottom] {
+                for (name, _, image) in &cards {
+                    let c = CardLayout::fit(target, &grid, None, anchor, min, image.size)
+                        .unwrap_or_else(|| panic!("{name} fits {target:?}"));
+                    assert_eq!(c.scale, want, "{name} {target:?} {anchor:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_bottom_anchored_card_sits_in_the_bottom_left() {
+        let target = (1280, 720);
+        let g = grid();
+        let top = CardLayout::fit(target, &g, None, Top, 0, (144, 80)).unwrap();
+        let c = CardLayout::fit(target, &g, None, Bottom, 0, (144, 80)).unwrap();
+        assert_eq!(c.scale, top.scale);
+        let (width, height) = (f64::from(c.size().0), f64::from(c.size().1));
+        // Two card pixels in from the left and bottom edges, at its scale.
+        assert_eq!(c.origin.0, 2 * c.scale);
+        assert_eq!(c.origin.1 + c.size().1 + 2 * c.scale, target.1);
+        assert!(c.origin.1 > top.origin.1);
+        // Hit tests follow the drawing.
+        let (left, upper) = (f64::from(c.origin.0), f64::from(c.origin.1));
+        assert!(c.contains(left, upper));
+        assert!(c.contains(left + width - 1.0, upper + height - 1.0));
+        assert!(!c.contains(left + width, upper));
+        assert!(!c.contains(left, upper - 1.0));
+        assert!(!c.contains(left, upper + height));
+        let top_left = (f64::from(top.origin.0), f64::from(top.origin.1));
+        assert!(!c.contains(top_left.0, top_left.1));
+        assert!(top.contains(top_left.0, top_left.1));
+        // A shorter card is lower, not at the same top, so it stays on the
+        // edge.
+        let short = CardLayout::fit(target, &g, None, Bottom, 0, (144, 40)).unwrap();
+        assert_eq!(short.scale, c.scale);
+        assert_eq!(short.origin.1 + short.size().1 + 2 * short.scale, target.1);
+    }
+
+    #[test]
+    fn a_palette_in_the_canvas_overrides_the_anchor() {
+        let g = grid();
+        let p = PaletteLayout::fit((1280, 720), &g, 9, 0, 4, 0);
+        let top = CardLayout::fit((1280, 720), &g, Some(&p), Top, 0, (144, 80));
+        let bottom = CardLayout::fit((1280, 720), &g, Some(&p), Bottom, 0, (144, 80));
+        assert!(top.is_some());
+        assert_eq!(top, bottom);
     }
 
     #[test]
@@ -712,19 +950,33 @@ mod tests {
         let grid = Layout::fit((320, 180), (1280, 720));
         let palette = PaletteLayout::fit((1280, 720), &grid, 9, 0, 4, 0);
         // Too tall at scale 4 below the palette: shrinks, stays inside.
-        let card = CardLayout::fit((1280, 400), &grid, Some(&palette), (144, 100)).unwrap();
+        let card = CardLayout::fit((1280, 400), &grid, Some(&palette), Top, 0, (144, 100)).unwrap();
         assert!(card.scale < 4);
+        let (width, height) = card.size();
+        assert!(card.origin.0 + width <= 1280 && card.origin.1 + height <= 400);
+        // Bottom-anchored, it stays inside too.
+        let card = CardLayout::fit((1280, 400), &grid, None, Bottom, 0, (144, 100)).unwrap();
         let (width, height) = card.size();
         assert!(card.origin.0 + width <= 1280 && card.origin.1 + height <= 400);
         // Too small at scale 1: nothing.
         let grid = Layout::fit((320, 180), (160, 90));
         let palette = PaletteLayout::fit((160, 90), &grid, 9, 0, 4, 0);
         assert_eq!(
-            CardLayout::fit((160, 90), &grid, Some(&palette), (144, 100)),
+            CardLayout::fit((160, 90), &grid, Some(&palette), Top, 0, (144, 100)),
             None
         );
-        assert_eq!(CardLayout::fit((0, 0), &grid, None, (144, 100)), None);
-        assert_eq!(CardLayout::fit((1280, 720), &grid, None, (0, 0)), None);
+        assert_eq!(
+            CardLayout::fit((160, 90), &grid, None, Bottom, 0, (144, 100)),
+            None
+        );
+        assert_eq!(
+            CardLayout::fit((0, 0), &grid, None, Top, 0, (144, 100)),
+            None
+        );
+        assert_eq!(
+            CardLayout::fit((1280, 720), &grid, None, Top, 0, (0, 0)),
+            None
+        );
     }
 
     /// Writes cards as PNGs to `target/shots/card-*.png` when `CARD_SHOTS`
