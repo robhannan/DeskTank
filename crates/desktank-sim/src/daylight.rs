@@ -302,8 +302,8 @@ pub fn tint(minute: u16) -> [f32; 3] {
 }
 
 /// [`tint`] under `schedule`: linear between the schedule's key times, and
-/// continuous across midnight. A polar day is always [`DAY`] and a polar
-/// night always [`NIGHT`].
+/// continuous across midnight. A polar day is always untinted (`[1.0; 3]`) and
+/// a polar night always dim blue moonlight.
 #[must_use]
 pub fn tint_with_schedule(minute: u16, schedule: DaylightSchedule) -> [f32; 3] {
     match schedule.polar {
