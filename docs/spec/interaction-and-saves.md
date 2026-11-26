@@ -136,7 +136,9 @@
     text typed with a steady caret (no blink, so it never asks for
     timed redraws) and the hint "Enter saves, Esc cancels". Enter names
     the creature (a blank name removes it), Escape cancels, and a click
-    elsewhere ends it too; names are cut to 24 characters
+    elsewhere ends it too (on the web, where the text box losing focus
+    ends it, what was typed is kept, so a phone keyboard's Done names
+    the creature); names are cut to 24 characters
     (`MAX_NAME_CHARS`), which always fits the row on one line. A click on
     the row doesn't turn the page; a click anywhere else on the card
     does, and no click on the card reaches the tank. The tank only draws

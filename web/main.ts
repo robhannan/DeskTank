@@ -838,8 +838,9 @@ function loop(now: number) {
   const t0 = performance.now();
   const flags = tank.frame(now);
   if (flags >> TICKS_SHIFT) tickMs = performance.now() - t0;
-  // The card follows its creature, and the name input follows the card.
-  if (inspected || !nameInput.disabled) placeNameInput();
+  // The card follows its creature, and the name input follows the card
+  // (only when a frame was drawn: nothing moves otherwise).
+  if (flags & DREW && (inspected || !nameInput.disabled)) placeNameInput();
   if (!gpuErrorShown) showGpuError();
   if (flags & DREW) {
     if (!drewFirst) {
@@ -1372,7 +1373,7 @@ function runDeviceGuardToggle() {
 // invisible, over the row (placeNameInput) and a tap on the row focuses it.
 // Focus is editing: the tank draws what the input holds (it is told on each
 // input event, never per frame), Enter names the creature (blank removes its
-// name), Escape or losing focus cancels.
+// name) and so does losing focus (a phone keyboard's Done), Escape cancels.
 
 // Whether the inspected creature can be named from here.
 function canName() {
@@ -1435,8 +1436,8 @@ function cancelNaming() {
 // Hides the name input (and cancels what was typed).
 function closeName() {
   if (!tank) return;
-  if (document.activeElement === nameInput) nameInput.blur();
   cancelNaming();
+  if (document.activeElement === nameInput) nameInput.blur();
   nameInput.disabled = true;
 }
 
@@ -1858,12 +1859,16 @@ function wireInput() {
     tank.setInspectNameEdit(nameInput.value);
     kick();
   });
+  // Losing focus keeps what was typed (a phone keyboard's Done blurs);
+  // Escape cancels first, so its blur has nothing to keep.
   nameInput.addEventListener("blur", () => {
-    cancelNaming();
+    if (canName() && tank.inspectNameEditing() && nameInput.value !== inspected!.name) runName();
+    else cancelNaming();
   });
   nameInput.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
+      cancelNaming();
       nameInput.blur();
     } else if (e.key === "Enter") {
       e.preventDefault();

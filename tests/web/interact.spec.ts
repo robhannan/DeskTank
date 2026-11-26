@@ -450,6 +450,13 @@ test.describe("touch", () => {
     await page.keyboard.press("Enter");
     expect(await page.evaluate(() => window.desktank.tank.creatureName(1))).toBe("Zip");
     await expect(page.locator("#name-input")).not.toBeFocused();
+    // A phone keyboard's Done only blurs the input: what was typed is kept.
+    await tap({ x: row.x + row.width / 2, y: row.y + row.height / 2 });
+    await expect(page.locator("#name-input")).toBeFocused();
+    await page.keyboard.type("py");
+    await page.locator("#name-input").blur();
+    expect(await page.evaluate(() => window.desktank.tank.creatureName(1))).toBe("Zippy");
+    expect(await editing(page)).toBe(false);
     expect(errors).toEqual([]);
   });
 
