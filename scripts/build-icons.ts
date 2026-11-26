@@ -8,6 +8,9 @@
 //   android/app/src/main/res/          Android's adaptive launcher layers
 //     drawable-nodpi/ic_launcher_{background,foreground,monochrome}.png
 //     (432x432) and the Leanback banner drawable-xhdpi/tv_banner.png (320x180)
+//   assets/icons/windows/desktank.ico  PNG-in-ICO frames, 16..256 px
+//   assets/icons/linux/hicolor/<n>x<n>/apps/desktank.png  freedesktop sizes
+//   web/icons/favicon-32.png, favicon.ico, apple-touch-icon.png
 //
 // Layers: the betta's 80x64 fine sprite (assets/species/betta.toml) at 8x,
 // two plant clumps cut from the plant reference render
@@ -290,9 +293,9 @@ function bettaImage(betta: Betta, opts: { glassEdge: boolean; crop: boolean; ink
   return img;
 }
 
-function bettaLayer(betta: Betta): Image {
+function bettaLayer(betta: Betta, glassEdge = true): Image {
   const img = blank(SIZE, SIZE);
-  over(img, bettaImage(betta, { glassEdge: true, crop: false }), 208, 160, 8);
+  over(img, bettaImage(betta, { glassEdge, crop: false }), 208, 160, 8);
   return img;
 }
 
@@ -601,6 +604,192 @@ function androidIcons(betta: Betta): [string, Image, boolean][] {
   ];
 }
 
+// --- Windows, Linux and favicon icons -----------------------------------------
+
+/** Per-pixel coverage (0..1) of the rounded rectangle at integer position
+ * (rx, ry), size rw x rh and corner radius `r`, on a `w` x `h` canvas.
+ * Corner pixels are sampled 8x8; everything else is exactly 0 or 1. */
+function roundedCoverage(w: number, h: number, rx: number, ry: number, rw: number, rh: number, r: number): Float64Array {
+  const out = new Float64Array(w * h);
+  const grid = 8;
+  const inside = (u: number, v: number): boolean => {
+    if (u < rx || u > rx + rw || v < ry || v > ry + rh) return false;
+    const dx = Math.max(rx + r - u, u - (rx + rw - r), 0);
+    const dy = Math.max(ry + r - v, v - (ry + rh - r), 0);
+    return dx * dx + dy * dy <= r * r;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const inCorner = (x < rx + r || x + 1 > rx + rw - r) && (y < ry + r || y + 1 > ry + rh - r);
+      if (!inCorner) {
+        out[y * w + x] = x >= rx && x + 1 <= rx + rw && y >= ry && y + 1 <= ry + rh ? 1 : 0;
+        continue;
+      }
+      let hits = 0;
+      for (let sy = 0; sy < grid; sy++) {
+        for (let sx = 0; sx < grid; sx++) {
+          if (inside(x + (sx + 0.5) / grid, y + (sy + 0.5) / grid)) hits++;
+        }
+      }
+      out[y * w + x] = hits / (grid * grid);
+    }
+  }
+  return out;
+}
+
+/** A box blur of `map` (w x h), `passes` times in each direction, with clear
+ * pixels beyond the edge. */
+function boxBlur(map: Float64Array, w: number, h: number, radius: number, passes: number): Float64Array {
+  let cur = map;
+  const span = 2 * radius + 1;
+  for (let pass = 0; pass < passes * 2; pass++) {
+    const horizontal = pass % 2 === 0;
+    const next = new Float64Array(cur.length);
+    const [along, across] = horizontal ? [w, h] : [h, w];
+    for (let line = 0; line < across; line++) {
+      for (let i = 0; i < along; i++) {
+        let sum = 0;
+        for (let k = -radius; k <= radius; k++) {
+          const j = i + k;
+          if (j >= 0 && j < along) sum += cur[horizontal ? line * w + j : j * w + line];
+        }
+        next[horizontal ? line * w + i : i * w + line] = sum / span;
+      }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+const SHADOW_RGB = [4, 14, 26];
+const SHADOW_ALPHA = 0.35;
+
+/** The hi-res (1024 px) simplified icon scene: water with the cropped betta
+ * (its original dark outline) centred at 80% of the width. */
+function smallScene(betta: Betta): Image {
+  const scene = waterGradient(SIZE, SIZE);
+  const fish = bettaImage(betta, { glassEdge: false, crop: true });
+  const k = Math.floor((SIZE * 0.8) / Math.max(fish.w, fish.h));
+  over(scene, fish, Math.floor((SIZE - fish.w * k) / 2), Math.floor((SIZE - fish.h * k) / 2), k);
+  return scene;
+}
+
+/** A desktop icon of `size` px, RGBA with clear corners. Up to 32 px: the
+ * betta on water in a rounded square, edge to edge. Larger: the whole tank
+ * scene in a rounded square inset by a margin, over a soft drop shadow. */
+function desktopIcon(size: number, small: Image, tank: Image): Image {
+  const out = blank(size, size);
+  if (size <= 32) {
+    const scene = downsample(small, size);
+    const cover = roundedCoverage(size, size, 0, 0, size, size, size * 0.2);
+    for (let i = 0; i < size * size; i++) {
+      const a = Math.round(cover[i] * 255);
+      if (a === 0) continue;
+      out.data.set([scene.data[i * 4], scene.data[i * 4 + 1], scene.data[i * 4 + 2], a], i * 4);
+    }
+    return out;
+  }
+  const margin = Math.round(size * 0.04);
+  const tile = size - 2 * margin;
+  const scene = downsample(tank, tile);
+  const dy = Math.max(1, Math.round(size * 0.015));
+  const radius = size * 0.18;
+  const cover = roundedCoverage(size, size, margin, margin, tile, tile, radius);
+  const shadow = boxBlur(
+    roundedCoverage(size, size, margin, margin + dy, tile, tile, radius),
+    size,
+    size,
+    Math.max(1, Math.round(size * 0.015)),
+    2,
+  );
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const ta = cover[i];
+      const sa = shadow[i] * SHADOW_ALPHA;
+      const alpha = ta + sa * (1 - ta);
+      const a = Math.round(alpha * 255);
+      if (a === 0) continue;
+      const inTile = x >= margin && x < margin + tile && y >= margin && y < margin + tile;
+      const t = inTile ? (y - margin) * tile + (x - margin) : 0;
+      const rgb = [0, 1, 2].map((c) => {
+        const tc = inTile ? scene.data[t * 4 + c] : 0;
+        return Math.round((tc * ta + SHADOW_RGB[c] * sa * (1 - ta)) / alpha);
+      });
+      out.data.set([rgb[0], rgb[1], rgb[2], a], i * 4);
+    }
+  }
+  return out;
+}
+
+/** An ICO file of PNG frames (Vista and later), in the order given. */
+function encodeIco(frames: { size: number; png: Buffer }[]): Buffer {
+  const head = Buffer.alloc(6 + 16 * frames.length);
+  head.writeUInt16LE(0, 0);
+  head.writeUInt16LE(1, 2);
+  head.writeUInt16LE(frames.length, 4);
+  let offset = head.length;
+  frames.forEach(({ size, png }, i) => {
+    const at = 6 + 16 * i;
+    head[at] = size === 256 ? 0 : size;
+    head[at + 1] = size === 256 ? 0 : size;
+    head.writeUInt16LE(1, at + 4); // planes
+    head.writeUInt16LE(32, at + 6); // bits per pixel
+    head.writeUInt32LE(png.length, at + 8);
+    head.writeUInt32LE(offset, at + 12);
+    offset += png.length;
+  });
+  return Buffer.concat([head, ...frames.map((f) => f.png)]);
+}
+
+/** The PNG frames of an ICO file written by `encodeIco`. */
+function decodeIco(file: Buffer): Buffer[] {
+  if (file.length < 6 || file.readUInt16LE(0) !== 0 || file.readUInt16LE(2) !== 1) throw new Error("not an ICO");
+  const count = file.readUInt16LE(4);
+  const dirEnd = 6 + 16 * count;
+  if (file.length < dirEnd) throw new Error("corrupt ICO: truncated directory");
+  return Array.from({ length: count }, (_, i) => {
+    const at = 6 + 16 * i;
+    const w = file[at] === 0 ? 256 : file[at];
+    const h = file[at + 1] === 0 ? 256 : file[at + 1];
+    const planes = file.readUInt16LE(at + 4);
+    const bpp = file.readUInt16LE(at + 6);
+    if (w !== h || planes !== 1 || bpp !== 32) throw new Error(`unexpected ICO directory entry (${w}x${h}, planes ${planes}, bpp ${bpp})`);
+    const [len, offset] = [file.readUInt32LE(at + 8), file.readUInt32LE(at + 12)];
+    if (offset < dirEnd || offset + len > file.length) throw new Error("corrupt ICO: frame out of bounds");
+    const png = file.subarray(offset, offset + len);
+    const img = decodePng(png);
+    if (img.w !== w || img.h !== h) throw new Error(`ICO entry ${w}x${h} mismatches PNG ${img.w}x${img.h}`);
+    return png;
+  });
+}
+
+const WINDOWS_SIZES = [16, 24, 32, 48, 64, 128, 256];
+const LINUX_SIZES = [16, 32, 48, 64, 128, 256, 512];
+const FAVICON_SIZES = [16, 32];
+
+/** The Windows, Linux and web favicon icons, as [path, bytes]. */
+function desktopIcons(betta: Betta, tank: Image, apple: Image): [string, Buffer][] {
+  const small = smallScene(betta);
+  const cache = new Map<number, Buffer>();
+  const png = (size: number): Buffer => {
+    let buf = cache.get(size);
+    if (!buf) {
+      buf = encodePng(desktopIcon(size, small, tank), true);
+      cache.set(size, buf);
+    }
+    return buf;
+  };
+  const ico = (sizes: number[]): Buffer => encodeIco(sizes.map((size) => ({ size, png: png(size) })));
+  return [
+    ["assets/icons/windows/desktank.ico", ico(WINDOWS_SIZES)],
+    ...LINUX_SIZES.map((size): [string, Buffer] => [`assets/icons/linux/hicolor/${size}x${size}/apps/desktank.png`, png(size)]),
+    ["web/icons/favicon-32.png", png(32)],
+    ["web/icons/favicon.ico", ico(FAVICON_SIZES)],
+    ["web/icons/apple-touch-icon.png", encodePng(downsample(apple, 180), false)],
+  ];
+}
+
 // --- Outputs ----------------------------------------------------------------
 
 function build(): Map<string, Buffer> {
@@ -609,6 +798,7 @@ function build(): Map<string, Buffer> {
   const reeds = reedsLayer();
   const betta = bettaLayer(sprite);
   const flat = composite([gravel, reeds, betta]);
+  const tank = composite([gravel, reeds, bettaLayer(sprite, false)]);
   return new Map<string, Buffer>([
     [`${ICON_DIR}/icon.json`, Buffer.from(iconDocument())],
     [`${ICON_DIR}/Assets/Betta.png`, encodePng(betta, true)],
@@ -617,11 +807,12 @@ function build(): Map<string, Buffer> {
     ["web/icons/tank-512.png", encodePng(downsample(flat, 512), false)],
     ["web/icons/tank-192.png", encodePng(downsample(flat, 192), false)],
     ...androidIcons(sprite).map(([path, img, alpha]): [string, Buffer] => [path, encodePng(img, alpha)]),
+    ...desktopIcons(sprite, tank, flat),
   ]);
 }
 
 /** Whether the file at `path` already holds `want`: the same bytes, or for
- * a PNG the same pixels (another zlib may compress the same image differently). */
+ * a PNG (or the frames of an ICO) the same pixels (another zlib may compress the same image differently). */
 function upToDate(path: string, want: Buffer): boolean {
   const file = join(ROOT, path);
   if (!existsSync(file)) return false;
@@ -630,14 +821,22 @@ function upToDate(path: string, want: Buffer): boolean {
   if (path.endsWith(".json")) {
     return have.toString("utf8").replace(/\r\n/g, "\n") === want.toString("utf8").replace(/\r\n/g, "\n");
   }
-  if (!path.endsWith(".png")) return false;
-  try {
-    const a = decodePng(have);
-    const b = decodePng(want);
+  const samePixels = (x: Buffer, y: Buffer): boolean => {
+    const a = decodePng(x);
+    const b = decodePng(y);
     return a.w === b.w && a.h === b.h && Buffer.from(a.data).equals(Buffer.from(b.data));
+  };
+  try {
+    if (path.endsWith(".png")) return samePixels(have, want);
+    if (path.endsWith(".ico")) {
+      const a = decodeIco(have);
+      const b = decodeIco(want);
+      return a.length === b.length && a.every((frame, i) => samePixels(frame, b[i]));
+    }
   } catch {
     return false;
   }
+  return false;
 }
 
 function exportMacos(): void {
