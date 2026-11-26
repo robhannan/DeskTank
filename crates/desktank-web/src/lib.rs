@@ -41,7 +41,7 @@
 
 use core::time::Duration;
 
-use desktank_render::{BrushPreview, FieldOverlay, Layout, Magnifier, Tank, TankConfig};
+use desktank_render::{BrushPreview, Card, FieldOverlay, Layout, Magnifier, Tank, TankConfig};
 use desktank_sim::tools::{
     self, AddRefused, Button, Inspection, Outcome, PaletteItem, PalettePath, Tool, Tools,
 };
@@ -128,6 +128,9 @@ pub struct WebTank {
     tank: Tank,
     tools: Tools,
     avoid_cursor: bool,
+    /// The species card closed with a click; it stays closed until
+    /// another species (or none) is selected.
+    closed_card: Option<Card>,
     palette: Vec<PaletteItem>,
     /// Each palette item's sub-category.
     categories: Vec<PalettePath>,
@@ -533,6 +536,17 @@ impl WebTank {
         }
     }
 
+    /// Where the selected species' card is drawn, as canvas pixels
+    /// `[x, y, width, height]`, or empty if no card is shown.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = cardRect))]
+    #[must_use]
+    pub fn card_rect(&self) -> Vec<u32> {
+        self.tank.card_layout(self.size).map_or_else(Vec::new, |c| {
+            let (w, h) = c.size();
+            vec![c.origin.0, c.origin.1, w, h]
+        })
+    }
+
     /// Brush radius in cells.
     #[must_use]
     pub fn radius(&self) -> u32 {
@@ -646,6 +660,12 @@ impl WebTank {
         let Some(button) = to_button(button) else {
             return 0;
         };
+        // A click on the species card closes it.
+        if self.over_card(x, y) {
+            self.closed_card = self.tank.card();
+            self.sync_cursor();
+            return 0;
+        }
         let cell = self.cell(x, y);
         let out = self.tools.press(self.tank.world_mut(), button, cell);
         self.outcome(out)
@@ -656,6 +676,11 @@ impl WebTank {
     /// Returns how many cells (or bodies) changed.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerMove))]
     pub fn pointer_move(&mut self, x: f64, y: f64) -> u32 {
+        // Over the species card: hide the outline; a stroke ends.
+        if self.over_card(x, y) {
+            self.pointer_leave();
+            return 0;
+        }
         let cell = self.cell(x, y);
         let out = self.tools.moved(self.tank.world_mut(), cell);
         self.outcome(out)
@@ -1120,6 +1145,7 @@ impl WebTank {
             tank: Tank::new(world, TankConfig::default()),
             tools: Tools::new(sand),
             avoid_cursor: false,
+            closed_card: None,
             palette,
             categories,
             running: true,
@@ -1143,6 +1169,13 @@ impl WebTank {
 
     fn layout(&self) -> Layout {
         self.tank.layout(self.size)
+    }
+
+    /// Whether canvas pixel `(x, y)` is over the species card.
+    fn over_card(&self, x: f64, y: f64) -> bool {
+        self.tank
+            .card_layout(self.size)
+            .is_some_and(|c| c.contains(x, y))
     }
 
     /// The cell under canvas pixel `(x, y)`, clamped to just outside the
@@ -1298,6 +1331,19 @@ impl WebTank {
 
     /// Gives the tank the brush outline and magnifier lens to draw (or none).
     fn sync_cursor(&mut self) {
+        // The selected creature's or plant's species card, unless closed.
+        let card = self
+            .palette
+            .iter()
+            .copied()
+            .find(|&item| self.tools.is_selected(item))
+            .and_then(Card::of);
+        if self.closed_card != card {
+            // Another species (or none) is selected: its card opens.
+            self.closed_card = None;
+        }
+        self.tank
+            .set_card(card.filter(|&c| self.closed_card != Some(c)));
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {

@@ -8,6 +8,7 @@ import {
   cellCount,
   cellPoint,
   choose,
+  decodePng,
   gridSize,
   materialAt,
   open,
@@ -398,6 +399,67 @@ test.describe("touch", () => {
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no page overflow").toBe(true);
   });
+});
+
+test("a creature or plant shows its species card in the canvas; a click closes it", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const rect = () => page.evaluate(() => Array.from(window.desktank.tank.cardRect()));
+  const frames = () => page.evaluate(() => window.desktank.tank.framesDrawn());
+  const creatures = () => page.evaluate(() => window.desktank.tank.creatures());
+  // A material has no card.
+  await choose(page, "Sand");
+  expect(await rect()).toEqual([]);
+
+  // A creature does: on top of the tank, in the card's dark background.
+  await choose(page, "Guppy");
+  await expect.poll(rect).toHaveLength(4);
+  const [x, y, w, h] = await rect();
+  expect(w).toBeGreaterThan(0);
+  expect(h).toBeGreaterThan(0);
+  // A canvas pixel in the card's bottom padding, below its text.
+  const [cx, cy] = [x + w / 2, y + h - 3 * (w / 144)];
+  await page.locator("#tank").scrollIntoViewIfNeeded();
+  const canvasSize = await page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>("#tank")!;
+    return [canvas.width, canvas.height];
+  });
+  // It shows the card's background, #0b121c.
+  const img = await decodePng(page, await page.locator("#tank").screenshot());
+  const i = (Math.floor((cy / canvasSize[1]) * img.height) * img.width + Math.floor((cx / canvasSize[0]) * img.width)) * 4;
+  const got = [...img.rgba.slice(i, i + 3)];
+  const bg = [0x0b, 0x12, 0x1c];
+  expect(
+    got.every((v, k) => Math.abs(v - bg[k]) <= 6),
+    `card background in its bottom padding, got ${got.join(",")}`,
+  ).toBe(true);
+  const corner = await page.evaluate(
+    ([x, y]) => {
+      const canvas = document.querySelector<HTMLCanvasElement>("#tank")!;
+      const r = canvas.getBoundingClientRect();
+      return { x: r.left + (x / canvas.width) * r.width, y: r.top + (y / canvas.height) * r.height };
+    },
+    [cx, cy] as const,
+  );
+
+  // Nothing changes while it shows: no more frames are drawn.
+  const drawn = await frames();
+  await page.waitForTimeout(300);
+  expect(await frames(), "an unchanged card draws no frames").toBe(drawn);
+
+  // A click on it closes it and adds no creature under it.
+  await page.mouse.click(corner.x, corner.y);
+  await expect.poll(rect).toEqual([]);
+  expect(await creatures()).toBe(0);
+
+  // Another species opens its card again, plants included.
+  await choose(page, "Neon tetra");
+  await expect.poll(rect).toHaveLength(4);
+  await choose(page, "Java fern");
+  await expect.poll(rect).toHaveLength(4);
+  await choose(page, "Inspect");
+  await expect.poll(rect).toEqual([]);
+  expect(errors).toEqual([]);
 });
 
 test("the palette follows the sim's category tree and navigates with the keyboard", async ({ page }) => {
