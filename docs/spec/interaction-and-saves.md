@@ -86,12 +86,17 @@
     the in-tank inspect card), so it needs no new pipeline and is
     WebGL2-safe. It is built only when the species or morph selection
     changes and costs nothing while nothing is selected.
-    Every species card is shown at one scale on a given canvas, chosen
-    from the largest card rather than the one being shown, so choosing
-    another species never resizes it: the largest scale (up to the
-    palette's, or the cell scale) at which the largest card fits the
+    Every card is shown at one scale on a given canvas
+    (`desktank_render::card_scale`), chosen from the largest card rather
+    than the one being shown, so choosing another species never resizes
+    it: the largest scale (up to the palette's, or the cell scale, but at
+    least 2, or the host's minimum) at which the largest card fits the
     canvas and, above pixel scale 1, covers at most half its width, so a
-    phone keeps most of the tank clear while the text stays readable. Clicks on it never reach the
+    phone keeps most of the tank clear while the text stays readable.
+    Scales count canvas pixels, so on a high-density display 2 is too
+    small to read: the web host sets the minimum to its device-pixel
+    ratio rounded up (a phone at 3 gets scale 3 where it fits); desktop
+    hosts set none. Clicks on it never reach the
     tank; a click closes it until another species is selected.
 - **Tools:**
   - **pour** the selected material: left-drag, with the scroll wheel

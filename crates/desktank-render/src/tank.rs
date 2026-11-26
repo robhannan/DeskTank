@@ -113,6 +113,8 @@ pub struct Tank {
     /// The edge of the canvas a palette outside it is on (the card sits
     /// nearest it when there is no palette in the canvas).
     card_anchor: CardAnchor,
+    /// The host's minimum card scale (see [`Tank::set_card_min_scale`]).
+    card_min_scale: u32,
     /// The in-tank inspect card.
     inspect: InspectCard,
     /// The brush outline, if shown.
@@ -159,6 +161,7 @@ impl Tank {
             card_image: None,
             card_dirty: false,
             card_anchor: CardAnchor::default(),
+            card_min_scale: 0,
             inspect: InspectCard::default(),
             cursor: None,
             ghost: None,
@@ -339,6 +342,26 @@ impl Tank {
         self.card_anchor
     }
 
+    /// Sets the smallest scale the species and inspect cards are drawn at,
+    /// where they fit (see [`crate::card_scale`]). Card scales count target
+    /// pixels, so on a high-density display (a phone at 3 device pixels per
+    /// CSS pixel) the default 2 is too small to read: the web host passes
+    /// its device-pixel ratio, rounded up. 0 (the default) changes nothing.
+    /// A change asks for a frame; setting the same value again costs
+    /// nothing.
+    pub fn set_card_min_scale(&mut self, scale: u32) {
+        if self.card_min_scale != scale {
+            self.card_min_scale = scale;
+            self.needs_frame = true;
+        }
+    }
+
+    /// The minimum card scale set.
+    #[must_use]
+    pub fn card_min_scale(&self) -> u32 {
+        self.card_min_scale
+    }
+
     /// The species card set, if any.
     #[must_use]
     pub fn card(&self) -> Option<Card> {
@@ -356,6 +379,7 @@ impl Tank {
             &self.layout(target),
             self.palette_layout(target).as_ref(),
             self.card_anchor,
+            self.card_min_scale,
             image.size,
         )
     }
@@ -1198,6 +1222,41 @@ mod tests {
         assert_eq!(tank.inspect_layout(target), None);
         assert_eq!(tank.inspect_page(), InspectPage::Live);
         assert!(tank.frame_wanted());
+    }
+
+    #[test]
+    fn the_host_minimum_card_scale_enlarges_the_card_and_asks_for_one_frame() {
+        let world = World::new(
+            WorldConfig {
+                width: 320,
+                height: 180,
+                seed: 7,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap(), None);
+        tank.set_card(Some(guppy));
+        let req = tank.tick(Duration::ZERO);
+        assert!(req.redraw);
+        tank.mark_drawn();
+        // A DPR-3 phone's canvas: the grid is at scale 2 and so is the card.
+        let target = (1092, 614);
+        assert_eq!(tank.layout(target).scale, 2);
+        assert_eq!(tank.card_min_scale(), 0);
+        assert_eq!(tank.card_layout(target).unwrap().scale, 2);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(2), 2), 0);
+
+        tank.set_card_min_scale(3);
+        assert_eq!(tank.card_min_scale(), 3);
+        assert_eq!(tank.card_layout(target).unwrap().scale, 3);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(4), 2), 1);
+
+        // The same value again is free.
+        tank.set_card_min_scale(3);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 2), 0);
     }
 
     #[test]

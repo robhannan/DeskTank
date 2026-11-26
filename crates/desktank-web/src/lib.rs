@@ -1125,6 +1125,14 @@ impl WebTank {
         self.tank.set_on_battery(on_battery);
     }
 
+    /// Tells the tank the smallest scale to draw its cards at (the page's
+    /// device-pixel ratio, rounded up), so their text stays readable on a
+    /// high-density display. 0 means no minimum.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setCardMinScale))]
+    pub fn set_card_min_scale(&mut self, scale: u32) {
+        self.tank.set_card_min_scale(scale);
+    }
+
     /// Tells the tank whether the page is hidden (disables sway).
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setHidden))]
     pub fn set_hidden(&mut self, hidden: bool) {
