@@ -2917,9 +2917,12 @@ fn vs_sprite(
         let halo_cells = halo * pitch.zw / frame;
         let axes = abs(pitch.xy);
         let margin = vec2<f32>(dot(axes, halo_cells), dot(axes.yx, halo_cells));
-        // Use whole, screen-aligned texels at the selected art resolution.
+        // Use whole, screen-aligned texels no coarser than the art: a full
+        // body's are one art texel (half or a quarter cell), and a growing
+        // body drawn smaller than its frame has them finer, down to a
+        // screen pixel as the upright path samples, so it keeps its detail.
         // Round the bounds out to cover every destination texel we sample.
-        let texel_px = max(1.0, view.scale / select(2.0, 4.0, fine));
+        let texel_px = max(1.0, view.scale * min(pitch.z / frame.x, pitch.w / frame.y));
         let half_texels = ceil((size * 0.5 + margin) * view.scale / texel_px);
         let centre = round(view.offset + (cell + size * 0.5) * view.scale);
         o.local = (corner * 2.0 - 1.0) * half_texels;
