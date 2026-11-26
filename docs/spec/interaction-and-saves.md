@@ -187,8 +187,40 @@
   the host that owns the saved tank catches up. The window measures closed
   time from the save's modification time and the web uses its IndexedDB
   save timestamp (`savedAt`).
-- **Day and night** follow local time. The host injects the local minute;
-  hidden or paused tanks never tick the clock.
+- **Day and night** follow local time. The host injects the local minute
+  (once a minute while the tank runs); hidden or paused tanks never tick
+  the clock. The schedule says when the sun rises and sets, and so when
+  the light ramps and the creatures sleep and wake. It is a host input,
+  like the time of day: it isn't saved.
+  - **Fixed** (`daylight.schedule = "fixed"`, the default): sunrise at 06:30 and sunset at 20:30 every day, with the
+    lamp ramping through dawn 05:30 to 07:30 and dusk 19:30 to 21:30, and
+    creatures resting from 21:00 to 06:00. No location is ever read.
+  - **Location** (`daylight.schedule = "location"`): sunrise and sunset
+    for today at the device's place, from the NOAA solar position
+    approximation (good to a few minutes outside the polar circles), so
+    days are long in summer and short in winter. The tint ramps an hour
+    each way around the sun's rise and set (less in a short day or
+    night), and creatures wake half an hour before sunrise and settle half
+    an hour after sunset, each at its own stagger. Where the sun doesn't
+    rise or set the tank is lit all day (midnight sun, and creatures
+    don't sleep for the night) or all night (polar night, and creatures
+    keep the fixed rest times).
+  - **Where the device is:** the OS's location where there is a backend
+    (macOS `CoreLocation`; the other platforms follow), asked only while
+    location sync is on and only for the last known fix, never blocking
+    the frame loop. Access is requested once, and updates run only until a
+    recent fix arrives, then again every six hours. If there is no fix
+    (services off, access denied, no backend yet), the config's
+    `daylight.latitude` and `daylight.longitude` (degrees north and east,
+    set together; `--latitude` and `--longitude`) are used, and failing
+    those the fixed schedule. `window` has no tick and doesn't ask the OS:
+    it needs the coordinates (`--daylight-schedule location --latitude 51.5
+    --longitude 0 --time 16:30` lights the tank for that hour of today at
+    that place). The date and the UTC offset (daylight saving
+    included) come from the OS's local clock; the schedule is recomputed
+    only when the day, the offset or the place changes.
+  - **No cost when off:** with the fixed schedule no location service is
+    touched, and changing back to it releases the OS location.
 - **Time ratio** (`life.time_ratio` in `config.toml`, `--time-ratio` on
   `window`; 0.1 to 100, default 1 for real time) multiplies how fast life
   runs: ageing, growth, energy use, breeding and plant growth, in both
@@ -197,8 +229,9 @@
   While it isn't 1, and unless location sync is on, the day/night clock
   runs at the same ratio instead of following the wall clock: the host's
   first local minute seeds it and later minutes are ignored (60 passes a
-  day in 24 minutes). Location sync (planned) keeps day and night on the
-  wall clock at any ratio. `--time` and `capture` pin the time instead.
+  day in 24 minutes). The location schedule keeps day and night on the
+  wall clock at any ratio (the sun doesn't speed up), so the ratio then
+  scales life only. `--time` and `capture` pin the time instead.
   The clock advances only in simulated ticks and catch-up, never while
   hidden, and requests a frame only when the tint changes.
 - **Persistence.** Each tank (one per display, or one spanning tank) is

@@ -7,7 +7,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-use desktank_platform::PowerPolicy;
+use desktank_platform::{Coordinates, LocalDateTime, PowerPolicy};
+use desktank_sim::daylight::DaylightSchedule;
 use desktank_sim::{MAX_TIME_RATIO, MIN_TIME_RATIO};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
@@ -25,6 +26,7 @@ pub struct Config {
     pub plants: Plants,
     pub life: Life,
     pub overlay: Overlay,
+    pub daylight: Daylight,
 }
 
 impl Default for Config {
@@ -35,6 +37,7 @@ impl Default for Config {
             plants: Plants::default(),
             life: Life::default(),
             overlay: Overlay::default(),
+            daylight: Daylight::default(),
         }
     }
 }
@@ -87,6 +90,72 @@ impl Default for Overlay {
     }
 }
 
+/// Where the day's sunrise and sunset come from.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum DaylightMode {
+    /// The fixed schedule: sunrise 06:30, sunset 20:30.
+    #[default]
+    Fixed,
+    /// Sunrise and sunset where the device is: from the OS's location, or
+    /// `latitude` and `longitude` when it has none.
+    Location,
+}
+
+/// The `[daylight]` table (SPEC §2.6).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Daylight {
+    pub schedule: DaylightMode,
+    /// Degrees north, for when the OS can't say where the device is.
+    pub latitude: Option<f64>,
+    /// Degrees east, for when the OS can't say where the device is.
+    pub longitude: Option<f64>,
+}
+
+impl Daylight {
+    /// Whether day and night follow the sun at the device's location.
+    pub fn location_sync(&self) -> bool {
+        self.schedule == DaylightMode::Location
+    }
+
+    /// The coordinates from `latitude` and `longitude`, if both are set.
+    pub fn manual_coordinates(&self) -> Option<Coordinates> {
+        Some(Coordinates {
+            latitude: self.latitude?,
+            longitude: self.longitude?,
+        })
+    }
+
+    /// The day's schedule at `now` for `coordinates`: the sun's, when synced
+    /// to the location and both are known, otherwise the fixed schedule.
+    pub fn schedule_at(
+        &self,
+        now: Option<LocalDateTime>,
+        coordinates: Option<Coordinates>,
+    ) -> DaylightSchedule {
+        match (self.location_sync(), now, coordinates) {
+            (true, Some(now), Some(place)) => DaylightSchedule::solar_schedule(
+                now.day_of_year,
+                place.latitude,
+                place.longitude,
+                now.utc_offset_minutes,
+            ),
+            _ => DaylightSchedule::FIXED,
+        }
+    }
+}
+
+/// Whether `degrees` is a latitude: finite, in `-90.0..=90.0`.
+pub fn is_latitude(degrees: f64) -> bool {
+    degrees.is_finite() && (-90.0..=90.0).contains(&degrees)
+}
+
+/// Whether `degrees` is a longitude: finite, in `-180.0..=180.0`.
+pub fn is_longitude(degrees: f64) -> bool {
+    degrees.is_finite() && (-180.0..=180.0).contains(&degrees)
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CliOverrides {
     pub plants: Plants,
@@ -94,6 +163,9 @@ pub struct CliOverrides {
     pub population_cap: Option<u16>,
     pub catch_up: Option<bool>,
     pub time_ratio: Option<f32>,
+    pub daylight_schedule: Option<DaylightMode>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
 }
 
 pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
@@ -103,6 +175,9 @@ pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
     config.life.population_cap = cli.population_cap.or(config.life.population_cap);
     config.life.catch_up = cli.catch_up.unwrap_or(config.life.catch_up);
     config.life.time_ratio = cli.time_ratio.or(config.life.time_ratio);
+    config.daylight.schedule = cli.daylight_schedule.unwrap_or(config.daylight.schedule);
+    config.daylight.latitude = cli.latitude.or(config.daylight.latitude);
+    config.daylight.longitude = cli.longitude.or(config.daylight.longitude);
     config
 }
 
@@ -153,6 +228,28 @@ pub fn parse(text: &str) -> Result<Config, ConfigError> {
     }
     if !(config.overlay.tint.is_finite() && (0.0..=1.0).contains(&config.overlay.tint)) {
         return Err(ConfigError::Value("overlay.tint must be in 0.0..=1.0"));
+    }
+    let daylight = config.daylight;
+    if daylight.latitude.is_some() != daylight.longitude.is_some() {
+        return Err(ConfigError::Value(
+            "daylight.latitude and daylight.longitude must be set together",
+        ));
+    }
+    if daylight
+        .latitude
+        .is_some_and(|degrees| !is_latitude(degrees))
+    {
+        return Err(ConfigError::Value(
+            "daylight.latitude must be in -90.0..=90.0",
+        ));
+    }
+    if daylight
+        .longitude
+        .is_some_and(|degrees| !is_longitude(degrees))
+    {
+        return Err(ConfigError::Value(
+            "daylight.longitude must be in -180.0..=180.0",
+        ));
     }
     Ok(config)
 }
@@ -225,6 +322,11 @@ mod tests {
             exclude_from_capture: true,
         };
         assert_eq!(defaults.overlay, overlay);
+        assert_eq!(defaults.daylight, Daylight::default());
+        assert_eq!(defaults.daylight.schedule, DaylightMode::Fixed);
+        assert_eq!(defaults.daylight.manual_coordinates(), None);
+        assert!(!defaults.daylight.location_sync());
+        assert_eq!(parse("[daylight]").unwrap().daylight, Daylight::default());
         assert_eq!(parse("[overlay]").unwrap().overlay, overlay);
         assert_eq!(
             parse("[power]\nac_fps = 60").unwrap().power.battery_fps,
@@ -254,9 +356,21 @@ mod tests {
             [overlay]
             tint = 0.25
             exclude_from_capture = false
+            [daylight]
+            schedule = 'location'
+            latitude = 51.5
+            longitude = -0.12
         ",
         )
         .unwrap();
+        assert_eq!(
+            config.daylight,
+            Daylight {
+                schedule: DaylightMode::Location,
+                latitude: Some(51.5),
+                longitude: Some(-0.12),
+            }
+        );
         assert_eq!(
             config.power,
             PowerPolicy {
@@ -301,6 +415,9 @@ mod tests {
             "[plants]\nextra = 1",
             "[life]\nextra = 1",
             "[overlay]\nextra = 1",
+            "[daylight]\nextra = 1",
+            "[daylight]\nschedule = \"sunny\"",
+            "[daylight]\nschedule = \"Location\"",
         ] {
             assert!(matches!(parse(text), Err(ConfigError::Toml(_))), "{text}");
         }
@@ -408,6 +525,7 @@ mod tests {
                 population_cap: Some(30),
                 catch_up: Some(true),
                 time_ratio: None,
+                ..CliOverrides::default()
             },
         );
         assert_eq!(
@@ -438,5 +556,176 @@ mod tests {
             .catch_up
         );
         assert_eq!(effective.power, config.power);
+    }
+
+    #[test]
+    fn daylight_schedule_parses_both_modes_and_manual_coordinates() {
+        let daylight = |text: &str| parse(text).unwrap().daylight;
+        assert_eq!(
+            daylight("[daylight]\nschedule = \"fixed\"").schedule,
+            DaylightMode::Fixed
+        );
+        let location = daylight("[daylight]\nschedule = \"location\"");
+        assert_eq!(location.schedule, DaylightMode::Location);
+        assert!(location.location_sync());
+        assert_eq!(location.manual_coordinates(), None);
+        // Whole degrees are fine for a TOML float.
+        let manual = daylight("[daylight]\nlatitude = 51\nlongitude = -90.5");
+        assert_eq!(
+            manual.manual_coordinates(),
+            Some(Coordinates {
+                latitude: 51.0,
+                longitude: -90.5
+            })
+        );
+        assert_eq!(manual.schedule, DaylightMode::Fixed);
+        for (lat, lon) in [("90", "180"), ("-90", "-180"), ("0", "0")] {
+            let text = format!("[daylight]\nlatitude = {lat}\nlongitude = {lon}");
+            assert!(parse(&text).is_ok(), "{text}");
+        }
+    }
+
+    #[test]
+    fn daylight_coordinates_must_be_set_together() {
+        for text in [
+            "[daylight]\nlatitude = 51.5",
+            "[daylight]\nlongitude = 0.0",
+            "[daylight]\nschedule = \"location\"\nlatitude = 51.5",
+        ] {
+            assert!(
+                matches!(
+                    parse(text),
+                    Err(ConfigError::Value(
+                        "daylight.latitude and daylight.longitude must be set together"
+                    ))
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn daylight_coordinates_must_be_real_places() {
+        for lat in ["-90.1", "90.1", "nan", "inf", "-inf"] {
+            assert!(
+                matches!(
+                    parse(&format!("[daylight]\nlatitude = {lat}\nlongitude = 0.0")),
+                    Err(ConfigError::Value(
+                        "daylight.latitude must be in -90.0..=90.0"
+                    ))
+                ),
+                "{lat}"
+            );
+        }
+        for lon in ["-180.1", "180.1", "nan", "inf", "-inf"] {
+            assert!(
+                matches!(
+                    parse(&format!("[daylight]\nlatitude = 0.0\nlongitude = {lon}")),
+                    Err(ConfigError::Value(
+                        "daylight.longitude must be in -180.0..=180.0"
+                    ))
+                ),
+                "{lon}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_daylight_overrides_the_file() {
+        let config =
+            parse("[daylight]\nschedule = \"location\"\nlatitude = 51.5\nlongitude = -0.12")
+                .unwrap();
+        assert_eq!(merge(config, CliOverrides::default()), config);
+        let effective = merge(
+            config,
+            CliOverrides {
+                daylight_schedule: Some(DaylightMode::Fixed),
+                latitude: Some(-33.9),
+                longitude: Some(151.2),
+                ..CliOverrides::default()
+            },
+        );
+        assert_eq!(
+            effective.daylight,
+            Daylight {
+                schedule: DaylightMode::Fixed,
+                latitude: Some(-33.9),
+                longitude: Some(151.2),
+            }
+        );
+        let from_cli = merge(
+            Config::default(),
+            CliOverrides {
+                daylight_schedule: Some(DaylightMode::Location),
+                latitude: Some(1.0),
+                longitude: Some(2.0),
+                ..CliOverrides::default()
+            },
+        );
+        assert!(from_cli.daylight.location_sync());
+        assert_eq!(
+            from_cli.daylight.manual_coordinates(),
+            Some(Coordinates {
+                latitude: 1.0,
+                longitude: 2.0
+            })
+        );
+        // Only the schedule given on the command line changes.
+        assert_eq!(effective.life, config.life);
+        assert_eq!(effective.overlay, config.overlay);
+    }
+
+    #[test]
+    fn schedule_at_follows_the_sun_only_when_synced_and_located() {
+        let london = Coordinates {
+            latitude: 51.5,
+            longitude: -0.12,
+        };
+        let summer = LocalDateTime {
+            minute: 720,
+            day_of_year: 172,
+            utc_offset_minutes: 60,
+        };
+        let winter = LocalDateTime {
+            day_of_year: 355,
+            utc_offset_minutes: 0,
+            ..summer
+        };
+        let synced = Daylight {
+            schedule: DaylightMode::Location,
+            ..Daylight::default()
+        };
+        let fixed = Daylight::default();
+        assert_eq!(
+            fixed.schedule_at(Some(summer), Some(london)),
+            DaylightSchedule::FIXED,
+            "fixed ignores the sun"
+        );
+        assert_eq!(
+            synced.schedule_at(Some(summer), None),
+            DaylightSchedule::FIXED,
+            "no location"
+        );
+        assert_eq!(
+            synced.schedule_at(None, Some(london)),
+            DaylightSchedule::FIXED,
+            "no date"
+        );
+        let june = synced.schedule_at(Some(summer), Some(london));
+        let december = synced.schedule_at(Some(winter), Some(london));
+        assert_ne!(june, DaylightSchedule::FIXED);
+        assert!(
+            june.dawn_peak < december.dawn_peak && june.dusk_peak > december.dusk_peak,
+            "London's June day is longer: {june:?} {december:?}"
+        );
+    }
+
+    #[test]
+    fn latitude_and_longitude_checks_reject_non_finite_values() {
+        assert!(is_latitude(-90.0) && is_latitude(90.0) && !is_latitude(90.5));
+        assert!(is_longitude(-180.0) && is_longitude(180.0) && !is_longitude(-180.5));
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(!is_latitude(bad) && !is_longitude(bad));
+        }
     }
 }

@@ -148,6 +148,9 @@ pub struct Tank {
     flow_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
     time_of_day: u16,
+    /// The day's lighting and rest times (the fixed schedule unless the host
+    /// follows the sun, see [`Tank::set_daylight_schedule`]).
+    daylight_schedule: daylight::DaylightSchedule,
     /// The scaled day/night clock (see [`Tank::update_local_time`]).
     day_clock: DayClock,
     /// Creatures version last drawn (`None` before the first frame).
@@ -187,6 +190,7 @@ impl Tank {
             overlay_water_alpha: None,
             flow_drawn: 0,
             time_of_day: daylight::NOON,
+            daylight_schedule: daylight::DaylightSchedule::FIXED,
             day_clock: DayClock::default(),
             creatures_drawn: None,
             plants_drawn: None,
@@ -313,6 +317,27 @@ impl Tank {
         self.day_clock.location_sync = enabled;
     }
 
+    /// Sets the day's lighting and rest times, such as the sun's sunrise and
+    /// sunset at the user's location
+    /// ([`daylight::DaylightSchedule::solar_schedule`]). The world gets it
+    /// too, so creatures wake and settle with the sun. Asks for a frame only
+    /// if the tint at the current time of day changes, so a host can call
+    /// this every minute. Default: [`daylight::DaylightSchedule::FIXED`].
+    pub fn set_daylight_schedule(&mut self, schedule: daylight::DaylightSchedule) {
+        let bits = |s| daylight::tint_with_schedule(self.time_of_day, s).map(f32::to_bits);
+        if bits(schedule) != bits(self.daylight_schedule) {
+            self.needs_frame = true;
+        }
+        self.world.set_daylight_schedule(schedule);
+        self.daylight_schedule = schedule;
+    }
+
+    /// The day's lighting and rest times.
+    #[must_use]
+    pub fn daylight_schedule(&self) -> daylight::DaylightSchedule {
+        self.daylight_schedule
+    }
+
     /// Whether day and night follow the injected wall clock.
     #[must_use]
     pub fn location_sync(&self) -> bool {
@@ -334,7 +359,8 @@ impl Tank {
     fn apply_minute(&mut self, minute: u16) {
         let minute = minute % daylight::MINUTES_PER_DAY;
         self.world.set_time_of_day(minute);
-        let bits = |m: u16| daylight::tint(m).map(f32::to_bits);
+        let schedule = self.daylight_schedule;
+        let bits = |m: u16| daylight::tint_with_schedule(m, schedule).map(f32::to_bits);
         if bits(minute) != bits(self.time_of_day) {
             self.needs_frame = true;
         }
@@ -823,7 +849,7 @@ impl Tank {
             layout,
             self.overlay_water_alpha,
             self.world.surface_row(),
-            daylight::tint(self.time_of_day),
+            daylight::tint_with_schedule(self.time_of_day, self.daylight_schedule),
             phase,
             sway_on,
             &ripples,
@@ -1553,6 +1579,45 @@ mod tests {
         assert_eq!(tank.time_of_day(), 820);
         step_minutes_at_60(&mut tank, 2);
         assert_eq!(tank.time_of_day(), 822);
+    }
+
+    #[test]
+    fn set_daylight_schedule_updates_the_world_and_asks_for_a_frame_on_a_tint_change() {
+        let mut tank = clock_tank(1.0);
+        assert_eq!(tank.daylight_schedule(), daylight::DaylightSchedule::FIXED);
+        // 10:00 is full day under the fixed schedule.
+        tank.update_local_time(600);
+        tank.mark_drawn();
+        let same_day = daylight::DaylightSchedule::from_sun_times(5 * 60, 22 * 60);
+        tank.set_daylight_schedule(same_day);
+        assert_eq!(tank.daylight_schedule(), same_day);
+        assert_eq!(tank.world().daylight_schedule(), same_day);
+        assert!(!tank.needs_frame, "10:00 is day under both schedules");
+        // Sunrise at 10:00 puts the tank at dawn.
+        let late = daylight::DaylightSchedule::from_sun_times(600, 22 * 60);
+        tank.set_daylight_schedule(late);
+        assert!(tank.needs_frame, "the tint changed at 10:00");
+        assert_eq!(tank.world().daylight_schedule(), late);
+        tank.mark_drawn();
+        tank.set_daylight_schedule(late);
+        assert!(!tank.needs_frame, "same schedule, no frame");
+    }
+
+    #[test]
+    fn apply_minute_follows_the_active_schedule() {
+        let mut tank = clock_tank(1.0);
+        tank.update_local_time(7 * 60);
+        tank.mark_drawn();
+        tank.set_daylight_schedule(daylight::DaylightSchedule::from_sun_times(4 * 60, 22 * 60));
+        tank.mark_drawn();
+        // With a 04:00 sunrise 07:00 and 07:30 are both full day, while the
+        // fixed schedule is still at dawn at 06:50.
+        tank.update_local_time(7 * 60 + 30);
+        assert!(!tank.needs_frame, "day to day under this schedule");
+        tank.set_daylight_schedule(daylight::DaylightSchedule::FIXED);
+        tank.mark_drawn();
+        tank.update_local_time(6 * 60 + 50);
+        assert!(tank.needs_frame, "the fixed schedule is at dawn at 06:50");
     }
 
     #[test]

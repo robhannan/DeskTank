@@ -16,11 +16,12 @@ mod macos {
 
     use anyhow::Context;
     use desktank_platform::{
-        FullScreenMonitor, OverlayOptions, PowerDecision, PowerMonitor, PowerSource,
-        configure_overlay_window, hide_overlay, local_minute, set_overlay_capture_excluded,
-        show_overlay_without_focus,
+        Coordinates, FullScreenMonitor, LocalDateTime, LocationProvider, OverlayOptions,
+        PowerDecision, PowerMonitor, PowerSource, configure_overlay_window, hide_overlay,
+        local_date_time, set_overlay_capture_excluded, show_overlay_without_focus,
     };
     use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, TankSurface, wgpu};
+    use desktank_sim::daylight::DaylightSchedule;
     use desktank_sim::{MAX_CATCH_UP_SECONDS, MaterialTable, World, WorldConfig, scene};
     use winit::application::ApplicationHandler;
     use winit::dpi::PhysicalSize;
@@ -31,7 +32,7 @@ mod macos {
     };
     use winit::window::{Window, WindowId};
 
-    use crate::config::{self, Config, Life};
+    use crate::config::{self, Config, Daylight, Life};
     use crate::persist::Persistence;
 
     enum Wake {
@@ -117,6 +118,8 @@ mod macos {
         occluded: bool,
         paused_at: Option<SystemTime>,
         next_clock_update: Instant,
+        /// The sun's schedule and the OS location, while synced to it.
+        daylight: DaylightSync,
         /// Draw one static frame even while power-paused (startup, resize,
         /// unhide, or tint change) so a visible overlay is never blank.
         needs_static_frame: bool,
@@ -209,6 +212,7 @@ mod macos {
                 occluded: false,
                 paused_at: None,
                 next_clock_update: Instant::now(),
+                daylight: DaylightSync::default(),
                 needs_static_frame: true,
                 fullscreen_recheck_at: None,
             })
@@ -259,6 +263,13 @@ mod macos {
                         s.needs_static_frame = true;
                     }
                     apply_settings(&mut s.tank, settings, self.settings.life);
+                    if settings.daylight != self.settings.daylight {
+                        // Look the schedule up again on the next clock tick
+                        // (the next time the overlay runs), and let go of the
+                        // OS location if it is no longer wanted.
+                        s.daylight.reset(settings.daylight);
+                        s.next_clock_update = Instant::now();
+                    }
                 }
                 self.settings = settings;
             }
@@ -312,8 +323,13 @@ mod macos {
             s.tank
                 .set_on_battery(matches!(signals.source, PowerSource::Battery { .. }));
             if now >= s.next_clock_update {
-                if let Some(minute) = local_minute() {
-                    s.tank.update_local_time(minute);
+                if let Some(local) = local_date_time() {
+                    s.daylight.update(
+                        &mut s.tank,
+                        self.settings.daylight,
+                        local,
+                        LocationProvider::coordinates,
+                    );
                 }
                 s.next_clock_update = now + Duration::from_mins(1);
             }
@@ -399,7 +415,78 @@ mod macos {
             })
     }
 
+    /// The inputs of the sun's schedule: the day of the year, the UTC offset
+    /// and the place (latitude and longitude as bits).
+    type ScheduleInputs = (u16, i16, Option<(u64, u64)>);
+
+    /// Keeps the tank's day and night on the sun at the device's location:
+    /// the OS's, or the config's coordinates when it has none. It is asked
+    /// once a minute, only while the overlay runs, and does nothing (and
+    /// holds no OS location) while the schedule is fixed.
+    #[derive(Default)]
+    struct DaylightSync {
+        /// Created on first use while synced, dropped when synced no more.
+        provider: Option<LocationProvider>,
+        /// What the schedule was last worked out from, so the maths runs when
+        /// the date, the UTC offset (daylight saving) or the place changes.
+        last: Option<ScheduleInputs>,
+        /// Whether the missing location was already reported.
+        warned: bool,
+    }
+
+    impl DaylightSync {
+        /// Forgets the schedule so the next [`update`](Self::update) works it
+        /// out again, and lets go of the OS location unless still synced.
+        fn reset(&mut self, daylight: Daylight) {
+            self.last = None;
+            self.warned = false;
+            if !daylight.location_sync() {
+                self.provider = None;
+            }
+        }
+
+        /// Applies `local` to the tank, and with it the sun's schedule while
+        /// synced. `locate` asks the OS where the device is.
+        fn update(
+            &mut self,
+            tank: &mut Tank,
+            daylight: Daylight,
+            local: LocalDateTime,
+            locate: impl FnOnce(&mut LocationProvider) -> Option<Coordinates>,
+        ) {
+            if daylight.location_sync() {
+                let provider = self.provider.get_or_insert_with(LocationProvider::new);
+                let place = locate(provider).or_else(|| daylight.manual_coordinates());
+                let key = (
+                    local.day_of_year,
+                    local.utc_offset_minutes,
+                    place.map(|p| (p.latitude.to_bits(), p.longitude.to_bits())),
+                );
+                if self.last != Some(key) {
+                    self.last = Some(key);
+                    tank.set_daylight_schedule(daylight.schedule_at(Some(local), place));
+                    if place.is_none() && !self.warned {
+                        self.warned = true;
+                        eprintln!(
+                            "desktank overlay: no location yet, using the fixed schedule \
+                             (set daylight.latitude and daylight.longitude to use your own)"
+                        );
+                    }
+                }
+            } else {
+                self.provider = None;
+                self.last = None;
+            }
+            tank.update_local_time(local.minute);
+        }
+    }
+
     fn apply_settings(tank: &mut Tank, settings: Config, previous_life: Life) {
+        let synced = settings.daylight.location_sync();
+        tank.set_location_sync(synced);
+        if !synced {
+            tank.set_daylight_schedule(DaylightSchedule::FIXED);
+        }
         tank.set_sway(settings.plants.sway);
         tank.set_allow_sway_on_battery(settings.plants.sway_on_battery);
         tank.set_overlay_water_alpha(Some(settings.overlay.tint));
@@ -437,6 +524,133 @@ mod macos {
                 .min(MAX_CATCH_UP_SECONDS);
             tank.catch_up(seconds);
             tank.cells_edited();
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::config::DaylightMode;
+        use desktank_render::TankConfig;
+
+        const LONDON: Coordinates = Coordinates {
+            latitude: 51.5,
+            longitude: -0.12,
+        };
+
+        fn tank() -> Tank {
+            let world = World::new(
+                WorldConfig {
+                    width: 32,
+                    height: 24,
+                    seed: 5,
+                    water_level: 0.8,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            Tank::new(world, TankConfig::default())
+        }
+
+        fn at(day_of_year: u16) -> LocalDateTime {
+            LocalDateTime {
+                minute: 12 * 60,
+                day_of_year,
+                utc_offset_minutes: 0,
+            }
+        }
+
+        fn synced() -> Daylight {
+            Daylight {
+                schedule: DaylightMode::Location,
+                ..Daylight::default()
+            }
+        }
+
+        #[test]
+        fn a_fixed_schedule_never_asks_the_os_where_it_is() {
+            let mut sync = DaylightSync::default();
+            let mut tank = tank();
+            sync.update(&mut tank, Daylight::default(), at(172), |_| {
+                panic!("asked the OS for a location")
+            });
+            assert!(sync.provider.is_none(), "no provider is even created");
+            assert_eq!(tank.daylight_schedule(), DaylightSchedule::FIXED);
+            assert_eq!(tank.time_of_day(), 12 * 60);
+        }
+
+        #[test]
+        fn a_synced_overlay_follows_the_sun_and_asks_only_when_the_inputs_change() {
+            let mut sync = DaylightSync::default();
+            let mut tank = tank();
+            let mut asks = 0;
+            let mut update = |sync: &mut DaylightSync, tank: &mut Tank, day: u16| {
+                sync.update(tank, synced(), at(day), |_| {
+                    asks += 1;
+                    Some(LONDON)
+                });
+            };
+            update(&mut sync, &mut tank, 172);
+            let june = tank.daylight_schedule();
+            assert_ne!(june, DaylightSchedule::FIXED);
+            assert_eq!(june, synced().schedule_at(Some(at(172)), Some(LONDON)));
+            // The same inputs a minute later leave the schedule be.
+            update(&mut sync, &mut tank, 172);
+            assert_eq!(tank.daylight_schedule(), june);
+            // A new day recomputes it.
+            update(&mut sync, &mut tank, 355);
+            assert_ne!(tank.daylight_schedule(), june);
+            assert_eq!(asks, 3, "the OS is asked each minute, the maths isn't");
+        }
+
+        #[test]
+        fn no_os_location_falls_back_to_the_manual_coordinates_then_the_fixed_schedule() {
+            let mut sync = DaylightSync::default();
+            let mut tank = tank();
+            sync.update(&mut tank, synced(), at(172), |_| None);
+            assert_eq!(tank.daylight_schedule(), DaylightSchedule::FIXED);
+            assert!(sync.warned);
+            // The OS location arrives: the schedule follows it.
+            sync.update(&mut tank, synced(), at(172), |_| Some(LONDON));
+            assert_ne!(tank.daylight_schedule(), DaylightSchedule::FIXED);
+            // The OS location is gone again, but the config has a place.
+            let manual = Daylight {
+                latitude: Some(-33.9),
+                longitude: Some(151.2),
+                ..synced()
+            };
+            sync.update(&mut tank, manual, at(172), |_| None);
+            assert_eq!(
+                tank.daylight_schedule(),
+                manual.schedule_at(Some(at(172)), manual.manual_coordinates())
+            );
+        }
+
+        #[test]
+        fn reset_forces_a_new_schedule_and_drops_the_provider_when_not_synced() {
+            let mut sync = DaylightSync::default();
+            let mut tank = tank();
+            sync.update(&mut tank, synced(), at(172), |_| Some(LONDON));
+            assert!(sync.provider.is_some());
+            sync.reset(synced());
+            assert!(sync.provider.is_some(), "still synced");
+            assert!(sync.last.is_none());
+            sync.reset(Daylight::default());
+            assert!(sync.provider.is_none(), "fixed lets go of the OS location");
+        }
+
+        #[test]
+        fn apply_settings_returns_to_the_fixed_schedule_when_synced_off() {
+            let mut tank = tank();
+            tank.set_daylight_schedule(DaylightSchedule::from_sun_times(300, 1200));
+            tank.set_location_sync(true);
+            apply_settings(&mut tank, Config::default(), Life::default());
+            assert_eq!(tank.daylight_schedule(), DaylightSchedule::FIXED);
+            assert!(!tank.location_sync());
+            let mut settings = Config::default();
+            settings.daylight = synced();
+            apply_settings(&mut tank, settings, Life::default());
+            assert!(tank.location_sync());
         }
     }
 }
