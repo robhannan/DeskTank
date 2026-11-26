@@ -178,7 +178,7 @@ impl World {
         if k.live {
             c.face_along(c.vx, c.vy);
         } else {
-            super::update_swim_heading(c);
+            super::update_swim_heading(c, super::TURN_SPEED);
         }
         true
     }

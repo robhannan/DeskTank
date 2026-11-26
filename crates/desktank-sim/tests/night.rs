@@ -174,6 +174,43 @@ fn each_species_rests_where_it_naturally_would() {
     assert!(near, "the tetra rests among the plants at ({tx}, {ty})");
 }
 
+/// A fish rising to the surface or sinking to the bed to sleep moves
+/// straight up or down, but sleeps level, not nose-up or nose-down.
+#[test]
+fn a_swimmer_that_rises_or_sinks_to_rest_sleeps_level() {
+    let mut w = world(13);
+    let betta = add(&mut w, "betta", 60, 50);
+    let goldfish = add(&mut w, "common_goldfish", 150, 15);
+    let tetra = add(&mut w, "neon_tetra", 100, 30);
+    w.set_time_of_day(MIDNIGHT);
+    let start: Vec<_> = [betta, goldfish]
+        .iter()
+        .map(|&id| w.creature(id).unwrap().centre().1)
+        .collect();
+    let mut steepest = 0;
+    for _ in 0..90 * TICKS_PER_SECOND {
+        w.tick();
+        for id in [betta, goldfish, tetra] {
+            steepest = steepest.max(w.creature(id).unwrap().pitch().abs());
+        }
+    }
+    for (id, from) in [betta, goldfish].into_iter().zip(start) {
+        let fish = w.creature(id).unwrap();
+        assert!(fish.asleep());
+        assert!((fish.centre().1 - from).abs() > 10.0, "it swam to its spot");
+        assert_eq!(fish.pitch(), 0, "it sleeps level");
+    }
+    assert_eq!(w.creature(tetra).unwrap().pitch(), 0);
+    assert!(steepest > 0, "it did pitch on the way");
+    // And it stays level through the night.
+    run(&mut w, 60);
+    assert!(
+        [betta, goldfish, tetra]
+            .iter()
+            .all(|&id| w.creature(id).unwrap().pitch() == 0)
+    );
+}
+
 #[test]
 fn nocturnal_species_and_live_food_stay_up() {
     let mut w = world(5);

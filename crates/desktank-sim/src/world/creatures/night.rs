@@ -229,15 +229,20 @@ impl World {
                 c.vx = 0;
             }
             Zone::Mid | Zone::Surface => {
+                // Settled, it eases level, so one that rose or sank to its
+                // rest spot doesn't sleep nose-up or nose-down.
                 if (c.tx, c.ty) == (c.x, c.y) || dist(c.tx - c.x, c.ty - c.y) <= REACHED / 2 {
                     (c.tx, c.ty, c.vx, c.vy) = (c.x, c.y, 0, 0);
+                    super::level_off(c);
                 } else {
                     steer(k, c, c.tx, c.ty, (k.cruise / 3).max(1), false);
                     if self.try_move(k, c) == Move::Moved {
-                        super::update_swim_heading(c);
+                        // A drift to rest mirrors on any sideways motion.
+                        super::update_swim_heading(c, 0);
                     } else {
                         // Settled where something stops it.
                         (c.tx, c.ty, c.vx, c.vy) = (c.x, c.y, 0, 0);
+                        super::level_off(c);
                     }
                 }
             }

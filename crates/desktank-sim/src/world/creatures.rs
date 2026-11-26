@@ -187,6 +187,13 @@ enum Move {
 /// Sideways speed, in 1/256 cell per tick, past which a creature turns to
 /// face the way it swims.
 const TURN_SPEED: i32 = 12;
+/// Speed, in 1/256 cell per tick, below which an idling swimmer keeps its
+/// pitch: a fish easing to a stop or holding against a current would
+/// otherwise rock between neighbouring angles.
+const PITCH_SPEED: i32 = TURN_SPEED;
+/// A pitched swimmer's art is a rotated box; one eighth turn is 1/sqrt(2)
+/// of the upright sides, rounded up (181.02 of 256) to stay conservative.
+const DIAGONAL: i32 = 182;
 /// Ticks a hopping walker kicks upwards for, at its top speed; it then
 /// drifts back down at its cruising speed.
 const HOP_TICKS: u64 = 8;
@@ -1724,6 +1731,36 @@ impl World {
 
     /// One tick of one creature. Returns whether it moved or turned.
     fn update_creature(&mut self, c: &mut Creature) -> bool {
+        let moved = self.step_creature(c);
+        self.level_to_fit(c);
+        moved
+    }
+
+    /// Eases a pitched swimmer's art level, one eighth turn at a time,
+    /// until its rotated bounds lie in open water (inside the tank, clear
+    /// of the substrate, hardscape, plants in its band and the air). Its
+    /// collision box stays upright, so the art would otherwise draw into
+    /// whatever blocks it: a fish eating on the bed, a surface feeder, a
+    /// long loach diving. The check uses the same rules as [`World::fits`]
+    /// on the rotated box, so it is exact in cells, and deterministic.
+    fn level_to_fit(&self, c: &mut Creature) {
+        if c.pitch == 0 {
+            return;
+        }
+        let Some(k) = self.grown_kind(c) else {
+            c.pitch = 0;
+            return;
+        };
+        while c.pitch != 0 {
+            let (wide, tall) = pitched_extent(&k, c.pitch);
+            if self.fits_extent(wide, tall, c.x, c.y, Some(c.band()), true) {
+                break;
+            }
+            c.pitch -= c.pitch.signum();
+        }
+    }
+
+    fn step_creature(&mut self, c: &mut Creature) -> bool {
         let Some(k) = self.grown_kind(c) else {
             return false;
         };
@@ -1789,6 +1826,7 @@ impl World {
         // against the current, but still eats what is under its mouth.
         if speed == 0 {
             (c.vx, c.vy, c.dodging) = (0, 0, 0);
+            level_off(c);
             if hungry && self.anything_to_eat(&k) && self.eat(&k, c) {
                 c.food = None;
             }
@@ -1827,7 +1865,7 @@ impl World {
             }
         }
         if swimming && moved == Move::Moved {
-            update_swim_heading(c);
+            update_swim_heading(c, TURN_SPEED);
         } else if !swimming && !flipping {
             update_facing(c, sponge);
         }
@@ -2558,7 +2596,20 @@ impl World {
     /// their occupied bands and, if `soft` and in a band, a floater's
     /// hanging roots. With no band, every obstacle counts.
     fn fits_box(&self, wide: i32, tall: i32, x: i32, y: i32, band: Option<u8>, soft: bool) -> bool {
-        let Some(b) = body_box(wide, tall, x, y, self.width, self.height) else {
+        self.fits_extent(wide * ONE, tall * ONE, x, y, band, soft)
+    }
+
+    /// [`World::fits_box`] for a box whose sides are in fixed point.
+    fn fits_extent(
+        &self,
+        wide: i32,
+        tall: i32,
+        x: i32,
+        y: i32,
+        band: Option<u8>,
+        soft: bool,
+    ) -> bool {
+        let Some(b) = body_extent(wide, tall, x, y, self.width, self.height) else {
             return false;
         };
         let mut memo = None;
@@ -2643,28 +2694,35 @@ fn open_water(zone: Zone) -> bool {
 
 /// Track the heading with a speed dead zone and separate thresholds for
 /// entering and leaving each angle. The inequalities compare fixed-point
-/// slopes around tan(22.5°) and tan(67.5°).
-fn update_swim_heading(c: &mut Creature) {
+/// slopes around tan(22.5°) and tan(67.5°). Idling below [`PITCH_SPEED`] it
+/// keeps its pitch. It mirrors only once its sideways speed passes
+/// `turn_speed`, as `update_facing` always has, so one slowing on arrival
+/// or holding against a current keeps its face.
+fn update_swim_heading(c: &mut Creature, turn_speed: i32) {
     let (x, y) = (c.vx.abs(), c.vy.abs());
-    // Below 3/256 cell per tick on both axes, keep the last heading.
-    if x.max(y) < 3 {
-        return;
+    let mut magnitude = c.pitch.abs();
+    if x.max(y) >= PITCH_SPEED {
+        let previous = c.pitch * if c.vy < 0 { -1 } else { 1 };
+        let steep = if previous == 2 { 4 } else { 5 };
+        let shallow = if previous > 0 { 3 } else { 2 };
+        magnitude = if 2 * y > x * steep {
+            2
+        } else {
+            i8::from(y * shallow > x)
+        };
+        let sign = if c.vy < 0 { -1 } else { 1 };
+        c.pitch = sign * magnitude;
     }
-    let sign = if c.vy < 0 { -1 } else { 1 };
-    let previous = c.pitch * sign;
-    let steep = if previous == 2 { 4 } else { 5 };
-    let shallow = if previous > 0 { 3 } else { 2 };
-    let magnitude = if 2 * y > x * steep {
-        2
-    } else {
-        i8::from(y * shallow > x)
-    };
     // At a vertical heading, tiny horizontal reversals would mirror the
     // body without changing where the nose points.
-    if magnitude < 2 {
+    if magnitude < 2 && x > turn_speed {
         c.facing_left = c.vx < 0;
     }
-    c.pitch = sign * magnitude;
+}
+
+/// Eases a swimmer's pitch one eighth turn towards level.
+fn level_off(c: &mut Creature) {
+    c.pitch -= c.pitch.signum();
 }
 
 /// Accelerates `c` towards `(tx, ty)` at up to `speed`, slowing on
@@ -2761,12 +2819,30 @@ fn body(k: &Kind, turn: u8, x: i32, y: i32, width: usize, height: usize) -> Opti
 /// The cells a `wide × tall`-cell box centred at `(x, y)` (fixed point)
 /// covers, rounded outwards; `None` if any part is outside the grid.
 fn body_box(wide: i32, tall: i32, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
-    let (left, top) = (x - wide * ONE / 2, y - tall * ONE / 2);
+    body_extent(wide * ONE, tall * ONE, x, y, width, height)
+}
+
+/// [`body_box`] for sides in fixed point (1/256 cell).
+fn body_extent(wide: i32, tall: i32, x: i32, y: i32, width: usize, height: usize) -> Option<Rect> {
+    let (left, top) = (x - wide / 2, y - tall / 2);
     let x0 = usize::try_from(left.div_euclid(ONE)).ok()?;
     let y0 = usize::try_from(top.div_euclid(ONE)).ok()?;
-    let x1 = usize::try_from((left + wide * ONE + ONE - 1).div_euclid(ONE)).ok()?;
-    let y1 = usize::try_from((top + tall * ONE + ONE - 1).div_euclid(ONE)).ok()?;
+    let x1 = usize::try_from((left + wide + ONE - 1).div_euclid(ONE)).ok()?;
+    let y1 = usize::try_from((top + tall + ONE - 1).div_euclid(ONE)).ok()?;
     (x1 <= width && y1 <= height).then_some(Rect { x0, y0, x1, y1 })
+}
+
+/// The sides, in fixed point, of the box a swimmer's art covers at `pitch`
+/// eighth turns: the body turned about its centre.
+fn pitched_extent(k: &Kind, pitch: i8) -> (i32, i32) {
+    match pitch.abs() {
+        0 => (k.w * ONE, k.h * ONE),
+        1 => {
+            let side = (k.w + k.h) * DIAGONAL;
+            (side, side)
+        }
+        _ => (k.h * ONE, k.w * ONE),
+    }
 }
 
 /// The zone's rows, `[top, bottom)`, for the water from `surface_row` to
@@ -2892,19 +2968,19 @@ mod tests {
         fish.vx = -100;
         for (vy, pitch) in [(-49, 0), (-51, -1), (-49, -1), (-51, -1), (-33, 0)] {
             fish.vy = vy;
-            update_swim_heading(fish);
+            update_swim_heading(fish, TURN_SPEED);
             assert_eq!(fish.pitch(), pitch);
             assert!(fish.facing_left());
         }
         for vx in [1, -1, 0] {
             (fish.vx, fish.vy) = (vx, 100);
-            update_swim_heading(fish);
+            update_swim_heading(fish, TURN_SPEED);
             assert_eq!(fish.pitch(), 2);
             assert!(fish.facing_left());
         }
         for (vx, vy) in [(0, 0), (1, -1)] {
             (fish.vx, fish.vy) = (vx, vy);
-            update_swim_heading(fish);
+            update_swim_heading(fish, TURN_SPEED);
             assert_eq!(fish.pitch(), 2);
             assert!(fish.facing_left());
         }
@@ -2930,6 +3006,173 @@ mod tests {
         }
         world.update_creature(&mut fish);
         assert_eq!(fish.pitch(), 0);
+    }
+
+    #[test]
+    fn slow_jitter_and_idling_keep_the_mirror_and_pitch() {
+        let mut world = pitch_world();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let id = world.add_creature(tetra, 48, 30).unwrap();
+        let fish = world.creature_mut(id).unwrap();
+        let (left, pitch) = (fish.facing_left(), 0);
+        // A fish slowing on its target, or holding against a filter
+        // current, swings its sideways speed through zero.
+        for vx in [5, -5, 8, -9, TURN_SPEED, -TURN_SPEED, 3, -4] {
+            (fish.vx, fish.vy) = (vx, 0);
+            update_swim_heading(fish, TURN_SPEED);
+            assert_eq!(fish.facing_left(), left, "vx {vx}");
+            assert_eq!(fish.pitch(), pitch, "vx {vx}");
+        }
+        // Slow idling velocities hold whatever pose it had.
+        for held in [0, -1, 2] {
+            fish.pitch = held;
+            for (vx, vy) in [(4, -3), (4, -1), (-3, 2), (5, -5), (-6, 4), (0, 0)] {
+                (fish.vx, fish.vy) = (vx, vy);
+                update_swim_heading(fish, TURN_SPEED);
+                assert_eq!(fish.pitch(), held, "({vx}, {vy})");
+                assert_eq!(fish.facing_left(), left, "({vx}, {vy})");
+            }
+        }
+        // Swimming off past the turn speed still turns it.
+        fish.pitch = 0;
+        (fish.vx, fish.vy) = (-(TURN_SPEED + 1), 0);
+        update_swim_heading(fish, TURN_SPEED);
+        assert!(fish.facing_left());
+        (fish.vx, fish.vy) = (TURN_SPEED + 1, 0);
+        update_swim_heading(fish, TURN_SPEED);
+        assert!(!fish.facing_left());
+    }
+
+    fn bed_world() -> World {
+        let mut world = pitch_world();
+        let sand = world.materials().id("sand").unwrap();
+        let rect = Rect {
+            x0: 0,
+            y0: BED,
+            x1: world.width,
+            y1: world.height,
+        };
+        world.fill_rect(rect, sand, Brush::Replace).unwrap();
+        world
+    }
+
+    const BED: usize = 56;
+
+    /// Whether `c`'s pitched art lies on cells it may overlap.
+    fn art_fits(world: &World, c: &Creature) -> bool {
+        let k = world.grown_kind(c).unwrap();
+        let (wide, tall) = pitched_extent(&k, c.pitch);
+        world.fits_extent(wide, tall, c.x, c.y, Some(c.band()), true)
+    }
+
+    #[test]
+    fn pitched_art_never_draws_into_the_bed_or_the_air() {
+        let mut world = bed_world();
+        let tetra = world.species().id("neon_tetra").unwrap();
+        let id = world.add_creature(tetra, 48, 30).unwrap();
+        let mut fish = world.creature(id).unwrap().clone();
+        let k = world.grown_kind(&fish).unwrap();
+        assert_ne!(k.w, k.h, "a non-square body");
+        // In open water the pitch stands.
+        for pitch in [-2, -1, 1, 2] {
+            fish.pitch = pitch;
+            world.level_to_fit(&mut fish);
+            assert_eq!(fish.pitch(), pitch);
+        }
+        // Eating on the bed, blocked and stopped: the body rests on the
+        // sand, so a nose-down body would reach into it.
+        let bed = i32::try_from(BED).unwrap() * ONE;
+        (fish.x, fish.y) = (48 * ONE, bed - k.h * ONE / 2);
+        assert!(world.fits(&k, 0, fish.x, fish.y, fish.band()));
+        for pitch in [-2, -1, 1, 2] {
+            fish.pitch = pitch;
+            world.level_to_fit(&mut fish);
+            assert_eq!(fish.pitch(), 0, "from {pitch}");
+        }
+        // Feeding at the top, with its body against the waterline.
+        let surface = i32::try_from(world.surface_row).unwrap() * ONE;
+        (fish.x, fish.y) = (48 * ONE, surface + k.h * ONE / 2);
+        assert!(world.fits(&k, 0, fish.x, fish.y, fish.band()));
+        for pitch in [-2, -1, 1, 2] {
+            fish.pitch = pitch;
+            world.level_to_fit(&mut fish);
+            assert_eq!(fish.pitch(), 0, "from {pitch}");
+        }
+    }
+
+    #[test]
+    fn a_long_bottom_dweller_diving_keeps_only_a_pitch_that_fits() {
+        let mut world = bed_world();
+        let loach = world.species().id("kuhli_loach").unwrap();
+        let id = world.add_creature(loach, 30, 50).unwrap();
+        let mut fish = world.creature(id).unwrap().clone();
+        let kind = world.grown_kind(&fish).unwrap();
+        assert!(kind.w >= 3 * kind.h, "a long body");
+        let swim = bottom::Swim {
+            rising: false,
+            dir: 1,
+        };
+        // A slim body is shorter on the diagonal than on end: just clear
+        // of the bed on the diagonal, the vertical nose would be in it.
+        let bed = i32::try_from(BED).unwrap() * ONE;
+        (fish.x, fish.y) = (30 * ONE, bed - (kind.w + kind.h) * DIAGONAL / 2);
+        fish.pitch = 2;
+        world.level_to_fit(&mut fish);
+        assert_eq!(fish.pitch(), 1);
+        assert!(art_fits(&world, &fish));
+        fish.y += ONE;
+        world.level_to_fit(&mut fish);
+        assert_eq!(fish.pitch(), 0);
+        // Diving for the bed, whatever pitch it keeps fits throughout.
+        (fish.x, fish.y, fish.pitch) = (30 * ONE, 48 * ONE, 0);
+        world.tick = 1;
+        for _ in 0..200 {
+            world.swim_step(&kind, &mut fish, swim);
+            world.level_to_fit(&mut fish);
+            assert!(fish.pitch() == 0 || art_fits(&world, &fish));
+        }
+    }
+
+    #[test]
+    fn no_swimmer_in_a_busy_tank_ever_pitches_into_anything() {
+        let mut world = bed_world();
+        for (name, x, y) in [
+            ("neon_tetra", 20, 30),
+            ("neon_tetra", 40, 20),
+            ("neon_tetra", 60, 40),
+            ("common_goldfish", 70, 30),
+            ("common_goldfish", 30, 45),
+            ("corydoras", 50, 54),
+            ("corydoras", 80, 54),
+            ("kuhli_loach", 40, 54),
+            ("betta", 60, 12),
+        ] {
+            let species = world.species().id(name).unwrap();
+            world.add_creature(species, x, y).unwrap();
+        }
+        let mut pitched = 0;
+        for tick in 0..3000 {
+            if tick % 400 == 0 {
+                crate::cheats::feed(&mut world);
+                let pellet = world.materials().id("sinking_pellet").unwrap();
+                world.paint(40, 8, 0, pellet, Brush::Pour).unwrap();
+                world.paint(70, 8, 0, pellet, Brush::Pour).unwrap();
+            }
+            world.tick();
+            for c in &world.creatures.list {
+                // (A burrowed loach is inside the bed, but never pitched.)
+                if c.pitch() != 0 {
+                    pitched += 1;
+                    assert!(
+                        art_fits(&world, c),
+                        "tick {tick}: {} at pitch {}",
+                        c.id.0,
+                        c.pitch()
+                    );
+                }
+            }
+        }
+        assert!(pitched > 0, "somebody pitched");
     }
 
     fn shy_world(shy: bool) -> World {
