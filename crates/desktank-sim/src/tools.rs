@@ -251,6 +251,8 @@ pub struct Tools {
     /// default). One a species doesn't grow from (a different world's
     /// species table) falls back to its default ([`Tools::plant_propagule`]).
     propagules: BTreeMap<PlantSpeciesId, Propagule>,
+    /// The explicit morph picked for each creature species.
+    morphs: BTreeMap<SpeciesId, u8>,
     radius: u32,
     /// Index into [`ZOOM_LEVELS`] for [`Tool::Magnify`].
     zoom: usize,
@@ -268,6 +270,7 @@ impl Tools {
             tool: Tool::Pour,
             material,
             propagules: BTreeMap::new(),
+            morphs: BTreeMap::new(),
             radius: DEFAULT_RADIUS,
             zoom: 0,
             pointer: None,
@@ -395,6 +398,77 @@ impl Tools {
     #[must_use]
     pub fn material(&self) -> MaterialId {
         self.material
+    }
+
+    /// The species of the selected creature slot, if one is selected.
+    #[must_use]
+    pub fn selected_creature(&self) -> Option<SpeciesId> {
+        match self.tool {
+            Tool::AddCreature(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The explicit morph for a multi-morph species, if the pick is valid in this world.
+    #[must_use]
+    pub fn morph_for(&self, world: &World, species: SpeciesId) -> Option<u8> {
+        let count = world.species().get(species)?.morphs.len();
+        self.morphs
+            .get(&species)
+            .copied()
+            .filter(|&m| count > 1 && usize::from(m) < count)
+    }
+
+    /// The explicit morph for the selected creature slot, if any.
+    #[must_use]
+    pub fn creature_morph(&self, world: &World) -> Option<u8> {
+        self.morph_for(world, self.selected_creature()?)
+    }
+
+    /// Sets or clears the selected species' morph pick. Returns whether the
+    /// selected slot has multiple morphs and the pick is valid.
+    pub fn set_creature_morph(&mut self, world: &World, morph: Option<u8>) -> bool {
+        let Some(species) = self.selected_creature() else {
+            return false;
+        };
+        let valid = world.species().get(species).is_some_and(|s| {
+            s.morphs.len() > 1 && morph.is_none_or(|m| usize::from(m) < s.morphs.len())
+        });
+        if valid {
+            if let Some(m) = morph {
+                self.morphs.insert(species, m);
+            } else {
+                self.morphs.remove(&species);
+            }
+        }
+        valid
+    }
+
+    /// Advances the selected creature's morph, including automatic stocking
+    /// (`Some(None)`) for species that cycle. Returns `None` if the slot
+    /// doesn't have multiple morphs.
+    pub fn next_creature_morph(&mut self, world: &World) -> Option<Option<u8>> {
+        let species = self.selected_creature()?;
+        let s = world.species().get(species)?;
+        let count = s.morphs.len();
+        if count <= 1 {
+            return None;
+        }
+        let current = self.morph_for(world, species);
+        let next = if s.cycle_palette {
+            let index = current.map_or(0, |m| usize::from(m) + 1);
+            (index < count).then_some(u8::try_from(index).ok()?)
+        } else {
+            let index = (usize::from(current.unwrap_or(s.palette_morph)) + 1) % count;
+            Some(u8::try_from(index).ok()?)
+        };
+        self.set_creature_morph(world, next);
+        Some(next)
+    }
+
+    /// Copies per-species morph picks when a host replaces its tank.
+    pub fn keep_creature_picks(&mut self, other: &Self) {
+        self.morphs.clone_from(&other.morphs);
     }
 
     /// The plant species the selected plant slot pours, if one is
@@ -622,21 +696,23 @@ impl Tools {
                         .unwrap_or(0),
                 ),
                 // No room (solid/air there) or a full tank reports why.
-                Tool::AddCreature(s) => match world.add_palette_creature(s, cell.0, cell.1) {
-                    Ok(id) => Outcome::Added(id),
-                    Err(WorldError::PopulationCap(cap)) => Outcome::AddRefused {
-                        species: s,
-                        reason: AddRefused::PopulationCap {
-                            cap,
-                            live_food: world.species().get(s).is_some_and(|sp| sp.live_food),
+                Tool::AddCreature(s) => {
+                    match world.add_palette_creature(s, cell.0, cell.1, self.morph_for(world, s)) {
+                        Ok(id) => Outcome::Added(id),
+                        Err(WorldError::PopulationCap(cap)) => Outcome::AddRefused {
+                            species: s,
+                            reason: AddRefused::PopulationCap {
+                                cap,
+                                live_food: world.species().get(s).is_some_and(|sp| sp.live_food),
+                            },
                         },
-                    },
-                    Err(WorldError::NoRoom) => Outcome::AddRefused {
-                        species: s,
-                        reason: AddRefused::NoRoom,
-                    },
-                    Err(_) => Outcome::None,
-                },
+                        Err(WorldError::NoRoom) => Outcome::AddRefused {
+                            species: s,
+                            reason: AddRefused::NoRoom,
+                        },
+                        Err(_) => Outcome::None,
+                    }
+                }
                 _ => Outcome::None,
             },
             Action::Net(Some((id, _))) => {
@@ -1371,6 +1447,92 @@ mod tests {
             let m = id(&w, name);
             assert!(!all.contains(&PaletteItem::Material(m)), "{name}");
         }
+    }
+
+    fn stock(t: &mut Tools, w: &mut World, x: i64, morph: u8) -> CreatureId {
+        let outcome = t.press(w, Button::Primary, (x, 40));
+        t.release(w, Button::Primary);
+        let Outcome::Added(id) = outcome else {
+            panic!("expected a creature, got {outcome:?}");
+        };
+        assert_eq!(w.creature(id).unwrap().alleles(), [morph; 2]);
+        id
+    }
+
+    #[test]
+    fn single_morph_creature_slot_places_without_a_pick() {
+        let mut w = world();
+        let mut t = Tools::new(id(&w, "sand"));
+        assert_eq!(t.selected_creature(), None);
+        assert_eq!(t.next_creature_morph(&w), None);
+        assert!(!t.set_creature_morph(&w, None));
+
+        let neon = w.species().id("neon_tetra").unwrap();
+        t.select(PaletteItem::Tool(Tool::AddCreature(neon)));
+        assert_eq!(t.selected_creature(), Some(neon));
+        assert_eq!(t.creature_morph(&w), None);
+        assert_eq!(t.next_creature_morph(&w), None);
+        assert!(!t.set_creature_morph(&w, Some(0)));
+        assert!(!t.set_creature_morph(&w, None));
+        stock(&mut t, &mut w, 40, 0);
+    }
+
+    #[test]
+    fn noncycling_creature_slot_places_the_default_or_its_pick() {
+        let mut w = world();
+        let mut t = Tools::new(id(&w, "sand"));
+        let shrimp = w.species().id("cherry_shrimp").unwrap();
+        let guppy = w.species().id("guppy").unwrap();
+        t.select(PaletteItem::Tool(Tool::AddCreature(shrimp)));
+        assert_eq!(t.creature_morph(&w), None);
+        let default = w.species().get(shrimp).unwrap().palette_morph;
+        stock(&mut t, &mut w, 40, default);
+        assert_eq!(t.next_creature_morph(&w), Some(Some(1)));
+        assert!(t.set_creature_morph(&w, Some(3)));
+        assert_eq!(t.next_creature_morph(&w), Some(Some(0)));
+        assert!(t.set_creature_morph(&w, Some(2)));
+        assert!(!t.set_creature_morph(&w, Some(4)));
+
+        t.select(PaletteItem::Tool(Tool::AddCreature(guppy)));
+        assert_eq!(t.creature_morph(&w), None);
+        assert!(t.set_creature_morph(&w, Some(1)));
+        t.select(PaletteItem::Tool(Tool::AddCreature(shrimp)));
+        assert_eq!(t.creature_morph(&w), Some(2));
+        stock(&mut t, &mut w, 60, 2);
+
+        let mut fresh = Tools::new(id(&w, "sand"));
+        fresh.keep_creature_picks(&t);
+        assert_eq!(fresh.morph_for(&w, shrimp), Some(2));
+        assert_eq!(fresh.morph_for(&w, guppy), Some(1));
+    }
+
+    #[test]
+    fn cycling_creature_slot_resumes_automatic_stocking_after_a_pick() {
+        let mut w = world();
+        let mut t = Tools::new(id(&w, "sand"));
+        let axolotl = w.species().id("axolotl").unwrap();
+        t.select(PaletteItem::Tool(Tool::AddCreature(axolotl)));
+        assert_eq!(t.creature_morph(&w), None);
+        stock(&mut t, &mut w, 20, 0);
+        stock(&mut t, &mut w, 40, 1);
+
+        assert!(t.set_creature_morph(&w, Some(1)));
+        for x in [60, 80] {
+            let id = stock(&mut t, &mut w, x, 1);
+            assert_eq!(
+                w.creature_card(id).unwrap().morph.as_deref(),
+                Some("leucistic")
+            );
+        }
+        assert!(t.set_creature_morph(&w, None));
+        assert_eq!(t.creature_morph(&w), None);
+        stock(&mut t, &mut w, 100, 1);
+
+        for morph in [Some(0), Some(1), Some(2), None] {
+            assert_eq!(t.next_creature_morph(&w), Some(morph));
+        }
+        assert_eq!(t.creature_morph(&w), None);
+        stock(&mut t, &mut w, 120, 2);
     }
 
     #[test]

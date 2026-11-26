@@ -158,6 +158,7 @@ const paletteBox = $("palette-box");
 const tabsEl = $("tabs");
 const subtabsEl = $("subtabs");
 const propagulesEl = $("propagules");
+const morphsEl = $("morphs");
 
 let settings = loadSettings();
 let tank: WebTank; // set by main() before anything uses it
@@ -401,9 +402,10 @@ function replaceTank(next: WebTank) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
   const zoom = tank?.zoom() ?? next.zoom();
-  // It keeps the propagule picks (one per plant species) too.
+  // It also keeps each species’ palette picks.
   if (tank) {
     next.keepPlantPicks(tank);
+    next.keepCreaturePicks(tank);
     // Reuse the graphics and compiled pipelines (a lost context can't be).
     if (!contextLost && !restoring) next.takeGraphics(tank);
   }
@@ -1070,6 +1072,7 @@ const topTabs = () => [...tabsEl.children] as HTMLButtonElement[];
 const subTabs = () => [...subtabsEl.children] as HTMLButtonElement[];
 const swatches = () => [...paletteEl.children] as HTMLButtonElement[];
 const chips = () => [...propagulesEl.querySelectorAll("button")];
+const morphChips = () => [...morphsEl.querySelectorAll("button")];
 const swatch = (i: number) => paletteEl.children[i] as HTMLButtonElement | undefined;
 const openItems = () => swatches().filter((b) => !b.hidden);
 
@@ -1115,6 +1118,7 @@ function showSelection(focus = false) {
   const items = openItems();
   if (items.length && !items.some((b) => b.tabIndex === 0)) items[0].tabIndex = 0;
   showPropagules();
+  showMorphs();
   showFlip();
 }
 
@@ -1160,6 +1164,51 @@ function nextPropagule(focus = false) {
   else flash("Select a plant, then P picks how it starts");
 }
 
+function showMorphs(focus = false) {
+  const morphs = tank.creatureMorphs();
+  morphsEl.hidden = morphs.length <= 1 || swatch(tank.selected())?.hidden !== false;
+  if (morphsEl.hidden) return setChildren(morphsEl);
+  const picked = tank.creatureMorph();
+  const names = tank.creatureMorphCycles() ? ["", ...morphs] : morphs;
+  const caption = document.createElement("span");
+  caption.className = "as";
+  caption.textContent = "Morph";
+  caption.setAttribute("aria-hidden", "true");
+  setChildren(
+    morphsEl,
+    caption,
+    ...names.map((name) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip";
+      b.dataset.morph = name;
+      b.setAttribute("role", "radio");
+      const on = name === picked;
+      b.setAttribute("aria-checked", String(on));
+      b.tabIndex = on ? 0 : -1;
+      b.textContent = name ? label(name) : "Cycle";
+      b.addEventListener("click", () => pickMorph(name, true));
+      return b;
+    }),
+  );
+  if (focus) morphChips().find((b) => b.tabIndex === 0)?.focus({ preventScroll: true });
+}
+
+function pickMorph(name: string, focus = false) {
+  if (!tank.setCreatureMorph(name)) return;
+  showMorphs(focus);
+  kick();
+}
+
+function nextMorph(focus = false) {
+  if (tank.nextCreatureMorph() === undefined) {
+    flash("Select a creature with morphs, then C picks its colour");
+    return;
+  }
+  showMorphs(focus);
+  kick();
+}
+
 // Selects slot `n` of the open sub-category, if it has one.
 function chooseSlot(n: number, focus = false) {
   const b = openItems()[n];
@@ -1199,6 +1248,10 @@ function paletteKeys(e: KeyboardEvent) {
 
 function propaguleKeys(e: KeyboardEvent) {
   arrows(e, chips(), (b) => pickPropagule(b.dataset.propagule ?? "", true));
+}
+
+function morphKeys(e: KeyboardEvent) {
+  arrows(e, morphChips(), (b) => pickMorph(b.dataset.morph ?? "", true));
 }
 
 // --- Input -------------------------------------------------------------------
@@ -1669,6 +1722,7 @@ function wireInput() {
   tabsEl.addEventListener("keydown", tabKeys);
   subtabsEl.addEventListener("keydown", subKeys);
   propagulesEl.addEventListener("keydown", propaguleKeys);
+  morphsEl.addEventListener("keydown", morphKeys);
   // Scrolling over the palette steps through the sub-categories, on into
   // the next tab (as in desktank window).
   paletteBox.addEventListener(
@@ -1771,6 +1825,8 @@ function wireInput() {
     } else if (e.key === "p" || e.key === "P") {
       // The selected plant's next propagule.
       nextPropagule(propagulesEl.contains(e.target as Node | null));
+    } else if (e.key === "c" || e.key === "C") {
+      nextMorph(morphsEl.contains(e.target as Node | null));
     } else if (/^[0-9]$/.test(e.key)) {
       // 1–9 are the open sub-category's first nine slots, 0 the tenth.
       chooseSlot((Number(e.key) + 9) % 10);

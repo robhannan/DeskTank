@@ -27,8 +27,9 @@ use crate::hud::{
 /// A species to show on the card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Card {
-    /// A creature species (live food and cheat-only species included).
-    Creature(SpeciesId),
+    /// A creature species (live food and cheat-only species included), with
+    /// the colour morph to preview (`None`: the species' palette morph).
+    Creature(SpeciesId, Option<u8>),
     /// A plant species.
     Plant(PlantSpeciesId),
 }
@@ -39,7 +40,7 @@ impl Card {
     #[must_use]
     pub fn of(item: PaletteItem) -> Option<Self> {
         match item {
-            PaletteItem::Tool(Tool::AddCreature(s)) => Some(Self::Creature(s)),
+            PaletteItem::Tool(Tool::AddCreature(s)) => Some(Self::Creature(s, None)),
             PaletteItem::Tool(Tool::Plant(s)) => Some(Self::Plant(s)),
             _ => None,
         }
@@ -117,7 +118,7 @@ pub(crate) fn build_tagged(
 ) -> Option<CardImage> {
     let mut page = Page::new(tag);
     match card {
-        Card::Creature(id) => creature(&mut page, species.get(id)?, materials),
+        Card::Creature(id, morph) => creature(&mut page, species.get(id)?, morph, materials),
         Card::Plant(id) => plant(&mut page, plants.get(id)?, materials),
     }
     Some(page.finish())
@@ -139,8 +140,10 @@ type Art<'a> = ((usize, usize), &'a [[u8; 4]], &'static str);
 
 /// The adult sprites of a creature: the male and the female, labelled, if
 /// it is drawn differently by sex, else the one look, unlabelled. Each is
-/// its coarse first frame.
-fn creature_sprites(sp: &Species) -> Vec<Art<'_>> {
+/// its coarse first frame, in colour morph `morph` (the species' palette
+/// morph if `None`).
+fn creature_sprites(sp: &Species, morph: Option<u8>) -> Vec<Art<'_>> {
+    let morph = morph.unwrap_or(sp.palette_morph);
     let sexes: &[(bool, &str)] = if sp.dimorphic() {
         &[(false, "male"), (true, "female")]
     } else {
@@ -149,7 +152,7 @@ fn creature_sprites(sp: &Species) -> Vec<Art<'_>> {
     sexes
         .iter()
         .filter_map(|&(female, label)| {
-            let look = sp.looks.get(sp.look(0, female, false))?;
+            let look = sp.looks.get(sp.look(morph, female, false))?;
             Some((look.size, look.frames.first()?.as_slice(), label))
         })
         .collect()
@@ -157,9 +160,9 @@ fn creature_sprites(sp: &Species) -> Vec<Art<'_>> {
 
 /// A creature: its sprites, adult size, diet, behaviour and needs, and
 /// description.
-fn creature(page: &mut Page, sp: &Species, materials: &MaterialTable) {
+fn creature(page: &mut Page, sp: &Species, morph: Option<u8>, materials: &MaterialTable) {
     page.heading(&display_name(&sp.name), &sp.scientific_name);
-    page.sprites(&creature_sprites(sp));
+    page.sprites(&creature_sprites(sp, morph));
     page.field("Size:", &sp.describe_size());
     page.field("Diet:", &sp.describe_diet(materials));
     page.field("Behaviour:", &sp.describe_behaviour());
@@ -442,7 +445,9 @@ mod tests {
     fn every_card(
         (m, s, p): &(MaterialTable, SpeciesTable, PlantSpeciesTable),
     ) -> Vec<(String, Card, CardImage)> {
-        let creatures = s.iter().map(|sp| (sp.name.clone(), Card::Creature(sp.id)));
+        let creatures = s
+            .iter()
+            .map(|sp| (sp.name.clone(), Card::Creature(sp.id, None)));
         let plants = p.iter().map(|sp| (sp.name.clone(), Card::Plant(sp.id)));
         creatures
             .chain(plants)
@@ -567,7 +572,7 @@ mod tests {
         let species = |name: &str| s.get(s.id(name).unwrap()).unwrap();
         for name in ["guppy", "betta"] {
             let sp = species(name);
-            let art = creature_sprites(sp);
+            let art = creature_sprites(sp, None);
             let labels: Vec<_> = art.iter().map(|a| a.2).collect();
             assert_eq!(labels, ["male", "female"], "{name}");
             for (female, (size, frame, _)) in [false, true].into_iter().zip(&art) {
@@ -578,13 +583,13 @@ mod tests {
             // The two are different pictures.
             assert_ne!(art[0].1, art[1].1, "{name}");
         }
-        let tetra = creature_sprites(species("neon_tetra"));
+        let tetra = creature_sprites(species("neon_tetra"), None);
         assert_eq!(tetra.len(), 1);
         assert_eq!(tetra[0].2, "");
         // The guppy's sprites are doubled: its male's first opaque texel's
         // colour fills at least four card pixels per such texel.
         let guppy = species("guppy");
-        let card = build(Card::Creature(guppy.id), &m, &s, &p).unwrap();
+        let card = build(Card::Creature(guppy.id, None), &m, &s, &p).unwrap();
         let male = &guppy.looks[guppy.look(0, false, false)].frames[0];
         let own = |c: [u8; 3]| ![TITLE, LABEL, BODY, LATIN, BACKGROUND, FRAME].contains(&c);
         let colour = male
@@ -600,6 +605,33 @@ mod tests {
     }
 
     #[test]
+    fn a_creature_card_previews_the_picked_morph() {
+        let (m, s, p) = tables();
+        for name in ["cherry_shrimp", "betta"] {
+            let sp = s.get(s.id(name).unwrap()).unwrap();
+            let count = u8::try_from(sp.morphs.len()).unwrap();
+            assert!(count > 1, "{name}");
+            let card = |morph| build(Card::Creature(sp.id, morph), &m, &s, &p).unwrap();
+            // No pick previews the palette morph.
+            assert_eq!(card(None), card(Some(sp.palette_morph)), "{name}");
+            for morph in 0..count {
+                let art = creature_sprites(sp, Some(morph));
+                for (female, (size, frame, _)) in [false, true].into_iter().zip(&art) {
+                    let look = &sp.looks[sp.look(morph, female, false)];
+                    assert_eq!((*size, *frame), (look.size, look.frames[0].as_slice()));
+                }
+            }
+            // Different morphs draw different pixels.
+            let images: Vec<_> = (0..count).map(|k| card(Some(k)).pixels).collect();
+            let distinct = images
+                .iter()
+                .enumerate()
+                .all(|(i, a)| images[i + 1..].iter().all(|b| a != b));
+            assert!(distinct, "{name}: every morph's card differs");
+        }
+    }
+
+    #[test]
     fn a_plant_card_shows_the_sprout_in_its_colours() {
         let (m, s, p) = tables();
         let moss = p.get(p.id("java_moss").unwrap()).unwrap();
@@ -611,7 +643,7 @@ mod tests {
     #[test]
     fn unknown_species_have_no_card() {
         let (m, s, p) = tables();
-        assert!(build(Card::Creature(SpeciesId(250)), &m, &s, &p).is_none());
+        assert!(build(Card::Creature(SpeciesId(250), None), &m, &s, &p).is_none());
         assert!(build(Card::Plant(PlantSpeciesId(250)), &m, &s, &p).is_none());
     }
 
@@ -632,7 +664,7 @@ mod tests {
     #[test]
     fn the_card_sits_below_the_palette_at_its_scale() {
         let g = grid();
-        let p = PaletteLayout::fit((1280, 720), &g, 9, 0, 4);
+        let p = PaletteLayout::fit((1280, 720), &g, 9, 0, 4, 0);
         let c = CardLayout::fit((1280, 720), &g, Some(&p), (144, 80)).unwrap();
         assert_eq!(c.scale, p.scale);
         assert_eq!(c.origin.0, p.origin.0);
@@ -678,7 +710,7 @@ mod tests {
     #[test]
     fn the_card_shrinks_to_fit_and_is_hidden_when_it_cannot() {
         let grid = Layout::fit((320, 180), (1280, 720));
-        let palette = PaletteLayout::fit((1280, 720), &grid, 9, 0, 4);
+        let palette = PaletteLayout::fit((1280, 720), &grid, 9, 0, 4, 0);
         // Too tall at scale 4 below the palette: shrinks, stays inside.
         let card = CardLayout::fit((1280, 400), &grid, Some(&palette), (144, 100)).unwrap();
         assert!(card.scale < 4);
@@ -686,7 +718,7 @@ mod tests {
         assert!(card.origin.0 + width <= 1280 && card.origin.1 + height <= 400);
         // Too small at scale 1: nothing.
         let grid = Layout::fit((320, 180), (160, 90));
-        let palette = PaletteLayout::fit((160, 90), &grid, 9, 0, 4);
+        let palette = PaletteLayout::fit((160, 90), &grid, 9, 0, 4, 0);
         assert_eq!(
             CardLayout::fit((160, 90), &grid, Some(&palette), (144, 100)),
             None

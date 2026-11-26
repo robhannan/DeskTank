@@ -605,7 +605,6 @@ pub fn glow_pulse(tick: u64) -> f32 {
 
 /// Pixel `(x, y)` of an 8×8 palette icon for species `id`: its hand-drawn
 /// icon centred, `None` where transparent.
-#[allow(clippy::many_single_char_names)] // pixel maths
 #[must_use]
 pub fn icon(
     species: &SpeciesTable,
@@ -613,7 +612,26 @@ pub fn icon(
     x: u32,
     y: u32,
 ) -> Option<[u8; 3]> {
-    let icon = &species.get(id)?.sprite.icon;
+    centred_icon(&species.get(id)?.sprite.icon, x, y)
+}
+
+/// Pixel `(x, y)` of an 8×8 palette icon for species `id` in colour morph
+/// `morph` (the base icon for an unknown morph), centred, `None` where
+/// transparent.
+#[must_use]
+pub fn morph_icon(
+    species: &SpeciesTable,
+    id: desktank_sim::SpeciesId,
+    morph: u8,
+    x: u32,
+    y: u32,
+) -> Option<[u8; 3]> {
+    centred_icon(species.get(id)?.morph_icon(morph), x, y)
+}
+
+/// Pixel `(x, y)` of `icon` centred in an 8×8 slot.
+#[allow(clippy::many_single_char_names)] // pixel maths
+fn centred_icon(icon: &desktank_sim::species::Icon, x: u32, y: u32) -> Option<[u8; 3]> {
     let (w, h) = (icon.width, icon.height);
     let (ox, oy) = (8_usize.saturating_sub(w) / 2, 8_usize.saturating_sub(h) / 2);
     let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);

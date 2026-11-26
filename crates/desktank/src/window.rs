@@ -74,8 +74,8 @@ use desktank_platform::{
     PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats,
 };
 use desktank_render::{
-    BrushPreview, Card, Gpu, GpuOptions, Inspected, Magnifier, Palette, PaletteHit, Tank,
-    TankConfig, TankSurface, wgpu,
+    BrushPreview, Card, Gpu, GpuOptions, Inspected, Magnifier, Palette, PaletteHit, PaletteMorphs,
+    Tank, TankConfig, TankSurface, wgpu,
 };
 use desktank_sim::cheats::{self, CheatKey, Konami};
 use desktank_sim::tools::{
@@ -295,9 +295,14 @@ struct Hidden {
     minimised: bool,
 }
 
-/// What the palette overlay last showed: the open tab and sub-category and
-/// the selection (tab, sub-category, item).
-type Shown = (usize, usize, Option<(usize, usize, usize)>);
+/// What the palette overlay last showed: the open tab and sub-category,
+/// the selection (tab, sub-category, item) and the morph row under it.
+type Shown = (
+    usize,
+    usize,
+    Option<(usize, usize, usize)>,
+    Option<PaletteMorphs>,
+);
 
 struct Running {
     window: Arc<Window>,
@@ -521,7 +526,7 @@ impl Running {
         if let (Some((px, py)), Some(c)) = (self.cursor, self.tank.card_layout(size))
             && c.contains(px, py)
         {
-            self.closed_card = self.tank.card();
+            self.closed_card = self.tank.card().map(species_card);
             return;
         }
         if let (Some((px, py)), Some(p)) = (self.cursor, self.tank.palette_layout(size)) {
@@ -536,6 +541,10 @@ impl Running {
                 }
                 Some(PaletteHit::Item(i)) => {
                     self.select_slot(i);
+                    return;
+                }
+                Some(PaletteHit::Morph(slot)) => {
+                    self.pick_morph(slot);
                     return;
                 }
                 None if p.contains(px, py) => return,
@@ -557,11 +566,13 @@ impl Running {
     }
 
     /// Selects a palette item. A plant slot names its species and
-    /// propagule in the title.
+    /// propagule in the title, a multi-morph creature slot its morph.
     fn choose(&mut self, item: PaletteItem) {
         self.tools.select(item);
         if matches!(item, PaletteItem::Tool(Tool::Plant(_))) {
             self.show_plant();
+        } else if matches!(item, PaletteItem::Tool(Tool::AddCreature(_))) {
+            self.show_creature();
         } else if item == PaletteItem::Tool(Tool::Magnify) {
             self.show_magnify();
         }
@@ -604,6 +615,67 @@ impl Running {
         );
         self.sync_overlay();
         self.window.set_title(&title);
+    }
+
+    /// Names the colour morph the selected creature slot adds in the title
+    /// bar, if its species has more than one.
+    fn show_creature(&mut self) {
+        let world = self.tank.world();
+        let Some(sp) = self
+            .tools
+            .selected_creature()
+            .and_then(|id| world.species().get(id))
+            .filter(|sp| sp.morphs.len() > 1)
+        else {
+            return;
+        };
+        let morph = match self.tools.creature_morph(world) {
+            Some(m) => sp.morphs.get(usize::from(m)),
+            None if sp.cycle_palette => None,
+            None => sp.morphs.get(usize::from(sp.palette_morph)),
+        };
+        let pick = morph.map_or_else(|| "cycling morphs".to_owned(), |m| m.replace('_', " "));
+        let title = format!(
+            "DeskTank — {} ({pick}, C to change morph)",
+            sp.name.replace('_', " ")
+        );
+        self.sync_overlay();
+        self.window.set_title(&title);
+    }
+
+    /// Picks the morph in slot `slot` of the palette's morph row: the
+    /// automatic slot first if the species cycles.
+    fn pick_morph(&mut self, slot: usize) {
+        let world = self.tank.world();
+        let Some(sp) = self
+            .tools
+            .selected_creature()
+            .and_then(|id| world.species().get(id))
+        else {
+            return;
+        };
+        // The automatic slot picks no morph; a slot beyond a u8 is no pick.
+        let morph = match (sp.cycle_palette, slot) {
+            (true, 0) => Some(None),
+            (true, k) => u8::try_from(k - 1).ok().map(Some),
+            (false, k) => u8::try_from(k).ok().map(Some),
+        };
+        if let Some(morph) = morph
+            && self.tools.set_creature_morph(world, morph)
+        {
+            self.show_creature();
+        }
+    }
+
+    /// Picks the next colour morph the selected creature slot adds (and
+    /// automatic stocking, for species that cycle) and names it.
+    fn next_creature_morph(&mut self) {
+        if self.tools.next_creature_morph(self.tank.world()).is_some() {
+            self.show_creature();
+        } else {
+            self.window
+                .set_title("DeskTank — select a creature with morphs, then C picks its colour");
+        }
     }
 
     /// Reports an inspection or refused creature add in the title bar, and
@@ -947,13 +1019,35 @@ impl Running {
         })
     }
 
+    /// The morph row for the selection: shown under the items while the
+    /// selected creature's sub-category is open and its species has more
+    /// than one morph.
+    fn palette_morphs(&self, selected: Option<(usize, usize, usize)>) -> Option<PaletteMorphs> {
+        selected.filter(|&(t, sub, _)| (t, sub) == (self.open, self.open_sub))?;
+        let id = self.tools.selected_creature()?;
+        let world = self.tank.world();
+        let sp = world.species().get(id).filter(|sp| sp.morphs.len() > 1)?;
+        let pick = self.tools.morph_for(world, id);
+        Some(PaletteMorphs {
+            species: id,
+            count: sp.morphs.len(),
+            cycle: sp.cycle_palette,
+            selected: if sp.cycle_palette {
+                pick
+            } else {
+                Some(pick.unwrap_or(sp.palette_morph))
+            },
+        })
+    }
+
     /// Pushes the palette (open tabs and selection) and brush outline to
     /// the tank; it only asks for a frame if they changed.
     fn sync_overlay(&mut self) {
         let selected = self.selection();
-        let shown = (self.open, self.open_sub, selected);
+        let morphs = self.palette_morphs(selected);
+        let shown = (self.open, self.open_sub, selected, morphs);
         if self.shown != Some(shown) {
-            if self.shown.is_none_or(|(_, _, s)| s != selected) {
+            if self.shown.is_none_or(|(_, _, s, _)| s != selected) {
                 // A new tool clears the last inspection from the title and
                 // the drawn card, so it can't catch the new tool's clicks.
                 self.window.set_title("DeskTank");
@@ -978,9 +1072,12 @@ impl Running {
                 open_sub: self.open_sub,
                 items: self.open_items().to_vec(),
                 selected,
+                morphs,
             }));
         }
         // The selected creature's or plant's species card, unless closed.
+        // A closed card stays closed through morph picks, which only change
+        // the preview.
         let card = selected
             .and_then(|(t, sub, i)| self.tree.get(t)?.subs.get(sub)?.items.get(i).copied())
             .and_then(Card::of);
@@ -988,8 +1085,14 @@ impl Running {
             // Another species (or none) is selected: its card opens.
             self.closed_card = None;
         }
-        self.tank
-            .set_card(card.filter(|&c| self.closed_card != Some(c)));
+        let world = self.tank.world();
+        let card = card
+            .filter(|&c| self.closed_card != Some(c))
+            .map(|c| match c {
+                Card::Creature(id, _) => Card::Creature(id, self.tools.morph_for(world, id)),
+                plant @ Card::Plant(_) => plant,
+            });
+        self.tank.set_card(card);
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
@@ -1004,6 +1107,15 @@ impl Running {
             .magnifier()
             .map(|(x, y, zoom)| Magnifier { cell: (x, y), zoom });
         self.tank.set_magnifier(magnifier);
+    }
+}
+
+/// `card` with no morph preview: the species alone, for telling whether a
+/// card is the one that was closed.
+fn species_card(card: Card) -> Card {
+    match card {
+        Card::Creature(id, _) => Card::Creature(id, None),
+        plant @ Card::Plant(_) => plant,
     }
 }
 
@@ -1361,6 +1473,15 @@ impl ApplicationHandler<Wake> for App {
                         if c.eq_ignore_ascii_case("i") && !event.repeat && !s.command() =>
                     {
                         s.toggle_inspected_device_guard();
+                    }
+                    // C picks the selected creature's next colour morph.
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("c")
+                            && !event.repeat
+                            && !s.command()
+                            && !s.modifiers.alt_key() =>
+                    {
+                        s.next_creature_morph();
                     }
                     Key::Character(c) => {
                         // 1–9 are the open sub-category's first nine slots,

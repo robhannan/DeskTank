@@ -1547,7 +1547,7 @@ fn the_species_card_is_drawn_on_top_of_the_tank_and_the_lens() {
     let guppy = tank.world().species().id("guppy").unwrap();
     let plain = render_sized(gpu, &mut tank, format, (tw, th));
 
-    tank.set_card(Some(desktank_render::Card::Creature(guppy)));
+    tank.set_card(Some(desktank_render::Card::Creature(guppy, None)));
     let layout = tank.card_layout((tw, th)).unwrap();
     // No palette: top-left, shrunk to fit the 320x180 target.
     assert_eq!((layout.scale, layout.origin), (1, (2, 2)));
@@ -1579,7 +1579,7 @@ fn the_species_card_is_drawn_on_top_of_the_tank_and_the_lens() {
     // Nothing under the card shows through: the same card over a tank with
     // no creature there draws the same pixels.
     let mut bare = Tank::new(world(false), TankConfig::default());
-    bare.set_card(Some(desktank_render::Card::Creature(guppy)));
+    bare.set_card(Some(desktank_render::Card::Creature(guppy, None)));
     let bare = render_sized(gpu, &mut bare, format, (tw, th));
     for y in y0..y0 + ch {
         for x in x0..x0 + cw {

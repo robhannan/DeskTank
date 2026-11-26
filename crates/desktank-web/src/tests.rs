@@ -220,6 +220,68 @@ fn the_propagule_chips_list_the_species_methods_and_seeds_pour() {
 }
 
 #[test]
+fn creature_morph_picks_wrap_and_survive_replacement() {
+    let mut t = tank();
+    t.select(slot(&t, "creature neon_tetra"));
+    assert_eq!(t.creature_morphs(), Vec::<String>::new());
+    assert!(!t.creature_morph_cycles());
+    assert_eq!(t.creature_morph(), "");
+    assert!(!t.set_creature_morph(""));
+    assert_eq!(t.next_creature_morph(), None);
+
+    t.select(slot(&t, "creature cherry_shrimp"));
+    assert_eq!(t.creature_morphs(), ["red", "wild", "blue", "yellow"]);
+    assert!(!t.creature_morph_cycles());
+    assert_eq!(t.creature_morph(), "red");
+    assert!(t.set_creature_morph("yellow"));
+    assert_eq!(t.next_creature_morph().as_deref(), Some("red"));
+    assert!(t.set_creature_morph("BLUE"));
+
+    t.select(slot(&t, "creature betta"));
+    assert!(t.creature_morph_cycles());
+    assert_eq!(t.creature_morph(), "");
+    assert_eq!(t.next_creature_morph().as_deref(), Some("wild"));
+    assert!(t.set_creature_morph("lavender"));
+    assert_eq!(t.next_creature_morph().as_deref(), Some(""));
+    assert!(t.set_creature_morph("koi"));
+    assert!(!t.set_creature_morph("blue"));
+    assert_eq!(t.creature_morph(), "koi");
+    assert!(t.set_creature_morph(""));
+    assert_eq!(t.creature_morph(), "");
+    assert!(t.set_creature_morph("copper"));
+
+    let mut next = tank();
+    next.select(slot(&next, "creature betta"));
+    next.keep_creature_picks(&t);
+    assert_eq!(next.creature_morph(), "copper");
+    assert_eq!(
+        next.tank.card(),
+        next.tools
+            .selected_creature()
+            .map(|id| Card::Creature(id, Some(2)))
+    );
+    next.select(slot(&next, "creature cherry_shrimp"));
+    assert_eq!(next.creature_morph(), "blue");
+}
+
+#[test]
+fn changing_morph_keeps_a_closed_species_card_closed() {
+    let mut t = tank();
+    t.select(slot(&t, "creature betta"));
+    let id = t.tools.selected_creature().unwrap();
+    assert!(t.set_creature_morph("koi"));
+    assert_eq!(t.tank.card(), Some(Card::Creature(id, Some(3))));
+    let rect = t.card_rect();
+    t.pointer_down(PRIMARY, f64::from(rect[0]) + 1.0, f64::from(rect[1]) + 1.0);
+    assert_eq!(t.tank.card(), None);
+    assert_eq!(t.next_creature_morph().as_deref(), Some("marble"));
+    assert_eq!(t.tank.card(), None);
+    t.select(slot(&t, "creature neon_tetra"));
+    t.select(slot(&t, "creature betta"));
+    assert_eq!(t.tank.card(), Some(Card::Creature(id, Some(4))));
+}
+
+#[test]
 fn a_plant_slot_pours_its_species_and_inspect_shows_the_plant() {
     let mut t = tank();
     let plants: Vec<_> = t

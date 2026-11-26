@@ -41,7 +41,9 @@ pub use wgpu;
 
 pub use card::{CARD_MAX, Card, CardLayout};
 pub use gpu::{Gpu, GpuError, GpuOptions};
-pub use hud::{BrushPreview, Magnifier, MagnifierLayout, Palette, PaletteHit, PaletteLayout};
+pub use hud::{
+    BrushPreview, Magnifier, MagnifierLayout, Palette, PaletteHit, PaletteLayout, PaletteMorphs,
+};
 pub use inspect::{InspectPage, Inspected};
 pub use layout::{Layout, even_scale};
 pub use offscreen::CaptureError;

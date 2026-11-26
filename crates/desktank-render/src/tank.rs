@@ -430,6 +430,7 @@ impl Tank {
             p.tabs.len(),
             p.subs.len(),
             p.items.len(),
+            p.morphs.map_or(0, |m| m.count + usize::from(m.cycle)),
         ))
     }
 
@@ -1061,7 +1062,7 @@ mod tests {
     #[test]
     fn settled_tank_draws_only_when_the_card_changes() {
         let mut tank = settled_planted_tank();
-        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap());
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap(), None);
         let moss = Card::Plant(tank.world().plant_species().id("java_moss").unwrap());
         // No card: nothing built, nothing to draw, no frame.
         assert_eq!(tank.card(), None);
@@ -1097,7 +1098,7 @@ mod tests {
         assert_eq!(count_frames(&mut tank, Duration::from_secs(9), 2), 0);
 
         // An unknown species shows nothing but is still a change.
-        tank.set_card(Some(Card::Creature(desktank_sim::SpeciesId(250))));
+        tank.set_card(Some(Card::Creature(desktank_sim::SpeciesId(250), None)));
         assert!(tank.card_image.is_none());
         assert_eq!(tank.card_layout((1280, 720)), None);
     }
@@ -1178,7 +1179,7 @@ mod tests {
     #[test]
     fn the_card_sits_below_the_palette_when_there_is_one() {
         let mut tank = settled_planted_tank();
-        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap());
+        let guppy = Card::Creature(tank.world().species().id("guppy").unwrap(), None);
         tank.set_card(Some(guppy));
         let alone = tank.card_layout((1280, 720)).unwrap();
         tank.set_palette(Some(Palette {
@@ -1188,6 +1189,7 @@ mod tests {
             open_sub: 0,
             items: Vec::new(),
             selected: None,
+            morphs: None,
         }));
         let below = tank.card_layout((1280, 720)).unwrap();
         let palette = tank.palette_layout((1280, 720)).unwrap();
