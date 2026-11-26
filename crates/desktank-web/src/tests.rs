@@ -482,19 +482,45 @@ fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     t.pointer_up(PRIMARY);
     assert_eq!(t.inspect_page(), 1);
     assert_eq!(t.state_hash(), hash);
-    // Inspecting water removes it.
+    // Inspecting water moves it to that cell: one page, so a click on it
+    // keeps it there.
     down(&mut t, PRIMARY, 100, 20);
     t.pointer_up(PRIMARY);
-    assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
-    // Netted out, the card goes with the creature.
+    assert_eq!(t.inspect_page(), 1);
+    let rect = t.inspect_rect();
+    assert!(
+        rect[0] > 100 * 4 || rect[0] + rect[2] < 100 * 4,
+        "beside the cell"
+    );
+    let (x, y) = (f64::from(rect[0] + 2), f64::from(rect[1] + 2));
+    t.pointer_down(PRIMARY, x, y);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 1);
+    assert_eq!(t.take_inspection(), "cell water 100 20");
+    // Inspected again, then the net picked: the card goes, so it can't
+    // catch the net's clicks (the Tank tests cover a creature leaving).
     down(&mut t, PRIMARY, 30, 40);
     t.pointer_up(PRIMARY);
     assert_eq!(t.inspect_page(), 1);
+    // Another tool removes it; selecting the same tool again doesn't.
+    t.select(slot(&t, "tool inspect"));
+    assert_eq!(t.inspect_page(), 1);
     t.select(slot(&t, "tool net"));
+    assert_eq!(t.inspect_page(), 0);
     down(&mut t, PRIMARY, 30, 40);
     drag(&mut t, 30, 0);
     assert_eq!(t.pointer_up(PRIMARY), 1);
     assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
+    // A device gets a card too.
+    t.select(slot(&t, "device internal_filter"));
+    down(&mut t, PRIMARY, 4, 30);
+    t.pointer_up(PRIMARY);
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 6, 40);
+    t.pointer_up(PRIMARY);
+    assert!(t.take_inspection().starts_with("device internal_filter "));
+    assert_eq!(t.inspect_page(), 1);
+    assert_eq!(t.inspect_rect().len(), 4);
 }
 
 #[test]

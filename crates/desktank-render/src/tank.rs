@@ -336,10 +336,10 @@ impl Tank {
         )
     }
 
-    /// Pins (or with `None`, removes) the inspect card to a creature or a
-    /// plant (SPEC §2.5): drawn beside it, following it, on its live page.
-    /// It needs no input to show, so any host can draw it. The card goes
-    /// by itself when its creature or plant does. A change builds the image
+    /// Pins (or with `None`, removes) the inspect card to a creature, plant,
+    /// device or cell (SPEC §2.5): drawn beside it, following it, on its
+    /// live page. It needs no input to show, so any host can draw it. The
+    /// card goes by itself when its creature, plant or device does. A change builds the image
     /// once and asks for a frame; setting the same thing again costs
     /// nothing (and keeps the page), and nothing is built or drawn while it
     /// is `None`.

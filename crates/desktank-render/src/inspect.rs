@@ -1,10 +1,13 @@
-//! The in-tank inspect card (SPEC §2.5): a two-page card pinned beside the
-//! creature or plant last inspected, following it as it moves.
+//! The in-tank inspect card (SPEC §2.5): a card pinned beside whatever was
+//! last inspected (a creature, a plant, a device or a cell), following it
+//! as it moves.
 //!
-//! Page 1 is what inspect found right now (its name, stage, age, health and
-//! so on, from [`World::creature_card`] or [`World::plant`]); page 2 is its
-//! species card ([`crate::card`]). Each page carries its number in the
-//! top-right corner. The card is built on the CPU like the species card and
+//! Page 1 is what inspect found right now (a creature's name, stage, age,
+//! health and so on from [`World::creature_card`]; a plant's growth; a
+//! device's mount and filter state; a cell's material). Creatures and
+//! plants have a second page, their species card ([`crate::card`]), and
+//! then each page carries its number in the top-right corner; devices and
+//! materials have no encyclopedia entry yet, so their card is one page. The card is built on the CPU like the species card and
 //! drawn from a third region of the HUD texture, so it needs nothing a host
 //! provides beyond the tank: a screensaver or wallpaper can show it as well
 //! as an interactive window.
@@ -14,7 +17,7 @@
 //! nothing is built, uploaded or drawn.
 
 use desktank_sim::tools::Inspection;
-use desktank_sim::{CreatureId, PlantId, UnmetNeed, World};
+use desktank_sim::{CreatureId, DeviceId, Mount, MovementClass, PlantId, UnmetNeed, World};
 
 use crate::card::{self, CARD_MAX, Card, CardImage, CardLayout, Page, display_name};
 use crate::layout::Layout;
@@ -33,18 +36,35 @@ pub enum Inspected {
     Creature(CreatureId),
     /// A plant.
     Plant(PlantId),
+    /// A device (D27).
+    Device(DeviceId),
+    /// A cell, whatever material is in it.
+    Cell {
+        /// Column.
+        x: usize,
+        /// Row.
+        y: usize,
+    },
 }
 
 impl Inspected {
-    /// What an inspection pins the card to: the creature or plant found;
-    /// `None` for a cell or a device.
+    /// What an inspection pins the card to: the creature, plant or device
+    /// found, else the cell.
     #[must_use]
-    pub fn of(found: Inspection) -> Option<Self> {
+    pub fn of(found: Inspection) -> Self {
         match found {
-            Inspection::Creature { id, .. } => Some(Self::Creature(id)),
-            Inspection::Plant { id, .. } => Some(Self::Plant(id)),
-            Inspection::Cell { .. } | Inspection::Device { .. } => None,
+            Inspection::Creature { id, .. } => Self::Creature(id),
+            Inspection::Plant { id, .. } => Self::Plant(id),
+            Inspection::Device { id, .. } => Self::Device(id),
+            Inspection::Cell { x, y, .. } => Self::Cell { x, y },
         }
+    }
+
+    /// Whether its card has a species page: creatures and plants do;
+    /// devices and materials have no encyclopedia entry yet.
+    #[must_use]
+    pub fn has_species_page(self) -> bool {
+        matches!(self, Self::Creature(_) | Self::Plant(_))
     }
 }
 
@@ -105,9 +125,11 @@ impl InspectCard {
         true
     }
 
-    /// Shows `page`; returns whether a frame is needed.
+    /// Shows `page` (only the live page for a card without a species
+    /// page); returns whether a frame is needed.
     pub(crate) fn set_page(&mut self, world: &World, page: InspectPage) -> bool {
-        if self.page == page {
+        let one_page = self.what.is_some_and(|w| !w.has_species_page());
+        if self.page == page || (one_page && page == InspectPage::Species) {
             return false;
         }
         self.page = page;
@@ -164,7 +186,75 @@ pub(crate) fn live(world: &World, what: Inspected) -> Option<Live> {
     match what {
         Inspected::Creature(id) => creature_live(world, id),
         Inspected::Plant(id) => plant_live(world, id),
+        Inspected::Device(id) => device_live(world, id),
+        Inspected::Cell { x, y } => cell_live(world, x, y),
     }
+}
+
+/// What a material does, in a few words.
+fn class_name(class: MovementClass) -> &'static str {
+    match class {
+        MovementClass::Solid => "solid",
+        MovementClass::Rigid => "rigid body",
+        MovementClass::Powder => "powder",
+        MovementClass::Liquid => "liquid",
+        MovementClass::Buoyant => "rises",
+        MovementClass::Floating => "floats, then sinks",
+    }
+}
+
+fn cell_live(world: &World, x: usize, y: usize) -> Option<Live> {
+    let material = world.materials().get(world.cell(x, y)?.material)?;
+    Some(Live {
+        title: display_name(&material.name),
+        subtitle: String::new(),
+        fields: vec![
+            ("Kind:", class_name(material.class).to_owned()),
+            ("Cell:", format!("{x}, {y}")),
+        ],
+    })
+}
+
+fn device_live(world: &World, id: DeviceId) -> Option<Live> {
+    let s = world.device_status(id)?;
+    let art = world.device_kinds().get(s.kind);
+    let place = match art.mount {
+        Mount::SideGlass if s.facing_left => "right glass",
+        Mount::SideGlass => "left glass",
+        Mount::Bed => "bed",
+        Mount::Rim => "rim",
+        Mount::Floor | Mount::FloorPanel => "floor",
+    };
+    let mut fields = vec![("On:", place.to_owned())];
+    if s.is_filter {
+        let guard = if s.fry_safe {
+            "fry-safe"
+        } else if s.intake_guard {
+            "on"
+        } else {
+            "off"
+        };
+        fields.extend([
+            ("Flow:", format!("{:.1} cells/s", s.flow)),
+            ("Load:", percent(s.media_load)),
+            ("Maturity:", percent(s.maturity)),
+            ("Guard:", guard.to_owned()),
+        ]);
+    } else if art.mount == Mount::FloorPanel {
+        let state = if s.connected {
+            "connected"
+        } else {
+            "not connected"
+        };
+        fields.push(("Filter:", state.to_owned()));
+    } else {
+        fields.push(("Type:", "air diffuser".to_owned()));
+    }
+    Some(Live {
+        title: format!("{} #{}", art.label, id.0),
+        subtitle: String::new(),
+        fields,
+    })
 }
 
 fn percent(v: f32) -> String {
@@ -243,9 +333,9 @@ fn plant_live(world: &World, id: PlantId) -> Option<Live> {
     })
 }
 
-/// Draws the live page.
-pub(crate) fn build_live(live: &Live) -> CardImage {
-    let mut page = Page::new(Some(InspectPage::Live.tag()));
+/// Draws the live page, numbered if there is a second.
+pub(crate) fn build_live(live: &Live, numbered: bool) -> CardImage {
+    let mut page = Page::new(numbered.then(|| InspectPage::Live.tag()));
     page.heading(&live.title, &live.subtitle);
     for (label, text) in &live.fields {
         page.field(label, text);
@@ -262,11 +352,12 @@ pub(crate) fn build(
     live: &Live,
 ) -> Option<CardImage> {
     match page {
-        InspectPage::Live => Some(build_live(live)),
+        InspectPage::Live => Some(build_live(live, what.has_species_page())),
         InspectPage::Species => {
             let species = match what {
                 Inspected::Creature(id) => Card::Creature(world.creature(id)?.species()),
                 Inspected::Plant(id) => Card::Plant(world.plant(id)?.species),
+                Inspected::Device(_) | Inspected::Cell { .. } => return None,
             };
             card::build_tagged(
                 species,
@@ -301,6 +392,19 @@ pub(crate) fn anchor(world: &World, what: Inspected) -> Option<[f32; 4]> {
                 f(b.x1.max(b.x0 + 1)),
                 f(b.y1.max(b.y0 + 1)),
             ])
+        }
+        Inspected::Device(id) => {
+            let d = world.device(id)?;
+            let art = world.device_kinds().get(d.kind);
+            #[allow(clippy::cast_precision_loss)] // grid coordinates
+            let f = |v: usize| v as f32;
+            Some([f(d.x), f(d.y), f(d.x + art.size.0), f(d.y + d.span(art))])
+        }
+        Inspected::Cell { x, y } => {
+            world.cell(x, y)?;
+            #[allow(clippy::cast_precision_loss)] // grid coordinates
+            let (x, y) = (x as f32, y as f32);
+            Some([x, y, x + 1.0, y + 1.0])
         }
     }
 }
@@ -473,6 +577,68 @@ mod tests {
         assert!(build(&w, what, InspectPage::Species, &live).is_some());
         let a = anchor(&w, what).unwrap();
         assert!(a[0] <= 40.0 && a[2] > 40.0, "{a:?}");
+    }
+
+    #[test]
+    fn cells_and_devices_have_a_one_page_live_card() {
+        let mut w = world();
+        let cell = Inspected::Cell { x: 10, y: 60 };
+        let page_text = super::live(&w, cell).unwrap();
+        assert_eq!(page_text.title, "Water");
+        assert_eq!(
+            page_text.fields,
+            [
+                ("Kind:", "liquid".to_owned()),
+                ("Cell:", "10, 60".to_owned())
+            ]
+        );
+        assert!(!cell.has_species_page());
+        assert!(build(&w, cell, InspectPage::Species, &page_text).is_none());
+        let page = build(&w, cell, InspectPage::Live, &page_text).unwrap();
+        assert_ne!(page, build_live(&page_text, true), "no page number");
+        assert_eq!(anchor(&w, cell), Some([10.0, 60.0, 11.0, 61.0]));
+        assert!(live(&w, Inspected::Cell { x: 999, y: 0 }).is_none());
+
+        let filter = w
+            .add_device(desktank_sim::DeviceKind::InternalFilter, 4, 40, false)
+            .unwrap()
+            .unwrap();
+        let bubbler = w
+            .add_device(desktank_sim::DeviceKind::Bubbler, 80, 40, false)
+            .unwrap()
+            .unwrap();
+        let f = live(&w, Inspected::Device(filter)).unwrap();
+        assert_eq!(f.title, format!("Internal filter #{}", filter.0));
+        let labels: Vec<_> = f.fields.iter().map(|f| f.0).collect();
+        assert_eq!(labels, ["On:", "Flow:", "Load:", "Maturity:", "Guard:"]);
+        assert_eq!(f.fields[0].1, "left glass");
+        let b = live(&w, Inspected::Device(bubbler)).unwrap();
+        assert_eq!(
+            b.fields.last().unwrap(),
+            &("Type:", "air diffuser".to_owned())
+        );
+        let a = anchor(&w, Inspected::Device(filter)).unwrap();
+        assert!(a[2] > a[0] + 4.0 && a[3] > a[1] + 4.0, "{a:?}");
+        for text in [&f, &b]
+            .iter()
+            .flat_map(|l| l.fields.iter().map(|f| &f.1).chain([&l.title]))
+        {
+            assert!(
+                text.chars().all(|c| crate::font::glyph(c).is_some()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_one_page_card_does_not_turn() {
+        let w = world();
+        let mut card = InspectCard::default();
+        assert!(card.set(&w, Some(Inspected::Cell { x: 5, y: 60 })));
+        assert!(card.image.is_some());
+        assert!(!card.set_page(&w, InspectPage::Species));
+        assert_eq!(card.page, InspectPage::Live);
+        assert!(card.image.is_some());
     }
 
     #[test]

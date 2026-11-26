@@ -130,6 +130,7 @@ const canvas = $<HTMLCanvasElement>("tank");
 const statusEl = $("status");
 const statsEl = $("stats");
 const inspectEl = $("inspect");
+const inspectSr = $("inspect-sr");
 const cheatForm = $<HTMLFormElement>("cheat");
 const cheatInput = $<HTMLInputElement>("cheat-input");
 const cheatOut = $<HTMLOutputElement>("cheat-out");
@@ -1205,8 +1206,24 @@ function canvasPoint(e: PointerEvent): Point {
   return [((e.clientX - rect.left) / rect.width) * canvas.width, ((e.clientY - rect.top) / rect.height) * canvas.height];
 }
 
-// Shows a line in the inspect readout for a few seconds (longer while its
-// name field is in use).
+// Tells screen readers what inspect found. The drawn card in the canvas
+// shows it to everyone else, so nothing visible repeats it.
+function announce(text: string) {
+  inspectSr.textContent = text;
+}
+
+// Hides the name field and device actions once the inspect card has gone
+// (another tool's stroke can't remove it, but netting, death or a new
+// inspection can).
+function syncInspectControls() {
+  if (tank.inspectPage() !== 0) return;
+  inspected = null;
+  closeName();
+  closeDeviceActions();
+}
+
+// Shows a message (a refusal, a cheat's result, an error) in the readout
+// line for a few seconds.
 function flash(text: string) {
   inspectEl.textContent = text;
   inspectEl.hidden = false;
@@ -1215,16 +1232,7 @@ function flash(text: string) {
 }
 
 function fade() {
-  if (
-    document.activeElement === nameInput ||
-    (!deviceActions.hidden && deviceActions.contains(document.activeElement))
-  ) {
-    inspectTimer = setTimeout(fade, INSPECT_SHOW_MS);
-    return;
-  }
   inspectEl.hidden = true;
-  closeName();
-  closeDeviceActions();
 }
 
 function closeDeviceActions() {
@@ -1247,7 +1255,7 @@ function showDeviceLine(rest: string[], preserveCell = false) {
     inspected = null;
     closeName();
     closeDeviceActions();
-    flash(`${label(name)} #${id} · ${placeText} · ${status === "air" ? "air diffuser" : status} · cell ${x}, ${y}`);
+    announce(`${label(name)} #${id} · ${placeText} · ${status === "air" ? "air diffuser" : status} · cell ${x}, ${y}`);
     return;
   }
   const [, , , flow, load, maturity, guard, frySafe, rawX, rawY] = rest;
@@ -1258,7 +1266,7 @@ function showDeviceLine(rest: string[], preserveCell = false) {
   inspected = null;
   closeName();
   inspectedDeviceId = Number(id);
-  flash(text);
+  announce(text);
   if (owner && !handingOver) {
     deviceGuardLabel.hidden = frySafe === "yes";
     deviceGuardInput.checked = guard === "on";
@@ -1310,7 +1318,8 @@ function runName(e: SubmitEvent) {
     nameInput.value = inspected.name;
     nameOut.textContent = inspected.name ? "Named · Enter renames · Esc closes" : "No name · Esc closes";
     nameInput.blur();
-    flash(creatureText(inspected));
+    announce(creatureText(inspected));
+    kick();
   } catch (err) {
     nameOut.textContent = String(err);
     inspected = null;
@@ -1364,19 +1373,21 @@ function runCheat(e: SubmitEvent) {
   }
 }
 
-// Shows what inspect last found under the tank for a few seconds.
+// Takes what inspect last found: the card shows it; this announces it and
+// opens the name field or device actions that act on it.
 function showInspection() {
   const found = tank.takeInspection();
   if (!found) return;
   const [kind, ...rest] = found.split(" ");
+  let text: string;
   if (kind === "cell") {
     const [name, x, y] = rest;
-    inspectEl.textContent = `${label(name)} · cell ${x}, ${y}`;
+    text = `${label(name)} · cell ${x}, ${y}`;
   } else if (kind === "plant") {
     const [species, id, age, health, cells, limit, x, y] = rest;
     const s = Number(age);
     const old = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
-    inspectEl.textContent = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
+    text = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
   } else if (kind === "device") {
     // D27, DV3: flow, media load, maturity, Rinse and intake guard toggle.
     showDeviceLine(rest);
@@ -1385,7 +1396,7 @@ function showInspection() {
     // The name is last and may hold spaces.
     closeDeviceActions();
     inspected = { id: Number(rest[1]), parts: rest.slice(0, 12), name: rest.slice(12).join(" ") };
-    flash(creatureText(inspected));
+    announce(creatureText(inspected));
     if (owner && !handingOver) {
       nameInput.value = inspected.name;
       nameOut.textContent = "N or click to name · Enter names it · Esc closes";
@@ -1398,7 +1409,7 @@ function showInspection() {
   inspected = null;
   closeName();
   closeDeviceActions();
-  flash(inspectEl.textContent);
+  announce(text);
 }
 
 // Shows why adding a creature or live food was refused.
@@ -1469,6 +1480,7 @@ function pickZoom() {
 
 function after() {
   showInspection();
+  syncInspectControls();
   showRefusal();
   showCreatureCap();
   showZoom();

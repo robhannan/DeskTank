@@ -28,14 +28,15 @@
 //! Plants (T6b): each plant species has a slot under Plants; selected, it
 //! pours its species as the propagule named in the title bar (seeds,
 //! cuttings, fragments, runners or buds), and `P` picks the next one that
-//! species grows from (remembered per species). Inspect shows a plant's
-//! species, age, health, size and what limits its growth in the title bar.
+//! species grows from (remembered per species). Inspect pins the drawn
+//! inspect card to what it finds (a creature, plant, device or cell); the
+//! title bar keeps only the keys that act on it.
 //!
 //! Creatures (T7a): the palette's creature slots add one per click; the net
 //! carries a creature and, let go above the water, lifts it out; inspect
-//! shows its card in the title bar (T9: its name, species, stage, sex,
-//! age, health, energy, morph and how long a carrying female has to go;
-//! [`desktank_sim::CreatureCard`]). `N` then opens a name field for it in
+//! shows its card beside it (T9: its name, species, stage, sex, age,
+//! health, energy, morph and how long a carrying female has to go, then
+//! its species). `N` then opens a name field for it in
 //! the title bar: Enter names it (a blank name removes it), Escape cancels.
 //! Names are saved with the tank. `--fish N` stocks the tank with N
 //! creatures to start with. Swimming creatures redraw the tank every tick
@@ -76,14 +77,12 @@ use desktank_render::{
     BrushPreview, Card, Gpu, GpuOptions, Inspected, Magnifier, Palette, PaletteHit, Tank,
     TankConfig, TankSurface, wgpu,
 };
-use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
 use desktank_sim::tools::{
     AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
 };
 use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, PlantId, RinseKind,
-    World, WorldConfig,
+    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, RinseKind, World, WorldConfig,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -342,9 +341,9 @@ struct Running {
     /// The creature inspect last showed, which `N` names; cleared when
     /// another tool is picked.
     inspected: Option<CreatureId>,
-    /// The device inspect last showed (`id`, cell `x`, `y`), which `R` rinses
+    /// The device inspect last showed, which `R` rinses
     /// and `I` toggles the intake guard on.
-    inspected_device: Option<(DeviceId, usize, usize)>,
+    inspected_device: Option<DeviceId>,
 }
 
 /// A one-line text field in the title bar.
@@ -645,60 +644,23 @@ impl Running {
         // shown now, an open name field is for the one shown before, and
         // the drawn card moves to this creature or plant (or goes).
         self.forget_inspected();
-        self.tank.set_inspected(Inspected::of(found));
-        let text = match found {
-            Inspection::Cell { x, y, material } => {
-                let name = self
-                    .tank
-                    .world()
-                    .materials()
-                    .get(material)
-                    .map_or("?", |m| m.name.as_str());
-                format!("{name} at ({x}, {y})")
-            }
-            Inspection::Device { id, x, y } => {
-                let Some(line) = device_line(self.tank.world(), id, x, y) else {
-                    return;
-                };
-                self.inspected_device = Some((id, x, y));
-                line
-            }
-            Inspection::Creature {
-                id,
-                species,
-                x,
-                y,
-                material,
-            } => {
-                let world = self.tank.world();
-                let Some(card) = world.creature_card(id) else {
-                    return;
-                };
+        self.tank.set_inspected(Some(Inspected::of(found)));
+        // The card shows what was found; the title keeps only the keys.
+        let hint = match found {
+            Inspection::Creature { id, .. } => {
                 self.inspected = Some(id);
-                let over = world
-                    .materials()
-                    .get(material)
-                    .map_or("?", |m| m.name.as_str());
-                let need = match world.unmet_need(species) {
-                    Some(UnmetNeed::Depth { needs, .. }) => {
-                        format!(", needs {needs} cells of water")
-                    }
-                    Some(UnmetNeed::Air) => ", needs air at the surface".to_owned(),
-                    None => String::new(),
-                };
-                format!(
-                    "{}{need} · over {over} at ({x}, {y}) · N names it",
-                    card.summary()
-                )
+                Some("N names it")
             }
-            Inspection::Plant { id, x, y, .. } => {
-                let Some(line) = plant_line(self.tank.world(), id, x, y) else {
-                    return;
-                };
-                line
+            Inspection::Device { id, .. } => {
+                self.inspected_device = Some(id);
+                device_hint(self.tank.world(), id)
             }
+            Inspection::Cell { .. } | Inspection::Plant { .. } => None,
         };
-        self.window.set_title(&format!("DeskTank — {text}"));
+        self.window.set_title(&hint.map_or_else(
+            || "DeskTank".to_owned(),
+            |hint| format!("DeskTank — {hint}"),
+        ));
     }
 
     /// Shows the open text field in the title bar, after `note` (the last
@@ -766,13 +728,13 @@ impl Running {
 
     /// Rinses the device inspect last showed (`R` gentle, `Shift+R` hard).
     fn rinse_inspected_device(&mut self, kind: RinseKind) {
-        let Some((id, x, y)) = self.inspected_device else {
+        let Some(id) = self.inspected_device else {
             return;
         };
         self.tank.world_mut().rinse_device(id, kind);
-        if let Some(line) = device_line(self.tank.world(), id, x, y) {
-            self.window.set_title(&format!("DeskTank — {line}"));
-        } else {
+        // Redraw so the card shows it, even while paused.
+        self.tank.invalidate();
+        if self.tank.world().device(id).is_none() {
             self.inspected_device = None;
             self.window
                 .set_title("DeskTank — that device is no longer in the tank");
@@ -781,18 +743,16 @@ impl Running {
 
     /// Toggles the intake guard on the device inspect last showed (`I`).
     fn toggle_inspected_device_guard(&mut self) {
-        let Some((id, x, y)) = self.inspected_device else {
+        let Some(id) = self.inspected_device else {
             return;
         };
+        self.tank.invalidate();
         if self
             .tank
             .world_mut()
             .toggle_device_intake_guard(id)
-            .is_some()
-            && let Some(line) = device_line(self.tank.world(), id, x, y)
+            .is_none()
         {
-            self.window.set_title(&format!("DeskTank — {line}"));
-        } else {
             self.inspected_device = None;
             self.window
                 .set_title("DeskTank — that device is no longer in the tank");
@@ -994,9 +954,11 @@ impl Running {
         let shown = (self.open, self.open_sub, selected);
         if self.shown != Some(shown) {
             if self.shown.is_none_or(|(_, _, s)| s != selected) {
-                // A new tool clears the last inspection from the title.
+                // A new tool clears the last inspection from the title and
+                // the drawn card, so it can't catch the new tool's clicks.
                 self.window.set_title("DeskTank");
                 self.forget_inspected();
+                self.tank.set_inspected(None);
             }
             self.shown = Some(shown);
             let first = |s: &PaletteSub| s.items.first().copied();
@@ -1563,75 +1525,17 @@ fn wrap(at: usize, steps: i32, n: usize) -> usize {
     usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
 }
 
-/// The inspect line for plant `id` under cell `(x, y)`.
-fn plant_line(world: &World, id: PlantId, x: usize, y: usize) -> Option<String> {
-    let p = world.plant(id)?;
-    let name = world
-        .plant_species()
-        .get(p.species)
-        .map_or("?", |s| s.name.as_str());
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ages ≥ 0
-    let age = p.age as u64;
-    let [roots, stem, leaves] = p.parts;
-    Some(format!(
-        "{name} #{}, {}m {:02}s old, health {:.0}%, {} cells \
-         (roots {roots}, stem {stem}, leaves {leaves}), {} at ({x}, {y})",
-        id.0,
-        age / 60,
-        age % 60,
-        p.health * 100.0,
-        p.size(),
-        p.limit.describe(),
-    ))
-}
-
-/// The inspect line for device `id` under cell `(x, y)`, including its mount (D27, DV3–DV7).
-fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
+/// The keys for the device inspect last showed: a filter's rinse, media
+/// and guard keys (the guard only if it isn't fry-safe); `None` otherwise.
+fn device_hint(world: &World, id: DeviceId) -> Option<&'static str> {
     let status = world.device_status(id)?;
-    let art = world.device_kinds().get(status.kind);
-    let label = &art.label;
-    let place = match art.mount {
-        Mount::SideGlass => {
-            if status.facing_left {
-                "on the right glass"
-            } else {
-                "on the left glass"
-            }
-        }
-        Mount::Bed => "on the bed",
-        Mount::Rim => "on the rim",
-        Mount::Floor | Mount::FloorPanel => "on the floor",
-    };
     if !status.is_filter {
-        let detail = match (art.mount, status.connected) {
-            (Mount::FloorPanel, true) => "connected",
-            (Mount::FloorPanel, false) => "disconnected",
-            _ => "air diffuser",
-        };
-        return Some(format!(
-            "{label} #{} · {place} · {detail} · at ({x}, {y})",
-            id.0
-        ));
+        None
+    } else if status.fry_safe {
+        Some("R rinse · Shift+R hard rinse · M replace media")
+    } else {
+        Some("R rinse · Shift+R hard rinse · M replace media · I guard")
     }
-    let guard = if status.fry_safe {
-        "fry-safe"
-    } else if status.intake_guard {
-        "guard on"
-    } else {
-        "guard off"
-    };
-    let hint = if status.fry_safe {
-        "R rinse · Shift+R hard rinse · M replace media"
-    } else {
-        "R rinse · Shift+R hard rinse · M replace media · I guard"
-    };
-    Some(format!(
-        "{label} #{} · {place} · flow {:.1} cells/s · load {:.0}% · maturity {:.0}% · {guard} · at ({x}, {y}) · {hint}",
-        id.0,
-        status.flow,
-        status.media_load * 100.0,
-        status.maturity * 100.0,
-    ))
 }
 
 #[cfg(test)]
@@ -1661,7 +1565,7 @@ mod tests {
     }
 
     #[test]
-    fn device_line_omits_filter_fields_for_bubbler() {
+    fn only_a_filter_has_device_keys() {
         let mut w = World::new(
             WorldConfig {
                 width: 120,
@@ -1676,15 +1580,12 @@ mod tests {
             .add_device(DeviceKind::Bubbler, 50, 40, false)
             .unwrap()
             .unwrap();
-        let line = device_line(&w, bid, 50, 76).unwrap();
-        assert_eq!(line, "Bubbler #1 · on the bed · air diffuser · at (50, 76)");
-
+        assert_eq!(device_hint(&w, bid), None);
         let fid = w
             .add_device(DeviceKind::InternalFilter, 4, 40, false)
             .unwrap()
             .unwrap();
-        let filter_line = device_line(&w, fid, 4, 40).unwrap();
-        assert!(filter_line.contains("Internal filter #2"));
-        assert!(filter_line.contains("R rinse"));
+        assert!(device_hint(&w, fid).unwrap().starts_with("R rinse"));
+        assert_eq!(device_hint(&w, DeviceId(99)), None);
     }
 }
