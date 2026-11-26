@@ -2913,7 +2913,10 @@ fn vs_sprite(
     let halo = select(0.0, HALO, k > 0.0);
     var o: SpriteOut;
     var px: vec2<f32>;
-    if pitch.y != 0.0 {
+    // Pitched sprites have a sine of 0.7 or 1 either way. Compare with a
+    // margin: Chromium 68's SwiftShader reads a mirrored level sprite's
+    // negative zero as not equal to zero.
+    if abs(pitch.y) > 0.5 {
         let halo_cells = halo * pitch.zw / frame;
         let axes = abs(pitch.xy);
         let margin = vec2<f32>(dot(axes, halo_cells), dot(axes.yx, halo_cells));

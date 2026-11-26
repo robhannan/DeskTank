@@ -568,7 +568,8 @@ impl Sprite {
         };
         // The rotation follows the mirror, so its direction reverses on
         // a left-facing sprite. The bounding box is the same either way.
-        let sin = if self.flip { -sin } else { sin };
+        // (Not a negative zero when level: some GPUs' compares tell it apart.)
+        let sin = if self.flip && sin != 0.0 { -sin } else { sin };
         let (w, h) = if sin != 0.0 {
             (
                 cos * body_w + sin.abs() * body_h,
@@ -745,6 +746,26 @@ mod tests {
                     assert!((actual - expected).abs() < 1e-5);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_level_sprite_has_a_positive_zero_pitch_sine_mirrored_or_not() {
+        let mut w = world();
+        let tetra = w.species().id("neon_tetra").unwrap();
+        w.add_creature(tetra, 30, 30).unwrap();
+        let atlas = Atlas::build(w.species(), w.device_kinds());
+        let (mut sprites, mut out) = (Vec::new(), Vec::new());
+        atlas.instances(&w, &mut sprites, &mut out);
+        let mut sprite = sprites[0];
+        sprite.pitch = 0;
+        for flip in [false, true] {
+            sprite.flip = flip;
+            out.clear();
+            sprite.push(&mut out);
+            // Chromium 68's SwiftShader reads -0.0 as non-zero, which sent
+            // mirrored level fish down the pitched path in the shader.
+            assert_eq!(out[20].to_bits(), 0.0f32.to_bits(), "flip {flip}");
         }
     }
 
