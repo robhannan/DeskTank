@@ -1114,7 +1114,8 @@ mod tests {
         assert_eq!(count_frames(&mut tank, Duration::ZERO, 2), 0);
 
         // Inspecting builds the live page once and asks for one frame. The
-        // live page changes at most once a minute for a plant.
+        // live page changes at most once a life day (ten minutes) for a
+        // plant.
         tank.set_inspected(Some(plant));
         assert_eq!(tank.inspected(), Some(plant));
         assert_eq!(tank.inspect_page(), InspectPage::Live);

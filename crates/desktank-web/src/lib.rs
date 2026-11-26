@@ -846,7 +846,7 @@ impl WebTank {
     }
 
     /// What inspect found since the last call, once: `"cell <material>
-    /// <column> <row>"`, `"plant <species> <id> <age seconds> <health %>
+    /// <column> <row>"`, `"plant <species> <id> <age days> <health %>
     /// <cells> <limit> <column> <row>"` (limit as
     /// [`desktank_sim::Limit::key`]), `"creature <species> <id> <material>
     /// <column> <row> <stage> <age days> <health %> <energy %> <female|male>
@@ -1381,9 +1381,9 @@ impl WebTank {
                                 .get(p.species)
                                 .map_or("?", |s| s.name.as_str());
                             format!(
-                                "plant {name} {} {:.0} {:.0} {} {} {x} {y}",
+                                "plant {name} {} {} {:.0} {} {} {x} {y}",
                                 id.0,
-                                p.age.floor(),
+                                p.age_days(),
                                 p.health * 100.0,
                                 p.size(),
                                 p.limit.key()

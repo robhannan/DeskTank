@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::LIFE_DAY_SECONDS;
 use crate::material::{MaterialId, MaterialTable, parse_colour};
 use crate::palette::{Holds, PalettePath, PalettePathError};
 
@@ -566,7 +567,9 @@ pub struct Growth {
     pub size: u32,
     /// Nutrient each new cell takes from the field where it grows.
     pub cost: f32,
-    /// Lifespan in seconds, if it ages: past it, health declines.
+    /// Lifespan in seconds of world time, if it ages: past it, health
+    /// declines. A species gives `lifespan_days` on the life clock (SPEC
+    /// §2.4, [`LIFE_DAY_SECONDS`] per day, as creatures do), converted here.
     pub lifespan: Option<f32>,
     /// It feeds through its roots: only its roots and runners sample the
     /// nutrient field, so it follows the substrate (root tabs) rather than
@@ -1187,7 +1190,8 @@ struct GrowthDef {
     rate: f32,
     size: u32,
     cost: f32,
-    lifespan: Option<f32>,
+    /// Life days (SPEC §2.4), as a creature's `lifespan_days`.
+    lifespan_days: Option<f32>,
     #[serde(default)]
     root_feeder: bool,
 }
@@ -1536,8 +1540,8 @@ fn validate(
     if !(g.cost.is_finite() && (0.0..=1.0).contains(&g.cost)) {
         return Err(invalid("growth cost must be within 0..=1"));
     }
-    if g.lifespan.is_some_and(|l| !(l.is_finite() && l > 0.0)) {
-        return Err(invalid("lifespan must be > 0 seconds"));
+    if g.lifespan_days.is_some_and(|l| !(l.is_finite() && l > 0.0)) {
+        return Err(invalid("lifespan_days must be > 0 life days"));
     }
     let h = &d.hardiness;
     let ok = |v: f32| v.is_finite() && v >= 0.0;
@@ -1664,7 +1668,9 @@ fn validate(
             rate: g.rate,
             size: g.size,
             cost: g.cost,
-            lifespan: g.lifespan,
+            // Life days to world seconds.
+            #[allow(clippy::cast_precision_loss)] // 600 is exact
+            lifespan: g.lifespan_days.map(|d| d * LIFE_DAY_SECONDS as f32),
             root_feeder: g.root_feeder,
         },
         hardiness: Hardiness {
@@ -1954,6 +1960,39 @@ mod tests {
         assert!(matches!(
             PlantSpeciesTable::from_toml_sources(&[OK, OK], &m),
             Err(PlantSpeciesError::BadId(9))
+        ));
+    }
+
+    #[test]
+    fn lifespan_is_given_in_life_days() {
+        let m = materials();
+        let with = |days: &str| {
+            let src = OK.replace(
+                "cost = 0.01",
+                &format!("cost = 0.01\nlifespan_days = {days}"),
+            );
+            PlantSpeciesTable::from_toml_sources(&[&src], &m)
+        };
+        // Optional, and none by default.
+        let plain = PlantSpeciesTable::from_toml_sources(&[OK], &m).unwrap();
+        assert_eq!(plain.get(PlantSpeciesId(9)).unwrap().growth.lifespan, None);
+        // A life day is `LIFE_DAY_SECONDS` of world time; fractions work.
+        for (days, seconds) in [("1", 600.0), ("30", 18_000.0), ("0.5", 300.0)] {
+            let t = with(days).unwrap();
+            let span = t.get(PlantSpeciesId(9)).unwrap().growth.lifespan.unwrap();
+            assert!((span - seconds).abs() < 1e-3, "{days}: {span}");
+        }
+        for bad in ["0", "-1", "nan", "inf"] {
+            assert!(
+                matches!(with(bad), Err(PlantSpeciesError::Invalid { .. })),
+                "{bad}"
+            );
+        }
+        // The old key in seconds is gone.
+        let old = OK.replace("cost = 0.01", "cost = 0.01\nlifespan = 600.0");
+        assert!(matches!(
+            PlantSpeciesTable::from_toml_sources(&[&old], &m),
+            Err(PlantSpeciesError::Parse { .. })
         ));
     }
 

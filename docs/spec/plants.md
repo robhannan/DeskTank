@@ -24,7 +24,8 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     bottom third). With E1, temperature and nitrate join the ranges;
   - **growth**: base rate (new cells per minute at full response),
     mature size (cells) and height, nutrient cost per cell, and an
-    optional lifespan;
+    optional lifespan (`lifespan_days`, in life days: see *Health and
+    death* below);
   - **hardiness**: how long it tolerates conditions outside its range
     before it drops leaves, and how fast it then declines;
   - **propagation**: any of seeds, cuttings, fragments, runners, plantlets
@@ -85,7 +86,15 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
   - **Health and death.** Health falls while the plant's conditions are
     outside its ranges and recovers inside them. Low health drops the
     oldest leaves first, then the whole plant becomes dead plant matter;
-    old age only if the species has a lifespan. Grazing (T7) removes
+    old age only if the species has a lifespan. Plant ages and lifespans
+    are on the **life clock** like creatures' (§2.4; `creatures.md`, *Life
+    clock*): one day per `LIFE_DAY_SECONDS` = 600 s (10 minutes) of world
+    time. A species gives `[growth] lifespan_days` (finite, above 0; a
+    fraction of a day is fine), and the inspect cards (and the web inspect
+    line) show a plant's age in whole life days, worded as a creature's
+    ("under a day", "1 day", "N days"). The growth `rate` stays in new
+    cells per world minute. Saves keep each plant's birth tick, so they
+    are unchanged. Grazing (T7) removes
     cells and costs health. Hungry guppies seek palatable floating leaves (duckweed).
     Each bite removes one floating leaf and costs its plant 0.05 health.
   - **Cap.** A plant population cap per tank, set from measurement in

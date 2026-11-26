@@ -261,6 +261,15 @@ fn percent(v: f32) -> String {
     format!("{:.0}%", (v * 100.0).clamp(0.0, 100.0))
 }
 
+/// An age in whole life days (SPEC §2.4), worded the same on every card.
+fn age_text(days: u32) -> String {
+    match days {
+        0 => "under a day".to_owned(),
+        1 => "1 day".to_owned(),
+        d => format!("{d} days"),
+    }
+}
+
 fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
     let card = world.creature_card(id)?;
     let species = world.creature(id)?.species();
@@ -272,14 +281,7 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
     let sex = if card.female { "female" } else { "male" };
     let mut fields = vec![
         ("Stage:", format!("{} {sex}", card.stage.name())),
-        (
-            "Age:",
-            match card.age_days {
-                0 => "under a day".to_owned(),
-                1 => "1 day".to_owned(),
-                d => format!("{d} days"),
-            },
-        ),
+        ("Age:", age_text(card.age_days)),
         ("Health:", percent(card.health)),
         ("Energy:", percent(card.energy)),
     ];
@@ -307,19 +309,12 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
 fn plant_live(world: &World, id: PlantId) -> Option<Live> {
     let p = world.plant(id)?;
     let sp = world.plant_species().get(p.species)?;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ages ≥ 0
-    let minutes = (p.age / 60.0) as u64;
-    let age = match minutes {
-        0 => "under a minute".to_owned(),
-        m if m < 60 => format!("{m} min"),
-        m => format!("{} h {} min", m / 60, m % 60),
-    };
     let [roots, stem, leaves] = p.parts;
     Some(Live {
         title: format!("{} #{}", display_name(&sp.name), id.0),
         subtitle: String::new(),
         fields: vec![
-            ("Age:", age),
+            ("Age:", age_text(p.age_days())),
             ("Health:", percent(p.health)),
             (
                 "Size:",
@@ -557,6 +552,48 @@ mod tests {
     }
 
     #[test]
+    fn ages_read_the_same_on_every_card() {
+        assert_eq!(age_text(0), "under a day");
+        assert_eq!(age_text(1), "1 day");
+        assert_eq!(age_text(2), "2 days");
+        assert_eq!(age_text(400), "400 days");
+    }
+
+    #[test]
+    fn a_plant_ages_in_life_days() {
+        let mut w = world();
+        // A cutting rooted in aquasoil thrives, so it is still there a day on.
+        let aquasoil = w.materials().id("aquasoil").unwrap();
+        w.fill_rect(
+            desktank_sim::Rect {
+                x0: 0,
+                y0: 80,
+                x1: 160,
+                y1: 90,
+            },
+            aquasoil,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+        let stem = w.materials().id("stem").unwrap();
+        w.set_cell(40, 79, stem).unwrap();
+        w.tick();
+        let id = w.plants().next().unwrap().id;
+        let age = |w: &World| live(w, Inspected::Plant(id)).unwrap().fields[0].clone();
+        // Under a day for the first ten minutes of world time (a day is
+        // `LIFE_DAY_TICKS` ticks).
+        for _ in 0..desktank_sim::LIFE_DAY_TICKS - 10 {
+            w.tick();
+        }
+        assert_eq!(age(&w), ("Age:", "under a day".to_owned()));
+        for _ in 0..20 {
+            w.tick();
+        }
+        assert_eq!(w.plant(id).map(|p| p.age_days()), Some(1));
+        assert_eq!(age(&w), ("Age:", "1 day".to_owned()));
+    }
+
+    #[test]
     fn a_plant_live_page_shows_its_growth() {
         let mut w = world();
         // Leaf cells painted in make a plant of the default species.
@@ -576,7 +613,7 @@ mod tests {
         let what = Inspected::Plant(id);
         let live = live(&w, what).unwrap();
         assert_eq!(live.title, format!("Hygrophila #{}", id.0));
-        assert_eq!(live.fields[0], ("Age:", "under a minute".to_owned()));
+        assert_eq!(live.fields[0], ("Age:", "under a day".to_owned()));
         assert!(build(&w, what, InspectPage::Species, &live).is_some());
         let a = anchor(&w, what).unwrap();
         assert!(a[0] <= 40.0 && a[2] > 40.0, "{a:?}");

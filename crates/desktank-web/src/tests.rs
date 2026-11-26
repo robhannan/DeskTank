@@ -349,6 +349,42 @@ fn a_plant_slot_pours_its_species_and_inspect_shows_the_plant() {
 }
 
 #[test]
+fn a_plant_is_inspected_with_its_age_in_life_days() {
+    let mut t = paused();
+    let world = t.tank.world_mut();
+    let aquasoil = world.materials().id("aquasoil").unwrap();
+    let stem = world.materials().id("stem").unwrap();
+    let floor = desktank_sim::Rect {
+        x0: 0,
+        y0: 62,
+        x1: 128,
+        y1: 72,
+    };
+    world
+        .fill_rect(floor, aquasoil, desktank_sim::Brush::Replace)
+        .unwrap();
+    world.set_cell(21, 61, stem).unwrap();
+    // A day of its life (`LIFE_DAY_TICKS` ticks) and a bit more.
+    for _ in 0..desktank_sim::LIFE_DAY_TICKS + 20 {
+        world.tick();
+    }
+    assert_eq!(t.plant_count(), 1);
+    t.select(slot(&t, "tool inspect"));
+    let base = t.tank().world().plants().next().unwrap().base;
+    down(
+        &mut t,
+        PRIMARY,
+        i32::try_from(base.0).unwrap(),
+        i32::try_from(base.1).unwrap(),
+    );
+    t.pointer_up(PRIMARY);
+    let line = t.take_inspection();
+    let age: Vec<_> = line.split(' ').collect();
+    assert_eq!(&age[..2], ["plant", "hygrophila"], "{line}");
+    assert_eq!(age[3], "1", "one life day old: {line}");
+}
+
+#[test]
 fn select_changes_the_tool_and_ignores_bad_indices() {
     let mut t = tank();
     let gravel = slot(&t, "material gravel");

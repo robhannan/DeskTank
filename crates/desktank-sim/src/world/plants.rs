@@ -193,6 +193,16 @@ impl PlantInfo {
     pub fn size(&self) -> u32 {
         self.parts.iter().sum()
     }
+
+    /// Its age in whole days of its life (SPEC §2.4: [`LIFE_DAY_SECONDS`] of
+    /// world time each), as a creature's card counts them.
+    #[must_use]
+    pub fn age_days(&self) -> u32 {
+        // Truncation is the whole days; the cast saturates.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let days = (self.age / f64::from(super::LIFE_DAY_SECONDS)) as u32;
+        days
+    }
 }
 
 /// One plant in the table.
