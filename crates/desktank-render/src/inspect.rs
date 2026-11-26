@@ -307,7 +307,7 @@ pub(crate) fn anchor(world: &World, what: Inspected) -> Option<[f32; 4]> {
 
 impl CardLayout {
     /// Places an inspect card of `image` pixels beside `anchor` (cells, as
-    /// [`anchor`] gives them) in `target`: to its right, or to its left if
+    /// `anchor` gives them) in `target`: to its right, or to its left if
     /// that has more room, vertically centred on it, then clamped inside
     /// the tank (the grid's area within `target`). Its scale is half the
     /// grid's cell scale (at least 2), dropped until it covers at most half
