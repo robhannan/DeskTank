@@ -7,6 +7,7 @@ use std::process::ExitCode;
 mod bench;
 mod capture;
 mod config;
+mod controls;
 mod ipc;
 mod overlay;
 mod persist;

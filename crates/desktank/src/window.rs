@@ -72,28 +72,19 @@ use anyhow::Context as _;
 use desktank_platform::{
     PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats,
 };
-use desktank_render::{
-    BrushPreview, Card, Gpu, GpuOptions, Magnifier, Palette, PaletteHit, Tank, TankConfig,
-    TankSurface, wgpu,
-};
-use desktank_sim::UnmetNeed;
-use desktank_sim::cheats::{self, CheatKey, Konami};
-use desktank_sim::tools::{
-    AddRefused, Button, Inspection, Outcome, PaletteItem, PaletteSub, PaletteTab, Tool, Tools,
-};
-use desktank_sim::{
-    CreatureId, DeviceId, FieldKind, MAX_NAME_CHARS, MaterialTable, Mount, RinseKind, World,
-    WorldConfig,
-};
+use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, TankSurface, wgpu};
+use desktank_sim::cheats::{self, Konami};
+use desktank_sim::tools::Button;
+use desktank_sim::{MaterialTable, World, WorldConfig};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::InteractState;
 use crate::config::{self, CliOverrides, Config, Life};
+use crate::controls::{Controls, Response, Session};
 use crate::ipc::{self, Reply, Request};
 use crate::persist::Persistence;
 use desktank_sim::scene;
@@ -104,8 +95,6 @@ const CELL_SCALE: u32 = 4;
 const MAX_GRID_SIDE: u32 = 2048;
 /// Pointer sample interval of the demo pour (a 60 Hz mouse).
 const DEMO_SAMPLE: Duration = Duration::from_micros(16_667);
-/// Trackpad scroll distance (physical pixels) per brush-size step.
-const SCROLL_STEP_PX: f64 = 24.0;
 /// World seed for the window's starter scene.
 const SEED: u64 = 7;
 
@@ -258,13 +247,14 @@ impl Demo {
         let (width, height) = s.surface.size();
         let Some((t0, cpu0)) = self.start else {
             self.start = Some((now, process_stats().cpu_time));
-            s.cursor = Some((f64::from(width) * 0.15, f64::from(height) * 0.3));
-            s.pressed(Button::Primary);
+            let mut ui = s.ui();
+            ui.point_at(Some((f64::from(width) * 0.15, f64::from(height) * 0.3)));
+            ui.pressed(Button::Primary);
             return Some(now + DEMO_SAMPLE);
         };
         let t = now - t0;
         if t >= self.length {
-            s.tools.release(s.tank.world_mut(), Button::Primary);
+            s.ui().release(Button::Primary);
             let cpu = process_stats().cpu_time.saturating_sub(cpu0);
             eprintln!(
                 "desktank window: demo pour {:.1} s, CPU {:.2} s = {:.1}% of a core",
@@ -276,11 +266,10 @@ impl Demo {
         }
         // Sweep back and forth across the middle 70%, about once per 3 s.
         let f = (t.as_secs_f64() * 2.0).sin().mul_add(0.5, 0.5);
-        s.cursor = Some((
+        s.ui().point_at(Some((
             f64::from(width) * f.mul_add(0.7, 0.15),
             f64::from(height) * 0.3,
-        ));
-        s.pointer_moved();
+        )));
         Some(now + DEMO_SAMPLE)
     }
 }
@@ -296,10 +285,6 @@ struct Hidden {
     minimised: bool,
 }
 
-/// What the palette overlay last showed: the open tab and sub-category and
-/// the selection (tab, sub-category, item).
-type Shown = (usize, usize, Option<(usize, usize, usize)>);
-
 struct Running {
     window: Arc<Window>,
     gpu: Gpu,
@@ -310,66 +295,7 @@ struct Running {
     last_decision: PowerDecision,
     /// Start of the current power pause, on a clock that includes system sleep.
     paused_at: Option<SystemTime>,
-    /// Pointer position in physical pixels.
-    cursor: Option<(f64, f64)>,
-    avoid_cursor: bool,
-    tools: Tools,
-    /// The palette's tree: top tabs, their sub-categories and items.
-    tree: Vec<PaletteTab>,
-    /// Index of the top tab the palette shows.
-    open: usize,
-    /// Index of the sub-category it shows within that tab.
-    open_sub: usize,
-    /// Modifier keys held (Shift steps tabs backwards; with Ctrl or
-    /// Command a key is a shortcut, which neither types into the cheat
-    /// field nor counts towards the code).
-    modifiers: ModifiersState,
-    /// Trackpad scroll (pixels) not yet turned into a brush-size step.
-    scroll: f64,
-    /// Wheel scroll (lines) not yet turned into a step; Windows precision
-    /// touchpads send fractions of a line.
-    scroll_lines: f64,
-    /// Open tab and sub-category and the selection last given to the tank
-    /// (`None` before the first).
-    shown: Option<Shown>,
-    /// The species card closed with a click; it stays closed until
-    /// another species (or none) is selected.
-    closed_card: Option<Card>,
-    /// Watches key presses for the code that opens the cheat field.
-    konami: Konami,
-    /// The text field open in the title bar (cheat or name), if any.
-    field: Option<TextField>,
-    /// The creature inspect last showed, which `N` names; cleared when
-    /// another tool is picked.
-    inspected: Option<CreatureId>,
-    /// The device inspect last showed (`id`, cell `x`, `y`), which `R` rinses
-    /// and `I` toggles the intake guard on.
-    inspected_device: Option<(DeviceId, usize, usize)>,
-}
-
-/// A one-line text field in the title bar.
-struct TextField {
-    purpose: Purpose,
-    line: String,
-}
-
-/// What a [`TextField`] is for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Purpose {
-    /// A cheat ([`desktank_sim::cheats`]).
-    Cheat,
-    /// A name for this creature.
-    Name(CreatureId),
-}
-
-impl Purpose {
-    /// Longest line it takes, in characters.
-    fn max_chars(self) -> usize {
-        match self {
-            Self::Cheat => cheats::MAX_LINE,
-            Self::Name(_) => MAX_NAME_CHARS,
-        }
-    }
+    controls: Controls,
 }
 
 impl Running {
@@ -410,8 +336,7 @@ impl Running {
             scene::starter(&mut world, SEED)?;
             world
         };
-        let tools = Tools::new(scene::material(&world, "sand")?);
-        let tree = Tools::palette_tree(&world);
+        let controls = Controls::new(&world, Konami::new())?;
         let info = gpu.adapter.get_info();
         eprintln!(
             "desktank window: {} ({:?}), {}x{} cells, {}x{} px, {:?}",
@@ -433,25 +358,9 @@ impl Running {
                 max_fps: TankConfig::default().max_fps,
             },
             paused_at: None,
-            cursor: None,
-            avoid_cursor: false,
-            tools,
-            tree,
-            open: 0,
-            open_sub: 0,
-            modifiers: ModifiersState::empty(),
-            scroll: 0.0,
-            scroll_lines: 0.0,
-            shown: None,
-            closed_card: None,
-            konami: Konami::new(),
-            field: None,
-            inspected: None,
-            inspected_device: None,
+            controls,
         };
-        // Open the tab and sub-category holding the starting material.
-        (s.open, s.open_sub) = s.selection().map_or((0, 0), |(t, sub, _)| (t, sub));
-        s.sync_overlay();
+        s.sync();
         Ok(s)
     }
 
@@ -482,568 +391,19 @@ impl Running {
         self.tank.invalidate();
     }
 
-    /// The cell under the cursor, unless the cursor is over the palette
-    /// or the species card.
-    fn cursor_cell(&self) -> Option<(i64, i64)> {
-        let (px, py) = self.cursor?;
+    /// The controls, borrowed with the tank.
+    fn ui(&mut self) -> Session<'_> {
         let size = self.surface.size();
-        if self
-            .tank
-            .palette_layout(size)
-            .is_some_and(|p| p.contains(px, py))
-            || self
-                .tank
-                .card_layout(size)
-                .is_some_and(|c| c.contains(px, py))
-        {
-            return None;
+        self.controls.session(&mut self.tank, size)
+    }
+
+    /// Pushes the palette and brush to the tank, and any new text to the
+    /// title bar.
+    fn sync(&mut self) {
+        self.ui().sync();
+        if let Some(title) = self.controls.take_title() {
+            self.window.set_title(&title);
         }
-        Some(self.tank.layout(size).cell_at(px, py))
-    }
-
-    fn pointer_moved(&mut self) {
-        match self.cursor_cell() {
-            Some(cell) => {
-                let out = self.tools.moved(self.tank.world_mut(), cell);
-                self.show(out);
-            }
-            // Over the palette (or gone): hide the outline; a stroke ends.
-            None => self.tools.leave(self.tank.world_mut()),
-        }
-    }
-
-    fn pressed(&mut self, button: Button) {
-        let size = self.surface.size();
-        // A click on the species card closes it.
-        if let (Some((px, py)), Some(c)) = (self.cursor, self.tank.card_layout(size))
-            && c.contains(px, py)
-        {
-            self.closed_card = self.tank.card();
-            return;
-        }
-        if let (Some((px, py)), Some(p)) = (self.cursor, self.tank.palette_layout(size)) {
-            match p.hit(px, py) {
-                Some(PaletteHit::Tab(t)) => {
-                    self.open_tab(t);
-                    return;
-                }
-                Some(PaletteHit::Sub(sub)) => {
-                    self.open_sub = sub;
-                    return;
-                }
-                Some(PaletteHit::Item(i)) => {
-                    self.select_slot(i);
-                    return;
-                }
-                None if p.contains(px, py) => return,
-                None => {}
-            }
-        }
-        if let Some(cell) = self.cursor_cell() {
-            let out = self.tools.press(self.tank.world_mut(), button, cell);
-            self.show(out);
-        }
-    }
-
-    /// Selects a palette item. A plant slot names its species and
-    /// propagule in the title.
-    fn choose(&mut self, item: PaletteItem) {
-        self.tools.select(item);
-        if matches!(item, PaletteItem::Tool(Tool::Plant(_))) {
-            self.show_plant();
-        } else if item == PaletteItem::Tool(Tool::Magnify) {
-            self.show_magnify();
-        }
-    }
-
-    /// Shows the active magnification factor in the title bar.
-    fn show_magnify(&mut self) {
-        let zoom = self.tools.zoom();
-        self.sync_overlay();
-        self.window.set_title(&format!(
-            "DeskTank — magnify {zoom}× (scroll, click or +/- to zoom)"
-        ));
-    }
-
-    /// Names the species the selected plant slot pours, and as what, in
-    /// the title bar.
-    fn show_plant(&mut self) {
-        let world = self.tank.world();
-        let Some(s) = self
-            .tools
-            .selected_plant()
-            .and_then(|id| world.plant_species().get(id))
-        else {
-            return;
-        };
-        let way = self
-            .tools
-            .plant_propagule(world)
-            .map_or("", desktank_sim::Propagule::name);
-        let ways: Vec<_> = s.propagules().map(desktank_sim::Propagule::name).collect();
-        let more = if ways.len() > 1 {
-            format!(", P for {}", ways.join("/"))
-        } else {
-            String::new()
-        };
-        let title = format!(
-            "DeskTank — {} as {way} ({}{more})",
-            s.name.replace('_', " "),
-            s.description
-        );
-        self.sync_overlay();
-        self.window.set_title(&title);
-    }
-
-    /// Reports an inspection or refused creature add in the title bar (the
-    /// window's card; a drawn one comes with the overlay, which has no title
-    /// bar).
-    fn show(&mut self, out: Outcome) {
-        if let Outcome::Zoomed(_) = out {
-            self.show_magnify();
-            return;
-        }
-        if let Outcome::AddRefused { species, reason } = out {
-            self.forget_inspected();
-            let world = self.tank.world();
-            let name = world
-                .species()
-                .get(species)
-                .map_or_else(|| "creature".to_owned(), |s| s.name.replace('_', " "));
-            let text = match reason {
-                AddRefused::PopulationCap {
-                    cap,
-                    live_food: true,
-                } => format!("can't add {name}: live food limit reached ({cap} max)"),
-                AddRefused::PopulationCap {
-                    cap,
-                    live_food: false,
-                } => format!(
-                    "can't add {name}: tank is full ({}/{cap} creatures) — raise --creature-cap or net one out",
-                    world.stock_count(),
-                ),
-                AddRefused::NoRoom => format!("can't add {name} here: no room (click open water)"),
-            };
-            self.window.set_title(&format!("DeskTank — {text}"));
-            return;
-        }
-        let Outcome::Inspected(found) = out else {
-            return;
-        };
-        // A new inspection replaces the last: N names only a creature
-        // shown now, and an open name field is for the one shown before.
-        self.forget_inspected();
-        let text = match found {
-            Inspection::Cell { x, y, material } => {
-                let name = self
-                    .tank
-                    .world()
-                    .materials()
-                    .get(material)
-                    .map_or("?", |m| m.name.as_str());
-                format!("{name} at ({x}, {y})")
-            }
-            Inspection::Device { id, x, y } => {
-                let Some(line) = device_line(self.tank.world(), id, x, y) else {
-                    return;
-                };
-                self.inspected_device = Some((id, x, y));
-                line
-            }
-            Inspection::Creature {
-                id,
-                species,
-                x,
-                y,
-                material,
-            } => {
-                let world = self.tank.world();
-                let Some(card) = world.creature_card(id) else {
-                    return;
-                };
-                self.inspected = Some(id);
-                let over = world
-                    .materials()
-                    .get(material)
-                    .map_or("?", |m| m.name.as_str());
-                let need = match world.unmet_need(species) {
-                    Some(UnmetNeed::Depth { needs, .. }) => {
-                        format!(", needs {needs} cells of water")
-                    }
-                    Some(UnmetNeed::Air) => ", needs air at the surface".to_owned(),
-                    None => String::new(),
-                };
-                format!(
-                    "{}{need} · over {over} at ({x}, {y}) · N names it",
-                    card.summary()
-                )
-            }
-            Inspection::Plant { id, x, y, .. } => {
-                let world = self.tank.world();
-                let Some(p) = world.plant(id) else { return };
-                let name = world
-                    .plant_species()
-                    .get(p.species)
-                    .map_or("?", |s| s.name.as_str());
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ages ≥ 0
-                let age = p.age as u64;
-                let [roots, stem, leaves] = p.parts;
-                format!(
-                    "{name} #{}, {}m {:02}s old, health {:.0}%, {} cells \
-                     (roots {roots}, stem {stem}, leaves {leaves}), {} at ({x}, {y})",
-                    id.0,
-                    age / 60,
-                    age % 60,
-                    p.health * 100.0,
-                    p.size(),
-                    p.limit.describe(),
-                )
-            }
-        };
-        self.window.set_title(&format!("DeskTank — {text}"));
-    }
-
-    /// Shows the open text field in the title bar, after `note` (the last
-    /// cheat's error) if any.
-    fn show_field(&self, note: Option<&str>) {
-        let Some(field) = &self.field else { return };
-        let note = note.map_or(String::new(), |n| format!("{n} · "));
-        let line = &field.line;
-        let title = match field.purpose {
-            Purpose::Cheat => {
-                format!("DeskTank — {note}cheat: {line}_ (Enter runs, Esc closes)")
-            }
-            Purpose::Name(id) => {
-                let world = self.tank.world();
-                let species = world
-                    .creature(id)
-                    .and_then(|c| world.species().get(c.species()))
-                    .map_or("?".to_owned(), |s| s.name.replace('_', " "));
-                format!(
-                    "DeskTank — {note}name {species} #{}: {line}_ (Enter names it, Esc cancels)",
-                    id.0
-                )
-            }
-        };
-        self.window.set_title(&title);
-    }
-
-    /// Gives a key press to the text fields first: an open field takes
-    /// every key, and the press completing the Konami code opens the cheat
-    /// field instead of doing its usual binding (A). Returns whether it
-    /// took it.
-    fn field_input(&mut self, event: &KeyEvent) -> bool {
-        if self.field.is_some() {
-            self.field_key(event);
-            return true;
-        }
-        if let Some(key) = konami_key(&event.logical_key)
-            && !event.repeat
-            && !self.command()
-            && self.konami.key(key, false)
-        {
-            self.open_field(Purpose::Cheat, String::new());
-            return true;
-        }
-        false
-    }
-
-    fn open_field(&mut self, purpose: Purpose, line: String) {
-        self.field = Some(TextField { purpose, line });
-        self.show_field(None);
-    }
-
-    /// Forgets the creature or device inspect last showed, closing its name field.
-    fn forget_inspected(&mut self) {
-        self.inspected = None;
-        self.inspected_device = None;
-        if self
-            .field
-            .as_ref()
-            .is_some_and(|f| matches!(f.purpose, Purpose::Name(_)))
-        {
-            self.field = None;
-        }
-    }
-
-    /// Rinses the device inspect last showed (`R` gentle, `Shift+R` hard).
-    fn rinse_inspected_device(&mut self, kind: RinseKind) {
-        let Some((id, x, y)) = self.inspected_device else {
-            return;
-        };
-        self.tank.world_mut().rinse_device(id, kind);
-        if let Some(line) = device_line(self.tank.world(), id, x, y) {
-            self.window.set_title(&format!("DeskTank — {line}"));
-        } else {
-            self.inspected_device = None;
-            self.window
-                .set_title("DeskTank — that device is no longer in the tank");
-        }
-    }
-
-    /// Toggles the intake guard on the device inspect last showed (`I`).
-    fn toggle_inspected_device_guard(&mut self) {
-        let Some((id, x, y)) = self.inspected_device else {
-            return;
-        };
-        if self
-            .tank
-            .world_mut()
-            .toggle_device_intake_guard(id)
-            .is_some()
-            && let Some(line) = device_line(self.tank.world(), id, x, y)
-        {
-            self.window.set_title(&format!("DeskTank — {line}"));
-        } else {
-            self.inspected_device = None;
-            self.window
-                .set_title("DeskTank — that device is no longer in the tank");
-        }
-    }
-
-    /// Opens the name field for the creature inspect last showed (`N`),
-    /// holding its name so far.
-    fn open_name_field(&mut self) {
-        let world = self.tank.world();
-        if let Some(c) = self.inspected.and_then(|id| world.creature(id)) {
-            let (id, name) = (c.id(), c.name().unwrap_or("").to_owned());
-            self.open_field(Purpose::Name(id), name);
-        } else {
-            self.inspected = None;
-            self.window
-                .set_title("DeskTank — inspect a creature, then N names it");
-        }
-    }
-
-    /// Whether Ctrl or Command is held.
-    fn command(&self) -> bool {
-        self.modifiers.control_key() || self.modifiers.super_key()
-    }
-
-    /// Takes a key press while a text field is open: Enter runs the cheat
-    /// (closing the field if it ran) or names the creature, Escape closes
-    /// the field, Backspace deletes, and text is typed in.
-    fn field_key(&mut self, event: &KeyEvent) {
-        let command = self.command();
-        let Some(field) = self.field.as_mut() else {
-            return;
-        };
-        match &event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                self.field = None;
-                self.window.set_title("DeskTank");
-            }
-            Key::Named(NamedKey::Enter) => {
-                // Kept on failure, to fix a typo.
-                let line = field.line.clone();
-                match field.purpose {
-                    Purpose::Cheat => match cheats::run(self.tank.world_mut(), &line) {
-                        Ok(out) => {
-                            if out.cells_changed > 0 {
-                                self.tank.cells_edited();
-                            }
-                            self.field = None;
-                            self.window
-                                .set_title(&format!("DeskTank — cheat: {}", out.message));
-                        }
-                        Err(e) => self.show_field(Some(&e.to_string())),
-                    },
-                    Purpose::Name(id) => {
-                        self.field = None;
-                        let world = self.tank.world_mut();
-                        let title = if world.set_creature_name(id, &line).is_some() {
-                            let card = world.creature_card(id).map(|c| c.summary());
-                            format!("DeskTank — {} · N renames it", card.unwrap_or_default())
-                        } else {
-                            "DeskTank — that creature has left the tank".to_owned()
-                        };
-                        self.window.set_title(&title);
-                    }
-                }
-            }
-            Key::Named(NamedKey::Backspace) => {
-                field.line.pop();
-                self.show_field(None);
-            }
-            _ if command => {}
-            _ => {
-                let max = field.purpose.max_chars();
-                let typed = event.text.as_ref().map_or("", |t| t.as_str());
-                for c in typed.chars().filter(|c| !c.is_control()) {
-                    if field.line.chars().count() < max {
-                        field.line.push(c);
-                    }
-                }
-                self.show_field(None);
-            }
-        }
-    }
-
-    /// Scroll up grows the brush, down shrinks it.
-    fn scrolled(&mut self, delta: MouseScrollDelta) {
-        let steps = match delta {
-            MouseScrollDelta::LineDelta(_, y) => {
-                self.scroll_lines += f64::from(y);
-                let steps = self.scroll_lines.trunc();
-                self.scroll_lines -= steps;
-                steps
-            }
-            MouseScrollDelta::PixelDelta(p) => {
-                self.scroll += p.y;
-                let steps = (self.scroll / SCROLL_STEP_PX).trunc();
-                self.scroll -= steps * SCROLL_STEP_PX;
-                steps
-            }
-        };
-        #[allow(clippy::cast_possible_truncation)] // clamped to a small range
-        let steps = steps.clamp(-100.0, 100.0) as i32;
-        let over_palette = self
-            .cursor
-            .zip(self.tank.palette_layout(self.surface.size()));
-        if over_palette.is_some_and(|((px, py), p)| p.contains(px, py)) {
-            // Over the palette: scroll down for the next sub-category.
-            self.step_through(-steps);
-        } else if self.tools.tool() == Tool::Magnify {
-            if self.tools.step_zoom(steps) {
-                self.show_magnify();
-            }
-        } else {
-            self.tools.resize(steps);
-        }
-    }
-
-    /// Opens top tab `t` on the sub-category holding the selection, if it
-    /// is in that tab, else on its first.
-    fn open_tab(&mut self, t: usize) {
-        self.open = t;
-        self.open_sub = self
-            .selection()
-            .filter(|&(st, _, _)| st == t)
-            .map_or(0, |(_, sub, _)| sub);
-    }
-
-    /// Opens the top tab `steps` after (or before) the open one, wrapping.
-    fn step_tab(&mut self, steps: i32) {
-        self.open_tab(wrap(self.open, steps, self.tree.len()));
-    }
-
-    /// Opens the open tab's sub-category `steps` after (or before) the
-    /// open one, wrapping within the tab.
-    fn step_sub(&mut self, steps: i32) {
-        let n = self.tree.get(self.open).map_or(1, |t| t.subs.len());
-        self.open_sub = wrap(self.open_sub, steps, n);
-    }
-
-    /// Steps through every sub-category in palette order, `steps` on (or
-    /// back), on into the next (or previous) tab and wrapping: what
-    /// scrolling over the palette does.
-    fn step_through(&mut self, steps: i32) {
-        let all: Vec<(usize, usize)> = self
-            .tree
-            .iter()
-            .enumerate()
-            .flat_map(|(t, tab)| (0..tab.subs.len()).map(move |sub| (t, sub)))
-            .collect();
-        let at = all
-            .iter()
-            .position(|&p| p == (self.open, self.open_sub))
-            .unwrap_or(0);
-        if let Some(&(t, sub)) = all.get(wrap(at, steps, all.len())) {
-            (self.open, self.open_sub) = (t, sub);
-        }
-    }
-
-    /// The open sub-category's items.
-    fn open_items(&self) -> &[PaletteItem] {
-        self.tree
-            .get(self.open)
-            .and_then(|t| t.subs.get(self.open_sub))
-            .map_or(&[], |s| &s.items)
-    }
-
-    /// Selects slot `i` of the open sub-category, if it has one.
-    fn select_slot(&mut self, i: usize) {
-        if let Some(&item) = self.open_items().get(i) {
-            self.choose(item);
-        }
-    }
-
-    /// Picks the next propagule the selected plant's species grows from
-    /// (seeds, cuttings, fragments, runners, buds) and names it.
-    fn next_plant_propagule(&mut self) {
-        if self.tools.next_plant_propagule(self.tank.world()).is_some() {
-            self.show_plant();
-        } else {
-            self.window
-                .set_title("DeskTank — select a plant, then P picks how it starts");
-        }
-    }
-
-    /// The selection's tab, sub-category and index there.
-    fn selection(&self) -> Option<(usize, usize, usize)> {
-        self.tree.iter().enumerate().find_map(|(t, tab)| {
-            tab.subs.iter().enumerate().find_map(|(sub, s)| {
-                let i = s.items.iter().position(|&i| self.tools.is_selected(i))?;
-                Some((t, sub, i))
-            })
-        })
-    }
-
-    /// Pushes the palette (open tabs and selection) and brush outline to
-    /// the tank; it only asks for a frame if they changed.
-    fn sync_overlay(&mut self) {
-        let selected = self.selection();
-        let shown = (self.open, self.open_sub, selected);
-        if self.shown != Some(shown) {
-            if self.shown.is_none_or(|(_, _, s)| s != selected) {
-                // A new tool clears the last inspection from the title.
-                self.window.set_title("DeskTank");
-                self.forget_inspected();
-            }
-            self.shown = Some(shown);
-            let first = |s: &PaletteSub| s.items.first().copied();
-            let open = self.tree.get(self.open);
-            // A tab with one sub-category has no sub-tab row.
-            let subs = open
-                .filter(|t| t.subs.len() > 1)
-                .map_or_else(Vec::new, |t| t.subs.iter().filter_map(first).collect());
-            self.tank.set_palette(Some(Palette {
-                tabs: self
-                    .tree
-                    .iter()
-                    .filter_map(|t| t.subs.first().and_then(first))
-                    .collect(),
-                open: self.open,
-                subs,
-                open_sub: self.open_sub,
-                items: self.open_items().to_vec(),
-                selected,
-            }));
-        }
-        // The selected creature's or plant's species card, unless closed.
-        let card = selected
-            .and_then(|(t, sub, i)| self.tree.get(t)?.subs.get(sub)?.items.get(i).copied())
-            .and_then(Card::of);
-        if self.closed_card != card {
-            // Another species (or none) is selected: its card opens.
-            self.closed_card = None;
-        }
-        self.tank
-            .set_card(card.filter(|&c| self.closed_card != Some(c)));
-        let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
-        self.tank.world_mut().set_creature_cursor(pointer);
-        let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
-            cell: (x, y),
-            radius,
-        });
-        self.tank.set_cursor(cursor);
-        let ghost = self.tools.ghost(self.tank.world());
-        self.tank.set_device_ghost(ghost);
-        let magnifier = self
-            .tools
-            .magnifier()
-            .map(|(x, y, zoom)| Magnifier { cell: (x, y), zoom });
-        self.tank.set_magnifier(magnifier);
     }
 }
 
@@ -1270,165 +630,16 @@ impl ApplicationHandler<Wake> for App {
                     event_loop.exit();
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                s.cursor = Some((position.x, position.y));
-                s.pointer_moved();
-            }
-            WindowEvent::CursorLeft { .. } => {
-                s.cursor = None;
-                s.tools.leave(s.tank.world_mut());
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                let button = match button {
-                    MouseButton::Left => Button::Primary,
-                    MouseButton::Right => Button::Secondary,
-                    _ => return,
-                };
-                if state == ElementState::Pressed {
-                    s.pressed(button);
-                } else {
-                    let out = s.tools.release(s.tank.world_mut(), button);
-                    s.show(out);
+            _ => {
+                let size = s.surface.size();
+                match s.controls.session(&mut s.tank, size).window_event(&event) {
+                    Response::Ignored => return,
+                    Response::Escape => event_loop.exit(),
+                    Response::Handled => {}
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } => s.scrolled(delta),
-            WindowEvent::ModifiersChanged(m) => s.modifiers = m.state(),
-            WindowEvent::Focused(false) => s.konami.reset(),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed && s.field_input(&event) => {}
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                match event.logical_key {
-                    Key::Named(NamedKey::Escape) => event_loop.exit(),
-                    Key::Character(c) if c.eq_ignore_ascii_case("a") && !event.repeat => {
-                        s.avoid_cursor = !s.avoid_cursor;
-                        let state = if s.avoid_cursor { "on" } else { "off" };
-                        s.window
-                            .set_title(&format!("DeskTank — cursor avoidance {state}"));
-                    }
-                    Key::Character(c) if c.eq_ignore_ascii_case("s") && !event.repeat => {
-                        let (label, next) = if s.modifiers.shift_key() {
-                            let next = !s.tank.allows_sway_on_battery();
-                            s.tank.set_allow_sway_on_battery(next);
-                            ("plant sway on battery", next)
-                        } else {
-                            let next = !s.tank.sway();
-                            s.tank.set_sway(next);
-                            ("plant sway", next)
-                        };
-                        let state = if next { "on" } else { "off" };
-                        s.window.set_title(&format!("DeskTank — {label} {state}"));
-                    }
-                    Key::Character(c) if c.eq_ignore_ascii_case("f") => {
-                        use desktank_render::FieldOverlay::{Flow, Scalar};
-                        let next = match s.tank.field_overlay() {
-                            None => Some(Scalar(FieldKind::Nutrient)),
-                            Some(Scalar(FieldKind::Nutrient)) => Some(Scalar(FieldKind::Co2)),
-                            Some(Scalar(FieldKind::Co2)) => Some(Scalar(FieldKind::Light)),
-                            Some(Scalar(FieldKind::Light)) => Some(Flow),
-                            Some(Flow) => None,
-                        };
-                        s.tank.set_field_overlay(next);
-                        let title = next.map_or("DeskTank".to_owned(), |f| {
-                            format!("DeskTank — {} field", f.name())
-                        });
-                        s.window.set_title(&title);
-                    }
-                    // X mirrors the next flippable device placed onto the other
-                    // glass (D27); the ghost shows where it goes.
-                    Key::Character(c)
-                        if c.eq_ignore_ascii_case("x")
-                            && !event.repeat
-                            && !s.command()
-                            && !s.modifiers.alt_key()
-                            && s.tools.can_flip(s.tank.world()) =>
-                    {
-                        let side = if s.tools.flip() { "other" } else { "nearer" };
-                        s.window
-                            .set_title(&format!("DeskTank — devices go on the {side} glass"));
-                    }
-                    Key::Character(c) if c.eq_ignore_ascii_case("w") => {
-                        let siphoned = s.tank.world_mut().water_change();
-                        s.tank.cells_edited();
-                        let q = s.tank.world().ecosystem().quality;
-                        s.window.set_title(&format!(
-                            "DeskTank — water changed, {siphoned} cells siphoned, quality {:.0}%",
-                            q * 100.0
-                        ));
-                    }
-                    Key::Character(c) if c.eq_ignore_ascii_case("q") => {
-                        let e = s.tank.world().ecosystem();
-                        s.window.set_title(&format!(
-                            "DeskTank — water quality {:.0}%, nutrients {:.2}, surface algae {:.1}%",
-                            e.quality * 100.0,
-                            e.mean_nutrient,
-                            e.algae_coverage * 100.0
-                        ));
-                    }
-                    // G opens the next tab, Shift+G the previous one, and H
-                    // / Shift+H the open tab's sub-categories (Shift, not
-                    // the letter's case: Caps Lock doesn't flip it).
-                    Key::Character(c) if c.eq_ignore_ascii_case("g") => {
-                        s.step_tab(if s.modifiers.shift_key() { -1 } else { 1 });
-                    }
-                    Key::Character(c) if c.eq_ignore_ascii_case("h") => {
-                        s.step_sub(if s.modifiers.shift_key() { -1 } else { 1 });
-                    }
-                    // N names the creature inspect last showed.
-                    Key::Character(c)
-                        if c.eq_ignore_ascii_case("n") && !event.repeat && !s.command() =>
-                    {
-                        s.open_name_field();
-                    }
-                    // R rinses the inspected filter (Shift+R hard rinse),
-                    // M replaces its media, and I toggles its intake guard
-                    // (D27, DV3).
-                    Key::Character(c)
-                        if c.eq_ignore_ascii_case("r") && !event.repeat && !s.command() =>
-                    {
-                        let kind = if s.modifiers.shift_key() {
-                            RinseKind::Hard
-                        } else {
-                            RinseKind::Gentle
-                        };
-                        s.rinse_inspected_device(kind);
-                    }
-                    Key::Character(c)
-                        if c.eq_ignore_ascii_case("m") && !event.repeat && !s.command() =>
-                    {
-                        s.rinse_inspected_device(RinseKind::Replace);
-                    }
-                    Key::Character(c)
-                        if c.eq_ignore_ascii_case("i") && !event.repeat && !s.command() =>
-                    {
-                        s.toggle_inspected_device_guard();
-                    }
-                    Key::Character(c) => {
-                        // 1–9 are the open sub-category's first nine slots,
-                        // 0 the tenth; P picks the selected plant's next way
-                        // to start (seeds, cuttings, fragments, runners, buds).
-                        if let Ok(n) = c.parse::<usize>() {
-                            s.select_slot((n + 9) % 10);
-                        } else if c.eq_ignore_ascii_case("p") {
-                            s.next_plant_propagule();
-                        } else if s.tools.tool() == Tool::Magnify
-                            && matches!(c.as_str(), "+" | "=" | "]")
-                        {
-                            if s.tools.step_zoom(1) {
-                                s.show_magnify();
-                            }
-                        } else if s.tools.tool() == Tool::Magnify
-                            && matches!(c.as_str(), "-" | "[")
-                            && s.tools.step_zoom(-1)
-                        {
-                            s.show_magnify();
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            _ => return,
         }
-        s.sync_overlay();
+        s.sync();
     }
 
     /// Saves on the way out. On macOS, quitting from the menu or the Dock
@@ -1510,7 +721,7 @@ impl ApplicationHandler<Wake> for App {
         }
         let demo_wake = self.demo.as_mut().and_then(|d| {
             let wake = d.step(s);
-            s.sync_overlay();
+            s.sync();
             wake
         });
         if demo_wake.is_none() {
@@ -1522,7 +733,7 @@ impl ApplicationHandler<Wake> for App {
         }
         // Holding still keeps pouring, once per tick run.
         for _ in 0..req.sim_ticks {
-            s.tools.hold(s.tank.world_mut());
+            s.ui().hold();
         }
         if req.redraw {
             s.window.request_redraw();
@@ -1533,91 +744,9 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
-/// The Konami detector's view of a key; `None` for a modifier on its own
-/// (Shift for a capital B doesn't break the code).
-fn konami_key(key: &Key) -> Option<CheatKey> {
-    Some(match key {
-        Key::Named(NamedKey::ArrowUp) => CheatKey::Up,
-        Key::Named(NamedKey::ArrowDown) => CheatKey::Down,
-        Key::Named(NamedKey::ArrowLeft) => CheatKey::Left,
-        Key::Named(NamedKey::ArrowRight) => CheatKey::Right,
-        Key::Character(c) if c.eq_ignore_ascii_case("b") => CheatKey::B,
-        Key::Character(c) if c.eq_ignore_ascii_case("a") => CheatKey::A,
-        Key::Named(
-            NamedKey::Shift
-            | NamedKey::Control
-            | NamedKey::Alt
-            | NamedKey::Super
-            | NamedKey::Meta
-            | NamedKey::Hyper
-            | NamedKey::Fn
-            | NamedKey::CapsLock
-            | NamedKey::AltGraph,
-        ) => return None,
-        _ => CheatKey::Other,
-    })
-}
-
-/// `at` moved `steps` along a ring of `n`.
-fn wrap(at: usize, steps: i32, n: usize) -> usize {
-    let n = i64::try_from(n).unwrap_or(1).max(1);
-    let at = i64::try_from(at).unwrap_or(0);
-    usize::try_from((at + i64::from(steps)).rem_euclid(n)).unwrap_or(0)
-}
-
-/// The inspect line for device `id` under cell `(x, y)`, including its mount (D27, DV3–DV7).
-fn device_line(world: &World, id: DeviceId, x: usize, y: usize) -> Option<String> {
-    let status = world.device_status(id)?;
-    let art = world.device_kinds().get(status.kind);
-    let label = &art.label;
-    let place = match art.mount {
-        Mount::SideGlass => {
-            if status.facing_left {
-                "on the right glass"
-            } else {
-                "on the left glass"
-            }
-        }
-        Mount::Bed => "on the bed",
-        Mount::Rim => "on the rim",
-        Mount::Floor | Mount::FloorPanel => "on the floor",
-    };
-    if !status.is_filter {
-        let detail = match (art.mount, status.connected) {
-            (Mount::FloorPanel, true) => "connected",
-            (Mount::FloorPanel, false) => "disconnected",
-            _ => "air diffuser",
-        };
-        return Some(format!(
-            "{label} #{} · {place} · {detail} · at ({x}, {y})",
-            id.0
-        ));
-    }
-    let guard = if status.fry_safe {
-        "fry-safe"
-    } else if status.intake_guard {
-        "guard on"
-    } else {
-        "guard off"
-    };
-    let hint = if status.fry_safe {
-        "R rinse · Shift+R hard rinse · M replace media"
-    } else {
-        "R rinse · Shift+R hard rinse · M replace media · I guard"
-    };
-    Some(format!(
-        "{label} #{} · {place} · flow {:.1} cells/s · load {:.0}% · maturity {:.0}% · {guard} · at ({x}, {y}) · {hint}",
-        id.0,
-        status.flow,
-        status.media_load * 100.0,
-        status.maturity * 100.0,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use desktank_sim::{DeviceKind, MaterialTable, WorldConfig};
 
     #[test]
     fn catch_up_ignores_short_gaps_and_backward_clocks() {
@@ -1638,33 +767,5 @@ mod tests {
             catch_up_seconds(since, since + Duration::from_hours(72)),
             desktank_sim::MAX_CATCH_UP_SECONDS
         );
-    }
-
-    #[test]
-    fn device_line_omits_filter_fields_for_bubbler() {
-        let mut w = World::new(
-            WorldConfig {
-                width: 120,
-                height: 80,
-                seed: 1,
-                water_level: 0.9,
-            },
-            MaterialTable::builtin().unwrap(),
-        )
-        .unwrap();
-        let bid = w
-            .add_device(DeviceKind::Bubbler, 50, 40, false)
-            .unwrap()
-            .unwrap();
-        let line = device_line(&w, bid, 50, 76).unwrap();
-        assert_eq!(line, "Bubbler #1 · on the bed · air diffuser · at (50, 76)");
-
-        let fid = w
-            .add_device(DeviceKind::InternalFilter, 4, 40, false)
-            .unwrap()
-            .unwrap();
-        let filter_line = device_line(&w, fid, 4, 40).unwrap();
-        assert!(filter_line.contains("Internal filter #2"));
-        assert!(filter_line.contains("R rinse"));
     }
 }
