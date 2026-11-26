@@ -184,9 +184,14 @@ directory for custom materials and species is a stretch goal.
     `~/Library/Caches/DeskTank` on macOS and `%LOCALAPPDATA%\DeskTank`
     on Windows. `DESKTANK_RUNTIME_DIR` overrides it. On Unix the runtime
     directory is private (mode `0700`). Windows uses a per-user local
-    pipe name with the default DACL pending a
-    current-user-only DACL. The blocking Windows pipe API has no read
-    timeout, so an idle connection can stall IPC on Windows.)*
+    pipe name with a protected DACL that grants access to the current
+    user's SID only. Each connection runs on its own short-lived worker
+    thread (at most 8 at once; more are told `app busy`), so a stalled
+    client cannot block others. On Unix a request line has one overall
+    2 s read deadline, so a client trickling bytes is cut off. The
+    blocking Windows pipe API has no read timeout, so a silent
+    connection on Windows holds its worker (and one of the 8 slots)
+    until the client closes it.)*
 - **Start at login**: `SMAppService` on macOS, the `HKCU\…\Run` key on
   Windows, and an XDG autostart `.desktop` file on Linux.
 - **Logging**: `tracing`, with `tracing-appender` writing a rotating file
