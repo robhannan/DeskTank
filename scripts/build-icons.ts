@@ -5,13 +5,19 @@
 //     Assets/{Gravel,Reeds,Betta}.png  plus three 1024x1024 RGBA layers)
 //   web/icons/tank-{512,192}.png       flat web/PWA icons: the same layers
 //                                      composited over a water gradient
+//   android/app/src/main/res/          Android's adaptive launcher layers
+//     drawable-nodpi/ic_launcher_{background,foreground,monochrome}.png
+//     (432x432) and the Leanback banner drawable-xhdpi/tv_banner.png (320x180)
 //
 // Layers: the betta's 80x64 fine sprite (assets/species/betta.toml) at 8x,
 // two plant clumps cut from the plant reference render
 // (crates/desktank/tests/reference/plant_rosettes_x4.png) at 3x, and a bed
 // of fine-scale gravel shaded by a port of the STYLE_GRAVEL pebble shader
 // (crates/desktank-render/src/tank.wgsl) at 4x. Dependency-free and
-// deterministic: no clock, no randomness, no Xcode.
+// deterministic: no clock, no randomness, no Xcode. The Android art reuses
+// the same betta, reeds, water and gravel at other sizes, with the betta's
+// original dark outline and the wordmark set in the 3x6 pixel font of
+// crates/desktank-render/src/font.rs.
 //
 //   node scripts/build-icons.ts                 write every output
 //   node scripts/build-icons.ts --check         exit 1 if an output is stale
@@ -43,6 +49,23 @@ function blank(w: number, h: number): Image {
 
 function put(img: Image, x: number, y: number, r: number, g: number, b: number, a = 255): void {
   img.data.set([r, g, b, a], (y * img.w + x) * 4);
+}
+
+/** Alpha-composites `src` onto `dst` at (dx, dy), each source pixel
+ * repeated `scale` times in both directions (nearest neighbour). */
+function over(dst: Image, src: Image, dx = 0, dy = 0, scale = 1): void {
+  for (let y = 0; y < src.h * scale; y++) {
+    for (let x = 0; x < src.w * scale; x++) {
+      const s = (Math.floor(y / scale) * src.w + Math.floor(x / scale)) * 4;
+      const a = src.data[s + 3];
+      if (a === 0) continue;
+      const d = ((dy + y) * dst.w + dx + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        dst.data[d + c] = Math.round((src.data[s + c] * a + dst.data[d + c] * (255 - a)) / 255);
+      }
+      dst.data[d + 3] = Math.round(a + (dst.data[d + 3] * (255 - a)) / 255);
+    }
+  }
 }
 
 // --- PNG ------------------------------------------------------------------
@@ -209,37 +232,70 @@ function spriteValue(toml: string, name: string, open: string, close: string): s
 // fish legible against the tank.
 const GLASS_EDGE: Record<string, string> = { "#480a1c": "#901c36", "#5a0c1e": "#9b213b" };
 
-function bettaLayer(): Image {
+interface Betta {
+  rows: string[];
+  colours: Map<string, string>;
+}
+
+/** The betta's first fine frame (80x64) and its palette, as authored. */
+function loadBetta(): Betta {
   const toml = readFileSync(join(ROOT, "assets/species/betta.toml"), "utf8");
-  const colours = new Map<string, [number, number, number]>();
+  const colours = new Map<string, string>();
   for (const m of spriteValue(toml, "colours", "{", "}").matchAll(/(\S)\s*=\s*"(#[0-9a-fA-F]{6})"/g)) {
-    const hex = m[2].toLowerCase();
-    colours.set(m[1], hexRgb(GLASS_EDGE[hex] ?? hex));
+    colours.set(m[1], m[2].toLowerCase());
   }
   const frames = spriteValue(toml, "fine_frames", "[", "]");
   const first = frames.slice(frames.indexOf("[", 1));
   const rows = [...first.slice(0, first.indexOf("]")).matchAll(/"([^"]*)"/g)].map((m) => m[1]);
   if (rows.length !== 64 || rows.some((r) => r.length !== 80)) throw new Error("betta fine frame is not 80x64");
+  return { rows, colours };
+}
 
-  const scale = 8;
-  const [ox, oy] = [208, 160];
-  const img = blank(SIZE, SIZE);
-  rows.forEach((row, y) => {
-    [...row].forEach((key, x) => {
-      if (key === ".") return;
-      const c = colours.get(key);
-      if (!c) throw new Error(`betta sprite key ${key} has no colour`);
-      for (let sy = 0; sy < scale; sy++) {
-        for (let sx = 0; sx < scale; sx++) put(img, ox + x * scale + sx, oy + y * scale + sy, c[0], c[1], c[2]);
-      }
+/** The sprite as an image, one pixel per fine pixel. `glassEdge` lightens the
+ * dark outline (macOS and web); `crop` trims it to its non-empty bounds
+ * (Android). `ink`, when given, paints every pixel it accepts white
+ * (`ink` gets the key and the pixel's position in the 80x64 sprite) and
+ * leaves the rest clear: a monochrome silhouette. */
+function bettaImage(betta: Betta, opts: { glassEdge: boolean; crop: boolean; ink?: (key: string, x: number, y: number) => boolean }): Image {
+  let [x0, y0, x1, y1] = [0, 0, 80, 64];
+  if (opts.crop) {
+    [x0, y0, x1, y1] = [80, 64, 0, 0];
+    betta.rows.forEach((row, y) => {
+      [...row].forEach((key, x) => {
+        if (key === ".") return;
+        [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x + 1), Math.max(y1, y + 1)];
+      });
     });
-  });
+  }
+  const img = blank(x1 - x0, y1 - y0);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const key = betta.rows[y][x];
+      if (key === ".") continue;
+      if (opts.ink) {
+        if (opts.ink(key, x, y)) put(img, x - x0, y - y0, 255, 255, 255);
+        continue;
+      }
+      const hex = betta.colours.get(key);
+      if (!hex) throw new Error(`betta sprite key ${key} has no colour`);
+      const [r, g, b] = hexRgb(opts.glassEdge ? (GLASS_EDGE[hex] ?? hex) : hex);
+      put(img, x - x0, y - y0, r, g, b);
+    }
+  }
+  return img;
+}
+
+function bettaLayer(betta: Betta): Image {
+  const img = blank(SIZE, SIZE);
+  over(img, bettaImage(betta, { glassEdge: true, crop: false }), 208, 160, 8);
   return img;
 }
 
 // --- Reeds ------------------------------------------------------------------
 
-function reedsLayer(): Image {
+/** The plant reference render's two clumps, cut out of the water behind them
+ * (one pixel per fine pixel, clear elsewhere). */
+function reedClumps(): { tall: Image; rosette: Image } {
   const ref = decodePng(readFileSync(join(ROOT, "crates/desktank/tests/reference/plant_rosettes_x4.png")));
   if (ref.w !== 640 || ref.h !== 360) throw new Error(`plant reference is ${ref.w}x${ref.h}, expected 640x360`);
   const px = (x: number, y: number): [number, number, number] => {
@@ -248,27 +304,25 @@ function reedsLayer(): Image {
   };
   // Plant pixels are those that differ from the water behind them, which
   // varies by row only: sampled in a clear column.
-  const water = new Map<number, [number, number, number]>();
-  for (let y = 170; y < 332; y++) water.set(y, px(200, y));
-  const img = blank(SIZE, SIZE);
-  const scale = 3;
-  // [x0, y0, x1, y1) in the reference, and where it lands.
-  const clumps: [number, number, number, number, number, number][] = [
-    [268, 184, 372, 332, 32, 500], // tall vallisneria
-    [92, 264, 144, 332, 792, 740], // compact rosette
-  ];
-  for (const [x0, y0, x1, y1, dx, dy] of clumps) {
+  const cut = (x0: number, y0: number, x1: number, y1: number): Image => {
+    const img = blank(x1 - x0, y1 - y0);
     for (let y = y0; y < y1; y++) {
-      const [br, bg, bb] = water.get(y) ?? px(200, y);
+      const [br, bg, bb] = px(200, y);
       for (let x = x0; x < x1; x++) {
         const [r, g, b] = px(x, y);
-        if (Math.abs(r - br) + Math.abs(g - bg) + Math.abs(b - bb) <= 12) continue;
-        for (let sy = 0; sy < scale; sy++) {
-          for (let sx = 0; sx < scale; sx++) put(img, dx + (x - x0) * scale + sx, dy + (y - y0) * scale + sy, r, g, b);
-        }
+        if (Math.abs(r - br) + Math.abs(g - bg) + Math.abs(b - bb) > 12) put(img, x - x0, y - y0, r, g, b);
       }
     }
-  }
+    return img;
+  };
+  return { tall: cut(268, 184, 372, 332), rosette: cut(92, 264, 144, 332) };
+}
+
+function reedsLayer(): Image {
+  const { tall, rosette } = reedClumps();
+  const img = blank(SIZE, SIZE);
+  over(img, tall, 32, 500, 3);
+  over(img, rosette, 792, 740, 3);
   return img;
 }
 
@@ -312,17 +366,19 @@ const GRAVEL_TOP = [
 // gravel bed stays legible against the dark water backdrop at Dock sizes.
 const GRAVEL_BASE = [152, 132, 96].map((c) => f32(c / 255));
 
-function gravelLayer(): Image {
-  const grid = GRAVEL_TOP.length;
-  const img = blank(SIZE, SIZE);
-  const scale = SIZE / (grid * 4);
+/** A gravel bed: `tops[cx]` is the first solid coarse row of column `cx`, the
+ * grid is `tops.length` columns by `rows` rows of 4x4 fine pixels, and each
+ * fine pixel is `scale` image pixels square. */
+function gravelLayer(tops: number[], rows: number, scale: number): Image {
+  const grid = tops.length;
+  const img = blank(grid * 4 * scale, rows * 4 * scale);
   for (let cx = 0; cx < grid; cx++) {
-    const top = GRAVEL_TOP[cx];
-    for (let cy = top; cy < grid; cy++) {
+    const top = tops[cx];
+    for (let cy = top; cy < rows; cy++) {
       const v = hash(cx + 17, cy + 31) & 0xff;
       const openUp = cy === top;
-      const openL = cx > 0 && cy < GRAVEL_TOP[cx - 1];
-      const openR = cx < grid - 1 && cy < GRAVEL_TOP[cx + 1];
+      const openL = cx > 0 && cy < tops[cx - 1];
+      const openR = cx < grid - 1 && cy < tops[cx + 1];
       // Cell-constant layout bits (glue bit dropped).
       const cv = hash(v >>> 1, 0x4b1d);
       const cellN = f32(f32((v >>> 3) & 3) - 1.5) * f32(0.025);
@@ -386,25 +442,23 @@ function gravelLayer(): Image {
 
 // --- Web icons --------------------------------------------------------------
 
-/** `layers` over a vertical water gradient, opaque. */
-function composite(layers: Image[]): Image {
+/** A vertical water gradient, opaque. */
+function waterGradient(w: number, h: number): Image {
   const top = hexRgb("#2d6086");
   const bottom = hexRgb("#103b5a");
-  const img = blank(SIZE, SIZE);
-  for (let y = 0; y < SIZE; y++) {
-    const t = y / (SIZE - 1);
+  const img = blank(w, h);
+  for (let y = 0; y < h; y++) {
+    const t = y / (h - 1);
     const [r, g, b] = top.map((c, i) => Math.round(c + (bottom[i] - c) * t));
-    for (let x = 0; x < SIZE; x++) put(img, x, y, r, g, b);
+    for (let x = 0; x < w; x++) put(img, x, y, r, g, b);
   }
-  for (const layer of layers) {
-    for (let i = 0; i < SIZE * SIZE * 4; i += 4) {
-      const a = layer.data[i + 3];
-      if (a === 0) continue;
-      for (let c = 0; c < 3; c++) {
-        img.data[i + c] = Math.round((layer.data[i + c] * a + img.data[i + c] * (255 - a)) / 255);
-      }
-    }
-  }
+  return img;
+}
+
+/** `layers` over a vertical water gradient, opaque. */
+function composite(layers: Image[]): Image {
+  const img = waterGradient(SIZE, SIZE);
+  for (const layer of layers) over(img, layer);
   return img;
 }
 
@@ -452,12 +506,99 @@ function iconDocument(): string {
   )}\n`;
 }
 
+// --- Android ----------------------------------------------------------------
+
+const ANDROID_RES = "android/app/src/main/res";
+
+/** The 3x6 glyphs of `crates/desktank-render/src/font.rs` for ASCII 32..126,
+ * parsed from the source so the wordmark follows the font. */
+function loadFont(): string[][] {
+  const src = readFileSync(join(ROOT, "crates/desktank-render/src/font.rs"), "utf8");
+  const start = src.indexOf("const ASCII:");
+  if (start < 0) throw new Error("no ASCII table in font.rs");
+  const table = src.slice(src.indexOf("= [", start), src.indexOf("\n];", start));
+  const glyphs = [...table.matchAll(/\[((?:\s*"[.#]{3}",?){6})\s*\]/g)].map((m) => [...m[1].matchAll(/"([.#]{3})"/g)].map((r) => r[1]));
+  if (glyphs.length !== 95) throw new Error(`font.rs ASCII table has ${glyphs.length} glyphs, expected 95`);
+  return glyphs;
+}
+
+/** `text` in the pixel font, `scale` image pixels per font pixel, its top left at (x, y). */
+function drawText(img: Image, font: string[][], text: string, x: number, y: number, scale: number, rgb: number[]): void {
+  const advance = 4;
+  [...text].forEach((ch, i) => {
+    const glyph = font[ch.charCodeAt(0) - 32];
+    if (!glyph) throw new Error(`no glyph for ${JSON.stringify(ch)}`);
+    glyph.forEach((row, gy) => {
+      [...row].forEach((ink, gx) => {
+        if (ink !== "#") return;
+        for (let sy = 0; sy < scale; sy++) {
+          for (let sx = 0; sx < scale; sx++) {
+            put(img, x + (i * advance + gx) * scale + sx, y + gy * scale + sy, rgb[0], rgb[1], rgb[2]);
+          }
+        }
+      });
+    });
+  });
+}
+
+/** `img` centred horizontally on a `size` canvas (nudged 4 px right, where
+ * the betta's mass sits) at `y`, scaled `scale` times, on a clear layer. */
+function androidLayer(img: Image, scale: number, y: (h: number) => number): Image {
+  const size = 432;
+  const layer = blank(size, size);
+  const [w, h] = [img.w * scale, img.h * scale];
+  over(layer, img, Math.floor((size - w) / 2) + 4, y(h), scale);
+  return layer;
+}
+
+/** The adaptive icon's layers (432x432: 108 dp at xxxhdpi, 72 dp visible under
+ * a circular mask) and the TV banner, as [path, image, has alpha]. */
+function androidIcons(betta: Betta): [string, Image, boolean][] {
+  const { tall, rosette } = reedClumps();
+
+  // Water, a gravel bed low in the circle's arc, and the two reeds at 2x.
+  const background = waterGradient(432, 432);
+  const tops = Array.from({ length: 54 }, (_, cx) => ([14, 15, 16, 26, 27, 28, 29, 38, 39, 40].includes(cx) ? 39 : 40));
+  over(background, gravelLayer(tops, 54, 2));
+  over(background, tall, 18, 326 - 296, 2);
+  over(background, rosette, 286, 326 - 136, 2);
+
+  const outline = bettaImage(betta, { glassEdge: false, crop: true });
+  const foreground = androidLayer(outline, 3, (h) => 200 - Math.floor(h / 2));
+  // The themed icon: a white silhouette with the eye cut out.
+  const silhouette = bettaImage(betta, {
+    glassEdge: false,
+    crop: true,
+    ink: (key, x, y) => !((key === "k" || key === "e") && x > 55 && y < 30),
+  });
+  const monochrome = androidLayer(silhouette, 3, (h) => Math.floor((432 - h) / 2));
+
+  // The Leanback banner: the same scene at 1x with the fish and the name.
+  const banner = waterGradient(320, 180);
+  const bannerTops = Array.from({ length: 80 }, (_, cx) => ([2, 3, 4, 5, 11, 12, 13].includes(cx % 19) ? 39 : 40));
+  over(banner, gravelLayer(bannerTops, 45, 1));
+  over(banner, tall, 4, 162 - 148);
+  over(banner, rosette, 262, 162 - 68);
+  over(banner, outline, 18, 26, 2);
+  const font = loadFont();
+  drawText(banner, font, "DeskTank", 182, 64, 4, hexRgb("#0a2034"));
+  drawText(banner, font, "DeskTank", 180, 62, 4, hexRgb("#f2f8fc"));
+
+  return [
+    [`${ANDROID_RES}/drawable-nodpi/ic_launcher_background.png`, background, false],
+    [`${ANDROID_RES}/drawable-nodpi/ic_launcher_foreground.png`, foreground, true],
+    [`${ANDROID_RES}/drawable-nodpi/ic_launcher_monochrome.png`, monochrome, true],
+    [`${ANDROID_RES}/drawable-xhdpi/tv_banner.png`, banner, false],
+  ];
+}
+
 // --- Outputs ----------------------------------------------------------------
 
 function build(): Map<string, Buffer> {
-  const gravel = gravelLayer();
+  const sprite = loadBetta();
+  const gravel = gravelLayer(GRAVEL_TOP, 64, 4);
   const reeds = reedsLayer();
-  const betta = bettaLayer();
+  const betta = bettaLayer(sprite);
   const flat = composite([gravel, reeds, betta]);
   return new Map<string, Buffer>([
     [`${ICON_DIR}/icon.json`, Buffer.from(iconDocument())],
@@ -466,6 +607,7 @@ function build(): Map<string, Buffer> {
     [`${ICON_DIR}/Assets/Gravel.png`, encodePng(gravel, true)],
     ["web/icons/tank-512.png", encodePng(downsample(flat, 512), false)],
     ["web/icons/tank-192.png", encodePng(downsample(flat, 192), false)],
+    ...androidIcons(sprite).map(([path, img, alpha]): [string, Buffer] => [path, encodePng(img, alpha)]),
   ]);
 }
 
