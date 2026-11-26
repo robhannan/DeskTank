@@ -18,6 +18,8 @@
 #![forbid(unsafe_code)]
 
 mod algae;
+mod card;
+mod font;
 mod gpu;
 mod grid;
 mod hud;
@@ -36,6 +38,7 @@ mod timer;
 /// instance and surfaces.
 pub use wgpu;
 
+pub use card::{CARD_MAX, Card, CardLayout};
 pub use gpu::{Gpu, GpuError, GpuOptions};
 pub use hud::{BrushPreview, Magnifier, MagnifierLayout, Palette, PaletteHit, PaletteLayout};
 pub use layout::{Layout, even_scale};

@@ -73,8 +73,8 @@ use desktank_platform::{
     PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats,
 };
 use desktank_render::{
-    BrushPreview, Gpu, GpuOptions, Magnifier, Palette, PaletteHit, Tank, TankConfig, TankSurface,
-    wgpu,
+    BrushPreview, Card, Gpu, GpuOptions, Magnifier, Palette, PaletteHit, Tank, TankConfig,
+    TankSurface, wgpu,
 };
 use desktank_sim::UnmetNeed;
 use desktank_sim::cheats::{self, CheatKey, Konami};
@@ -332,6 +332,9 @@ struct Running {
     /// Open tab and sub-category and the selection last given to the tank
     /// (`None` before the first).
     shown: Option<Shown>,
+    /// The species card closed with a click; it stays closed until
+    /// another species (or none) is selected.
+    closed_card: Option<Card>,
     /// Watches key presses for the code that opens the cheat field.
     konami: Konami,
     /// The text field open in the title bar (cheat or name), if any.
@@ -440,6 +443,7 @@ impl Running {
             scroll: 0.0,
             scroll_lines: 0.0,
             shown: None,
+            closed_card: None,
             konami: Konami::new(),
             field: None,
             inspected: None,
@@ -478,7 +482,8 @@ impl Running {
         self.tank.invalidate();
     }
 
-    /// The cell under the cursor, unless the cursor is over the palette.
+    /// The cell under the cursor, unless the cursor is over the palette
+    /// or the species card.
     fn cursor_cell(&self) -> Option<(i64, i64)> {
         let (px, py) = self.cursor?;
         let size = self.surface.size();
@@ -486,6 +491,10 @@ impl Running {
             .tank
             .palette_layout(size)
             .is_some_and(|p| p.contains(px, py))
+            || self
+                .tank
+                .card_layout(size)
+                .is_some_and(|c| c.contains(px, py))
         {
             return None;
         }
@@ -505,6 +514,13 @@ impl Running {
 
     fn pressed(&mut self, button: Button) {
         let size = self.surface.size();
+        // A click on the species card closes it.
+        if let (Some((px, py)), Some(c)) = (self.cursor, self.tank.card_layout(size))
+            && c.contains(px, py)
+        {
+            self.closed_card = self.tank.card();
+            return;
+        }
         if let (Some((px, py)), Some(p)) = (self.cursor, self.tank.palette_layout(size)) {
             match p.hit(px, py) {
                 Some(PaletteHit::Tab(t)) => {
@@ -1004,6 +1020,16 @@ impl Running {
                 selected,
             }));
         }
+        // The selected creature's or plant's species card, unless closed.
+        let card = selected
+            .and_then(|(t, sub, i)| self.tree.get(t)?.subs.get(sub)?.items.get(i).copied())
+            .and_then(Card::of);
+        if self.closed_card != card {
+            // Another species (or none) is selected: its card opens.
+            self.closed_card = None;
+        }
+        self.tank
+            .set_card(card.filter(|&c| self.closed_card != Some(c)));
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {

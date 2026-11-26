@@ -1501,3 +1501,117 @@ fn clown_vomit_gravel_renders_multiple_saturated_pebble_colours() {
         );
     }
 }
+
+#[test]
+fn the_species_card_is_drawn_on_top_of_the_tank_and_the_lens() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (tw, th) = (320u32, 180u32);
+    let world = |with_creature: bool| {
+        let materials = MaterialTable::builtin().unwrap();
+        let rock = materials.id("rock").unwrap();
+        let config = WorldConfig {
+            width: 80,
+            height: 45,
+            seed: 7,
+            water_level: 1.0,
+        };
+        let mut world = World::new(config, materials).unwrap();
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: 0,
+                    y0: 30,
+                    x1: 80,
+                    y1: 45,
+                },
+                rock,
+                Brush::Replace,
+            )
+            .unwrap();
+        if with_creature {
+            // Under the card's top-left corner.
+            let tetra = world.species().id("neon_tetra").unwrap();
+            world.add_creature(tetra, 14, 8).unwrap();
+        }
+        world
+    };
+    let mut tank = Tank::new(world(true), TankConfig::default());
+    let guppy = tank.world().species().id("guppy").unwrap();
+    let plain = render_sized(gpu, &mut tank, format, (tw, th));
+
+    tank.set_card(Some(desktank_render::Card::Creature(guppy)));
+    let layout = tank.card_layout((tw, th)).unwrap();
+    // No palette: top-left, shrunk to fit the 320x180 target.
+    assert_eq!((layout.scale, layout.origin), (1, (2, 2)));
+    let (cw, ch) = layout.size();
+    assert!(layout.origin.1 + ch <= th && ch > 100, "{layout:?}");
+    let carded = render_sized(gpu, &mut tank, format, (tw, th));
+    let at = |img: &[u8], x: u32, y: u32| px_at(img, tw, x, y);
+    let (x0, y0) = layout.origin;
+    assert_eq!(at(&carded, x0, y0), [0x2a, 0x36, 0x48], "frame");
+    assert_eq!(
+        at(&carded, x0 + 2, y0 + 2),
+        [0x0b, 0x12, 0x1c],
+        "background"
+    );
+    assert_eq!(at(&carded, x0 + cw - 1, y0 + ch - 1), [0x2a, 0x36, 0x48]);
+
+    // Outside the card the tank is untouched.
+    let mut changed_outside = 0;
+    for y in 0..th {
+        for x in 0..tw {
+            let inside = x >= x0 && x < x0 + cw && y >= y0 && y < y0 + ch;
+            if !inside && at(&plain, x, y) != at(&carded, x, y) {
+                changed_outside += 1;
+            }
+        }
+    }
+    assert_eq!(changed_outside, 0);
+
+    // Nothing under the card shows through: the same card over a tank with
+    // no creature there draws the same pixels.
+    let mut bare = Tank::new(world(false), TankConfig::default());
+    bare.set_card(Some(desktank_render::Card::Creature(guppy)));
+    let bare = render_sized(gpu, &mut bare, format, (tw, th));
+    for y in y0..y0 + ch {
+        for x in x0..x0 + cw {
+            assert_eq!(at(&bare, x, y), at(&carded, x, y), "({x}, {y})");
+        }
+    }
+
+    // A magnifier lens over the card doesn't draw into it.
+    tank.set_magnifier(Some(desktank_render::Magnifier {
+        cell: (30, 20),
+        zoom: 2,
+    }));
+    let lens = render_sized(gpu, &mut tank, format, (tw, th));
+    let ml = desktank_render::MagnifierLayout::fit(
+        (tw, th),
+        &tank.layout((tw, th)),
+        tank.magnifier().unwrap(),
+    )
+    .unwrap();
+    assert!(
+        ml.lens_origin.0 < x0 + cw && ml.lens_origin.1 < y0 + ch,
+        "lens meets the card"
+    );
+    assert_ne!(lens, carded, "the lens drew");
+    for y in y0..y0 + ch {
+        for x in x0..x0 + cw {
+            assert_eq!(at(&carded, x, y), at(&lens, x, y), "({x}, {y})");
+        }
+    }
+
+    // Hiding the card brings the tank back.
+    tank.set_magnifier(None);
+    tank.set_card(None);
+    assert_eq!(tank.card_layout((tw, th)), None);
+    assert_eq!(render_sized(gpu, &mut tank, format, (tw, th)), plain);
+}
+
+/// Pixel `(x, y)` of a `width`-pixel-wide RGBA image.
+fn px_at(img: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
+    let i = ((y * width + x) * 4) as usize;
+    [img[i], img[i + 1], img[i + 2]]
+}

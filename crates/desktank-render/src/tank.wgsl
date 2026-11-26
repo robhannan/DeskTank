@@ -48,6 +48,12 @@ struct View {
     // 1 nutrient, 2 CO2, 3 light, 4 flow), and the normalized surface-current
     // ripple speed threshold (w: > 0 when strong surface current is active).
     hud_size: vec4<f32>,
+    // Species card: top-left in target pixels, target pixels per card pixel,
+    // and 1 if shown.
+    card: vec4<f32>,
+    // Card image size in card pixels (xy) and the row of the HUD texture
+    // where the card's region starts (z; its left edge is column 0).
+    card_size: vec4<f32>,
     // Brush outline: centre cell, radius in cells, and 1 if shown.
     cursor: vec4<f32>,
     // Day and night: a colour multiplier for the tank (rgb; 1 by day), and
@@ -245,9 +251,17 @@ struct GridSource {
     swayed_away: bool,
 };
 
-// The palette pixel at `pos` if the palette is shown and covers it (alpha
-// above 0.5), else alpha 0.
+// The HUD pixel at `pos` if the species card or the palette is shown and
+// covers it (alpha above 0.5), else alpha 0; the card is on top. Every pass
+// that must leave the HUD alone (grid, plants, sprites, the lens frame)
+// asks this, so they can't disagree about what it covers.
 fn hud_at(pos: vec2<f32>) -> vec4<f32> {
+    if view.card.w > 0.5 {
+        let p = floor((pos - view.card.xy) / view.card.z);
+        if all(p >= vec2<f32>(0.0)) && all(p < view.card_size.xy) {
+            return textureLoad(hud, vec2<i32>(p) + vec2<i32>(0, i32(view.card_size.z)), 0);
+        }
+    }
     if view.hud.w > 0.5 {
         let p = floor((pos - view.hud.xy) / view.hud.z);
         if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy) {
@@ -3060,19 +3074,15 @@ fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
-// Sprite fragments drawn without looking at plants: under the palette
-// (it stays on top; creatures show beside its shorter row), and open
+// Sprite fragments drawn without looking at plants: under the palette or
+// the species card (they stay on top; creatures show beside its shorter row), and open
 // texels without a glow's halo.
 fn sprite_skipped(v: SpriteOut) -> bool {
     if outside_lens(v.pos.xy) {
         return true;
     }
-    if view.hud.w > 0.5 {
-        let p = floor((v.pos.xy - view.hud.xy) / view.hud.z);
-        if all(p >= vec2<f32>(0.0)) && all(p < view.hud_size.xy)
-            && textureLoad(hud, vec2<i32>(p), 0).a > 0.5 {
-            return true;
-        }
+    if hud_at(v.pos.xy).a > 0.5 {
+        return true;
     }
     return frame_texel(v.frame, floor(v.local)).a < 0.5 && v.glow.w <= 0.0;
 }

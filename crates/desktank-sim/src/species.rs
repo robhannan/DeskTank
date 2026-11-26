@@ -430,6 +430,20 @@ impl Species {
         items.join(", ")
     }
 
+    /// Adult body length for a species card: one length, or the male's and
+    /// the female's where they differ.
+    #[must_use]
+    pub fn describe_size(&self) -> String {
+        if (self.female_length_cm - self.length_cm).abs() < f32::EPSILON {
+            format!("{} cm", self.length_cm)
+        } else {
+            format!(
+                "male {} cm, female {} cm",
+                self.length_cm, self.female_length_cm
+            )
+        }
+    }
+
     /// Minimum water depth, surface air and territory for a species card.
     #[must_use]
     #[allow(clippy::cast_precision_loss)] // Tank depths are small enough to retain half-centimetres.
@@ -1561,6 +1575,7 @@ mod tests {
                 species.name
             );
             assert!(!species.describe_behaviour().is_empty(), "{}", species.name);
+            assert!(species.describe_size().ends_with(" cm"), "{}", species.name);
             assert!(
                 !species.describe_requirements().is_empty(),
                 "{}",
@@ -1662,6 +1677,20 @@ mod tests {
         let species = table.iter().next().unwrap();
         assert_eq!(species.describe_requirements(), "min depth 5.5 cm");
         assert_eq!(species.describe_diet(&materials), "none");
+    }
+
+    #[test]
+    fn species_card_sizes_name_both_sexes_only_where_they_differ() {
+        let table = SpeciesTable::builtin_for(&materials()).unwrap();
+        let size = |name: &str| {
+            table
+                .iter()
+                .find(|s| s.name == name)
+                .unwrap()
+                .describe_size()
+        };
+        assert_eq!(size("guppy"), "male 3 cm, female 4.5 cm");
+        assert_eq!(size("neon_tetra"), "3.5 cm");
     }
 
     #[test]

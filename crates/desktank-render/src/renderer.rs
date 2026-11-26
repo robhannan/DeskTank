@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use desktank_sim::{FieldKind, Part, World};
 
 use crate::algae;
+use crate::card::{self, CardLayout};
 use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, Magnifier, MagnifierLayout, PaletteLayout};
 use crate::layout::Layout;
@@ -16,12 +17,39 @@ use crate::plants::{self, PlantTints};
 use crate::sprites::{self, Atlas};
 use crate::{Gpu, timer::GpuTimer};
 
+/// The shader's field overlay mode: 0 = none; 1, 2, 3 = nutrient, CO₂, light
+/// (the texture's channels); 4 = flow.
+fn field_mode(field: Option<crate::FieldOverlay>) -> f32 {
+    match field {
+        None => 0.0,
+        Some(crate::FieldOverlay::Scalar(FieldKind::Nutrient)) => 1.0,
+        Some(crate::FieldOverlay::Scalar(FieldKind::Co2)) => 2.0,
+        Some(crate::FieldOverlay::Scalar(FieldKind::Light)) => 3.0,
+        Some(crate::FieldOverlay::Flow) => 4.0,
+    }
+}
+
+/// What is drawn over the tank in one frame.
+#[derive(Clone, Copy)]
+pub struct Overlay {
+    /// The interact palette.
+    pub palette: Option<PaletteLayout>,
+    /// The species card.
+    pub card: Option<CardLayout>,
+    /// The brush outline.
+    pub cursor: Option<BrushPreview>,
+    /// The magnified lens.
+    pub magnifier: Option<Magnifier>,
+    /// The field tinted over the tank.
+    pub field: Option<crate::FieldOverlay>,
+}
+
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (192 base, 16
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (224 base, 16
 /// ripple vec4s and two vec4s of look for each algae variety id).
-const VIEW_BYTES: u64 = 192 + (desktank_sim::MAX_DEVICES as u64) * 16 + 16 * 2 * 16;
+const VIEW_BYTES: u64 = 224 + (desktank_sim::MAX_DEVICES as u64) * 16 + 16 * 2 * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -455,11 +483,25 @@ impl Renderer {
 
     /// Uploads the palette strip image (`size` palette pixels, RGBA rows).
     pub fn upload_hud(&self, gpu: &Gpu, image: &[u8], size: (u32, u32)) {
+        self.write_hud(gpu, image, size, 0);
+    }
+
+    /// Uploads the species card image (`size` card pixels, RGBA rows) to the
+    /// card's region of the HUD texture, below the palette's.
+    pub fn upload_card(&self, gpu: &Gpu, image: &[u8], size: (u32, u32)) {
+        self.write_hud(gpu, image, size, card::TEXTURE_Y);
+    }
+
+    /// Writes `image` into the HUD texture at column 0, row `y`.
+    fn write_hud(&self, gpu: &Gpu, image: &[u8], size: (u32, u32), y: u32) {
         if size.0 == 0 || size.1 == 0 {
             return;
         }
         gpu.queue.write_texture(
-            self.hud.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                origin: wgpu::Origin3d { x: 0, y, z: 0 },
+                ..self.hud.as_image_copy()
+            },
             image,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
@@ -488,6 +530,7 @@ impl Renderer {
         ripples: &[[f32; 4]],
         surface_ripple_threshold: f32,
         palette: Option<PaletteLayout>,
+        card: Option<CardLayout>,
         cursor: Option<BrushPreview>,
         field_mode: f32,
         lens: [f32; 4],
@@ -518,6 +561,20 @@ impl Renderer {
                 ]
             },
         );
+        // Origin, scale and 1 if shown; then size and the texture row of the
+        // card's region.
+        let card = card.map_or([0.0; 8], |c| {
+            [
+                c.origin.0 as f32,
+                c.origin.1 as f32,
+                c.scale as f32,
+                1.0,
+                c.image.0 as f32,
+                c.image.1 as f32,
+                card::TEXTURE_Y as f32,
+                0.0,
+            ]
+        });
         let cursor = cursor.map_or([0.0; 4], |c| {
             [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
         });
@@ -544,6 +601,7 @@ impl Renderer {
         .into_iter()
         .chain(backdrop(overlay_water_alpha))
         .chain(hud)
+        .chain(card)
         .chain(cursor)
         .chain(daylight)
         .chain([desktank_sim::daylight::darkness(daylight)])
@@ -580,23 +638,17 @@ impl Renderer {
         sway_on: bool,
         ripples: &[[f32; 4]],
         surface_ripple_threshold: f32,
-        overlay: (
-            Option<PaletteLayout>,
-            Option<BrushPreview>,
-            Option<Magnifier>,
-            Option<crate::FieldOverlay>,
-        ),
+        overlay: Overlay,
         timer: Option<&GpuTimer>,
     ) {
-        let (palette, cursor, magnifier, field) = overlay;
-        // 0 = none; 1, 2, 3 = nutrient, CO₂, light (the texture's channels).
-        let field_mode = match field {
-            None => 0.0,
-            Some(crate::FieldOverlay::Scalar(FieldKind::Nutrient)) => 1.0,
-            Some(crate::FieldOverlay::Scalar(FieldKind::Co2)) => 2.0,
-            Some(crate::FieldOverlay::Scalar(FieldKind::Light)) => 3.0,
-            Some(crate::FieldOverlay::Flow) => 4.0,
-        };
+        let Overlay {
+            palette,
+            card,
+            cursor,
+            magnifier,
+            field,
+        } = overlay;
+        let field_mode = field_mode(field);
         let bytes = self.pack_view(
             size,
             layout.offset,
@@ -608,6 +660,7 @@ impl Renderer {
             ripples,
             surface_ripple_threshold,
             palette,
+            card,
             cursor,
             field_mode,
             [0.0; 4],
@@ -638,6 +691,7 @@ impl Renderer {
                 ripples,
                 surface_ripple_threshold,
                 palette,
+                card,
                 None,
                 field_mode,
                 lens_info,
@@ -1188,13 +1242,14 @@ fn create_atlas(gpu: &Gpu, atlas: &Atlas) -> wgpu::Texture {
     texture
 }
 
-/// The palette-strip texture, sized for the largest strip.
+/// The HUD texture: the palette strip (top) and the species card (below),
+/// each sized for the largest.
 fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
     d.create_texture(&wgpu::TextureDescriptor {
         label: Some("hud"),
         size: wgpu::Extent3d {
-            width: hud::MAX_SIZE.0,
-            height: hud::MAX_SIZE.1,
+            width: card::HUD_TEXTURE.0,
+            height: card::HUD_TEXTURE.1,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
