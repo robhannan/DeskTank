@@ -55,7 +55,8 @@ const TICKS_PER_FRAME: u64 = 5;
 /// or, alive, 1 for a burrower (2), the fine frame's atlas origin (2), or -1 for a body drawn
 /// smaller than its frame, the depth in bands (1, D21), and the night glow
 /// (4): its colour (sRGB-encoded) and strength times the pulse, 0 for none.
-pub const INSTANCE_FLOATS: usize = 19;
+/// Last are the pitch's cosine and sine and the upright body size (4).
+pub const INSTANCE_FLOATS: usize = 23;
 /// Atlas alpha of a glowing species' eye-white texel: it glows brighter
 /// than the body.
 pub const ALPHA_EYE: u8 = 254;
@@ -333,6 +334,7 @@ impl Atlas {
                 frame: e.size,
                 flip: c.facing_left(),
                 turn: c.turn() % 4,
+                pitch: c.pitch(),
                 look: [look, 0.0],
                 depth: c.depth(),
                 glow,
@@ -361,6 +363,7 @@ impl Atlas {
                 frame: e.size,
                 flip: !c.facing_left(),
                 turn: 2,
+                pitch: 0,
                 look: [LOOK_DEAD, c.decay()],
                 depth: f32::from(c.band()),
                 // The dead don't glow.
@@ -465,6 +468,7 @@ impl Atlas {
             frame: (entry.size.0, h * TEXELS_PER_CELL),
             flip: d.facing_left,
             turn: 0,
+            pitch: 0,
             look,
             depth,
             glow: [0.0; 4],
@@ -539,6 +543,7 @@ pub struct Sprite {
     frame: (usize, usize),
     flip: bool,
     turn: u8,
+    pitch: i8,
     look: [f32; 2],
     /// Depth in bands from the front glass (D21).
     depth: f32,
@@ -554,8 +559,27 @@ impl Sprite {
         // Sprite sides and atlas texels are small: exact in f32.
         #[allow(clippy::cast_precision_loss)]
         let f = |v: usize| v as f32;
-        let (w, h) = (f(self.size.0), f(self.size.1));
-        let (w, h) = if self.turn % 2 == 1 { (h, w) } else { (w, h) };
+        let (body_w, body_h) = (f(self.size.0), f(self.size.1));
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+        let (cos, sin) = match self.pitch.abs() {
+            1 => (diagonal, diagonal * f32::from(self.pitch.signum())),
+            2 => (0.0, f32::from(self.pitch.signum())),
+            _ => (1.0, 0.0),
+        };
+        // The rotation follows the mirror, so its direction reverses on
+        // a left-facing sprite. The bounding box is the same either way.
+        // (Not a negative zero when level: some GPUs' compares tell it apart.)
+        let sin = if self.flip && sin != 0.0 { -sin } else { sin };
+        let (w, h) = if sin != 0.0 {
+            (
+                cos * body_w + sin.abs() * body_h,
+                sin.abs() * body_w + cos * body_h,
+            )
+        } else if self.turn % 2 == 1 {
+            (body_h, body_w)
+        } else {
+            (body_w, body_h)
+        };
         let (cx, cy) = self.centre;
         // Fine texels are a quarter cell only on a full-size body; a growing
         // creature samples the coarser frame, which drops less of its art.
@@ -588,6 +612,7 @@ impl Sprite {
             self.depth,
         ]);
         out.extend_from_slice(&self.glow);
+        out.extend_from_slice(&[cos, sin, body_w, body_h]);
     }
 }
 
@@ -701,6 +726,65 @@ mod tests {
         let (cx, cy) = w.creatures()[0].centre();
         assert!((out[0] + out[2] / 2.0 - cx).abs() < 1e-6);
         assert!((out[1] + out[3] / 2.0 - cy).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pitched_instance_bounds_keep_the_body_centre_and_follow_the_mirror() {
+        let mut w = world();
+        let tetra = w.species().id("neon_tetra").unwrap();
+        w.add_creature(tetra, 30, 30).unwrap();
+        let atlas = Atlas::build(w.species(), w.device_kinds());
+        let (mut sprites, mut out) = (Vec::new(), Vec::new());
+        atlas.instances(&w, &mut sprites, &mut out);
+        let mut sprite = sprites[0];
+        let (width, height) = (out[2], out[3]);
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+
+        for flip in [false, true] {
+            sprite.flip = flip;
+            for pitch in [-1, 2] {
+                sprite.pitch = pitch;
+                out.clear();
+                sprite.push(&mut out);
+                assert_eq!(out.len(), 23);
+                assert_eq!(out.len(), INSTANCE_FLOATS);
+                let instance = instance_at(&out, sprite.centre);
+                let side = (width + height) * diagonal;
+                let (box_w, box_h, cos, sin) = if pitch == -1 {
+                    (side, side, diagonal, -diagonal)
+                } else {
+                    (height, width, 0.0, 1.0)
+                };
+                let sin = if flip { -sin } else { sin };
+                for (actual, expected) in instance[2..4]
+                    .iter()
+                    .chain(&instance[19..23])
+                    .zip([box_w, box_h, cos, sin, width, height])
+                {
+                    assert!((actual - expected).abs() < 1e-5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_level_sprite_has_a_positive_zero_pitch_sine_mirrored_or_not() {
+        let mut w = world();
+        let tetra = w.species().id("neon_tetra").unwrap();
+        w.add_creature(tetra, 30, 30).unwrap();
+        let atlas = Atlas::build(w.species(), w.device_kinds());
+        let (mut sprites, mut out) = (Vec::new(), Vec::new());
+        atlas.instances(&w, &mut sprites, &mut out);
+        let mut sprite = sprites[0];
+        sprite.pitch = 0;
+        for flip in [false, true] {
+            sprite.flip = flip;
+            out.clear();
+            sprite.push(&mut out);
+            // Chromium 68's SwiftShader reads -0.0 as non-zero, which sent
+            // mirrored level fish down the pitched path in the shader.
+            assert_eq!(out[20].to_bits(), 0.0f32.to_bits(), "flip {flip}");
+        }
     }
 
     /// T9 part 2: each creature and corpse samples its own look (morph and

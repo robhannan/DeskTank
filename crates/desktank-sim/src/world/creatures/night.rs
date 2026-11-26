@@ -206,6 +206,7 @@ impl World {
         let before = (c.x, c.y, c.facing_left);
         match k.zone {
             Zone::Surfaces => {
+                c.pitch = 0;
                 // It holds its face (or its pane); one that fell asleep
                 // mid-swim sinks until it touches something it can hold.
                 (c.vx, c.vy) = (0, 0);
@@ -217,6 +218,7 @@ impl World {
                 }
             }
             Zone::Bottom => {
+                c.pitch = 0;
                 // It sinks back to the bed and stays, off any face it
                 // climbed.
                 self.let_go(k, c);
@@ -227,15 +229,25 @@ impl World {
                 c.vx = 0;
             }
             Zone::Mid | Zone::Surface => {
+                // Settled, it eases level, so one that rose or sank to its
+                // rest spot doesn't sleep nose-up or nose-down.
                 if (c.tx, c.ty) == (c.x, c.y) || dist(c.tx - c.x, c.ty - c.y) <= REACHED / 2 {
                     (c.tx, c.ty, c.vx, c.vy) = (c.x, c.y, 0, 0);
+                    super::level_off(c);
                 } else {
                     steer(k, c, c.tx, c.ty, (k.cruise / 3).max(1), false);
                     if self.try_move(k, c) == Move::Moved {
-                        c.face_along(c.vx, 0);
+                        // A drift to rest mirrors on any sideways motion.
+                        super::update_swim_heading(c, 0);
+                        // Too slow to set a pitch, it eases level on the
+                        // way rather than keeping its daytime one.
+                        if c.vx.abs().max(c.vy.abs()) < super::PITCH_SPEED {
+                            super::level_off(c);
+                        }
                     } else {
                         // Settled where something stops it.
                         (c.tx, c.ty, c.vx, c.vy) = (c.x, c.y, 0, 0);
+                        super::level_off(c);
                     }
                 }
             }

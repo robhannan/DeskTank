@@ -2846,8 +2846,8 @@ fn layer_out(rgb: vec3<f32>, alpha: f32) -> vec4<f32> {
 
 struct SpriteOut {
     @builtin(position) pos: vec4<f32>,
-    // Texel coordinate within the frame, interpolated across the quad
-    // (outside 0..frame size in a glow halo).
+    // Texel coordinate interpolated across the quad. For pitched sprites
+    // this is in destination texels relative to the centre.
     @location(0) local: vec2<f32>,
     // 0 alive, 1 elder, 2 dead, 3 a device's placement ghost; how far a
     // corpse has rotted (0..1), or 1 for a ghost that doesn't fit.
@@ -2860,6 +2860,9 @@ struct SpriteOut {
     // Glow colour (rgb, sRGB-encoded) and strength times the darkness (w;
     // 0 for none).
     @location(4) @interpolate(flat) glow: vec4<f32>,
+    // Rows of the mapping from destination to frame texels, including
+    // inverse pitch and mirroring. Zero for sprites without pitch.
+    @location(5) @interpolate(flat) unpitch: vec4<f32>,
 };
 
 // Glow halo radius past the sprite's opaque texels, in texels.
@@ -2883,7 +2886,8 @@ fn vs_sprite(
     // than it), the look (see SpriteOut) and the fine frame's top-left texel
     // (the same pose at twice the size; negative for a body drawn smaller
     // than its frame, which keeps the coarser art); its depth in bands; its
-    // night glow colour and strength (0 for none).
+    // night glow colour and strength (0 for none); pitch cosine, sine and
+    // upright body size. Pitched sprites supply the rotated bounds in size.
     @location(0) cell: vec2<f32>,
     @location(1) size: vec2<f32>,
     @location(2) origin: vec2<f32>,
@@ -2893,6 +2897,7 @@ fn vs_sprite(
     @location(6) fine_origin: vec2<f32>,
     @location(7) depth: f32,
     @location(8) glow: vec4<f32>,
+    @location(9) pitch: vec4<f32>,
 ) -> SpriteOut {
     // Corners (0,0) (1,0) (0,1) | (0,1) (1,0) (1,1).
     let corner = vec2<f32>(
@@ -2906,31 +2911,69 @@ fn vs_sprite(
     // (in cells: HALO times the cells per texel along each screen axis).
     let k = glow.w * view.daylight.w;
     let halo = select(0.0, HALO, k > 0.0);
-    let margin = halo * size / select(frame, frame.yx, turn % 2u == 1u);
-    let top_left = round(view.offset + cell * view.scale) - margin * view.scale;
-    let px = top_left + corner * (size + 2.0 * margin) * view.scale;
-    let ndc = vec2<f32>(px.x / view.target_size.x * 2.0 - 1.0, 1.0 - px.y / view.target_size.y * 2.0);
-    // Undo the turn: the frame point (0..1) this screen corner shows. One
-    // clockwise turn takes frame (a, b) to screen (1 - b, a).
-    var q = corner;
-    if turn == 1u {
-        q = vec2<f32>(corner.y, 1.0 - corner.x);
-    } else if turn == 2u {
-        q = vec2<f32>(1.0 - corner.x, 1.0 - corner.y);
-    } else if turn == 3u {
-        q = vec2<f32>(1.0 - corner.y, corner.x);
-    }
-    if orient.x > 0.5 {
-        q.x = 1.0 - q.x;
-    }
     var o: SpriteOut;
+    var px: vec2<f32>;
+    // Pitched sprites have a sine of 0.7 or 1 either way. Compare with a
+    // margin: Chromium 68's SwiftShader reads a mirrored level sprite's
+    // negative zero as not equal to zero.
+    if abs(pitch.y) > 0.5 {
+        let halo_cells = halo * pitch.zw / frame;
+        let axes = abs(pitch.xy);
+        let margin = vec2<f32>(dot(axes, halo_cells), dot(axes.yx, halo_cells));
+        // Use whole, screen-aligned texels no coarser than the art: a full
+        // body's are one art texel (half or a quarter cell), and a growing
+        // body drawn smaller than its frame has them finer, down to a
+        // screen pixel as the upright path samples, so it keeps its detail.
+        // Round the bounds out to cover every destination texel we sample.
+        let texel_px = max(1.0, view.scale * min(pitch.z / frame.x, pitch.w / frame.y));
+        let half_texels = ceil((size * 0.5 + margin) * view.scale / texel_px);
+        let centre = round(view.offset + (cell + size * 0.5) * view.scale);
+        o.local = (corner * 2.0 - 1.0) * half_texels;
+        px = centre + o.local * texel_px;
+        let step = texel_px / view.scale * frame / pitch.zw;
+        let mirror = select(1.0, -1.0, orient.x > 0.5);
+        o.unpitch = vec4<f32>(
+            pitch.xy * (step.x * mirror),
+            vec2<f32>(-pitch.y, pitch.x) * step.y,
+        );
+    } else {
+        let margin = halo * size / select(frame, frame.yx, turn % 2u == 1u);
+        let top_left = round(view.offset + cell * view.scale) - margin * view.scale;
+        px = top_left + corner * (size + 2.0 * margin) * view.scale;
+        // Undo the turn: the frame point (0..1) this screen corner shows.
+        // One clockwise turn takes frame (a, b) to screen (1 - b, a).
+        var q = corner;
+        if turn == 1u {
+            q = vec2<f32>(corner.y, 1.0 - corner.x);
+        } else if turn == 2u {
+            q = vec2<f32>(1.0 - corner.x, 1.0 - corner.y);
+        } else if turn == 3u {
+            q = vec2<f32>(1.0 - corner.y, corner.x);
+        }
+        if orient.x > 0.5 {
+            q.x = 1.0 - q.x;
+        }
+        o.local = q * (frame + 2.0 * halo) - halo;
+        o.unpitch = vec4<f32>(0.0);
+    }
+    let ndc = vec2<f32>(px.x / view.target_size.x * 2.0 - 1.0, 1.0 - px.y / view.target_size.y * 2.0);
     o.pos = vec4<f32>(ndc, 0.0, 1.0);
-    o.local = q * (frame + 2.0 * halo) - halo;
     o.frame = vec4<f32>(select(origin, fine_origin, fine), frame);
     o.look = look;
     o.depth = depth;
     o.glow = vec4<f32>(glow.rgb, k);
     return o;
+}
+
+fn sprite_texel(v: SpriteOut) -> vec2<f32> {
+    if v.unpitch.y != 0.0 {
+        // Sample at the centre of each screen-aligned texel, then undo
+        // pitch and mirror around the body centre and sample nearest.
+        let local = floor(v.local) + 0.5;
+        let frame = vec2<f32>(dot(v.unpitch.xy, local), dot(v.unpitch.zw, local));
+        return floor(frame + v.frame.zw * 0.5);
+    }
+    return floor(v.local);
 }
 
 // Whether a plant cell in a band nearer the glass than `depth` covers the
@@ -3075,50 +3118,56 @@ fn glow_weight(frame: vec4<f32>, p: vec2<f32>, t: vec4<f32>) -> f32 {
 
 @fragment
 fn fs_sprite(v: SpriteOut) -> @location(0) vec4<f32> {
-    if sprite_skipped(v) {
+    let p = sprite_texel(v);
+    if sprite_skipped(v, p) {
         discard;
     }
-    let c = sprite_colour(v, hidden_by_plant(v.pos.xy, v.depth));
+    let c = sprite_colour(v, p, hidden_by_plant(v.pos.xy, v.depth));
     return sprite_out(c.rgb, c.a, v.pos.xy);
 }
 
 @fragment
 fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
-    if sprite_skipped(v) {
+    let p = sprite_texel(v);
+    if sprite_skipped(v, p) {
         discard;
     }
     // The split grid draws the front film in its own pass.
-    let c = sprite_colour(v, hidden_by_leaf(v.pos.xy, v.depth));
+    let c = sprite_colour(v, p, hidden_by_leaf(v.pos.xy, v.depth));
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
 @fragment
 fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
     // A see-through ghost is drawn once, by the leaves pass.
-    if sprite_skipped(v) || v.look.x > 2.5 {
+    let p = sprite_texel(v);
+    if sprite_skipped(v, p) || v.look.x > 2.5 {
         discard;
     }
-    let c = sprite_colour(v, hidden_by_stem(v.pos.xy, v.depth));
+    let c = sprite_colour(v, p, hidden_by_stem(v.pos.xy, v.depth));
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
 // Sprite fragments drawn without looking at plants: under the palette or
 // the species card (they stay on top; creatures show beside its shorter row), and open
 // texels without a glow's halo.
-fn sprite_skipped(v: SpriteOut) -> bool {
+fn sprite_skipped(v: SpriteOut, p: vec2<f32>) -> bool {
     if outside_lens(v.pos.xy) {
+        return true;
+    }
+    // The drawn silhouette can reach past the upright collision box.
+    if v.unpitch.y != 0.0 && !inside(vec2<i32>(floor((v.pos.xy - view.offset) / view.scale))) {
         return true;
     }
     if hud_at(v.pos.xy).a > 0.5 {
         return true;
     }
-    return frame_texel(v.frame, floor(v.local)).a < 0.5 && v.glow.w <= 0.0;
+    return frame_texel(v.frame, p).a < 0.5 && v.glow.w <= 0.0;
 }
 
 // A sprite fragment's colour that sprite_skipped kept, `hidden` if a nearer
 // plant covers it, before the front film and encoding (straight alpha).
-fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
-    let p = floor(v.local);
+fn sprite_colour(v: SpriteOut, p: vec2<f32>, hidden: bool) -> vec4<f32> {
     let texel = vec2<i32>(v.frame.xy + p);
     let t = frame_texel(v.frame, p);
     let k = v.glow.w;

@@ -106,6 +106,19 @@
     territory* below).
 
   Creatures collide with solid cells and with the substrate surface.
+  While swimming they point along their velocity in eighth turns
+  (level, diagonal or vertical), with separate entry and exit thresholds
+  to steady the pose and a low-speed dead zone that holds the last pitch.
+  Bottom dwellers that take short swims pitch during those bouts and
+  return to their ground pose when they settle. Pitch rotates the sprite
+  about its centre after mirroring and leaves its collision box upright.
+  Mirroring needs the same sideways speed as before, so a fish slowing on
+  arrival keeps its face. Each tick its art is levelled as far as needed
+  for the rotated box to lie in open water (clear of the bed, hardscape,
+  plants in its band and the air). Sleepers ease level an eighth turn a
+  tick where they settle, and on the way if they drift too slowly to pitch.
+  Save format v18 stores this pitch and older saves start level.
+
   The tank is 2.5D (D21): it is eight **depth bands** deep, front glass
   to back. Plant cells have a band (a plant's stem keeps one, its leaves
   are up to a band off it, a rosette's blades fan up to two bands either

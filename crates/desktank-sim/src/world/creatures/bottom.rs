@@ -175,7 +175,11 @@ impl World {
         if self.try_move(k, c) != super::Move::Moved {
             (c.vx, c.vy) = (0, 0);
         }
-        c.face_along(c.vx, c.vy);
+        if k.live {
+            c.face_along(c.vx, c.vy);
+        } else {
+            super::update_swim_heading(c, super::TURN_SPEED);
+        }
         true
     }
 
