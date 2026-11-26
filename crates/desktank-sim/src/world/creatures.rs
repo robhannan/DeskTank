@@ -542,9 +542,8 @@ struct Kind {
     live_prey: [u64; 4],
     /// It eats some live food.
     eats_live: bool,
-    /// Shrimp species (`*_shrimp`): graze sponge filters (DV4) and vulnerable
-    /// to unguarded intakes when small (DV3).
-    is_shrimp: bool,
+    /// Bottom-dwelling shrimp climb surfaces and graze sponge filters (DV4).
+    is_bottom_shrimp: bool,
     grazes_algae: bool,
     /// By algae variety id: how well it grazes the variety, in percent of a
     /// full bite (0 ignores it).
@@ -735,7 +734,7 @@ impl Creatures {
                 eats_live: live_prey != [0; 4],
                 grazes_algae: s.grazes_algae,
                 graze: grazing(s, algae),
-                is_shrimp: s.name.ends_with("_shrimp"),
+                is_bottom_shrimp: s.zone == Zone::Bottom && s.name.ends_with("_shrimp"),
                 rests: s.rests,
                 side: (w, h),
                 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
@@ -2105,7 +2104,7 @@ impl World {
         }
         (k.grazes_algae && self.graze_algae(k, reach, c))
             || (k.eats_corpses && self.bite_corpse(reach, c))
-            || (k.is_shrimp && self.graze_sponge(reach, c))
+            || (k.is_bottom_shrimp && self.graze_sponge(reach, c))
     }
 
     fn feeding_reach(&self, k: &Kind, c: &Creature) -> Option<Rect> {
@@ -2755,6 +2754,19 @@ fn to_i64(v: usize) -> i64 {
 mod tests {
     use super::*;
     use crate::{Brush, WorldConfig};
+
+    #[test]
+    fn only_bottom_shrimp_can_climb_and_graze_sponges() {
+        let world = World::new(WorldConfig::default(), MaterialTable::builtin().unwrap()).unwrap();
+        for (name, grazes) in [
+            ("cherry_shrimp", true),
+            ("amano_shrimp", true),
+            ("live_brine_shrimp", false),
+        ] {
+            let id = world.species().id(name).unwrap();
+            assert_eq!(world.kind(id).unwrap().is_bottom_shrimp, grazes, "{name}");
+        }
+    }
 
     fn shy_world(shy: bool) -> World {
         let mut world = World::new(

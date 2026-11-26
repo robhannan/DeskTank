@@ -158,7 +158,7 @@ impl World {
     /// side (glass, rock, wood or a plant), turned onto it like a crawler.
     /// Returns whether it took hold.
     pub(super) fn start_climb(&self, k: &Kind, c: &mut Creature, hungry: bool) -> bool {
-        if !k.is_shrimp || c.turn != 0 || !hungry || c.fear > 0 {
+        if !k.is_bottom_shrimp || c.turn != 0 || !hungry || c.fear > 0 {
             return false;
         }
         let Some((fx, fy)) = c.food.map(|i| self.food_centre(i)) else {
@@ -204,7 +204,7 @@ impl World {
     /// what it reaches, then steps (see [`World::climb`]). Returns whether
     /// it holds a face still, which takes the rest of its tick.
     pub(super) fn forage_climb(&mut self, k: &Kind, c: &mut Creature, hungry: bool) -> bool {
-        if !k.is_shrimp || (c.turn == 0 && !self.start_climb(k, c, hungry)) {
+        if !k.is_bottom_shrimp || (c.turn == 0 && !self.start_climb(k, c, hungry)) {
             return false;
         }
         if hungry && self.anything_to_eat(k) && self.eat(k, c) {
@@ -330,7 +330,7 @@ impl World {
     pub(super) fn climb_spot(&self, k: &Kind, c: &Creature) -> Option<i32> {
         let i = c.food?;
         let (_, fy) = self.food_centre(i);
-        if !k.is_shrimp || c.turn != 0 || fy >= c.y - extent(k, 0).1 * ONE / 2 - ONE {
+        if !k.is_bottom_shrimp || c.turn != 0 || fy >= c.y - extent(k, 0).1 * ONE / 2 - ONE {
             return None;
         }
         let (dx, _, band) = self.food_face(k, c, i).filter(|&(dx, _, _)| dx != 0)?;
@@ -364,7 +364,7 @@ impl World {
         c: &Creature,
         hungry: bool,
     ) -> Option<(i32, i32, i32)> {
-        if !k.is_shrimp || !hungry || c.fear > 0 || !self.has_grazeable_device() {
+        if !k.is_bottom_shrimp || !hungry || c.fear > 0 || !self.has_grazeable_device() {
             return None;
         }
         let (cx, cy) = (i64::from(c.x >> 8), i64::from(c.y >> 8));

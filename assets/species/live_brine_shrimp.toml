@@ -9,7 +9,7 @@ zone = "mid"
 depth = [0.2, 0.75]
 min_depth = 4
 length_cm = 1.0
-# A 20-world-minute lifespan, arriving at maturity (10 world minutes old).
+# Arrives mature at 10 world minutes old, with 10 world minutes left to live.
 lifespan_days = 2
 maturity_days = 1
 temperament = "peaceful"
