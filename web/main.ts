@@ -1440,8 +1440,8 @@ function showInspection() {
     text = `${label(name)} · cell ${x}, ${y}`;
   } else if (kind === "plant") {
     const [species, id, age, health, cells, limit, x, y] = rest;
-    const s = Number(age);
-    const old = s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+    const days = Number(age);
+    const old = days === 0 ? "under a day" : `${days} day${days === 1 ? "" : "s"}`;
     text = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
   } else if (kind === "device") {
     // D27, DV3: flow, media load, maturity, Rinse and intake guard toggle.
