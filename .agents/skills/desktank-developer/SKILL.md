@@ -10,6 +10,13 @@ the Build conventions relevant to its assignment.
 
 ## Assigning work
 
+The orchestrator does not write implementation code itself. Every feature or
+fix goes to developer agents, even a single small parcel. If the change looks
+too tightly coupled to split, sequence the parcels (each verified before the
+next) instead of doing it yourself. There are two exceptions: small
+review-finding fixes, and work the user explicitly asks to be done without
+delegation. Decide before the first edit to `crates/`, `web/` or `android/`.
+
 Keep a small change and its tests together. Split a larger change at boundaries
 that can be verified independently. Sequence dependencies. Run parcels in
 parallel only when their writes are disjoint and their checks can run safely
