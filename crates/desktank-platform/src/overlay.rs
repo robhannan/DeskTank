@@ -120,6 +120,38 @@ pub fn set_overlay_click_through(
     backend::set_overlay_click_through(raw_handle(handle)?, click_through)
 }
 
+/// How the overlay takes input in interact mode (SPEC §2.5, §3.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interactivity {
+    /// Click-through: every mouse event falls to the windows below.
+    ClickThrough,
+    /// Takes the pointer (clicks, drags and moves), without asking for key
+    /// focus: the held chord. A click may still make the app active.
+    Pointer,
+    /// Takes the pointer and key focus, for Esc and typing: the toggle.
+    Focused,
+}
+
+/// Switches how the overlay takes input.
+///
+/// On macOS this toggles `ignoresMouseEvents` and, while interactive, adds an
+/// always-active mouse-moved tracking area so the brush follows the pointer
+/// before the first click. Entering interact mode remembers the app in
+/// front; [`Interactivity::Focused`] activates this app and makes the overlay
+/// key; going back to [`Interactivity::ClickThrough`] gives focus back to the
+/// remembered app if this one took it. Must run on the main thread, and
+/// assumes one overlay window.
+///
+/// # Errors
+///
+/// As [`configure_overlay_window`].
+pub fn set_overlay_interactivity(
+    handle: &impl HasWindowHandle,
+    mode: Interactivity,
+) -> Result<(), OverlayError> {
+    backend::set_overlay_interactivity(raw_handle(handle)?, mode)
+}
+
 /// Shows the overlay without activating the app or taking key focus.
 ///
 /// # Errors
@@ -191,7 +223,7 @@ impl fmt::Debug for FullScreenMonitor {
 mod unsupported {
     use desktank_render::wgpu::rwh::RawWindowHandle;
 
-    use super::{OverlayError, OverlayOptions};
+    use super::{Interactivity, OverlayError, OverlayOptions};
 
     pub(super) fn configure_overlay_window(
         _handle: RawWindowHandle,
@@ -210,6 +242,13 @@ mod unsupported {
     pub(super) fn set_overlay_click_through(
         _handle: RawWindowHandle,
         _click_through: bool,
+    ) -> Result<(), OverlayError> {
+        Err(OverlayError::Unsupported)
+    }
+
+    pub(super) fn set_overlay_interactivity(
+        _handle: RawWindowHandle,
+        _mode: Interactivity,
     ) -> Result<(), OverlayError> {
         Err(OverlayError::Unsupported)
     }

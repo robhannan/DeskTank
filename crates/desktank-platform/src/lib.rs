@@ -8,6 +8,7 @@
 // needs a `// SAFETY:` comment (SPEC §4.1).
 #![allow(unsafe_code)]
 
+mod modifiers;
 mod overlay;
 mod power;
 mod stats;
@@ -20,9 +21,11 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+pub use modifiers::{Modifiers, held_modifiers};
 pub use overlay::{
-    FullScreenMonitor, OverlayError, OverlayOptions, configure_overlay_window, hide_overlay,
-    set_overlay_capture_excluded, set_overlay_click_through, show_overlay_without_focus,
+    FullScreenMonitor, Interactivity, OverlayError, OverlayOptions, configure_overlay_window,
+    hide_overlay, set_overlay_capture_excluded, set_overlay_click_through,
+    set_overlay_interactivity, show_overlay_without_focus,
 };
 pub use power::{PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSignals, PowerSource};
 pub use stats::{ProcessStats, process_stats};

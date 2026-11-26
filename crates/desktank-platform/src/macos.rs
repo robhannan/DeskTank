@@ -9,6 +9,7 @@
 //! - `NSWorkspace` Space and application notifications, then a
 //!   `CGWindowListCopyWindowInfo` bounds check, for full-screen apps.
 
+use core::cell::RefCell;
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
@@ -25,12 +26,13 @@ use objc2_core_foundation::{
 };
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSObjectProtocol,
-    NSProcessInfo, NSProcessInfoPowerStateDidChangeNotification, NSString,
+    NSProcessInfo, NSProcessInfoPowerStateDidChangeNotification, NSRect, NSString,
 };
 
 use desktank_render::wgpu::rwh::RawWindowHandle;
 
-use crate::overlay::{OverlayError, OverlayOptions};
+use crate::modifiers::Modifiers;
+use crate::overlay::{Interactivity, OverlayError, OverlayOptions};
 use crate::power::{PowerSignals, PowerSource};
 
 /// `IOPSCopyPowerSourcesInfo` / `IOPSNotificationCreateRunLoopSource` keys from
@@ -70,6 +72,7 @@ unsafe extern "C" {
     fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
     fn CGMainDisplayID() -> u32;
     fn CGDisplayBounds(display: u32) -> Rect;
+    fn CGEventSourceFlagsState(state: i32) -> u64;
 }
 
 struct Shared {
@@ -516,6 +519,149 @@ pub(crate) fn hide_overlay(handle: RawWindowHandle) -> Result<(), OverlayError> 
         let _: () = msg_send![&*window, orderOut: Option::<&AnyObject>::None];
     }
     Ok(())
+}
+
+// --- Interact input (SPEC §3.3) ---
+
+/// `kCGEventSourceStateCombinedSessionState`.
+const EVENT_SOURCE_COMBINED_SESSION: i32 = 0;
+/// `kCGEventFlagMaskShift`, `…Control`, `…Alternate` and `…Command`.
+const FLAG_SHIFT: u64 = 1 << 17;
+const FLAG_CONTROL: u64 = 1 << 18;
+const FLAG_ALTERNATE: u64 = 1 << 19;
+const FLAG_COMMAND: u64 = 1 << 20;
+
+/// The modifier keys held now. Reads modifier flags only, never other keys,
+/// so it needs neither Accessibility nor Input Monitoring permission (P1).
+pub(crate) fn held_modifiers() -> Modifiers {
+    // SAFETY: `CGEventSourceFlagsState` takes a source state ID by value and
+    // returns a flags word; it has no preconditions.
+    let flags = unsafe { CGEventSourceFlagsState(EVENT_SOURCE_COMBINED_SESSION) };
+    let mut held = Modifiers::NONE;
+    for (mask, modifier) in [
+        (FLAG_SHIFT, Modifiers::SHIFT),
+        (FLAG_CONTROL, Modifiers::CONTROL),
+        (FLAG_ALTERNATE, Modifiers::ALT),
+        (FLAG_COMMAND, Modifiers::SUPER),
+    ] {
+        if flags & mask != 0 {
+            held = held | modifier;
+        }
+    }
+    held
+}
+
+/// `NSTrackingMouseMoved | NSTrackingActiveAlways | NSTrackingInVisibleRect`:
+/// pointer moves reach the overlay's view even while another app is active,
+/// which `NSWindow` mouse-moved events (key window only) don't.
+const POINTER_TRACKING_OPTIONS: usize = 0x02 | 0x80 | 0x200;
+
+/// The overlay's interact state: the tracking area added while it takes
+/// the pointer, and the app that was in front when interact mode began.
+struct Interacting {
+    view: Retained<AnyObject>,
+    area: Retained<AnyObject>,
+    previous: Option<Retained<AnyObject>>,
+}
+
+thread_local! {
+    // AppKit objects, touched on the main thread only (one overlay).
+    static INTERACTING: RefCell<Option<Interacting>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn set_overlay_interactivity(
+    handle: RawWindowHandle,
+    mode: Interactivity,
+) -> Result<(), OverlayError> {
+    let RawWindowHandle::AppKit(raw) = handle else {
+        return Err(OverlayError::UnsupportedHandle);
+    };
+    let window = appkit_window(handle)?;
+    // SAFETY: `ns_view` is the live `NSView *` behind `handle` (checked by
+    // `appkit_window`, which also checked we are on the main thread).
+    let view: Retained<AnyObject> = unsafe { raw.ns_view.cast::<AnyObject>().as_ref() }.retain();
+    INTERACTING.with_borrow_mut(|state| {
+        if mode == Interactivity::ClickThrough {
+            // SAFETY: `window` is a live `NSWindow` on the main thread.
+            unsafe {
+                let _: () = msg_send![&*window, setIgnoresMouseEvents: true];
+            }
+            if let Some(old) = state.take() {
+                // SAFETY: `old.area` was added to `old.view` below; both are
+                // live (retained) AppKit objects on the main thread.
+                unsafe {
+                    let _: () = msg_send![&*old.view, removeTrackingArea: &*old.area];
+                }
+                if let Some(previous) = old.previous {
+                    return_focus(&previous);
+                }
+            }
+            return Ok(());
+        }
+        if state.is_none() {
+            // SAFETY: `+[NSWorkspace sharedWorkspace]` and
+            // `-frontmostApplication` return a live object or nil;
+            // `NSTrackingArea`'s designated initialiser takes an `NSRect`, an
+            // `NSTrackingAreaOptions` (`NSUInteger`), an owner (the view,
+            // whose `-mouseMoved:` winit implements) and nullable user info.
+            let interacting = unsafe {
+                let workspace: Retained<AnyObject> =
+                    msg_send![class!(NSWorkspace), sharedWorkspace];
+                let previous: Option<Retained<AnyObject>> =
+                    msg_send![&*workspace, frontmostApplication];
+                let alloc: objc2::rc::Allocated<AnyObject> =
+                    msg_send![class!(NSTrackingArea), alloc];
+                let area: Retained<AnyObject> = msg_send![
+                    alloc,
+                    initWithRect: NSRect::ZERO,
+                    options: POINTER_TRACKING_OPTIONS,
+                    owner: &*view,
+                    userInfo: Option::<&AnyObject>::None
+                ];
+                let _: () = msg_send![&*view, addTrackingArea: &*area];
+                let _: () = msg_send![&*window, setIgnoresMouseEvents: false];
+                Interacting {
+                    view,
+                    area,
+                    previous: previous.filter(|app| !is_current_app(app)),
+                }
+            };
+            *state = Some(interacting);
+        }
+        if mode == Interactivity::Focused {
+            // SAFETY: `NSApp` exists once winit's event loop runs (the only
+            // caller); `-activateIgnoringOtherApps:` takes a `BOOL` and
+            // `-makeKeyAndOrderFront:` a nullable sender, on the main thread.
+            unsafe {
+                let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
+                let _: () = msg_send![&*app, activateIgnoringOtherApps: true];
+                let _: () = msg_send![&*window, makeKeyAndOrderFront: Option::<&AnyObject>::None];
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Whether `app` (an `NSRunningApplication`) is this process.
+fn is_current_app(app: &AnyObject) -> bool {
+    // SAFETY: `-processIdentifier` returns a `pid_t` (`i32`).
+    let pid: i32 = unsafe { msg_send![app, processIdentifier] };
+    pid == i32::try_from(std::process::id()).unwrap_or(-1)
+}
+
+/// Gives focus back to `previous` if interact mode made this app active (a
+/// toggle, or a click while holding the chord).
+fn return_focus(previous: &AnyObject) {
+    // SAFETY: `NSApp` exists while the event loop runs; `-isActive` returns
+    // a `BOOL`; `-activateWithOptions:` takes `NSApplicationActivationOptions`
+    // (`NSUInteger`) and returns a `BOOL`; all on the main thread.
+    unsafe {
+        let app: Retained<AnyObject> = msg_send![class!(NSApplication), sharedApplication];
+        let active: bool = msg_send![&*app, isActive];
+        if active {
+            let _: bool = msg_send![previous, activateWithOptions: 0_usize];
+        }
+    }
 }
 
 // --- Full-screen app detection (SPEC §6.2) ---
