@@ -181,7 +181,9 @@ fn longest_stalls(seed: u64, minutes: u32) -> Vec<(String, u32)> {
     let swimmers: Vec<_> = w
         .species()
         .iter()
-        .filter(|s| matches!(s.zone, Zone::Mid | Zone::Surface))
+        // Live food can be eaten even in easy mode, which would remove it
+        // from the cohort tracked throughout this movement test.
+        .filter(|s| !s.live_food && matches!(s.zone, Zone::Mid | Zone::Surface))
         .map(|s| s.id)
         .collect();
     for (k, &s) in swimmers.iter().enumerate() {
