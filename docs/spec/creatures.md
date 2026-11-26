@@ -112,6 +112,10 @@
   Bottom dwellers that take short swims pitch during those bouts and
   return to their ground pose when they settle. Pitch rotates the sprite
   about its centre after mirroring and leaves its collision box upright.
+  Mirroring needs the same sideways speed as before, so a fish slowing on
+  arrival keeps its face. Its art is levelled, an eighth turn a tick, until
+  the rotated box lies in open water (clear of the bed, hardscape, plants
+  in its band and the air), and sleepers ease level where they settle.
   Save format v18 stores this pitch and older saves start level.
 
   The tank is 2.5D (D21): it is eight **depth bands** deep, front glass
