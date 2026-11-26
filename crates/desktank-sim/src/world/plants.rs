@@ -194,8 +194,9 @@ impl PlantInfo {
         self.parts.iter().sum()
     }
 
-    /// Its age in whole days of its life (SPEC §2.4: [`LIFE_DAY_SECONDS`] of
-    /// world time each), as a creature's card counts them.
+    /// Its age in whole days of its life (SPEC §2.4:
+    /// [`LIFE_DAY_SECONDS`](super::LIFE_DAY_SECONDS) of world time each), as
+    /// a creature's card counts them.
     #[must_use]
     pub fn age_days(&self) -> u32 {
         // Truncation is the whole days; the cast saturates.
