@@ -39,7 +39,7 @@ mod timer;
 /// instance and surfaces.
 pub use wgpu;
 
-pub use card::{CARD_MAX, Card, CardLayout};
+pub use card::{CARD_MAX, Card, CardAnchor, CardLayout};
 pub use gpu::{Gpu, GpuError, GpuOptions};
 pub use hud::{
     BrushPreview, Magnifier, MagnifierLayout, Palette, PaletteHit, PaletteLayout, PaletteMorphs,

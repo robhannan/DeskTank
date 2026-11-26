@@ -42,7 +42,8 @@
 use core::time::Duration;
 
 use desktank_render::{
-    BrushPreview, Card, FieldOverlay, InspectPage, Inspected, Layout, Magnifier, Tank, TankConfig,
+    BrushPreview, Card, CardAnchor, FieldOverlay, InspectPage, Inspected, Layout, Magnifier, Tank,
+    TankConfig,
 };
 use desktank_sim::tools::{
     self, AddRefused, Button, Inspection, Outcome, PaletteItem, PalettePath, Tool, Tools,
@@ -1256,8 +1257,11 @@ impl WebTank {
             .flat_map(|tab| tab.subs)
             .flat_map(|sub| sub.items.into_iter().map(move |i| (sub.path, i)))
             .unzip();
+        let mut tank = Tank::new(world, TankConfig::default());
+        // The palette is DOM, below the canvas, so the card sits nearest it.
+        tank.set_card_anchor(CardAnchor::Bottom);
         Ok(Self {
-            tank: Tank::new(world, TankConfig::default()),
+            tank,
             tools: Tools::new(sand),
             avoid_cursor: false,
             closed_card: None,

@@ -265,6 +265,19 @@ fn creature_morph_picks_wrap_and_survive_replacement() {
 }
 
 #[test]
+fn the_species_card_sits_in_the_bottom_left_nearest_the_dom_palette() {
+    let mut t = tank();
+    t.select(slot(&t, "creature guppy"));
+    let rect = t.card_rect();
+    assert_eq!(rect.len(), 4);
+    let scale = rect[2] / 144;
+    assert_eq!((rect[0], rect[1] + rect[3] + 2 * scale), (2 * scale, 288));
+    // A click on it is swallowed, so it closes the card.
+    t.pointer_down(PRIMARY, f64::from(rect[0]) + 1.0, f64::from(rect[1]) + 1.0);
+    assert_eq!(t.tank.card(), None);
+}
+
+#[test]
 fn changing_morph_keeps_a_closed_species_card_closed() {
     let mut t = tank();
     t.select(slot(&t, "creature betta"));
@@ -522,11 +535,11 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
 fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     let mut t = paused();
     t.select(slot(&t, "creature neon_tetra"));
-    down(&mut t, PRIMARY, 30, 40);
+    down(&mut t, PRIMARY, 30, 20);
     t.pointer_up(PRIMARY);
     assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
     t.select(slot(&t, "tool inspect"));
-    down(&mut t, PRIMARY, 30, 40);
+    down(&mut t, PRIMARY, 30, 20);
     t.pointer_up(PRIMARY);
     assert_eq!(t.inspect_page(), 1);
     let rect = t.inspect_rect();
@@ -541,7 +554,7 @@ fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     assert_eq!(t.inspect_page(), 2);
     assert_eq!(
         t.take_inspection(),
-        "creature neon_tetra 1 water 30 40 adult 180 100 100 male - - "
+        "creature neon_tetra 1 water 30 20 adult 180 100 100 male - - "
     );
     t.pointer_down(PRIMARY, x, y);
     t.pointer_up(PRIMARY);
@@ -564,7 +577,7 @@ fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     assert_eq!(t.take_inspection(), "cell water 100 20");
     // Inspected again, then the net picked: the card goes, so it can't
     // catch the net's clicks (the Tank tests cover a creature leaving).
-    down(&mut t, PRIMARY, 30, 40);
+    down(&mut t, PRIMARY, 30, 20);
     t.pointer_up(PRIMARY);
     assert_eq!(t.inspect_page(), 1);
     // Another tool removes it; selecting the same tool again doesn't.
@@ -572,7 +585,7 @@ fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     assert_eq!(t.inspect_page(), 1);
     t.select(slot(&t, "tool net"));
     assert_eq!(t.inspect_page(), 0);
-    down(&mut t, PRIMARY, 30, 40);
+    down(&mut t, PRIMARY, 30, 20);
     drag(&mut t, 30, 0);
     assert_eq!(t.pointer_up(PRIMARY), 1);
     assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
@@ -1123,7 +1136,7 @@ fn creature_cap_clamps_marks_dirty_and_persists_in_saves() {
     // Stocked creatures raise the lower bound; live food does not.
     t.select(slot(&t, "creature neon_tetra"));
     for x in [30, 60, 90] {
-        down(&mut t, PRIMARY, x, 40);
+        down(&mut t, PRIMARY, x, 20);
         t.pointer_up(PRIMARY);
     }
     assert_eq!(t.stock_count(), 3);
