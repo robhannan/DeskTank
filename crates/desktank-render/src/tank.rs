@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use desktank_sim::{TICKS_PER_SECOND, World, daylight};
+use desktank_sim::{DEFAULT_TIME_RATIO, TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
 use crate::card::{self, Card, CardImage, CardLayout};
@@ -87,6 +87,27 @@ pub enum DrawError {
     Validation,
 }
 
+/// The day/night clock that runs at the world's time ratio while the host's
+/// wall-clock injection is off.
+#[derive(Clone, Copy, Debug)]
+struct DayClock {
+    clock: daylight::DaylightClock,
+    /// The clock has been seeded from a host-injected minute.
+    seeded: bool,
+    /// Day and night follow the injected wall clock even at a scaled ratio.
+    location_sync: bool,
+}
+
+impl Default for DayClock {
+    fn default() -> Self {
+        Self {
+            clock: daylight::DaylightClock::new(daylight::NOON),
+            seeded: false,
+            location_sync: false,
+        }
+    }
+}
+
 /// A simulated world plus everything needed to show it. The host calls
 /// [`Tank::tick`] on its clock and [`Tank::draw`] (or [`Tank::render_to`])
 /// when the returned [`FrameRequest`] asks for a frame.
@@ -127,6 +148,8 @@ pub struct Tank {
     flow_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
     time_of_day: u16,
+    /// The scaled day/night clock (see [`Tank::update_local_time`]).
+    day_clock: DayClock,
     /// Creatures version last drawn (`None` before the first frame).
     creatures_drawn: Option<u64>,
     /// Plants version last drawn (`None` before the first frame).
@@ -164,6 +187,7 @@ impl Tank {
             overlay_water_alpha: None,
             flow_drawn: 0,
             time_of_day: daylight::NOON,
+            day_clock: DayClock::default(),
             creatures_drawn: None,
             plants_drawn: None,
             algae_drawn: None,
@@ -249,19 +273,85 @@ impl Tank {
         phase
     }
 
-    /// Sets the local time of day (minutes after midnight) the tank is lit
-    /// for (SPEC §2.6: day and night follow local time; the host injects
-    /// it). Asks for a frame only if the tint changes, so a host can call
-    /// this every minute. Default: noon. The world gets it too: creatures
-    /// rest at night ([`World::set_time_of_day`]).
+    /// Pins the time of day (minutes after midnight) the tank is lit for
+    /// (`--time`, `capture`): the scaled clock restarts from `minute` and is
+    /// no longer seeded by [`Tank::update_local_time`] until the next call.
+    /// Asks for a frame only if the tint changes. Default: noon. The world
+    /// gets it too: creatures rest at night ([`World::set_time_of_day`]).
     pub fn set_time_of_day(&mut self, minute: u16) {
+        self.day_clock.clock.set_minute(minute);
+        self.day_clock.seeded = false;
+        self.apply_minute(minute);
+    }
+
+    /// Injects the host's local wall-clock minute (SPEC §2.6: day and night
+    /// follow local time). At the default time ratio, or with location sync
+    /// on, the minute is applied directly. Otherwise the first call seeds the
+    /// scaled clock and later calls leave it running, so a faster or slower
+    /// day isn't snapped back to wall-clock time. Asks for a frame only if
+    /// the tint changes, so a host can call this every minute.
+    pub fn update_local_time(&mut self, minute: u16) {
         let minute = minute % daylight::MINUTES_PER_DAY;
+        if self.day_clock.location_sync || !self.clock_scaled() {
+            self.day_clock.clock.set_minute(minute);
+            self.day_clock.seeded = false;
+            self.apply_minute(minute);
+        } else if !self.day_clock.seeded {
+            self.day_clock.clock.set_minute(minute);
+            self.day_clock.seeded = true;
+            self.apply_minute(minute);
+        }
+    }
+
+    /// Makes day and night follow the injected wall clock even at a scaled
+    /// time ratio. Enabling it makes the next [`Tank::update_local_time`]
+    /// snap to wall-clock time.
+    pub fn set_location_sync(&mut self, enabled: bool) {
+        if enabled && !self.day_clock.location_sync {
+            self.day_clock.seeded = false;
+        }
+        self.day_clock.location_sync = enabled;
+    }
+
+    /// Whether day and night follow the injected wall clock.
+    #[must_use]
+    pub fn location_sync(&self) -> bool {
+        self.day_clock.location_sync
+    }
+
+    /// Whether the scaled clock drives the day: seeded, not location-synced
+    /// and a time ratio other than the default.
+    fn clock_running(&self) -> bool {
+        self.day_clock.seeded && !self.day_clock.location_sync && self.clock_scaled()
+    }
+
+    fn clock_scaled(&self) -> bool {
+        (self.world.time_ratio() - DEFAULT_TIME_RATIO).abs() >= f32::EPSILON
+    }
+
+    /// Applies `minute` to the world and the tint, asking for a frame only
+    /// if the tint changed.
+    fn apply_minute(&mut self, minute: u16) {
         self.world.set_time_of_day(minute);
         let bits = |m: u16| daylight::tint(m).map(f32::to_bits);
         if bits(minute) != bits(self.time_of_day) {
             self.needs_frame = true;
         }
         self.time_of_day = minute;
+    }
+
+    /// Catches the world up by `seconds` ([`World::catch_up`]) and, when the
+    /// scaled clock is running, the day with it.
+    pub fn catch_up(&mut self, seconds: u32) -> desktank_sim::CatchUp {
+        let report = self.world.catch_up(seconds);
+        if self.clock_running() {
+            let minute = self
+                .day_clock
+                .clock
+                .advance_seconds(report.seconds, self.world.time_ratio());
+            self.apply_minute(minute);
+        }
+        report
     }
 
     /// The local time of day the tank is lit for, minutes after midnight.
@@ -518,6 +608,15 @@ impl Tank {
     /// `desktank capture`, which step world time themselves.
     pub fn step(&mut self) {
         self.world.tick();
+        if self.clock_running() {
+            let minute = self
+                .day_clock
+                .clock
+                .advance_life_ticks(self.world.last_life_ticks());
+            if minute != self.time_of_day {
+                self.apply_minute(minute);
+            }
+        }
         self.refresh_inspect();
         for r in self.world.dirty_rects() {
             self.dirty.add(r);
@@ -1296,5 +1395,189 @@ mod tests {
             frames, 0,
             "idle tank with strong surface current must draw 0 extra frames, drew {frames}"
         );
+    }
+
+    /// An empty tank at `ratio`, its first frame drawn.
+    fn clock_tank(ratio: f32) -> Tank {
+        let mut world = World::new(
+            WorldConfig {
+                width: 32,
+                height: 24,
+                seed: 5,
+                water_level: 0.8,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        world.set_time_ratio(ratio);
+        let mut tank = Tank::new(world, TankConfig::default());
+        tank.mark_drawn();
+        tank
+    }
+
+    /// Steps `tank` through `minutes` of life time at a ratio of 60 (1200
+    /// life ticks per minute, 60 a step).
+    fn step_minutes_at_60(tank: &mut Tank, minutes: u32) {
+        for _ in 0..minutes * 20 {
+            tank.step();
+        }
+    }
+
+    #[test]
+    fn update_local_time_applies_directly_at_the_default_ratio() {
+        let mut tank = clock_tank(1.0);
+        tank.update_local_time(600);
+        assert_eq!(tank.time_of_day(), 600);
+        for _ in 0..100 {
+            tank.step();
+        }
+        assert_eq!(tank.time_of_day(), 600, "ratio 1 leaves the clock alone");
+        tank.update_local_time(601);
+        assert_eq!(tank.time_of_day(), 601, "the host's minute always wins");
+        tank.update_local_time(601 + daylight::MINUTES_PER_DAY);
+        assert_eq!(tank.time_of_day(), 601, "wrapped to a day");
+    }
+
+    #[test]
+    fn a_scaled_clock_is_seeded_once_then_runs_on_its_own() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(600);
+        assert_eq!(tank.time_of_day(), 600);
+        step_minutes_at_60(&mut tank, 5);
+        assert_eq!(tank.time_of_day(), 605);
+        assert_eq!(tank.world().time_of_day(), 605, "the world follows");
+        // The host's wall clock no longer snaps the scaled day back.
+        tank.update_local_time(900);
+        assert_eq!(tank.time_of_day(), 605);
+        step_minutes_at_60(&mut tank, 1);
+        assert_eq!(tank.time_of_day(), 606);
+    }
+
+    #[test]
+    fn the_scaled_clock_wraps_at_midnight() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(daylight::MINUTES_PER_DAY - 2);
+        step_minutes_at_60(&mut tank, 3);
+        assert_eq!(tank.time_of_day(), 1);
+    }
+
+    #[test]
+    fn the_scaled_clock_does_not_run_until_seeded() {
+        let mut tank = clock_tank(60.0);
+        step_minutes_at_60(&mut tank, 5);
+        assert_eq!(tank.time_of_day(), daylight::NOON);
+    }
+
+    #[test]
+    fn a_scaled_clock_requests_no_frames_on_a_daylight_plateau() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(600);
+        tank.mark_drawn();
+        step_minutes_at_60(&mut tank, 30);
+        assert_eq!(tank.time_of_day(), 630);
+        assert!(!tank.needs_frame, "same tint, no frame wanted");
+    }
+
+    #[test]
+    fn a_scaled_clock_requests_a_frame_when_the_tint_changes() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(1169);
+        tank.mark_drawn();
+        step_minutes_at_60(&mut tank, 3);
+        assert!(tank.needs_frame, "dusk has begun");
+    }
+
+    #[test]
+    fn a_scaled_clock_stays_put_when_not_stepped() {
+        // Hidden or paused hosts don't call `step`, so the day stands still.
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(600);
+        tank.pause();
+        tank.update_local_time(700);
+        assert_eq!(tank.time_of_day(), 600);
+    }
+
+    #[test]
+    fn catch_up_advances_a_running_scaled_clock() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(600);
+        let report = tank.catch_up(120);
+        assert_eq!(report.seconds, 120);
+        // 120 s at ratio 60 is 2 hours.
+        assert_eq!(tank.time_of_day(), 720);
+        assert_eq!(tank.world().time_of_day(), 720);
+    }
+
+    #[test]
+    fn catch_up_leaves_the_clock_alone_at_the_default_ratio_or_unseeded() {
+        let mut tank = clock_tank(1.0);
+        tank.update_local_time(600);
+        tank.catch_up(3600);
+        assert_eq!(tank.time_of_day(), 600);
+
+        let mut tank = clock_tank(60.0);
+        tank.catch_up(120);
+        assert_eq!(tank.time_of_day(), daylight::NOON, "not seeded yet");
+    }
+
+    #[test]
+    fn location_sync_keeps_day_and_night_on_the_wall_clock() {
+        let mut tank = clock_tank(60.0);
+        assert!(!tank.location_sync());
+        tank.set_location_sync(true);
+        assert!(tank.location_sync());
+        tank.update_local_time(600);
+        step_minutes_at_60(&mut tank, 5);
+        assert_eq!(tank.time_of_day(), 600, "the scaled clock is off");
+        tank.catch_up(120);
+        assert_eq!(tank.time_of_day(), 600);
+        tank.update_local_time(660);
+        assert_eq!(tank.time_of_day(), 660, "the wall clock applies directly");
+    }
+
+    #[test]
+    fn enabling_location_sync_stops_a_running_clock_and_snaps_to_the_wall_clock() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(600);
+        step_minutes_at_60(&mut tank, 5);
+        assert_eq!(tank.time_of_day(), 605);
+        tank.set_location_sync(true);
+        step_minutes_at_60(&mut tank, 5);
+        assert_eq!(tank.time_of_day(), 605);
+        tank.update_local_time(800);
+        assert_eq!(tank.time_of_day(), 800);
+        // Turning it off reseeds from the next injected minute.
+        tank.set_location_sync(false);
+        tank.update_local_time(820);
+        assert_eq!(tank.time_of_day(), 820);
+        step_minutes_at_60(&mut tank, 2);
+        assert_eq!(tank.time_of_day(), 822);
+    }
+
+    #[test]
+    fn set_time_of_day_pins_the_time_and_restarts_seeding() {
+        let mut tank = clock_tank(60.0);
+        tank.update_local_time(600);
+        step_minutes_at_60(&mut tank, 5);
+        tank.set_time_of_day(300);
+        assert_eq!(tank.time_of_day(), 300);
+        step_minutes_at_60(&mut tank, 5);
+        assert_eq!(tank.time_of_day(), 300, "pinned: no scaled advance");
+        tank.catch_up(120);
+        assert_eq!(tank.time_of_day(), 300);
+        // The next injected minute seeds a fresh scaled day.
+        tank.update_local_time(1000);
+        assert_eq!(tank.time_of_day(), 1000);
+    }
+
+    #[test]
+    fn set_time_of_day_requests_a_frame_only_when_the_tint_changes() {
+        let mut tank = clock_tank(1.0);
+        tank.set_time_of_day(600);
+        tank.mark_drawn();
+        tank.set_time_of_day(700);
+        assert!(!tank.needs_frame);
+        tank.set_time_of_day(0);
+        assert!(tank.needs_frame);
     }
 }

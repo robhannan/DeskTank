@@ -8,6 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use desktank_platform::PowerPolicy;
+use desktank_sim::{MAX_TIME_RATIO, MIN_TIME_RATIO};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 
@@ -60,12 +61,14 @@ pub struct Plants {
     pub sway_on_battery: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Life {
     pub easy_mode: Option<bool>,
     pub population_cap: Option<u16>,
     pub catch_up: bool,
+    /// Life and day/night clock multiplier (1 is real time).
+    pub time_ratio: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -90,6 +93,7 @@ pub struct CliOverrides {
     pub easy_mode: Option<bool>,
     pub population_cap: Option<u16>,
     pub catch_up: Option<bool>,
+    pub time_ratio: Option<f32>,
 }
 
 pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
@@ -98,6 +102,7 @@ pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
     config.life.easy_mode = cli.easy_mode.or(config.life.easy_mode);
     config.life.population_cap = cli.population_cap.or(config.life.population_cap);
     config.life.catch_up = cli.catch_up.unwrap_or(config.life.catch_up);
+    config.life.time_ratio = cli.time_ratio.or(config.life.time_ratio);
     config
 }
 
@@ -138,6 +143,13 @@ pub fn parse(text: &str) -> Result<Config, ConfigError> {
         .is_some_and(|cap| !(1..=128).contains(&cap))
     {
         return Err(ConfigError::Value("life.population_cap must be in 1..=128"));
+    }
+    if config
+        .life
+        .time_ratio
+        .is_some_and(|r| !(r.is_finite() && (MIN_TIME_RATIO..=MAX_TIME_RATIO).contains(&r)))
+    {
+        return Err(ConfigError::Value("life.time_ratio must be in 0.1..=100.0"));
     }
     if !(config.overlay.tint.is_finite() && (0.0..=1.0).contains(&config.overlay.tint)) {
         return Err(ConfigError::Value("overlay.tint must be in 0.0..=1.0"));
@@ -207,6 +219,7 @@ mod tests {
         assert_eq!(defaults.plants, Plants::default());
         assert_eq!(defaults.life, Life::default());
         assert!(!defaults.life.catch_up);
+        assert_eq!(defaults.life.time_ratio, None);
         let overlay = Overlay {
             tint: 0.0,
             exclude_from_capture: true,
@@ -237,6 +250,7 @@ mod tests {
             easy_mode = true
             population_cap = 42
             catch_up = true
+            time_ratio = 12.5
             [overlay]
             tint = 0.25
             exclude_from_capture = false
@@ -266,6 +280,7 @@ mod tests {
                 easy_mode: Some(true),
                 population_cap: Some(42),
                 catch_up: true,
+                time_ratio: Some(12.5),
             }
         );
         assert_eq!(
@@ -312,6 +327,56 @@ mod tests {
     }
 
     #[test]
+    fn time_ratio_accepts_the_supported_range() {
+        for (text, expected) in [("0.1", 0.1), ("1.0", 1.0), ("60", 60.0), ("100.0", 100.0)] {
+            let config = parse(&format!("[life]\ntime_ratio = {text}")).unwrap();
+            assert_eq!(config.life.time_ratio, Some(expected), "{text}");
+        }
+        assert_eq!(
+            parse("[life]\ncatch_up = true").unwrap().life.time_ratio,
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_time_ratio() {
+        for ratio in ["0.0", "0.09", "-1.0", "100.1", "nan", "inf", "-inf"] {
+            assert!(
+                matches!(
+                    parse(&format!("[life]\ntime_ratio = {ratio}")),
+                    Err(ConfigError::Value("life.time_ratio must be in 0.1..=100.0"))
+                ),
+                "{ratio}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_time_ratio_overrides_the_file() {
+        let config = parse("[life]\ntime_ratio = 5.0").unwrap();
+        assert_eq!(
+            merge(config, CliOverrides::default()).life.time_ratio,
+            Some(5.0)
+        );
+        let effective = merge(
+            config,
+            CliOverrides {
+                time_ratio: Some(60.0),
+                ..CliOverrides::default()
+            },
+        );
+        assert_eq!(effective.life.time_ratio, Some(60.0));
+        let from_cli = merge(
+            Config::default(),
+            CliOverrides {
+                time_ratio: Some(2.0),
+                ..CliOverrides::default()
+            },
+        );
+        assert_eq!(from_cli.life.time_ratio, Some(2.0));
+    }
+
+    #[test]
     fn rejects_invalid_overlay_tint() {
         for tint in ["-0.1", "1.1", "nan", "inf", "-inf"] {
             assert!(
@@ -342,6 +407,7 @@ mod tests {
                 easy_mode: Some(false),
                 population_cap: Some(30),
                 catch_up: Some(true),
+                time_ratio: None,
             },
         );
         assert_eq!(
@@ -357,6 +423,7 @@ mod tests {
                 easy_mode: Some(false),
                 population_cap: Some(30),
                 catch_up: true,
+                time_ratio: None,
             }
         );
         assert!(

@@ -187,7 +187,20 @@
   the host that owns the saved tank catches up. The window measures closed
   time from the save's modification time and the web uses its IndexedDB
   save timestamp (`savedAt`).
-- **Day and night** follow local time.
+- **Day and night** follow local time. The host injects the local minute;
+  hidden or paused tanks never tick the clock.
+- **Time ratio** (`life.time_ratio` in `config.toml`, `--time-ratio` on
+  `window`; 0.1 to 100, default 1 for real time) multiplies how fast life
+  runs: ageing, growth, energy use, breeding and plant growth, in both
+  normal ticks and catch-up. Movement and cells stay at normal speed. The
+  ratio is saved with the tank (format version 19; older tanks load at 1).
+  While it isn't 1, and unless location sync is on, the day/night clock
+  runs at the same ratio instead of following the wall clock: the host's
+  first local minute seeds it and later minutes are ignored (60 passes a
+  day in 24 minutes). Location sync (planned) keeps day and night on the
+  wall clock at any ratio. `--time` and `capture` pin the time instead.
+  The clock advances only in simulated ticks and catch-up, never while
+  hidden, and requests a frame only when the tint changes.
 - **Persistence.** Each tank (one per display, or one spanning tank) is
   saved to the platform data dir every 5 minutes and on exit.
   - **Envelope:** magic bytes, format version, payload length, CRC32,
@@ -235,6 +248,7 @@
       cells with water and start with bare surfaces;
     - each creature's swim pitch (version 18, #98). Older saves start
       with level swim poses;
+    - the time ratio (version 19, #74). Older saves load at real time;
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
