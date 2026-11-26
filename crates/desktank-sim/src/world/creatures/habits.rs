@@ -64,7 +64,7 @@ impl World {
         self.life.food_cells() > 0
             || self.has_film_to_graze(k)
             || (k.eats_corpses && !self.creatures.corpses.is_empty())
-            || (k.is_shrimp && self.has_grazeable_device())
+            || (k.is_bottom_shrimp && self.has_grazeable_device())
     }
 
     /// Whether some film on a surface or the glass is of a variety `k`

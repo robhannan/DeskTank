@@ -47,7 +47,7 @@ rate = 0.7
 # materials out of the tank.
 [water_change]
 fraction = 0.5
-siphon = ["waste", "detritus", "dead_plant", "sinking_pellet", "bloodworm", "algae_wafer"]
+siphon = ["waste", "detritus", "dead_plant", "sinking_pellet", "bloodworm", "algae_wafer", "brine_shrimp"]
 
 # The water-quality score (T6, SPEC §2.3), from 0 (foul) to 1 (pristine).
 # It loses up to `nutrient_weight` as the mean nutrient level in the water
@@ -72,7 +72,7 @@ filter_bonus = 0.15
 # matures over `maturity_days` life-days, and a mature filter speeds up
 # pollutant breakdown by up to `waste_boost` (1 + waste_boost at full bio).
 [filtration]
-capture = ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer", "waste", "detritus", "dead_plant"]
+capture = ["flake_food", "sinking_pellet", "bloodworm", "algae_wafer", "brine_shrimp", "waste", "detritus", "dead_plant"]
 capacity = 200.0
 clog_floor = 0.3
 maturity_days = 7.0

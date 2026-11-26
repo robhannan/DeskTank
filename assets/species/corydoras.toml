@@ -21,7 +21,7 @@ speed = 3.5
 max_speed = 7.0
 # Would rather stay on the bottom, but lifts off for a short swim now and then.
 swim_every = 36.0
-diet = ["sinking_pellet", "algae_wafer", "bloodworm", "flake_food", "algae", "detritus"]
+diet = ["sinking_pellet", "algae_wafer", "bloodworm", "brine_shrimp", "flake_food", "algae", "detritus"]
 
 # Sticks its eggs to glass and leaves; they hatch in 3–5 days.
 # Broods are scaled down for a desktop tank; days are on the life clock.

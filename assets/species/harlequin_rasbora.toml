@@ -20,7 +20,7 @@ breathes_air = false
 temperament = "schooling"
 speed = 4.5
 max_speed = 9.0
-diet = ["flake_food", "bloodworm"]
+diet = ["flake_food", "bloodworm", "brine_shrimp"]
 
 # Lays its eggs under broad leaves; they hatch in about a day.
 # Broods are scaled down for a desktop tank; days are on the life clock.

@@ -74,6 +74,8 @@ const LABELS: Record<string, string> = {
   sinking_pellet: "Pellets",
   bloodworm: "Frozen bloodworms",
   live_bloodworm: "Live bloodworms",
+  brine_shrimp: "Frozen brine shrimp",
+  live_brine_shrimp: "Live brine shrimp",
   algae_wafer: "Algae wafers",
   root_tab: "Root tabs",
   co2_bubble: "CO₂",

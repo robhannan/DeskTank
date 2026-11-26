@@ -10,7 +10,7 @@
 use desktank_sim::tools::{Button, Outcome, PaletteItem, Tool, Tools};
 use desktank_sim::{
     Brush, CreatureId, LIFE_DAY_TICKS, MAX_LIVE_FOOD, MaterialTable, PINCH, Rect, SpeciesId,
-    TICKS_PER_SECOND, World, WorldConfig, WorldError, cheats, scene,
+    TICKS_PER_SECOND, Traits, World, WorldConfig, WorldError, cheats, save, scene,
 };
 
 fn world(width: usize, height: usize, seed: u64) -> World {
@@ -44,10 +44,14 @@ fn species(w: &World, name: &str) -> SpeciesId {
 }
 
 fn worms(w: &World) -> Vec<CreatureId> {
-    let worm = species(w, "live_bloodworm");
+    live_ids(w, "live_bloodworm")
+}
+
+fn live_ids(w: &World, name: &str) -> Vec<CreatureId> {
+    let id = species(w, name);
     w.creatures()
         .iter()
-        .filter(|c| c.species() == worm)
+        .filter(|c| c.species() == id)
         .map(desktank_sim::Creature::id)
         .collect()
 }
@@ -62,8 +66,11 @@ fn count(w: &World, name: &str) -> usize {
 
 /// Selects the live bloodworm slot (Food › Live) and clicks at `cell`.
 fn pinch(w: &mut World, cell: (i64, i64)) -> Outcome {
-    let worm = species(w, "live_bloodworm");
-    let item = PaletteItem::Tool(Tool::AddCreature(worm));
+    feed_live(w, cell, "live_bloodworm")
+}
+
+fn feed_live(w: &mut World, cell: (i64, i64), name: &str) -> Outcome {
+    let item = PaletteItem::Tool(Tool::AddCreature(species(w, name)));
     let mut t = Tools::new(w.materials().id("sand").unwrap());
     t.select(item);
     let out = t.press(w, Button::Primary, cell);
@@ -233,10 +240,15 @@ fn live_food_keeps_its_own_limit_and_never_breeds() {
     w.set_creature_cap(2);
     let tetra = species(&w, "neon_tetra");
     w.add_creature(tetra, 30, 20).unwrap();
+    assert!(matches!(
+        feed_live(&mut w, (40, 20), "live_brine_shrimp"),
+        Outcome::Added(_)
+    ));
     for k in 0..20 {
         pinch(&mut w, (40 + 9 * k, 40));
     }
-    assert_eq!(worms(&w).len(), MAX_LIVE_FOOD);
+    assert_eq!(live_ids(&w, "live_brine_shrimp").len(), PINCH);
+    assert_eq!(worms(&w).len(), MAX_LIVE_FOOD - PINCH);
     assert_eq!(w.live_food_count(), MAX_LIVE_FOOD);
     assert_eq!(
         pinch(&mut w, (120, 40)),
@@ -320,4 +332,100 @@ fn a_chased_worm_squirms_away_and_a_save_mid_chase_replays_exactly() {
         loaded.tick();
     }
     assert_eq!(loaded.state_hash(), a.state_hash());
+}
+
+#[test]
+fn brine_shrimp_swim_in_bursts_and_a_hungry_fish_catches_them() {
+    let mut w = world(160, 60, 19);
+    w.set_easy_mode(true);
+    assert!(matches!(
+        feed_live(&mut w, (85, 28), "live_brine_shrimp"),
+        Outcome::Added(_)
+    ));
+    let ids = live_ids(&w, "live_brine_shrimp");
+    assert_eq!(ids.len(), PINCH);
+
+    let first = ids[0];
+    let mut prev = w.creature(first).unwrap().centre();
+    let mut fastest = 0.0_f32;
+    let mut slowest = f32::INFINITY;
+    for _ in 0..12 * TICKS_PER_SECOND {
+        w.tick();
+        let shrimp = w.creature(first).unwrap();
+        let next = shrimp.centre();
+        let speed = (next.0 - prev.0).hypot(next.1 - prev.1) * TICKS_PER_SECOND as f32;
+        fastest = fastest.max(speed);
+        slowest = slowest.min(speed);
+        prev = next;
+        assert!(w.creature_body(shrimp).y1 < w.height() - 10);
+    }
+    assert!((2.0..4.0).contains(&fastest), "fastest {fastest} cells/s");
+    assert!(slowest < 0.75, "slowest {slowest} cells/s");
+
+    let fish = w.add_creature(species(&w, "neon_tetra"), 45, 28).unwrap();
+    let mut hunted = false;
+    for _ in 0..60 * TICKS_PER_SECOND {
+        w.tick();
+        let eater = w.creature(fish).unwrap();
+        hunted |= eater.quarry().is_some_and(|id| ids.contains(&id));
+        if eater.eaten() > 0 {
+            break;
+        }
+    }
+    assert!(hunted);
+    assert!(w.creature(fish).unwrap().eaten() > 0);
+    assert!(live_ids(&w, "live_brine_shrimp").len() < PINCH);
+    assert_eq!(count(&w, "brine_shrimp"), 0, "swallowed whole");
+}
+
+#[test]
+fn brine_shrimp_survives_save_roundtrip_then_dies_into_rotting_food() {
+    let mut w = world(48, 30, 29);
+    let live = species(&w, "live_brine_shrimp");
+    let frozen = w.materials().id("brine_shrimp").unwrap();
+    w.paint(12, 18, 0, frozen, Brush::Pour).unwrap();
+    w.add_creature_with_traits(
+        live,
+        24,
+        16,
+        Traits {
+            age: Some(2 * LIFE_DAY_TICKS),
+            ..Traits::default()
+        },
+    )
+    .unwrap();
+    let mut restored = save::decode(&save::encode(&w), MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(restored.state_hash(), w.state_hash());
+
+    for _ in 0..150 * TICKS_PER_SECOND {
+        w.tick();
+        restored.tick();
+        if w.live_food_count() == 0 {
+            break;
+        }
+    }
+    assert_eq!(restored.state_hash(), w.state_hash());
+    assert_eq!(w.live_food_count(), 0);
+    assert_eq!(w.corpses(), []);
+    assert_eq!(count(&w, "brine_shrimp"), 2, "one painted, one dropped");
+    for _ in 0..300 * TICKS_PER_SECOND + 2 {
+        w.tick();
+    }
+    assert_eq!(count(&w, "brine_shrimp"), 0);
+    assert!(count(&w, "detritus") > 0);
+}
+
+#[test]
+fn fish_eat_frozen_brine_shrimp() {
+    let mut w = world(96, 40, 31);
+    let fish = w.add_creature(species(&w, "neon_tetra"), 36, 21).unwrap();
+    let frozen = w.materials().id("brine_shrimp").unwrap();
+    w.paint(48, 26, 1, frozen, Brush::Pour).unwrap();
+    for _ in 0..50 * TICKS_PER_SECOND {
+        w.tick();
+        if w.creature(fish).unwrap().eaten() > 0 {
+            break;
+        }
+    }
+    assert!(w.creature(fish).unwrap().eaten() > 0);
 }

@@ -28,7 +28,7 @@
       other glass; see [devices](devices.md));
     - **Water**: water, air bubbles, CO₂ bubbles;
     - **Food**: Fish food (flakes, pellets, frozen bloodworms, algae
-      wafers), Live (live bloodworms);
+      wafers, frozen brine shrimp), Live (live bloodworms, live brine shrimp);
     - **Care**: root tabs, liquid fertiliser, waste, detritus;
     - **Plants**: Stem, Rosette, Carpet, Floating, Moss & epiphytes
       (one item per plant species);

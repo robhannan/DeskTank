@@ -12,7 +12,7 @@ maturity_days = 365
 temperament = "territorial"
 speed = 5.0
 max_speed = 13.0
-diet = ["sinking_pellet", "bloodworm"]
+diet = ["sinking_pellet", "bloodworm", "brine_shrimp"]
 prey_cm = 4.0
 territory_cm = 25
 

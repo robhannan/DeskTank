@@ -426,6 +426,13 @@
     a second; 6 life days (about an hour of world time) from arriving
     grown. The frozen material keeps its id (`bloodworm`) and is labelled
     "Frozen bloodworms" on the web.
-  - **State.** Live food is ordinary creature state (no new fields), so
-    the save format is unchanged (v10); a save may hold up to the cap of
-    stock plus `MAX_LIVE_FOOD` live foods.
+  - **Live brine shrimp** (`live_brine_shrimp`, id 28, counting as
+    `brine_shrimp`): adult *Artemia* 1 cm long, with four poses of the
+    tail and swimming limbs (6×4 coarse texels, 12×8 fine). They stay in
+    midwater and alternate a half-second kick (top speed 3 cells/s)
+    with a slow drift (0.5 cells/s). They live 2 life days and arrive
+    at 1 day old. Frozen brine shrimp sinks and rots into detritus after five
+    world minutes. Species that take bloodworms also eat brine shrimp.
+  - **State.** The two species share the live-food limit. A save holds
+    ordinary creature state for each live food and stores its frozen
+    material by ID.

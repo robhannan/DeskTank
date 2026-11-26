@@ -14,7 +14,7 @@ maturity_days = 270
 temperament = "peaceful"
 speed = 3.5
 max_speed = 12.0
-diet = ["bloodworm", "sinking_pellet"]
+diet = ["bloodworm", "brine_shrimp", "sinking_pellet"]
 breathes_air = true
 # World seconds it lasts without air past a breath it misses (after a
 # 45-second grace for the trip up, it then dies of suffocation). An obligate air-breather: Hymenochirus has lungs and only

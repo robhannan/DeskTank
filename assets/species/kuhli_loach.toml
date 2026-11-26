@@ -20,7 +20,7 @@ max_speed = 12.0
 swim_every = 50.0
 # Digs into sand, gravel or soil (never rock) now and then and comes back out.
 burrow_every = 45.0
-diet = ["sinking_pellet", "bloodworm"]
+diet = ["sinking_pellet", "bloodworm", "brine_shrimp"]
 
 
 [breeding]

@@ -301,6 +301,13 @@ fn live_food_scene_matches_reference() {
     check_named("live_food", "live_food_x4", None, SIZE_X4);
 }
 
+/// Adult brine shrimp in open water and a patch of frozen shrimp on the bed.
+#[test]
+fn brine_shrimp_scene_matches_reference() {
+    check("brine_shrimp");
+    check_named("brine_shrimp", "brine_shrimp_x4", None, SIZE_X4);
+}
+
 /// More fish: a harlequin rasbora school, male guppies and honey gouramis
 /// come up for flakes over the starter bed, and otocinclus on a rock, the
 /// glass and the bed.

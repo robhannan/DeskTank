@@ -76,6 +76,11 @@ after = 300.0
 into = "detritus"
 
 [[decay]]
+material = "brine_shrimp"
+after = 300.0
+into = "detritus"
+
+[[decay]]
 material = "algae_wafer"
 after = 900.0
 into = "detritus"
