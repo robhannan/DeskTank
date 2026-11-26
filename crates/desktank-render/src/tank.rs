@@ -332,6 +332,7 @@ impl Tank {
     /// Applies `minute` to the world and the tint, asking for a frame only
     /// if the tint changed.
     fn apply_minute(&mut self, minute: u16) {
+        let minute = minute % daylight::MINUTES_PER_DAY;
         self.world.set_time_of_day(minute);
         let bits = |m: u16| daylight::tint(m).map(f32::to_bits);
         if bits(minute) != bits(self.time_of_day) {

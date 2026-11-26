@@ -260,7 +260,18 @@ impl World {
     /// air-breather's next breath comes one tick nearer, in
     /// [`SLEEP_BURN_EVERY`]. `before` is its energy before the burn.
     pub(super) fn sleep_refund(&self, k: &Kind, c: &mut Creature, before: u32, ticks: u32) {
-        if !c.asleep || ticks == 0 {
+        if !c.asleep {
+            return;
+        }
+        // Breath timing is in world ticks (`self.tick`), independent of
+        // `time_ratio`: offset the 1-tick world advance on non-burn ticks.
+        if k.breathes_air
+            && c.next_breath > self.tick
+            && !(self.tick + u64::from(c.id.0)).is_multiple_of(SLEEP_BURN_EVERY)
+        {
+            c.next_breath += 1;
+        }
+        if ticks == 0 {
             return;
         }
         // Burn ticks among the life ticks `(tick - ticks, tick]`, those
@@ -271,9 +282,6 @@ impl World {
         let refund = u32::try_from(u64::from(ticks).saturating_sub(burns)).unwrap_or(ticks);
         if refund > 0 {
             c.energy = c.energy.saturating_add(refund).min(before);
-            if k.breathes_air && c.next_breath > self.tick {
-                c.next_breath += u64::from(refund);
-            }
         }
     }
 

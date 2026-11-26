@@ -78,9 +78,10 @@ impl World {
     }
 
     fn catch_up_feed(&mut self, k: &Kind, c: &mut Creature, ticks: u32, food: &[u32]) -> usize {
-        let mut remaining = u16::try_from(ticks).unwrap_or(u16::MAX);
-        if c.satiety.saturating_sub(remaining) > FULL - BITE {
-            c.satiety -= remaining;
+        let mut remaining = ticks;
+        let sat_drop = u16::try_from(remaining).unwrap_or(u16::MAX);
+        if c.satiety.saturating_sub(sat_drop) > FULL - BITE {
+            c.satiety -= sat_drop;
             return 0;
         }
         let mut eaten = 0;
@@ -89,12 +90,12 @@ impl World {
                 break;
             }
             let wait = c.satiety.saturating_sub(FULL - BITE).max(1);
-            if remaining < wait {
+            if remaining < u32::from(wait) {
                 break;
             }
             let i = i as usize;
             if self.edible_material_cell(k, i) {
-                remaining -= wait;
+                remaining -= u32::from(wait);
                 c.satiety = c.satiety.saturating_sub(wait);
                 self.eat_cell(c, i % self.width, i / self.width);
                 eaten += 1;
@@ -105,7 +106,7 @@ impl World {
         {
             loop {
                 let wait = c.satiety.saturating_sub(FULL - BITE).max(1);
-                if c.energy == ENERGY_RESERVE || remaining < wait {
+                if c.energy == ENERGY_RESERVE || remaining < u32::from(wait) {
                     break;
                 }
                 let satiety = c.satiety;
@@ -114,11 +115,13 @@ impl World {
                     c.satiety = satiety;
                     break;
                 }
-                remaining -= wait;
+                remaining -= u32::from(wait);
                 eaten += 1;
             }
         }
-        c.satiety = c.satiety.saturating_sub(remaining);
+        c.satiety = c
+            .satiety
+            .saturating_sub(u16::try_from(remaining).unwrap_or(u16::MAX));
         eaten
     }
 }
