@@ -10,6 +10,13 @@ the Build conventions relevant to its assignment.
 
 ## Assigning work
 
+The orchestrator does not write implementation code itself. Every feature or
+fix goes to developer agents, even a single small parcel. If the change looks
+too tightly coupled to split, sequence the parcels (each verified before the
+next) instead of doing it yourself. There are two exceptions: small
+review-finding fixes, and work the user explicitly asks to be done without
+delegation. Decide before the first edit to `crates/`, `web/` or `android/`.
+
 Keep a small change and its tests together. Split a larger change at boundaries
 that can be verified independently. Sequence dependencies. Run parcels in
 parallel only when their writes are disjoint and their checks can run safely
@@ -97,6 +104,15 @@ orchestrator.
    the stack says `Part of #<n>`, except the top one (the last to merge),
    which says `Closes #<n>`. When you add a PR on top, move `Closes` up to
    it and change the PR below to `Part of`.
+   Then link them as a native GitHub stack, because chained bases alone
+   only get a suggestion banner. Install the extension once with
+   `gh extension install github/gh-stack`. Run `gh stack link <bottom-pr>
+   <next-pr> …` (bottom to top), or `gh stack link <stack-number> <new-pr>`
+   to add a PR on top. Check it with
+   `gh api repos/robhannan/DeskTank/pulls/<n> --jq .stack`, and don't call
+   PRs stacked until that shows the stack. The issue Status may not move
+   automatically for a PR whose base isn't `main`; check it and set it by
+   hand. Merge bottom-up.
 6. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
    must be the scaffold (workspace, toolchain, lints, `deny.toml`, CI);
    don't build features until it has merged. Install missing tools such as
