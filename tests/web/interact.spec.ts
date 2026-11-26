@@ -462,6 +462,62 @@ test("a creature or plant shows its species card in the canvas; a click closes i
   expect(errors).toEqual([]);
 });
 
+test("inspecting a creature pins a two-page card beside it; a click turns the page", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const [gw, gh] = await gridSize(page);
+  const [x, y] = [Math.round(gw / 4), Math.round(gh / 2)];
+  const rect = () => page.evaluate(() => Array.from(window.desktank.tank.inspectRect()));
+  const pageNo = () => page.evaluate(() => window.desktank.tank.inspectPage());
+  const frames = () => page.evaluate(() => window.desktank.tank.framesDrawn());
+  const toClient = (cx: number, cy: number) =>
+    page.evaluate(
+      ([cx, cy]) => {
+        const canvas = document.querySelector<HTMLCanvasElement>("#tank")!;
+        const r = canvas.getBoundingClientRect();
+        return { x: r.left + (cx / canvas.width) * r.width, y: r.top + (cy / canvas.height) * r.height };
+      },
+      [cx, cy] as const,
+    );
+
+  await choose(page, "Neon tetra");
+  let p = await cellPoint(page, x, y);
+  await page.mouse.click(p.x, p.y);
+  await choose(page, "Inspect");
+  expect(await rect()).toEqual([]);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(pageNo).toBe(1);
+  const [rx, ry, rw, rh] = await rect();
+  expect(rw).toBeGreaterThan(0);
+  expect(rh).toBeGreaterThan(0);
+  // Beside the tetra, on its right.
+  const tetra = await toClient(rx, ry);
+  expect(tetra.x).toBeGreaterThan(p.x);
+
+  // Paused and unchanged, it draws no frames.
+  // Let the frame that drew it land first.
+  await page.waitForTimeout(300);
+  const drawn = await frames();
+  await page.waitForTimeout(300);
+  expect(await frames(), "an unchanged card draws no frames").toBe(drawn);
+
+  // A click on it turns the page and changes nothing in the tank.
+  const hash = await stateHash(page);
+  const inside = await toClient(rx + rw / 2, ry + rh - 4);
+  await page.mouse.click(inside.x, inside.y);
+  await expect.poll(pageNo).toBe(2);
+  await page.mouse.click(inside.x, inside.y);
+  await expect.poll(pageNo).toBe(1);
+  expect(await stateHash(page)).toBe(hash);
+
+  // Inspecting water removes it.
+  p = await cellPoint(page, gw - 3, 3);
+  await page.mouse.click(p.x, p.y);
+  await expect.poll(rect).toEqual([]);
+  expect(await pageNo()).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test("the palette follows the sim's category tree and navigates with the keyboard", async ({ page }) => {
   await open(page, "?backend=webgl2");
   const entries = await page.evaluate(() => window.desktank.tank.palette());

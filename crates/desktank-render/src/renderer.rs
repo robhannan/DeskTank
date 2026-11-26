@@ -36,6 +36,8 @@ pub struct Overlay {
     pub palette: Option<PaletteLayout>,
     /// The species card.
     pub card: Option<CardLayout>,
+    /// The in-tank inspect card.
+    pub inspect: Option<CardLayout>,
     /// The brush outline.
     pub cursor: Option<BrushPreview>,
     /// The magnified lens.
@@ -47,8 +49,8 @@ pub struct Overlay {
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (224 base + 16 ripple vec4s).
-const VIEW_BYTES: u64 = 224 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (256 base + 16 ripple vec4s).
+const VIEW_BYTES: u64 = 256 + (desktank_sim::MAX_DEVICES as u64) * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -485,6 +487,12 @@ impl Renderer {
         self.write_hud(gpu, image, size, card::TEXTURE_Y);
     }
 
+    /// Uploads the inspect card image (`size` card pixels, RGBA rows) to
+    /// its region of the HUD texture, below the species card's.
+    pub fn upload_inspect(&self, gpu: &Gpu, image: &[u8], size: (u32, u32)) {
+        self.write_hud(gpu, image, size, crate::inspect::TEXTURE_Y);
+    }
+
     /// Writes `image` into the HUD texture at column 0, row `y`.
     fn write_hud(&self, gpu: &Gpu, image: &[u8], size: (u32, u32), y: u32) {
         if size.0 == 0 || size.1 == 0 {
@@ -522,13 +530,19 @@ impl Renderer {
         sway_on: bool,
         ripples: &[[f32; 4]],
         surface_ripple_threshold: f32,
-        palette: Option<PaletteLayout>,
-        card: Option<CardLayout>,
-        cursor: Option<BrushPreview>,
-        field_mode: f32,
+        overlay: Overlay,
         lens: [f32; 4],
         overlay_water_alpha: Option<f32>,
     ) -> Vec<u8> {
+        let Overlay {
+            palette,
+            card,
+            inspect,
+            cursor,
+            field,
+            ..
+        } = overlay;
+        let field_mode = field_mode(field);
         let hud = palette.map_or(
             [
                 0.0,
@@ -556,18 +570,22 @@ impl Renderer {
         );
         // Origin, scale and 1 if shown; then size and the texture row of the
         // card's region.
-        let card = card.map_or([0.0; 8], |c| {
-            [
-                c.origin.0 as f32,
-                c.origin.1 as f32,
-                c.scale as f32,
-                1.0,
-                c.image.0 as f32,
-                c.image.1 as f32,
-                card::TEXTURE_Y as f32,
-                0.0,
-            ]
-        });
+        let region = |c: Option<CardLayout>, row: u32| {
+            c.map_or([0.0; 8], |c| {
+                [
+                    c.origin.0 as f32,
+                    c.origin.1 as f32,
+                    c.scale as f32,
+                    1.0,
+                    c.image.0 as f32,
+                    c.image.1 as f32,
+                    row as f32,
+                    0.0,
+                ]
+            })
+        };
+        let card = region(card, card::TEXTURE_Y);
+        let inspect = region(inspect, crate::inspect::TEXTURE_Y);
         let cursor = cursor.map_or([0.0; 4], |c| {
             [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
         });
@@ -595,6 +613,7 @@ impl Renderer {
         .chain(backdrop(overlay_water_alpha))
         .chain(hud)
         .chain(card)
+        .chain(inspect)
         .chain(cursor)
         .chain(daylight)
         .chain([desktank_sim::daylight::darkness(daylight)])
@@ -633,14 +652,6 @@ impl Renderer {
         overlay: Overlay,
         timer: Option<&GpuTimer>,
     ) {
-        let Overlay {
-            palette,
-            card,
-            cursor,
-            magnifier,
-            field,
-        } = overlay;
-        let field_mode = field_mode(field);
         let bytes = self.pack_view(
             size,
             layout.offset,
@@ -651,10 +662,7 @@ impl Renderer {
             sway_on,
             ripples,
             surface_ripple_threshold,
-            palette,
-            card,
-            cursor,
-            field_mode,
+            overlay,
             [0.0; 4],
             overlay_water_alpha,
         );
@@ -663,7 +671,9 @@ impl Renderer {
             self.view = bytes;
         }
 
-        let lens_layout = magnifier.and_then(|m| MagnifierLayout::fit(size, &layout, m));
+        let lens_layout = overlay
+            .magnifier
+            .and_then(|m| MagnifierLayout::fit(size, &layout, m));
         if let Some(ml) = lens_layout {
             #[allow(clippy::cast_precision_loss)] // target pixels
             let lens_info = [
@@ -682,10 +692,10 @@ impl Renderer {
                 sway_on,
                 ripples,
                 surface_ripple_threshold,
-                palette,
-                card,
-                None,
-                field_mode,
+                Overlay {
+                    cursor: None,
+                    ..overlay
+                },
                 lens_info,
                 overlay_water_alpha,
             );
@@ -1207,8 +1217,8 @@ fn create_atlas(gpu: &Gpu, atlas: &Atlas) -> wgpu::Texture {
     texture
 }
 
-/// The HUD texture: the palette strip (top) and the species card (below),
-/// each sized for the largest.
+/// The HUD texture: the palette strip (top), the species card and the
+/// inspect card (below), each sized for the largest.
 fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
     d.create_texture(&wgpu::TextureDescriptor {
         label: Some("hud"),

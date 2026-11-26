@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::card::{self, Card, CardImage, CardLayout};
 use crate::grid::DirtyRects;
 use crate::hud::{self, BrushPreview, Magnifier, Palette, PaletteLayout};
+use crate::inspect::{InspectCard, InspectPage, Inspected};
 use crate::layout::Layout;
 use crate::pacing::{FrameRequest, Pacer};
 use crate::renderer::{Overlay, Renderer};
@@ -109,6 +110,8 @@ pub struct Tank {
     card_image: Option<CardImage>,
     /// The card image needs uploading.
     card_dirty: bool,
+    /// The in-tank inspect card.
+    inspect: InspectCard,
     /// The brush outline, if shown.
     cursor: Option<BrushPreview>,
     /// The device placement ghost and whether it fits (D27).
@@ -152,6 +155,7 @@ impl Tank {
             card: None,
             card_image: None,
             card_dirty: false,
+            inspect: InspectCard::default(),
             cursor: None,
             ghost: None,
             magnifier: None,
@@ -332,6 +336,55 @@ impl Tank {
         )
     }
 
+    /// Pins (or with `None`, removes) the inspect card to a creature or a
+    /// plant (SPEC §2.5): drawn beside it, following it, on its live page.
+    /// It needs no input to show, so any host can draw it. The card goes
+    /// by itself when its creature or plant does. A change builds the image
+    /// once and asks for a frame; setting the same thing again costs
+    /// nothing (and keeps the page), and nothing is built or drawn while it
+    /// is `None`.
+    pub fn set_inspected(&mut self, inspected: Option<Inspected>) {
+        self.needs_frame |= self.inspect.set(&self.world, inspected);
+    }
+
+    /// What the inspect card is pinned to, if anything (`None` once it has
+    /// gone, even before the next tick or frame drops the card).
+    #[must_use]
+    pub fn inspected(&self) -> Option<Inspected> {
+        self.inspect
+            .what
+            .filter(|&what| crate::inspect::anchor(&self.world, what).is_some())
+    }
+
+    /// Shows `page` of the inspect card (if one is shown). A change
+    /// rebuilds the image once and asks for a frame.
+    pub fn set_inspect_page(&mut self, page: InspectPage) {
+        self.needs_frame |= self.inspect.set_page(&self.world, page);
+    }
+
+    /// The inspect card's page.
+    #[must_use]
+    pub fn inspect_page(&self) -> InspectPage {
+        self.inspect.page
+    }
+
+    /// Where the inspect card is drawn in a `target`-pixel surface, for hit
+    /// tests (a click on it turns the page); `None` if none is shown or it
+    /// doesn't fit the target even at scale 1.
+    #[must_use]
+    pub fn inspect_layout(&self, target: (u32, u32)) -> Option<CardLayout> {
+        self.inspect
+            .layout(&self.world, target, &self.layout(target))
+    }
+
+    /// Brings the inspect card up to date with the world (see
+    /// [`InspectCard::refresh`]).
+    fn refresh_inspect(&mut self) {
+        if self.inspect.what.is_some() {
+            self.needs_frame |= self.inspect.refresh(&self.world, false);
+        }
+    }
+
     /// Shows (or hides) the brush outline. A change asks for a frame.
     pub fn set_cursor(&mut self, cursor: Option<BrushPreview>) {
         if self.cursor != cursor {
@@ -464,6 +517,7 @@ impl Tank {
     /// `desktank capture`, which step world time themselves.
     pub fn step(&mut self) {
         self.world.tick();
+        self.refresh_inspect();
         for r in self.world.dirty_rects() {
             self.dirty.add(r);
         }
@@ -538,6 +592,7 @@ impl Tank {
         self.dirty.mark_all();
         self.palette_dirty = true;
         self.card_dirty = true;
+        self.inspect.dirty = true;
         self.needs_frame = true;
         self.creatures_drawn = None;
         self.plants_drawn = None;
@@ -609,10 +664,14 @@ impl Tank {
             self.dirty.mark_all();
             self.palette_dirty = true;
             self.card_dirty = true;
+            self.inspect.dirty = true;
         }
+        // Edits made through `world_mut` while paused may have removed it.
+        self.refresh_inspect();
         let layout = self.layout(size);
         let palette = self.palette_layout(size);
         let card = self.card_layout(size);
+        let inspect = self.inspect_layout(size);
         let sway_on = self.sway_active();
         let ripples = self.world.surface_ripples();
         let has_current_ripples = self.world.has_surface_current_ripples();
@@ -645,25 +704,10 @@ impl Tank {
             renderer.upload_flow(gpu, &self.world);
         }
         self.flow_drawn = self.world.device_rebuilds();
-        if self.palette_dirty {
-            if let Some(p) = &self.palette {
-                let (image, image_size) = hud::build(
-                    p,
-                    self.world.materials(),
-                    self.world.species(),
-                    self.world.plant_species(),
-                    self.world.device_kinds(),
-                );
-                renderer.upload_hud(gpu, &image, image_size);
-            }
-            self.palette_dirty = false;
-        }
-        if self.card_dirty {
-            if let Some(image) = &self.card_image {
-                renderer.upload_card(gpu, &image.pixels, image.size);
-            }
-            self.card_dirty = false;
-        }
+        self.upload_hud(gpu);
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
 
         let mut encoder = gpu
             .device
@@ -686,6 +730,7 @@ impl Tank {
             Overlay {
                 palette,
                 card,
+                inspect,
                 cursor: self.cursor,
                 magnifier: self.magnifier,
                 field: self.field_overlay,
@@ -699,6 +744,38 @@ impl Tank {
         self.needs_frame = false;
         if let Some(t) = &self.timer {
             self.gpu_time = t.read(gpu, submission);
+        }
+    }
+
+    /// Uploads the palette, species card and inspect card images that
+    /// changed to the HUD texture.
+    fn upload_hud(&mut self, gpu: &Gpu) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        if self.palette_dirty {
+            if let Some(p) = &self.palette {
+                let (image, image_size) = hud::build(
+                    p,
+                    self.world.materials(),
+                    self.world.species(),
+                    self.world.plant_species(),
+                    self.world.device_kinds(),
+                );
+                renderer.upload_hud(gpu, &image, image_size);
+            }
+            self.palette_dirty = false;
+        }
+        if self.card_dirty {
+            if let Some(image) = &self.card_image {
+                renderer.upload_card(gpu, &image.pixels, image.size);
+            }
+            self.card_dirty = false;
+        }
+        if std::mem::take(&mut self.inspect.dirty)
+            && let Some(image) = &self.inspect.image
+        {
+            renderer.upload_inspect(gpu, &image.pixels, image.size);
         }
     }
 
@@ -1023,6 +1100,79 @@ mod tests {
         tank.set_card(Some(Card::Creature(desktank_sim::SpeciesId(250))));
         assert!(tank.card_image.is_none());
         assert_eq!(tank.card_layout((1280, 720)), None);
+    }
+
+    #[test]
+    fn settled_tank_draws_the_inspect_card_only_when_it_changes() {
+        let mut tank = settled_planted_tank();
+        let plant = Inspected::Plant(tank.world().plants().next().unwrap().id);
+        // Nothing inspected: nothing built, no frame.
+        tank.set_inspected(None);
+        assert!(tank.inspect.image.is_none() && !tank.inspect.dirty);
+        assert_eq!(tank.inspect_layout((1280, 720)), None);
+        assert_eq!(count_frames(&mut tank, Duration::ZERO, 2), 0);
+
+        // Inspecting builds the live page once and asks for one frame. The
+        // live page changes at most once a minute for a plant.
+        tank.set_inspected(Some(plant));
+        assert_eq!(tank.inspected(), Some(plant));
+        assert_eq!(tank.inspect_page(), InspectPage::Live);
+        assert!(tank.inspect.image.is_some() && tank.inspect.dirty);
+        let layout = tank.inspect_layout((1280, 720)).unwrap();
+        assert!(layout.scale >= 1);
+        assert!(count_frames(&mut tank, Duration::from_secs(2), 3) <= 2);
+        tank.inspect.dirty = false;
+        let live = tank.inspect.image.clone();
+        tank.set_inspected(Some(plant));
+        assert!(!tank.inspect.dirty);
+
+        // Turning the page rebuilds once; setting it again is free.
+        tank.set_inspect_page(InspectPage::Species);
+        assert!(tank.inspect.dirty);
+        assert_ne!(tank.inspect.image, live);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(5), 1), 1);
+        tank.inspect.dirty = false;
+        tank.set_inspect_page(InspectPage::Species);
+        assert!(!tank.inspect.dirty);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(6), 2), 0);
+
+        // Removing it is a change; then nothing.
+        tank.set_inspected(None);
+        assert!(tank.inspect.image.is_none());
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(8), 1), 1);
+        assert_eq!(count_frames(&mut tank, Duration::from_secs(9), 2), 0);
+    }
+
+    #[test]
+    fn the_inspect_card_follows_its_creature_and_goes_with_it() {
+        let mut tank = settled_planted_tank();
+        let guppy = tank.world().species().id("guppy").unwrap();
+        let id = tank.world_mut().add_creature(guppy, 16, 20).unwrap();
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        tank.set_inspect_page(InspectPage::Species);
+        let target = (1280, 720);
+        let before = tank.inspect_layout(target).unwrap();
+        let centre = tank.world().creature(id).unwrap().centre();
+        // It follows as the creature swims.
+        let mut moved = false;
+        for _ in 0..200 {
+            tank.step();
+            let now = tank.world().creature(id).unwrap().centre();
+            if (now.0 - centre.0).abs() > 2.0 || (now.1 - centre.1).abs() > 2.0 {
+                moved = tank.inspect_layout(target).unwrap() != before;
+                break;
+            }
+        }
+        assert!(moved, "the card followed");
+        assert_eq!(tank.inspect_page(), InspectPage::Species);
+        // Netted out: the card goes with it, at the next tick or frame.
+        assert!(tank.world_mut().remove_creature(id));
+        tank.step();
+        assert_eq!(tank.inspected(), None);
+        assert!(tank.inspect.image.is_none());
+        assert_eq!(tank.inspect_layout(target), None);
+        assert_eq!(tank.inspect_page(), InspectPage::Live);
+        assert!(tank.frame_wanted());
     }
 
     #[test]

@@ -41,7 +41,9 @@
 
 use core::time::Duration;
 
-use desktank_render::{BrushPreview, Card, FieldOverlay, Layout, Magnifier, Tank, TankConfig};
+use desktank_render::{
+    BrushPreview, Card, FieldOverlay, InspectPage, Inspected, Layout, Magnifier, Tank, TankConfig,
+};
 use desktank_sim::tools::{
     self, AddRefused, Button, Inspection, Outcome, PaletteItem, PalettePath, Tool, Tools,
 };
@@ -547,6 +549,31 @@ impl WebTank {
         })
     }
 
+    /// Where the inspect card is drawn, as canvas pixels `[x, y, width,
+    /// height]`, or empty if none is shown.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectRect))]
+    #[must_use]
+    pub fn inspect_rect(&self) -> Vec<u32> {
+        self.tank
+            .inspect_layout(self.size)
+            .map_or_else(Vec::new, |c| {
+                let (w, h) = c.size();
+                vec![c.origin.0, c.origin.1, w, h]
+            })
+    }
+
+    /// The inspect card's page: 1 (live) or 2 (species), or 0 if none is
+    /// shown.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectPage))]
+    #[must_use]
+    pub fn inspect_page(&self) -> u32 {
+        match (self.tank.inspected(), self.tank.inspect_page()) {
+            (None, _) => 0,
+            (Some(_), InspectPage::Live) => 1,
+            (Some(_), InspectPage::Species) => 2,
+        }
+    }
+
     /// Brush radius in cells.
     #[must_use]
     pub fn radius(&self) -> u32 {
@@ -666,6 +693,12 @@ impl WebTank {
             self.sync_cursor();
             return 0;
         }
+        // A click on the inspect card turns its page.
+        if self.over_inspect(x, y) {
+            let page = self.tank.inspect_page().turned();
+            self.tank.set_inspect_page(page);
+            return 0;
+        }
         let cell = self.cell(x, y);
         let out = self.tools.press(self.tank.world_mut(), button, cell);
         self.outcome(out)
@@ -676,8 +709,8 @@ impl WebTank {
     /// Returns how many cells (or bodies) changed.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = pointerMove))]
     pub fn pointer_move(&mut self, x: f64, y: f64) -> u32 {
-        // Over the species card: hide the outline; a stroke ends.
-        if self.over_card(x, y) {
+        // Over a card: hide the outline; a stroke ends.
+        if self.over_card(x, y) || self.over_inspect(x, y) {
             self.pointer_leave();
             return 0;
         }
@@ -1171,6 +1204,13 @@ impl WebTank {
         self.tank.layout(self.size)
     }
 
+    /// Whether canvas pixel `(x, y)` is over the inspect card.
+    fn over_inspect(&self, x: f64, y: f64) -> bool {
+        self.tank
+            .inspect_layout(self.size)
+            .is_some_and(|c| c.contains(x, y))
+    }
+
     /// Whether canvas pixel `(x, y)` is over the species card.
     fn over_card(&self, x: f64, y: f64) -> bool {
         self.tank
@@ -1244,6 +1284,7 @@ impl WebTank {
         let changed = match out {
             Outcome::Painted(n) | Outcome::Glued(n) => n,
             Outcome::Inspected(found) => {
+                self.tank.set_inspected(Inspected::of(found));
                 self.inspection = match found {
                     Inspection::Cell { x, y, material } => {
                         let table = self.tank.world().materials();

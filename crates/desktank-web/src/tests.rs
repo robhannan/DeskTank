@@ -454,6 +454,50 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
 }
 
 #[test]
+fn inspecting_pins_a_two_page_card_that_clicks_turn() {
+    let mut t = paused();
+    t.select(slot(&t, "creature neon_tetra"));
+    down(&mut t, PRIMARY, 30, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
+    t.select(slot(&t, "tool inspect"));
+    down(&mut t, PRIMARY, 30, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 1);
+    let rect = t.inspect_rect();
+    assert_eq!(rect.len(), 4);
+    // Beside the tetra (cell 30 at scale 4), on its right, inside the canvas.
+    assert!(rect[0] > 30 * 4 && rect[0] + rect[2] <= 512 && rect[1] + rect[3] <= 288);
+    // A click on it turns the page and changes nothing in the tank.
+    let hash = t.state_hash();
+    let (x, y) = (f64::from(rect[0] + 2), f64::from(rect[1] + 2));
+    assert_eq!(t.pointer_down(PRIMARY, x, y), 0);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 2);
+    assert_eq!(
+        t.take_inspection(),
+        "creature neon_tetra 1 water 30 40 adult 180 100 100 male - - "
+    );
+    t.pointer_down(PRIMARY, x, y);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 1);
+    assert_eq!(t.state_hash(), hash);
+    // Inspecting water removes it.
+    down(&mut t, PRIMARY, 100, 20);
+    t.pointer_up(PRIMARY);
+    assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
+    // Netted out, the card goes with the creature.
+    down(&mut t, PRIMARY, 30, 40);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.inspect_page(), 1);
+    t.select(slot(&t, "tool net"));
+    down(&mut t, PRIMARY, 30, 40);
+    drag(&mut t, 30, 0);
+    assert_eq!(t.pointer_up(PRIMARY), 1);
+    assert_eq!((t.inspect_page(), t.inspect_rect()), (0, Vec::new()));
+}
+
+#[test]
 fn device_inspect_rinse_and_guard_round_trip() {
     let mut t = paused();
     t.select(slot(&t, "device internal_filter"));

@@ -1617,6 +1617,70 @@ fn the_species_card_is_drawn_on_top_of_the_tank_and_the_lens() {
     assert_eq!(render_sized(gpu, &mut tank, format, (tw, th)), plain);
 }
 
+#[test]
+fn the_inspect_card_is_drawn_beside_its_creature_without_input() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (tw, th) = (640u32, 360u32);
+    let materials = MaterialTable::builtin().unwrap();
+    let config = WorldConfig {
+        width: 80,
+        height: 45,
+        seed: 7,
+        water_level: 1.0,
+    };
+    let mut world = World::new(config, materials).unwrap();
+    let tetra = world.species().id("neon_tetra").unwrap();
+    let id = world.add_creature(tetra, 14, 20).unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    // A screensaver: no palette, no input, just the tank.
+    tank.set_saver_mode(true);
+    let plain = render_sized(gpu, &mut tank, format, (tw, th));
+
+    for page in [
+        desktank_render::InspectPage::Live,
+        desktank_render::InspectPage::Species,
+    ] {
+        tank.set_inspected(Some(desktank_render::Inspected::Creature(id)));
+        tank.set_inspect_page(page);
+        let layout = tank.inspect_layout((tw, th)).unwrap();
+        let (cw, ch) = layout.size();
+        let (x0, y0) = layout.origin;
+        // Right of the tetra (at cell 14 of 80, scale 8), inside the target.
+        let centre = tank.world().creature(id).unwrap().centre();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let tetra_x = (centre.0 * 8.0) as u32;
+        assert!(x0 > tetra_x, "{page:?}: {layout:?}");
+        assert!(x0 + cw <= tw && y0 + ch <= th, "{page:?}: {layout:?}");
+        let carded = render_sized(gpu, &mut tank, format, (tw, th));
+        let at = |img: &[u8], x: u32, y: u32| px_at(img, tw, x, y);
+        assert_eq!(at(&carded, x0, y0), [0x2a, 0x36, 0x48], "{page:?} frame");
+        assert_eq!(
+            at(&carded, x0 + cw - 1, y0 + ch - 1),
+            [0x2a, 0x36, 0x48],
+            "{page:?} frame"
+        );
+        assert_eq!(
+            at(&carded, x0 + layout.scale, y0 + ch - 2 * layout.scale),
+            [0x0b, 0x12, 0x1c],
+            "{page:?} background"
+        );
+        for y in 0..th {
+            for x in 0..tw {
+                let inside = x >= x0 && x < x0 + cw && y >= y0 && y < y0 + ch;
+                if !inside {
+                    assert_eq!(at(&plain, x, y), at(&carded, x, y), "({x}, {y})");
+                }
+            }
+        }
+    }
+
+    // Removing it brings the tank back.
+    tank.set_inspected(None);
+    assert_eq!(tank.inspect_layout((tw, th)), None);
+    assert_eq!(render_sized(gpu, &mut tank, format, (tw, th)), plain);
+}
+
 /// Pixel `(x, y)` of a `width`-pixel-wide RGBA image.
 fn px_at(img: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
     let i = ((y * width + x) * 4) as usize;
