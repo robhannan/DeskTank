@@ -27,6 +27,8 @@ pub use overlay::{
 pub use power::{PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSignals, PowerSource};
 pub use stats::{ProcessStats, process_stats};
 pub use store::{KEEP, Loaded, SaveStore, config_dir, data_dir, runtime_dir};
+#[cfg(target_os = "windows")]
+pub use windows::current_user_sid;
 
 /// Local time of day as minutes after midnight (`0..1440`), if the OS reports it.
 #[must_use]
