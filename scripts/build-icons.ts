@@ -51,15 +51,20 @@ function put(img: Image, x: number, y: number, r: number, g: number, b: number, 
   img.data.set([r, g, b, a], (y * img.w + x) * 4);
 }
 
-/** Alpha-composites `src` onto `dst` at (dx, dy), each source pixel
- * repeated `scale` times in both directions (nearest neighbour). */
+/** Alpha-composites `src` onto `dst` at (dx, dy), each source pixel repeated
+ * `scale` times in both directions (nearest neighbour, clipped to `dst`).
+ * Assumes binary source alpha (0 or 255) or an opaque destination. */
 function over(dst: Image, src: Image, dx = 0, dy = 0, scale = 1): void {
   for (let y = 0; y < src.h * scale; y++) {
+    const ty = dy + y;
+    if (ty < 0 || ty >= dst.h) continue;
     for (let x = 0; x < src.w * scale; x++) {
+      const tx = dx + x;
+      if (tx < 0 || tx >= dst.w) continue;
       const s = (Math.floor(y / scale) * src.w + Math.floor(x / scale)) * 4;
       const a = src.data[s + 3];
       if (a === 0) continue;
-      const d = ((dy + y) * dst.w + dx + x) * 4;
+      const d = (ty * dst.w + tx) * 4;
       for (let c = 0; c < 3; c++) {
         dst.data[d + c] = Math.round((src.data[s + c] * a + dst.data[d + c] * (255 - a)) / 255);
       }
@@ -516,7 +521,11 @@ function loadFont(): string[][] {
   const src = readFileSync(join(ROOT, "crates/desktank-render/src/font.rs"), "utf8");
   const start = src.indexOf("const ASCII:");
   if (start < 0) throw new Error("no ASCII table in font.rs");
-  const table = src.slice(src.indexOf("= [", start), src.indexOf("\n];", start));
+  const open = src.indexOf("= [", start);
+  const rest = src.slice(open);
+  const end = rest.search(/\r?\n\];/);
+  if (open < 0 || end < 0) throw new Error("unterminated ASCII table in font.rs");
+  const table = rest.slice(0, end);
   const glyphs = [...table.matchAll(/\[((?:\s*"[.#]{3}",?){6})\s*\]/g)].map((m) => [...m[1].matchAll(/"([.#]{3})"/g)].map((r) => r[1]));
   if (glyphs.length !== 95) throw new Error(`font.rs ASCII table has ${glyphs.length} glyphs, expected 95`);
   return glyphs;
