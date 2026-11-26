@@ -147,14 +147,17 @@
     text entry needs a real input so phone keyboards open, so an
     invisible, focusable `<input>` (owner-only) is laid over the row,
     following the card, and its value is mirrored into the tank on each
-    `input` event; a tap on the row focuses it, and its keys never reach
-    the page's shortcuts. Screen readers still hear the inspection and
-    the new name.
+    `input` event; a tap on the row focuses it (the input is at least 32
+    CSS pixels tall, centred on the row and clamped to the canvas, so a
+    phone's few-pixel row is still a tap target, and a tap on it never
+    turns the page), and its keys never reach the page's shortcuts.
+    Screen readers still hear the inspection and the new name.
 
-    The card is drawn from a third HUD-texture region at
-    half the cell scale (at least 2, at most half the canvas each way),
-    and the live page is rebuilt only when its text changes, never per
-    frame; nothing is built or drawn while nothing is inspected. It
+    The card is drawn from a third HUD-texture region at the species
+    card's scale (`card_scale`: both pages and the species card match on
+    a given canvas, including the host's minimum on a high-density
+    screen), dropped only if the card itself doesn't fit, and the live
+    page is rebuilt only when its text changes, never per frame; nothing is built or drawn while nothing is inspected. It
     needs only the tank (`Tank::set_inspected`), so the screensaver and
     wallpaper can draw it too once they have a way to open it. Nothing
     else repeats what it shows: the window's title bar keeps only the

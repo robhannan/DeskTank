@@ -28,7 +28,10 @@ use desktank_sim::{
     CreatureId, DeviceId, MAX_NAME_CHARS, Mount, MovementClass, PlantId, UnmetNeed, World,
 };
 
-use crate::card::{self, CARD_MAX, CARD_W, Card, CardImage, CardLayout, Page, display_name};
+use crate::card::{
+    self, CARD_MAX, CARD_W, Card, CardImage, CardLayout, Page, card_scale, display_name,
+};
+use crate::hud::PaletteLayout;
 use crate::layout::Layout;
 
 /// The row of the HUD texture where the inspect card's region starts (below
@@ -186,17 +189,11 @@ impl InspectCard {
         self.edit.as_deref()
     }
 
-    /// Where the name row is in a `target`-pixel surface laid out as
-    /// `grid`, for hit tests; `None` unless naming is allowed and the live
-    /// page of a creature's card is shown and fits.
-    pub(crate) fn name_rect(
-        &self,
-        world: &World,
-        target: (u32, u32),
-        grid: &Layout,
-    ) -> Option<ScreenRect> {
+    /// Where the name row is when the card is drawn at `at` (its
+    /// [`Self::layout`]), for hit tests; `None` unless naming is allowed
+    /// and the live page of a creature's card is shown.
+    pub(crate) fn name_rect(&self, at: &CardLayout) -> Option<ScreenRect> {
         let [left, top, width, height] = self.name_row.filter(|_| self.can_name)?;
-        let at = self.layout(world, target, grid)?;
         let scale = at.scale;
         Some(ScreenRect {
             origin: (at.origin.0 + left * scale, at.origin.1 + top * scale),
@@ -253,9 +250,18 @@ impl InspectCard {
         world: &World,
         target: (u32, u32),
         grid: &Layout,
+        palette: Option<&PaletteLayout>,
+        min_scale: u32,
     ) -> Option<CardLayout> {
         let image = self.image.as_ref()?;
-        CardLayout::beside(target, grid, anchor(world, self.what?)?, image.size)
+        CardLayout::beside(
+            target,
+            grid,
+            palette,
+            min_scale,
+            anchor(world, self.what?)?,
+            image.size,
+        )
     }
 }
 
@@ -567,13 +573,17 @@ impl CardLayout {
     /// Places an inspect card of `image` pixels beside `anchor` (cells, as
     /// `anchor` gives them) in `target`: to its right, or to its left if
     /// that has more room, vertically centred on it, then clamped inside
-    /// the tank (the grid's area within `target`). Its scale is half the
-    /// grid's cell scale (at least 2), dropped until it covers at most half
-    /// the target each way and fits; `None` if it doesn't fit even at 1.
+    /// the tank (the grid's area within `target`). Its scale is the one every
+    /// species card is drawn at ([`card_scale`], from `palette` and
+    /// `min_scale` as the species card gets them), so both pages and the
+    /// species card match; it drops only if `image` doesn't fit `target` at
+    /// that scale. `None` if it doesn't fit even at 1.
     #[must_use]
     pub fn beside(
         target: (u32, u32),
         grid: &Layout,
+        palette: Option<&PaletteLayout>,
+        min_scale: u32,
         anchor: [f32; 4],
         image: (u32, u32),
     ) -> Option<Self> {
@@ -594,12 +604,11 @@ impl CardLayout {
         let (left_edge, top_edge) = (px(anchor[0], grid.offset.0), px(anchor[1], grid.offset.1));
         let (right_edge, bottom_edge) =
             (px(anchor[2], grid.offset.0), px(anchor[3], grid.offset.1));
-        let want = grid.scale.div_ceil(2).max(2);
+        let want = card_scale(target, grid, palette, min_scale);
         (1..=want).rev().find_map(|scale| {
             let width = i64::from(image.0) * i64::from(scale);
             let height = i64::from(image.1) * i64::from(scale);
-            let small = scale == 1 || (2 * width <= target_w && 2 * height <= target_h);
-            if !small || width > target_w || height > target_h {
+            if width > target_w || height > target_h {
                 return None;
             }
             // Clamp to the tank where it fits, else to the target.
@@ -795,11 +804,18 @@ mod tests {
         card.set(&w, Some(Inspected::Creature(id)));
         let target = (1280, 720);
         // Not allowed: nothing to click. Allowed: a rect inside the card.
-        assert_eq!(card.name_rect(&w, target, &g), None);
+        assert_eq!(
+            card.layout(&w, target, &g, None, 0)
+                .and_then(|at| card.name_rect(&at)),
+            None
+        );
         assert!(card.set_can_name(&w, true));
         assert!(!card.set_can_name(&w, true));
-        let at = card.layout(&w, target, &g).unwrap();
-        let rect = card.name_rect(&w, target, &g).unwrap();
+        let at = card.layout(&w, target, &g, None, 0).unwrap();
+        let rect = card
+            .layout(&w, target, &g, None, 0)
+            .and_then(|at| card.name_rect(&at))
+            .unwrap();
         let [x, y, rw, rh] = card.name_row.unwrap();
         assert_eq!(
             rect.origin,
@@ -808,20 +824,32 @@ mod tests {
         assert_eq!(rect.size, (rw * at.scale, rh * at.scale));
         // The page-two card has no row.
         assert!(card.set_page(&w, InspectPage::Species));
-        assert_eq!(card.name_rect(&w, target, &g), None);
+        assert_eq!(
+            card.layout(&w, target, &g, None, 0)
+                .and_then(|at| card.name_rect(&at)),
+            None
+        );
         // Editing returns to page one and edits are cut and cleaned.
         assert!(card.set_name_edit(&w, Some("A\tb")));
         assert_eq!(card.page, InspectPage::Live);
         assert_eq!(card.name_edit(), Some("Ab"));
         assert!(!card.set_name_edit(&w, Some("Ab")));
-        assert!(card.name_rect(&w, target, &g).is_some());
+        assert!(
+            card.layout(&w, target, &g, None, 0)
+                .and_then(|at| card.name_rect(&at))
+                .is_some()
+        );
         // Stopping naming stops the edit; a plant or a cell is not named.
         assert!(card.set_can_name(&w, false));
         assert_eq!(card.name_edit(), None);
         assert!(card.set_can_name(&w, true));
         assert!(card.set(&w, Some(Inspected::Cell { x: 5, y: 60 })));
         assert!(!card.set_name_edit(&w, Some("x")));
-        assert_eq!(card.name_rect(&w, target, &g), None);
+        assert_eq!(
+            card.layout(&w, target, &g, None, 0)
+                .and_then(|at| card.name_rect(&at)),
+            None
+        );
     }
 
     #[test]
@@ -926,22 +954,34 @@ mod tests {
     fn the_card_sits_beside_the_anchor_and_stays_in_the_tank() {
         let g = grid();
         let image = (144, 80);
-        // Room on the right: just right of it, centred on it, at half the
-        // cell scale.
-        let c = CardLayout::beside((1280, 720), &g, [100.0, 80.0, 104.0, 84.0], image).unwrap();
-        assert_eq!(c.scale, 2);
-        assert_eq!(c.origin.0, 104 * 4 + GAP * 2);
-        assert_eq!(c.origin.1, 82 * 4 - 80);
+        // Room on the right: just right of it, centred on it, at the species
+        // card's scale (the cell scale 4 where it fits).
+        let c = CardLayout::beside((1280, 720), &g, None, 0, [100.0, 80.0, 104.0, 84.0], image)
+            .unwrap();
+        assert_eq!(c.scale, 4);
+        assert_eq!(c.origin.0, 104 * 4 + GAP * 4);
+        assert_eq!(c.origin.1, 82 * 4 - 160);
         // Near the right edge: on its left.
-        let c = CardLayout::beside((1280, 720), &g, [300.0, 80.0, 304.0, 84.0], image).unwrap();
-        assert_eq!(c.origin.0 + 288 + GAP * 2, 300 * 4);
+        let c = CardLayout::beside((1280, 720), &g, None, 0, [300.0, 80.0, 304.0, 84.0], image)
+            .unwrap();
+        assert_eq!(c.origin.0 + 576 + GAP * 4, 300 * 4);
         // Near the top and bottom: clamped inside.
-        let c = CardLayout::beside((1280, 720), &g, [10.0, 0.0, 12.0, 2.0], image).unwrap();
+        let c =
+            CardLayout::beside((1280, 720), &g, None, 0, [10.0, 0.0, 12.0, 2.0], image).unwrap();
         assert_eq!(c.origin.1, 0);
-        let c = CardLayout::beside((1280, 720), &g, [10.0, 178.0, 12.0, 180.0], image).unwrap();
-        assert_eq!(c.origin.1 + 160, 720);
+        let c = CardLayout::beside((1280, 720), &g, None, 0, [10.0, 178.0, 12.0, 180.0], image)
+            .unwrap();
+        assert_eq!(c.origin.1 + 320, 720);
         // Off the grid entirely: still inside.
-        let c = CardLayout::beside((1280, 720), &g, [-50.0, -50.0, -40.0, -40.0], image).unwrap();
+        let c = CardLayout::beside(
+            (1280, 720),
+            &g,
+            None,
+            0,
+            [-50.0, -50.0, -40.0, -40.0],
+            image,
+        )
+        .unwrap();
         assert_eq!(c.origin, (0, 0));
     }
 
@@ -950,7 +990,8 @@ mod tests {
         // A 320×180 grid at scale 2 in 1000×600: offset (180, 120).
         let g = Layout::fit((320, 180), (1000, 600));
         assert_eq!((g.scale, g.offset), (2, (180, 120)));
-        let c = CardLayout::beside((1000, 600), &g, [0.0, 0.0, 1.0, 1.0], (144, 80)).unwrap();
+        let c =
+            CardLayout::beside((1000, 600), &g, None, 0, [0.0, 0.0, 1.0, 1.0], (144, 80)).unwrap();
         assert_eq!(c.scale, 2);
         assert!(c.origin.0 >= 180 && c.origin.1 >= 120, "{c:?}");
         let (w, h) = c.size();
@@ -960,15 +1001,23 @@ mod tests {
     #[test]
     fn a_small_target_shrinks_the_card_or_hides_it() {
         let g = Layout::fit((320, 180), (512, 288));
-        let c = CardLayout::beside((512, 288), &g, [10.0, 10.0, 11.0, 11.0], (144, 100)).unwrap();
+        let c = CardLayout::beside(
+            (512, 288),
+            &g,
+            None,
+            0,
+            [10.0, 10.0, 11.0, 11.0],
+            (144, 100),
+        )
+        .unwrap();
         assert_eq!(c.scale, 1);
         let g = Layout::fit((320, 180), (100, 60));
         assert_eq!(
-            CardLayout::beside((100, 60), &g, [1.0, 1.0, 2.0, 2.0], (144, 100)),
+            CardLayout::beside((100, 60), &g, None, 0, [1.0, 1.0, 2.0, 2.0], (144, 100)),
             None
         );
         assert_eq!(
-            CardLayout::beside((1280, 720), &grid(), [0.0; 4], (0, 0)),
+            CardLayout::beside((1280, 720), &grid(), None, 0, [0.0; 4], (0, 0)),
             None
         );
     }

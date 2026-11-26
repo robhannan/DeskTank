@@ -38,9 +38,13 @@ async function nameBox(page: Page) {
   const k = await canvasScale(page);
   const box = await boxOf(page.locator("#name-input"));
   expect(box.x).toBeCloseTo(canvas.x + rect[0] * k, 0);
-  expect(box.y).toBeCloseTo(canvas.y + rect[1] * k, 0);
   expect(box.width).toBeCloseTo(rect[2] * k, 0);
-  expect(box.height).toBeCloseTo(rect[3] * k, 0);
+  // At least a finger tall (32 CSS px), covering the row, inside the canvas.
+  expect(box.height).toBeGreaterThanOrEqual(Math.min(32, canvas.height) - 0.5);
+  expect(box.y).toBeLessThanOrEqual(canvas.y + rect[1] * k + 0.5);
+  expect(box.y + box.height).toBeGreaterThanOrEqual(canvas.y + (rect[1] + rect[3]) * k - 0.5);
+  expect(box.y).toBeGreaterThanOrEqual(canvas.y - 0.5);
+  expect(box.y + box.height).toBeLessThanOrEqual(canvas.y + canvas.height + 0.5);
   return box;
 }
 

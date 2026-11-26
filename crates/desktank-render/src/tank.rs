@@ -421,8 +421,13 @@ impl Tank {
     /// doesn't fit the target even at scale 1.
     #[must_use]
     pub fn inspect_layout(&self, target: (u32, u32)) -> Option<CardLayout> {
-        self.inspect
-            .layout(&self.world, target, &self.layout(target))
+        self.inspect.layout(
+            &self.world,
+            target,
+            &self.layout(target),
+            self.palette_layout(target).as_ref(),
+            self.card_min_scale,
+        )
     }
 
     /// Lets the viewer name creatures (the web's owner; every desktop
@@ -458,8 +463,7 @@ impl Tank {
     /// live page is shown.
     #[must_use]
     pub fn inspect_name_rect(&self, target: (u32, u32)) -> Option<ScreenRect> {
-        self.inspect
-            .name_rect(&self.world, target, &self.layout(target))
+        self.inspect.name_rect(&self.inspect_layout(target)?)
     }
 
     /// Brings the inspect card up to date with the world (see
@@ -1259,6 +1263,57 @@ mod tests {
         assert_eq!(tank.inspect_layout(target), None);
         assert_eq!(tank.inspect_page(), InspectPage::Live);
         assert!(tank.frame_wanted());
+    }
+
+    #[test]
+    fn the_inspect_card_and_the_species_card_share_one_scale() {
+        let world = World::new(
+            WorldConfig {
+                width: 320,
+                height: 180,
+                seed: 7,
+                water_level: 0.9,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let guppy = tank.world().species().id("guppy").unwrap();
+        let id = tank.world_mut().add_creature(guppy, 160, 90).unwrap();
+        tank.set_card(Some(Card::Creature(guppy, None)));
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        // A desktop canvas (cell scale 4), a DPR-3 phone's with the host's
+        // minimum, and a coarse small one.
+        for (target, min, scale) in [((1280, 720), 0, 4), ((1092, 614), 3, 3), ((512, 288), 0, 1)] {
+            tank.set_card_min_scale(min);
+            let species = tank.card_layout(target).unwrap().scale;
+            assert_eq!(species, scale, "{target:?}");
+            for page in [InspectPage::Live, InspectPage::Species] {
+                tank.set_inspect_page(page);
+                assert_eq!(
+                    tank.inspect_layout(target).unwrap().scale,
+                    species,
+                    "{target:?} {page:?}"
+                );
+            }
+        }
+        // With a palette in the canvas both are capped by its scale and still
+        // match.
+        tank.set_card_min_scale(0);
+        tank.set_palette(Some(Palette {
+            tabs: Vec::new(),
+            open: 0,
+            subs: Vec::new(),
+            open_sub: 0,
+            items: Vec::new(),
+            selected: None,
+            morphs: None,
+        }));
+        let target = (1280, 720);
+        let palette = tank.palette_layout(target).unwrap();
+        let species = tank.card_layout(target).unwrap().scale;
+        assert!(species <= palette.scale);
+        assert_eq!(tank.inspect_layout(target).unwrap().scale, species);
     }
 
     #[test]

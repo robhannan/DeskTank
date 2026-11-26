@@ -1379,6 +1379,9 @@ function canName() {
   return owner && !handingOver && inspected !== null && tank.inspectPage() !== 0;
 }
 
+// The shortest the name input is, in CSS pixels (a comfortable tap target).
+const NAME_INPUT_MIN_HEIGHT = 32;
+
 // Lays the name input over the card's Name row (canvas pixels to CSS
 // pixels), or switches it off where there is no row to type into.
 function placeNameInput() {
@@ -1390,11 +1393,17 @@ function placeNameInput() {
   const frame = canvas.getBoundingClientRect();
   const wrap = canvas.parentElement!.getBoundingClientRect();
   const [sx, sy] = [frame.width / canvas.width, frame.height / canvas.height];
+  // At least NAME_INPUT_MIN_HEIGHT tall, centred on the row and kept inside
+  // the canvas, so a finger can hit it even where the card's text is a few
+  // CSS pixels high.
+  const height = Math.min(Math.max(rect[3] * sy, NAME_INPUT_MIN_HEIGHT), frame.height);
+  const middle = (rect[1] + rect[3] / 2) * sy;
+  const top = Math.min(Math.max(middle - height / 2, 0), frame.height - height);
   const box = [
     frame.left - wrap.left - canvas.parentElement!.clientLeft + rect[0] * sx,
-    frame.top - wrap.top - canvas.parentElement!.clientTop + rect[1] * sy,
+    frame.top - wrap.top - canvas.parentElement!.clientTop + top,
     rect[2] * sx,
-    rect[3] * sy,
+    height,
   ].map((v) => `${v}px`);
   const { style } = nameInput;
   [style.left, style.top, style.width, style.height] = box;
