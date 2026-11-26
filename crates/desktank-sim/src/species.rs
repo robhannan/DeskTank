@@ -340,6 +340,8 @@ pub struct Species {
     /// Its colour morphs by name, in allele order (append only: saves
     /// store the index). A species with no `[genetics]` has one, `"wild"`.
     pub morphs: Vec<String>,
+    /// Recoloured palette icons in allele order.
+    pub morph_icons: Vec<Icon>,
     /// Index of the wildtype, which mixed lines revert to.
     pub wildtype: u8,
     /// Index of the morph the palette adds: the sprite's own colours.
@@ -361,6 +363,14 @@ pub struct Species {
 }
 
 impl Species {
+    /// The morph's palette icon, or the base sprite icon for an unknown morph.
+    #[must_use]
+    pub fn morph_icon(&self, morph: u8) -> &Icon {
+        self.morph_icons
+            .get(usize::from(morph))
+            .unwrap_or(&self.sprite.icon)
+    }
+
     /// Food materials, scavenging and prey size for a species card.
     #[must_use]
     pub fn describe_diet(&self, materials: &MaterialTable) -> String {
@@ -1075,7 +1085,7 @@ fn validate(
         }
     };
     let sprite = sprite(&d.sprite).map_err(invalid)?;
-    let (morphs, wildtype, palette_morph, looks, pane_looks) =
+    let (morphs, wildtype, palette_morph, looks, pane_looks, morph_icons) =
         looks(d, &sprite).map_err(invalid)?;
     let female_size = looks.get(morphs.len()).unwrap_or(&looks[0]).size;
     if !length_fits(d.length_cm, (sprite.width, sprite.height)) {
@@ -1170,6 +1180,7 @@ fn validate(
         breeding,
         glow,
         morphs,
+        morph_icons,
         wildtype,
         palette_morph,
         cycle_palette: d.genetics.as_ref().is_some_and(|g| g.cycle_palette),
@@ -1232,8 +1243,8 @@ fn glow(g: &GlowDef, colours: &BTreeMap<String, String>) -> Result<Glow, &'stati
 }
 
 /// The morph names, the wildtype's and the sprite's indices, every look,
-/// and the pane looks.
-type Looks = (Vec<String>, u8, u8, Vec<Look>, Vec<Look>);
+/// the pane looks and the morph icons.
+type Looks = (Vec<String>, u8, u8, Vec<Look>, Vec<Look>, Vec<Icon>);
 
 #[derive(Clone, Copy)]
 struct LookArt<'a> {
@@ -1352,10 +1363,18 @@ fn looks(d: &SpeciesDef, sprite: &Sprite) -> Result<Looks, &'static str> {
     };
     let art = look_art(&d.sprite, sprite)?;
     let mut looks = Vec::with_capacity(defs.len() * art.len());
+    let mut morph_icons = Vec::with_capacity(defs.len());
     for (female, art) in art {
         for (i, m) in defs.iter().enumerate() {
             let mut key = base.clone();
             recolour(&mut key, &m.colours)?;
+            if !female {
+                morph_icons.push(Icon {
+                    width: sprite.icon.width,
+                    height: sprite.icon.height,
+                    pixels: texels(&d.sprite.icon, sprite.icon.width, &key)?,
+                });
+            }
             if female && let Some(f) = &d.sprite.female {
                 recolour(&mut key, f)?;
             }
@@ -1394,6 +1413,7 @@ fn looks(d: &SpeciesDef, sprite: &Sprite) -> Result<Looks, &'static str> {
         index(palette),
         looks,
         pane_looks,
+        morph_icons,
     ))
 }
 
@@ -1557,6 +1577,31 @@ mod tests {
              "aaaa....aaaa", "aaaa....aaaa", "aaaa....aaaa", "aaaa....aaaa"],
         ]
     "##;
+
+    #[test]
+    fn morph_icons_recolour_the_base_icon() {
+        let table = SpeciesTable::builtin_for(&materials()).unwrap();
+        let shrimp = table.get(table.id("cherry_shrimp").unwrap()).unwrap();
+        let red = shrimp.morph_icon(0);
+        let blue = shrimp.morph_icon(2);
+        assert_eq!(shrimp.morph_icons.len(), shrimp.morphs.len());
+        assert_eq!(red, &shrimp.sprite.icon);
+        assert_ne!(red, blue);
+        assert_eq!((blue.width, blue.height), (red.width, red.height));
+        // The first body pixel uses the same colour key in both icons.
+        assert_eq!(blue.pixels[3], [0x2a, 0x4f, 0xa8, 255]);
+        assert!(
+            blue.pixels
+                .iter()
+                .zip(&red.pixels)
+                .all(|(b, r)| b[3] == r[3])
+        );
+
+        let neon = table.get(table.id("neon_tetra").unwrap()).unwrap();
+        assert_eq!(neon.morph_icons.len(), 1);
+        assert_eq!(neon.morph_icon(0), &neon.sprite.icon);
+        assert_eq!(neon.morph_icon(1), &neon.sprite.icon);
+    }
 
     #[test]
     fn builtin_species_have_card_text() {

@@ -936,26 +936,28 @@ impl World {
         species: SpeciesId,
         x: i64,
         y: i64,
+        morph: Option<u8>,
     ) -> Result<CreatureId, WorldError> {
         if self.is_live(species) {
             return self.add_pinch(species, x, y);
         }
-        let traits = self
-            .species()
-            .get(species)
-            .filter(|s| s.cycle_palette)
-            .map_or_else(Traits::default, |s| {
-                let count = self
-                    .creatures()
-                    .iter()
-                    .filter(|c| c.species == species)
-                    .count();
-                let morph = u8::try_from(count % s.morphs.len()).unwrap_or(s.palette_morph);
-                Traits {
-                    alleles: Some([morph; 2]),
-                    ..Traits::default()
-                }
-            });
+        let morph = morph.or_else(|| {
+            self.species()
+                .get(species)
+                .filter(|s| s.cycle_palette)
+                .map(|s| {
+                    let count = self
+                        .creatures()
+                        .iter()
+                        .filter(|c| c.species == species)
+                        .count();
+                    u8::try_from(count % s.morphs.len()).unwrap_or(s.palette_morph)
+                })
+        });
+        let traits = Traits {
+            alleles: morph.map(|m| [m; 2]),
+            ..Traits::default()
+        };
         self.add_creature_with_traits(species, x, y, traits)
     }
 
