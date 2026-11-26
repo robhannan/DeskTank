@@ -431,6 +431,7 @@ mod tests {
                 sp.describe_diet(m),
                 sp.describe_behaviour(),
                 sp.describe_requirements(),
+                sp.describe_size(),
             ]
         });
         let plants = p.iter().flat_map(|sp| {
@@ -444,7 +445,18 @@ mod tests {
         });
         creatures
             .chain(plants)
-            .chain(["Diet:", "Behaviour:", "Needs:", "Form:", "male", "female"].map(str::to_owned))
+            .chain(
+                [
+                    "Size:",
+                    "Diet:",
+                    "Behaviour:",
+                    "Needs:",
+                    "Form:",
+                    "male",
+                    "female",
+                ]
+                .map(str::to_owned),
+            )
             .collect()
     }
 

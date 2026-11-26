@@ -236,7 +236,12 @@ pub fn draw(
         }
         pen += ADVANCE;
     }
-    pen.saturating_sub(ADVANCE - GLYPH_W)
+    // No trailing gap after the last glyph; nothing drawn leaves the pen at x.
+    if pen == x {
+        x
+    } else {
+        pen - (ADVANCE - GLYPH_W)
+    }
 }
 
 #[cfg(test)]
