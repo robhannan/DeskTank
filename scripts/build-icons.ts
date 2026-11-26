@@ -101,6 +101,7 @@ function decodePng(file: Buffer): Image {
   const idat: Buffer[] = [];
   for (let at = 8; at + 8 <= file.length; ) {
     const len = file.readUInt32BE(at);
+    if (at + 12 + len > file.length) throw new Error("corrupt PNG: truncated chunk");
     const kind = file.toString("latin1", at + 4, at + 8);
     const body = file.subarray(at + 8, at + 8 + len);
     if (kind === "IHDR") {
@@ -120,6 +121,9 @@ function decodePng(file: Buffer): Image {
   }
   const raw = inflateSync(Buffer.concat(idat));
   const stride = w * channels;
+  if (raw.length !== h * (stride + 1)) {
+    throw new Error(`corrupt PNG: expected ${h * (stride + 1)} decompressed bytes, got ${raw.length}`);
+  }
   const img = blank(w, h);
   let prev = new Uint8Array(stride);
   for (let y = 0; y < h; y++) {
@@ -165,22 +169,37 @@ function hexRgb(hex: string): [number, number, number] {
 /** The text of the first bracketed or braced value after `name =` in the
  * `[sprite]` table of a species TOML, comments dropped. */
 function spriteValue(toml: string, name: string, open: string, close: string): string {
-  const sprite = toml.slice(toml.search(/^\[sprite\]/m));
-  const start = sprite.search(new RegExp(`^${name}\\s*=\\s*\\${open}`, "m"));
+  const tableStart = toml.search(/^\[sprite\]\s*(?:#.*)?$/m);
+  if (tableStart < 0) throw new Error("no [sprite] table");
+  const afterHeader = toml.indexOf("\n", tableStart);
+  const rest = afterHeader < 0 ? "" : toml.slice(afterHeader + 1);
+  const nextTable = rest.search(/^\[/m);
+  const sprite = nextTable < 0 ? rest : rest.slice(0, nextTable);
+  const start = sprite.search(new RegExp(`^\\s*${name}\\s*=\\s*\\${open}`, "m"));
   if (start < 0) throw new Error(`no ${name} in [sprite]`);
   const body = sprite.slice(sprite.indexOf(open, start));
-  // Skip strings and comments while matching the first closing bracket.
+  // Strip comments while keeping quoted strings intact and matching the closing bracket.
+  let out = "";
   let depth = 0;
   for (let i = 0; i < body.length; i++) {
     const ch = body[i];
     if (ch === '"') {
-      i = body.indexOf('"', i + 1);
+      const next = body.indexOf('"', i + 1);
+      if (next < 0) throw new Error(`unterminated string in ${name}`);
+      out += body.slice(i, next + 1);
+      i = next;
     } else if (ch === "#") {
-      i = body.indexOf("\n", i);
-    } else if (ch === open) {
-      depth++;
-    } else if (ch === close && --depth === 0) {
-      return body.slice(0, i + 1);
+      const next = body.indexOf("\n", i);
+      if (next < 0) break;
+      out += "\n";
+      i = next;
+    } else {
+      out += ch;
+      if (ch === open) {
+        depth++;
+      } else if (ch === close && --depth === 0) {
+        return out;
+      }
     }
   }
   throw new Error(`unterminated ${name}`);
@@ -289,6 +308,8 @@ const GRAVEL_TOP = [
   59, 59, 58, 58, 58, 58, 58, 58, 58, 58, 59, 59, 59, 59, 59, 59, 59, 59, 58, 58, 58, 58, 58, 58, 58, 59, 59, 59, 59, 59,
   59, 59, 59, 59,
 ];
+// Warmed and lightened from `assets/materials/gravel.toml` (#7d7468) so the
+// gravel bed stays legible against the dark water backdrop at Dock sizes.
 const GRAVEL_BASE = [152, 132, 96].map((c) => f32(c / 255));
 
 function gravelLayer(): Image {
@@ -455,6 +476,9 @@ function upToDate(path: string, want: Buffer): boolean {
   if (!existsSync(file)) return false;
   const have = readFileSync(file);
   if (have.equals(want)) return true;
+  if (path.endsWith(".json")) {
+    return have.toString("utf8").replace(/\r\n/g, "\n") === want.toString("utf8").replace(/\r\n/g, "\n");
+  }
   if (!path.endsWith(".png")) return false;
   try {
     const a = decodePng(have);
