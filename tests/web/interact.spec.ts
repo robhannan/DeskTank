@@ -84,7 +84,7 @@ test.describe("mouse", () => {
     await choose(page, "Inspect");
     p = await cellPoint(page, bx, h - 2);
     await page.mouse.click(p.x, p.y);
-    await expect(page.locator("#inspect")).toHaveText(
+    await expect(page.locator("#inspect-sr")).toHaveText(
       /^Bubbler #\d+ · on the bed · air diffuser · cell \d+, \d+$/,
     );
     await expect(page.locator("#device-actions")).toBeHidden();
@@ -99,7 +99,7 @@ test.describe("mouse", () => {
     await choose(page, "Inspect");
     p = await cellPoint(page, filterX, h - 1);
     await page.mouse.click(p.x, p.y);
-    await expect(page.locator("#inspect")).toHaveText(
+    await expect(page.locator("#inspect-sr")).toHaveText(
       /^Under-gravel filter #\d+ · on the floor · flow [\d.]+ cells\/s · load 0% · maturity 0% · fry-safe · cell /,
     );
     await expect(page.locator("#device-actions")).toBeVisible();
@@ -109,7 +109,7 @@ test.describe("mouse", () => {
     const hash = await stateHash(page);
     p = await cellPoint(page, Math.round(w * 0.8), y);
     await page.mouse.click(p.x, p.y);
-    await expect(page.locator("#inspect")).toHaveText(/^Water · cell \d+, \d+$/);
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell \d+, \d+$/);
     await choose(page, "Net");
     await page.mouse.move(p.x, p.y);
     await page.mouse.down();
@@ -127,7 +127,7 @@ test.describe("mouse", () => {
       const point = await cellPoint(page, x, y);
       await page.mouse.click(point.x, point.y);
     };
-    const inspect = page.locator("#inspect");
+    const inspect = page.locator("#inspect-sr");
     const actions = page.locator("#device-actions");
 
     await choose(page, "Under-gravel panel");
@@ -165,7 +165,7 @@ test.describe("mouse", () => {
     await choose(page, "Inspect");
     p = await cellPoint(page, x, y);
     await page.mouse.click(p.x, p.y);
-    await expect(page.locator("#inspect")).toHaveText(
+    await expect(page.locator("#inspect-sr")).toHaveText(
       /^Neon tetra #1 · adult male · 180 days old · health 100% · energy 100% · over Water · cell \d+, \d+$/,
     );
     expect(await stateHash(page)).toBe(hash);
@@ -176,16 +176,16 @@ test.describe("mouse", () => {
     await expect(page.locator("#name-input")).toBeFocused();
     await page.keyboard.type("  Big   Blue ");
     await page.keyboard.press("Enter");
-    await expect(page.locator("#inspect")).toHaveText(/^Big Blue · Neon tetra #1 · adult male · /);
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Big Blue · Neon tetra #1 · adult male · /);
     await expect(page.locator("#name-input")).toHaveValue("Big Blue");
     // Inspecting it again shows the name it keeps.
     await page.mouse.click(p.x, p.y);
-    await expect(page.locator("#inspect")).toHaveText(/^Big Blue · Neon tetra #1 · /);
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Big Blue · Neon tetra #1 · /);
     await expect(page.locator("#name-input")).toHaveValue("Big Blue");
     // Inspecting water hides the name field.
     const water = await cellPoint(page, 2, y);
     await page.mouse.click(water.x, water.y);
-    await expect(page.locator("#inspect")).toHaveText(/^Water · cell /);
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell /);
     await expect(page.locator("#name")).toBeHidden();
 
     // The net carries it up out of the water: it's gone.
@@ -273,7 +273,7 @@ test.describe("touch", () => {
     await touch.start([p]);
     await page.waitForTimeout(1200); // well past the 500 ms long-press
     await touch.end();
-    await expect(page.locator("#inspect")).toHaveText(/^Water · cell \d+, \d+$/);
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell \d+, \d+$/);
     expect(await cellCount(page, "gravel")).toBe(before);
     expect(errors).toEqual([]);
   });
@@ -304,14 +304,14 @@ test.describe("touch", () => {
     expect(await cellCount(page, "device")).toBeGreaterThan(300);
     await choose(page, "Inspect");
     await tap(4, y);
-    await expect(page.locator("#inspect")).toHaveText(
+    await expect(page.locator("#inspect-sr")).toHaveText(
       /^Internal filter #1 · on the left glass · flow [\d.]+ cells\/s · load 0% · maturity 0% · guard off · cell /,
     );
     await expect(page.locator("#device-actions")).toBeVisible();
     await page.locator("#device-guard").check();
-    await expect(page.locator("#inspect")).toContainText("guard on");
+    await expect(page.locator("#inspect-sr")).toContainText("guard on");
     await page.locator("#device-rinse").click();
-    await expect(page.locator("#inspect")).toContainText("load 0%");
+    await expect(page.locator("#inspect-sr")).toContainText("load 0%");
 
     // DV4: the sponge filter drops onto the bed, is intrinsically fry-safe
     // (no guard checkbox), and supports Rinse.
@@ -320,18 +320,18 @@ test.describe("touch", () => {
     await tap(spongeX, Math.round(h * 0.4));
     await choose(page, "Inspect");
     await tap(spongeX, h - 6);
-    await expect(page.locator("#inspect")).toHaveText(
+    await expect(page.locator("#inspect-sr")).toHaveText(
       /^Sponge filter #2 · on the bed · flow [\d.]+ cells\/s · load 0% · maturity 0% · fry-safe · cell /,
     );
     await expect(page.locator("#device-actions")).toBeVisible();
     await expect(page.locator("#device-guard-label")).toBeHidden();
     await page.locator("#device-rinse").click();
-    await expect(page.locator("#inspect")).toContainText("fry-safe");
+    await expect(page.locator("#inspect-sr")).toContainText("fry-safe");
 
     const hash = await stateHash(page);
     await choose(page, "Inspect");
     await tap(Math.round(w * 0.8), Math.round(h * 0.3));
-    await expect(page.locator("#inspect")).toHaveText(/^Water · cell/);
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell/);
     await choose(page, "Net");
     await touch.drag([await cellPoint(page, x, y - 20)], [await cellPoint(page, x + 30, y - 20)]);
     expect(await stateHash(page)).toBe(hash);
@@ -462,7 +462,7 @@ test("a creature or plant shows its species card in the canvas; a click closes i
   expect(errors).toEqual([]);
 });
 
-test("inspecting a creature pins a two-page card beside it; a click turns the page", async ({ page }) => {
+test("inspecting pins a card beside what it finds; a creature's has two pages a click turns", async ({ page }) => {
   const errors = watchErrors(page);
   await openPaused(page);
   const [gw, gh] = await gridSize(page);
@@ -510,11 +510,19 @@ test("inspecting a creature pins a two-page card beside it; a click turns the pa
   await expect.poll(pageNo).toBe(1);
   expect(await stateHash(page)).toBe(hash);
 
-  // Inspecting water removes it.
-  p = await cellPoint(page, gw - 3, 3);
+  // The readout line doesn't repeat it; screen readers still hear it.
+  await expect(page.locator("#inspect")).toBeHidden();
+  await expect(page.locator("#inspect-sr")).toHaveText(/^Neon tetra #1 · /);
+
+  // Inspecting water moves it to that cell, as a one-page card.
+  p = await cellPoint(page, gw - 3, y);
   await page.mouse.click(p.x, p.y);
-  await expect.poll(rect).toEqual([]);
-  expect(await pageNo()).toBe(0);
+  await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell /);
+  expect(await pageNo()).toBe(1);
+  const [wx, wy, ww, wh] = await rect();
+  const water = await toClient(wx + ww / 2, wy + wh - 4);
+  await page.mouse.click(water.x, water.y);
+  expect(await pageNo()).toBe(1);
   expect(errors).toEqual([]);
 });
 
@@ -1029,7 +1037,7 @@ test("flip device button only appears for flippable device tools and X ignores o
   await expect(flipBtn).toBeHidden();
   const rightSide = await cellPoint(page, w - 3, Math.round(h * 0.5));
   await page.mouse.click(rightSide.x, rightSide.y);
-  await expect(page.locator("#inspect")).toContainText("on the right glass");
+  await expect(page.locator("#inspect-sr")).toContainText("on the right glass");
 
   // Pressing X while Inspect is selected does not change flip state.
   await page.keyboard.press("x");

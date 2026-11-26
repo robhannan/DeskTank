@@ -530,9 +530,13 @@ impl WebTank {
     }
 
     /// Selects palette item `index` (ignored if out of range). Ends any
-    /// stroke in progress.
+    /// stroke in progress. Another tool removes the inspect card, so it
+    /// can't catch that tool's clicks.
     pub fn select(&mut self, index: u32) {
         if let Some(&item) = self.palette.get(index as usize) {
+            if !self.tools.is_selected(item) {
+                self.tank.set_inspected(None);
+            }
             self.tools.select(item);
             self.sync_cursor();
         }
@@ -843,6 +847,8 @@ impl WebTank {
             return Err("That device is no longer in the tank".to_owned());
         }
         self.dirty = true;
+        // Redraw so the inspect card shows it, even while paused.
+        self.tank.invalidate();
         let world = self.tank.world();
         let (x, y) = world.device(dev_id).map_or((0, 0), |d| (d.x, d.y));
         device_inspect_line(world, dev_id, x, y)
@@ -869,6 +875,8 @@ impl WebTank {
             return Err("That device is no longer in the tank".to_owned());
         }
         self.dirty = true;
+        // Redraw so the inspect card shows it, even while paused.
+        self.tank.invalidate();
         let world = self.tank.world();
         let (x, y) = world.device(dev_id).map_or((0, 0), |d| (d.x, d.y));
         device_inspect_line(world, dev_id, x, y)
@@ -1284,7 +1292,7 @@ impl WebTank {
         let changed = match out {
             Outcome::Painted(n) | Outcome::Glued(n) => n,
             Outcome::Inspected(found) => {
-                self.tank.set_inspected(Inspected::of(found));
+                self.tank.set_inspected(Some(Inspected::of(found)));
                 self.inspection = match found {
                     Inspection::Cell { x, y, material } => {
                         let table = self.tank.world().materials();

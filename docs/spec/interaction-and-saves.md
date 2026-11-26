@@ -89,21 +89,31 @@
   - **net**: pick up and move a creature;
   - **inspect**: show a creature's card and name it.
 
-    Inspecting a creature or a plant pins the **inspect card** beside
-    it, drawn in the canvas: to its right (or left, nearer the right
-    glass), centred on it, following it as it swims and clamped inside
-    the tank. It has two pages, numbered in its top-right corner: page 1
-    is the live state (name, stage and sex, age, health, energy, colour
-    morph, days left carrying, an unmet need; a plant's age, health,
-    size by part and what holds it back), page 2 its species card.
-    A click on it turns the page; inspecting a cell or device removes
-    it, and it goes by itself when its creature or plant does. It is
-    drawn from a third HUD-texture region at half the cell scale
-    (at least 2, at most half the canvas each way), and the live page is
-    rebuilt only when its text changes, never per frame; nothing is
-    built or drawn while nothing is inspected. It needs only the tank
-    (`Tank::set_inspected`), so the screensaver and wallpaper can draw
-    it too once they have a way to open it.
+    Inspecting pins the **inspect card** beside what it finds (a
+    creature, plant, device or cell), drawn in the canvas: to its right
+    (or left, nearer the right glass), centred on it, following it as it
+    swims and clamped inside the tank. Page 1 is the live state: a
+    creature's name, stage and sex, age, health, energy, colour morph,
+    days left carrying and any unmet need; a plant's age, health, size
+    by part and what holds it back; a device's mount and, for a filter,
+    flow, media load, maturity and intake guard (an air diffuser or a
+    floor panel's connection otherwise); a cell's material and what kind
+    of material it is. Creatures and plants have a second page, their
+    species card, and then both pages are numbered in the top-right
+    corner and a click on the card turns the page. Devices and materials
+    have no encyclopedia entry yet, so theirs is one page. The next
+    inspection moves the card, picking another tool removes it (so it
+    can't catch that tool's clicks), and it goes by itself when its
+    creature, plant or device does. It is drawn from a third HUD-texture region at
+    half the cell scale (at least 2, at most half the canvas each way),
+    and the live page is rebuilt only when its text changes, never per
+    frame; nothing is built or drawn while nothing is inspected. It
+    needs only the tank (`Tank::set_inspected`), so the screensaver and
+    wallpaper can draw it too once they have a way to open it. Nothing
+    else repeats what it shows: the window's title bar keeps only the
+    keys that act on it (N names a creature; R, Shift+R, M and I for a
+    filter), and the web's readout line is left for messages (refusals,
+    cheat results), with the inspection read out to screen readers only.
 
   The tray menu also has quick actions: Feed (default food), Water
   change, and Pause.
@@ -136,8 +146,8 @@
   draw the field. Where it works:
   - **window** and **web**: the host has keyboard focus, so the code is
     typed as is. The window shows the field in its title bar (as it does
-    inspection and naming); the web uses a text input and
-    shows the result in the inspect readout. A web viewer tab can't
+    naming); the web uses a text input and shows the result in the
+    readout line. A web viewer tab can't
     cheat.
   - **overlay and wallpaper** (O5): only while interact mode is on, and
     in chord mode only while the chord is held (`Konami::with_chord`);
