@@ -3,6 +3,7 @@ use super::{
     BITE, Creature, DeathCause, ENERGY_RESERVE, FULL, Kind, STRESS_LIMIT, TICKS_PER_SECOND, World,
 };
 use crate::CatchUp;
+use crate::world::LIFE_ACCUM_SCALE;
 
 impl World {
     /// Samples water quality once, then advances the animals to each minute
@@ -22,7 +23,14 @@ impl World {
         while self.tick < end {
             let start = self.tick;
             self.tick = (start + (BREED_CHECK_TICKS - start % BREED_CHECK_TICKS)).min(end);
-            let ticks = u32::try_from(self.tick - start).unwrap_or(0);
+            let world_ticks = self.tick - start;
+            // Life ticks lived in the span at the time ratio, carrying the
+            // fraction over (exactly the span at ratio 1).
+            let rate = self.life_step();
+            let scale = u64::from(LIFE_ACCUM_SCALE);
+            let lived = world_ticks * u64::from(rate) + u64::from(self.life_accum);
+            let ticks = u32::try_from(lived / scale).unwrap_or(u32::MAX);
+            self.life_accum = u32::try_from(lived % scale).unwrap_or(0);
             let second = u64::from(TICKS_PER_SECOND);
             let seconds = u32::try_from(self.tick / second - start / second).unwrap_or(0);
             let mut list = core::mem::take(&mut self.creatures.list);
@@ -40,7 +48,7 @@ impl World {
                 }
                 let cause = self.age_or_hunger_death(c, lifespan).or_else(|| {
                     let q = quality?;
-                    Self::update_water_stress(c, q, seconds, false);
+                    Self::update_water_stress(c, q, seconds, rate, false);
                     (c.stress >= STRESS_LIMIT).then_some(DeathCause::PoorWater)
                 });
                 if let Some(cause) = cause {

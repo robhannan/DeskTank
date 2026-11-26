@@ -255,15 +255,24 @@ impl World {
         (c.x, c.y, c.facing_left) != before
     }
 
-    /// Energy and breath back for a sleeping creature this tick: it burns
-    /// one tick of energy, and an air-breather's next breath comes one tick
-    /// nearer, in [`SLEEP_BURN_EVERY`]. `before` is its energy before the
-    /// tick's burn.
-    pub(super) fn sleep_refund(&self, k: &Kind, c: &mut Creature, before: u32) {
-        if c.asleep && !(self.tick + u64::from(c.id.0)).is_multiple_of(SLEEP_BURN_EVERY) {
-            c.energy = (c.energy + 1).min(before);
+    /// Energy and breath back for a sleeping creature over the `ticks` life
+    /// ticks this tick advanced: it burns one tick of energy, and an
+    /// air-breather's next breath comes one tick nearer, in
+    /// [`SLEEP_BURN_EVERY`]. `before` is its energy before the burn.
+    pub(super) fn sleep_refund(&self, k: &Kind, c: &mut Creature, before: u32, ticks: u32) {
+        if !c.asleep || ticks == 0 {
+            return;
+        }
+        // Burn ticks among the life ticks `(tick - ticks, tick]`, those
+        // where `tick + id` is a multiple of the interval; the rest refund.
+        let end = self.tick + u64::from(c.id.0);
+        let burns =
+            end / SLEEP_BURN_EVERY - end.saturating_sub(u64::from(ticks)) / SLEEP_BURN_EVERY;
+        let refund = u32::try_from(u64::from(ticks).saturating_sub(burns)).unwrap_or(ticks);
+        if refund > 0 {
+            c.energy = c.energy.saturating_add(refund).min(before);
             if k.breathes_air && c.next_breath > self.tick {
-                c.next_breath += 1;
+                c.next_breath += u64::from(refund);
             }
         }
     }

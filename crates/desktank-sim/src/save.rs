@@ -23,7 +23,8 @@
 //! `save::v9::Save` for 9, `save::v10::Save` for 10, `save::v11::Save` for 11,
 //! `save::v12::Save` for 12, `save::v13::Save` for 13, `save::v14::Save`
 //! for 14, `save::v15::Save` for 15, `save::v16::Save` for 16,
-//! `save::v17::Save` for 17, `save::v18::Save` for 18).
+//! `save::v17::Save` for 17, `save::v18::Save` for 18,
+//! `save::v19::Save` for 19).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -54,6 +55,8 @@
 //! film, each byte a variety and a density (version 17). Earlier algae
 //! material cells become water and surfaces start bare. Version 18 adds
 //! each creature's swim pitch. Older saves start with level swim poses.
+//! Version 19 adds the time ratio and its fractional life-tick remainder;
+//! older saves run at ratio 1.
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -113,6 +116,7 @@ pub(crate) mod v15;
 pub(crate) mod v16;
 pub(crate) mod v17;
 pub(crate) mod v18;
+pub(crate) mod v19;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -125,7 +129,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 18;
+pub const FORMAT_VERSION: u16 = 19;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -172,7 +176,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v18();
+    let snapshot = world.to_v19();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     wrap(FORMAT_VERSION, &raw)
@@ -203,6 +207,7 @@ fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
     let mut world = match version {
+        19 => World::from_v19(decode_snapshot(payload)?, materials)?,
         18 => World::from_v18(decode_snapshot(payload)?, materials)?,
         17 => World::from_v17(decode_snapshot(payload)?, materials)?,
         16 => World::from_v16(decode_snapshot(payload)?, materials)?,
@@ -401,6 +406,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v19_saves_the_time_ratio_and_v18_migrates_to_real_time() {
+        let materials = MaterialTable::builtin().unwrap();
+        let mut world = World::new(crate::WorldConfig::default(), materials.clone()).unwrap();
+        let guppy = world.species().id("guppy").unwrap();
+        world.add_creature(guppy, 32, 20).unwrap();
+
+        // A version 18 save runs at real time, and hashes as the tank did.
+        let old = wrap(18, &postcard::to_allocvec(&world.to_v18()).unwrap());
+        let migrated = decode(&old, materials.clone()).unwrap();
+        assert!((migrated.time_ratio() - 1.0).abs() < f32::EPSILON);
+        assert_eq!(migrated.state_hash(), world.state_hash());
+        assert_eq!(check(&encode(&migrated)), Ok(19));
+
+        // Ratio and fraction round-trip, and the tank carries on the same.
+        world.set_time_ratio(2.5);
+        for _ in 0..7 {
+            world.tick();
+        }
+        let saved = world.to_v19();
+        assert!((saved.time_ratio - 2.5).abs() < f32::EPSILON);
+        assert_eq!(saved.life_accum, 500);
+        let mut loaded = decode(&encode(&world), materials.clone()).unwrap();
+        assert!((loaded.time_ratio() - 2.5).abs() < f32::EPSILON);
+        assert_eq!(loaded.state_hash(), world.state_hash());
+        for _ in 0..50 {
+            world.tick();
+            loaded.tick();
+        }
+        assert_eq!(loaded.state_hash(), world.state_hash());
+        assert_ne!(loaded.state_hash(), migrated.state_hash());
+
+        for (time_ratio, life_accum) in [
+            (f32::NAN, 0),
+            (f32::INFINITY, 0),
+            (0.0, 0),
+            (0.05, 0),
+            (100.5, 0),
+            (1.0, 1000),
+        ] {
+            let mut bad = world.to_v19();
+            (bad.time_ratio, bad.life_accum) = (time_ratio, life_accum);
+            let bytes = wrap(19, &postcard::to_allocvec(&bad).unwrap());
+            assert!(matches!(
+                decode(&bytes, materials.clone()),
+                Err(SaveError::Invalid(_))
+            ));
+        }
+    }
+
+    #[test]
     fn v18_saves_and_hashes_swim_pitch_and_v17_starts_level() {
         let materials = MaterialTable::builtin().unwrap();
         let mut world = World::new(crate::WorldConfig::default(), materials.clone()).unwrap();
@@ -419,7 +474,7 @@ mod tests {
         let posed = World::from_v18(saved.clone(), materials.clone()).unwrap();
         assert_ne!(posed.state_hash(), level.state_hash());
         let bytes = encode(&posed);
-        assert_eq!(check(&bytes), Ok(18));
+        assert_eq!(check(&bytes), Ok(FORMAT_VERSION));
         let loaded = decode(&bytes, materials.clone()).unwrap();
         assert_eq!(loaded.creatures()[0].pitch(), -1);
         assert_eq!(loaded.state_hash(), posed.state_hash());

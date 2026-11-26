@@ -1598,7 +1598,7 @@ impl World {
         let hurt_by_ugf = rooted && self.is_over_floor_filter(bx, by);
         let response = if hurt_by_ugf { 0.0 } else { response };
         #[allow(clippy::cast_precision_loss)] // ≤ 2^32 ticks
-        let dt = elapsed as f32 / super::TICKS_PER_SECOND as f32;
+        let dt = elapsed as f32 / super::TICKS_PER_SECOND as f32 * self.time_ratio;
         #[allow(clippy::cast_precision_loss)] // exact below 2^53 ticks
         let age = tick.saturating_sub(p.born) as f32 / super::TICKS_PER_SECOND as f32;
         let h = s.hardiness;

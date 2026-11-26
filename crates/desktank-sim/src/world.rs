@@ -55,6 +55,14 @@ pub use plants::{
 pub const CHUNK_SIZE: usize = 64;
 /// Simulation ticks per second of world time (a fixed 1/20 s tick).
 pub const TICKS_PER_SECOND: u32 = 20;
+/// Slowest life-time multiplier ([`World::set_time_ratio`]).
+pub const MIN_TIME_RATIO: f32 = 0.1;
+/// Fastest life-time multiplier.
+pub const MAX_TIME_RATIO: f32 = 100.0;
+/// The default life-time multiplier: life runs at real time.
+pub const DEFAULT_TIME_RATIO: f32 = 1.0;
+/// Fixed-point scale of the fractional life-tick accumulator: thousandths.
+pub(crate) const LIFE_ACCUM_SCALE: u32 = 1000;
 /// Ticks without change after which a chunk falls asleep (1 s).
 pub const SLEEP_TICKS: u32 = TICKS_PER_SECOND;
 /// How far a blocked liquid looks sideways for somewhere to fall, in cells.
@@ -247,6 +255,13 @@ pub struct World {
     devices: devices::Devices,
     /// Material id of `driftwood`, if present in the material table.
     driftwood: Option<MaterialId>,
+    /// Life-time multiplier: creatures, plants and filter media live this
+    /// many times faster than real time ([`World::set_time_ratio`]).
+    time_ratio: f32,
+    /// Thousandths of a life tick carried between world ticks.
+    life_accum: u32,
+    /// Life ticks the most recent [`World::tick`] advanced.
+    life_ticks: u32,
 }
 
 impl World {
@@ -257,6 +272,7 @@ impl World {
     ///
     /// Returns an error if the size or water level is out of range, or the
     /// table has no `water` or `air` material.
+    #[allow(clippy::too_many_lines)] // validates, builds tables and the grid
     pub fn new(config: WorldConfig, materials: MaterialTable) -> Result<Self, WorldError> {
         let WorldConfig {
             width,
@@ -361,6 +377,9 @@ impl World {
             masks: BTreeMap::new(),
             devices,
             driftwood,
+            time_ratio: DEFAULT_TIME_RATIO,
+            life_accum: 0,
+            life_ticks: 1,
         };
         world.init_life();
         Ok(world)
@@ -471,6 +490,13 @@ impl World {
         self.hash_plants(&mut h);
         self.hash_masks(&mut h);
         self.hash_devices(&mut h);
+        // Only a tank off real time hashes its ratio, so others hash as
+        // before version 19.
+        if self.time_ratio.to_bits() != DEFAULT_TIME_RATIO.to_bits() || self.life_accum != 0 {
+            h.write(b"r");
+            h.write(&self.time_ratio.to_bits().to_le_bytes());
+            h.write(&self.life_accum.to_le_bytes());
+        }
         h.finish()
     }
 
@@ -613,9 +639,60 @@ impl World {
         Ok(changed)
     }
 
+    /// The life-time multiplier (1 is real time).
+    #[must_use]
+    pub fn time_ratio(&self) -> f32 {
+        self.time_ratio
+    }
+
+    /// Sets the life-time multiplier, clamped to
+    /// [`MIN_TIME_RATIO`]..=[`MAX_TIME_RATIO`] (non-finite becomes 1), and
+    /// returns the ratio set. It scales how fast creatures age, grow, burn
+    /// energy, breed and tire of foul water, how fast plants grow and heal
+    /// and how fast filter media mature, in [`World::tick`] and
+    /// [`World::catch_up`]; movement and cells run at normal speed. Saved
+    /// with the tank.
+    pub fn set_time_ratio(&mut self, ratio: f32) -> f32 {
+        self.time_ratio = if ratio.is_finite() {
+            ratio.clamp(MIN_TIME_RATIO, MAX_TIME_RATIO)
+        } else {
+            DEFAULT_TIME_RATIO
+        };
+        self.time_ratio
+    }
+
+    /// How many life ticks the most recent [`World::tick`] advanced: 1 at
+    /// ratio 1, more or sometimes none otherwise. Hosts advance a
+    /// [`crate::DaylightClock`] by this to keep the day in step.
+    #[must_use]
+    pub fn last_life_ticks(&self) -> u32 {
+        self.life_ticks
+    }
+
+    /// Thousandths of a life tick per world tick at the current ratio.
+    pub(crate) fn life_step(&self) -> u32 {
+        // The ratio is at most 100: the rounded value is at most 100_000
+        // (the scale, 1000, is exact in f32).
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let step = (self.time_ratio * LIFE_ACCUM_SCALE as f32).round() as u32;
+        step
+    }
+
+    /// Advances the fractional life-tick accumulator by one world tick.
+    fn advance_life_clock(&mut self) {
+        let total = self.life_accum + self.life_step();
+        self.life_ticks = total / LIFE_ACCUM_SCALE;
+        self.life_accum = total % LIFE_ACCUM_SCALE;
+    }
+
     /// Advances the world by one fixed tick (1/20 s of world time).
     pub fn tick(&mut self) {
         self.tick += 1;
+        self.advance_life_clock();
         self.plants.pearled_this_tick = false;
         #[allow(clippy::cast_possible_truncation)] // wraps after 2^31 ticks (~3.4 years)
         let stamp = (self.tick as u32).wrapping_mul(2);
