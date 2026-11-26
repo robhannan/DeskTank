@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
-use desktank_platform::PowerPolicy;
+use desktank_platform::{Modifiers, PowerPolicy};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 
@@ -24,6 +24,7 @@ pub struct Config {
     pub plants: Plants,
     pub life: Life,
     pub overlay: Overlay,
+    pub interact: Interact,
 }
 
 impl Default for Config {
@@ -34,6 +35,7 @@ impl Default for Config {
             plants: Plants::default(),
             life: Life::default(),
             overlay: Overlay::default(),
+            interact: Interact::default(),
         }
     }
 }
@@ -81,6 +83,51 @@ impl Default for Overlay {
             tint: 0.0,
             exclude_from_capture: true,
         }
+    }
+}
+
+/// Interact mode (SPEC §2.5).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Interact {
+    /// The modifiers held for interact mode; empty turns the chord (and its
+    /// 10 Hz poll) off, leaving the tray and `desktank interact`.
+    pub chord: Chord,
+}
+
+/// The interact chord: modifier names such as `["control", "alt"]`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "Vec<String>")]
+pub struct Chord(pub Modifiers);
+
+impl Default for Chord {
+    /// ⌃⌥ on macOS, Ctrl+Alt on Windows and Linux (SPEC §2.5).
+    fn default() -> Self {
+        Self(Modifiers::CONTROL | Modifiers::ALT)
+    }
+}
+
+impl TryFrom<Vec<String>> for Chord {
+    type Error = String;
+
+    fn try_from(names: Vec<String>) -> Result<Self, String> {
+        let mut chord = Modifiers::NONE;
+        for name in names {
+            chord = chord
+                | match name.to_ascii_lowercase().as_str() {
+                    "shift" => Modifiers::SHIFT,
+                    "control" | "ctrl" => Modifiers::CONTROL,
+                    "alt" | "option" => Modifiers::ALT,
+                    "super" | "command" | "cmd" | "win" => Modifiers::SUPER,
+                    _ => {
+                        return Err(format!(
+                            "unknown interact.chord modifier {name:?}; expected shift, \
+                             control, alt (option) or super (command)"
+                        ));
+                    }
+                };
+        }
+        Ok(Self(chord))
     }
 }
 
@@ -214,6 +261,10 @@ mod tests {
         assert_eq!(defaults.overlay, overlay);
         assert_eq!(parse("[overlay]").unwrap().overlay, overlay);
         assert_eq!(
+            defaults.interact.chord.0,
+            Modifiers::CONTROL | Modifiers::ALT
+        );
+        assert_eq!(
             parse("[power]\nac_fps = 60").unwrap().power.battery_fps,
             defaults.power.battery_fps
         );
@@ -222,7 +273,7 @@ mod tests {
     #[test]
     fn parses_full_config() {
         let config = parse(
-            r"
+            r#"
             version = 1
             [power]
             ac_fps = 60
@@ -240,7 +291,9 @@ mod tests {
             [overlay]
             tint = 0.25
             exclude_from_capture = false
-        ",
+            [interact]
+            chord = ["Command", "shift"]
+        "#,
         )
         .unwrap();
         assert_eq!(
@@ -275,6 +328,15 @@ mod tests {
                 exclude_from_capture: false,
             }
         );
+        assert_eq!(config.interact.chord.0, Modifiers::SUPER | Modifiers::SHIFT);
+        assert!(
+            parse("[interact]\nchord = []")
+                .unwrap()
+                .interact
+                .chord
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
@@ -286,6 +348,8 @@ mod tests {
             "[plants]\nextra = 1",
             "[life]\nextra = 1",
             "[overlay]\nextra = 1",
+            "[interact]\nextra = 1",
+            "[interact]\nchord = [\"hyper\"]",
         ] {
             assert!(matches!(parse(text), Err(ConfigError::Toml(_))), "{text}");
         }

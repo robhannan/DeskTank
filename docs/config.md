@@ -47,6 +47,12 @@ catch_up = false
 tint = 0.0
 # Ask macOS to exclude the overlay from screen capture where supported.
 exclude_from_capture = true
+
+[interact]
+# Modifiers held for interact mode over the overlay: any of "shift",
+# "control", "alt" ("option") and "super" ("command"). Empty ([]) turns
+# the chord and its 10 Hz poll off; `desktank interact toggle` still works.
+chord = ["control", "alt"]
 ```
 
 Catch-up applies elapsed wall-clock time in one summarised step. Reopening

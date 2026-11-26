@@ -100,6 +100,17 @@ tank off.
     `XQueryKeymap`.
   - **Wayland**: set the input region. No modifier detection; the tray
     toggle or CLI is used instead.
+  - *O5 (macOS, first part):* `desktank_platform::set_overlay_interactivity`
+    switches between click-through, pointer (the chord) and focused (the
+    toggle). While interactive it adds a mouse-moved tracking area that
+    is active even when another app is in front, because `NSWindow`
+    mouse-moved events go only to the key window. A click still makes
+    the app active. When interact mode ends, focus goes back to the app
+    that was in front when it began. The window's input handling is
+    shared through `desktank::controls`. Until the drawn in-tank card
+    lands, its title-bar text goes to the overlay's log. The overlay
+    serves IPC when it holds the instance lock. The chord is
+    `[interact] chord` in the config.
 
 ### 3.4 Screensaver and lock screen
 

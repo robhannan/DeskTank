@@ -80,8 +80,8 @@ pub struct Controls {
     /// Command a key is a shortcut, which neither types into the cheat
     /// field nor counts towards the code).
     modifiers: ModifiersState,
-    /// Whether the overlay's interact chord is held: its modifiers don't
-    /// make a key a shortcut, and a [`Konami::with_chord`] detector counts.
+    /// Whether keys count for a [`Konami::with_chord`] detector, and the
+    /// chord modifiers that then don't make a key a shortcut.
     chord: Option<ModifiersState>,
     /// Trackpad scroll (pixels) not yet turned into a brush-size step.
     scroll: f64,
@@ -162,9 +162,10 @@ impl Controls {
         self.title.take()
     }
 
-    /// Says whether the interact chord (`modifiers`) is held, for a host
-    /// that sees keys only through it; `None` when it is let go, which
-    /// starts the Konami code over.
+    /// For a [`Konami::with_chord`] host (the overlay): `Some(chord)` while
+    /// keys count towards the code, with `chord` the interact modifiers
+    /// held (empty in toggled interact mode), which don't make a key a
+    /// shortcut; `None` once they don't, which starts the code over.
     pub fn set_chord(&mut self, chord: Option<ModifiersState>) {
         if chord.is_none() && self.chord.is_some() {
             self.konami.reset();
@@ -248,15 +249,19 @@ impl Session<'_> {
     }
 
     /// Ends interaction for now (the overlay going click-through): any
-    /// stroke ends, the pointer and brush outline go, and an open text
-    /// field closes. The selection and palette stay as they were.
+    /// stroke ends, the pointer, brush outline, palette and card go, and an
+    /// open text field closes. The selection and open tab are kept, and the
+    /// next [`Session::sync`] shows the palette again.
     pub fn leave(&mut self) {
         self.c.cursor = None;
         self.c.tools.leave(self.tank.world_mut());
         self.c.field = None;
         self.c.konami.reset();
         self.c.modifiers = ModifiersState::empty();
-        self.sync();
+        self.sync_overlay();
+        self.c.shown = None;
+        self.tank.set_palette(None);
+        self.tank.set_card(None);
     }
 
     /// Pushes the palette, card and brush outline to the tank.
