@@ -239,6 +239,11 @@ impl World {
                     if self.try_move(k, c) == Move::Moved {
                         // A drift to rest mirrors on any sideways motion.
                         super::update_swim_heading(c, 0);
+                        // Too slow to set a pitch, it eases level on the
+                        // way rather than keeping its daytime one.
+                        if c.vx.abs().max(c.vy.abs()) < super::PITCH_SPEED {
+                            super::level_off(c);
+                        }
                     } else {
                         // Settled where something stops it.
                         (c.tx, c.ty, c.vx, c.vy) = (c.x, c.y, 0, 0);
