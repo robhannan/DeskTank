@@ -54,9 +54,10 @@ orchestrator.
 
    One issue's status is `status.name` in
    `gh api repos/robhannan/DeskTank/issues/<n>`. The latest comment on the
-   **Backlog grooming log** discussion orders the Todo batch: milestone
-   work first, then easy wins. Skip Todo issues that already have an open
-   PR, and say why when you pass over the first in line.
+   **Backlog grooming log** discussion orders the Todo batch: visible play
+   features first, then technical, milestone and fix work. Skip Todo issues
+   that already have an open PR, and say why when you pass over the first in
+   line.
    Set the issue to In progress when you start and In review when its PR
    opens. Look up the status IDs each time, because they can change, and
    set one with the issue's node ID (`id` above, or `node_id` in REST):

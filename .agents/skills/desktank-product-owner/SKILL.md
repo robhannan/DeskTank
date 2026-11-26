@@ -81,7 +81,7 @@ Also fix the metadata on every issue as you go:
 - Leave owner ideas without a milestone unless the spec places them in one.
 - Platform-specific issues get their `platform:*` label.
 
-Refine at most **12 issues per session**, newest owner issues and the next milestone first. Carry the rest over and list them in the summary.
+Refine at most **12 issues per session**, splitting capacity roughly half each (shifting unused capacity to the other side) across visible play features (newest owner ideas first, plus fun backlog items) and the next milestone (including MA) or technical/fix work so both sides stay ready for Todo. Carry the rest over and list them in the summary.
 
 ### 4. Refine (delegated)
 
@@ -121,12 +121,14 @@ Check each draft against the code and spec before applying it. Refiners can inve
 
 ### 7. Plan the next Todo batch
 
-Use judgement. The aim is a short, ready queue that the developer workflow can pick up in order.
+Use judgement. The aim is a short, ready queue that the developer workflow can pick up in order, pairing fun, visible tank features with steady milestone and technical progress. Only Ready or just-refined issues qualify; nothing blocked by an open `decision` qualifies, and every pick must respect sub-issues and `blocked by` dependencies (spec milestone ordering applies except where step 3 lets visible play features jump ahead).
 
 1. Keep existing Todo items that are still ready. Move an item back to Backlog only with a reason given in the summary.
-2. Fill from the **lowest open milestone**, treating MA as the same rank because of the Android TV lead. Respect sub-issues, `blocked by` dependencies and the spec's ordering. Only Ready or just-refined issues qualify. Nothing blocked by an open `decision` qualifies.
-3. Add **2–3 easy wins** on top: small, self-contained and low-risk. Good sources are follow-up items, `good first issue` and small owner Features.
-4. Aim for **6–10 issues in Todo** in total, ordered: milestone work first, then easy wins.
+2. Count only `Todo`-status items (not `In progress` or `In review`) toward the batch. Aim for **6–10 issues in Todo** in total, split roughly **half visible play features** and **half technical, milestone or fix work**, including **2–3 easy wins** (small, self-contained, low-risk items such as `good first issue`, small follow-ups or small owner Features) spread across both halves and counted inside the 6–10 total within their half. If kept Todo items skew toward one half, fill the lighter half first without exceeding 10.
+3. **Visible play features** (new things the owner can see or play with in the tank: creatures, behaviours, art, plants, materials, devices, interactive tools or palette UI): draw only from existing backlog issues. Unmilestoned owner Features and fun items from later milestones or follow-ups may jump ahead of the lowest open milestone. Classify by the issue's Goal: if the owner primarily gets something new to see or play with in the tank, it's play; platform modes, rendering/sim plumbing and bug fixes stay in step 4 even when they affect what appears on screen.
+4. **Technical, milestone and fix work** (platform modes, rendering/sim infrastructure, performance, refactors, bug fixes and review follow-ups): fill from the **lowest open milestone** first, treating MA as the same rank because of the Android TV lead, then ready fixes and follow-ups.
+5. If either half runs short of ready issues, don't invent new ones—backfill from the other half to stay within the 6–10 target and note the shortfall in the summary.
+6. Order the batch **visible play features first, then technical, milestone and fix work** (with easy wins noted alongside their category).
 
 ### 8. Summarise
 
@@ -135,7 +137,7 @@ Write one summary with links as `#n`. Keep it to about 400 words, not counting t
 ```markdown
 ## Backlog grooming — YYYY-MM-DD
 
-**Todo now** (N): #a milestone work …, #b easy win …
+**Todo now** (N): #a play feature …, #b play feature (easy win) …, #c milestone/technical …, #d technical/fix (easy win) …
 **Refined** (N): #n one-line gist of what was added
 **Metadata** : N statuses set, N labels/types/milestones changed (list notable ones)
 **Follow-ups filed** : #n …
@@ -168,7 +170,7 @@ When the owner answers in the T3 thread (or on an issue):
 - Reply on the issue's question comment, quoting the answer.
 - Carry out any approved proposals, such as closes, splits or milestone changes.
 - Move issues that are now ready into Todo if they fit the batch rules.
-- Edit the session's discussion comment to mark the questions that were answered, and report the changes in the thread.
+- Edit the session's discussion comment to mark the questions that were answered, update its `Todo now` line in play-first order if Todo changed, and report the changes in the thread.
 
 ## Refinement parcel
 
