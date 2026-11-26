@@ -88,9 +88,10 @@
     changes and costs nothing while nothing is selected.
     Every species card is shown at one scale on a given canvas, chosen
     from the largest card rather than the one being shown, so choosing
-    another species never resizes it. Above pixel scale 1 the largest card
-    covers at most half the canvas each way, so a phone keeps most of the
-    tank clear. Clicks on it never reach the
+    another species never resizes it: the largest scale (up to the
+    palette's, or the cell scale) at which the largest card fits the
+    canvas and, above pixel scale 1, covers at most half its width, so a
+    phone keeps most of the tank clear while the text stays readable. Clicks on it never reach the
     tank; a click closes it until another species is selected.
 - **Tools:**
   - **pour** the selected material: left-drag, with the scroll wheel

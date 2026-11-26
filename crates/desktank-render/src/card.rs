@@ -400,8 +400,8 @@ impl CardLayout {
     ///
     /// The scale is the same for every card: the largest at which the
     /// biggest card ([`CARD_MAX`]) fits inside `target` and, above scale 1,
-    /// covers at most half its width and half its height, so a small canvas
-    /// (a phone) keeps most of the tank clear. `image` only has to fit at
+    /// covers at most half its width, so a small canvas (a phone) keeps
+    /// most of the tank clear while the text stays readable. `image` only has to fit at
     /// that scale; `None` if it doesn't fit even at 1.
     #[must_use]
     pub fn fit(
@@ -444,11 +444,8 @@ impl CardLayout {
         (1..=want).rev().find_map(|scale| {
             // Above scale 1 the biggest card sets the scale, so every card
             // gets the same one; at 1 a card that is smaller may still fit.
-            let (w, h) = (
-                i64::from(CARD_MAX.0) * i64::from(scale),
-                i64::from(CARD_MAX.1) * i64::from(scale),
-            );
-            let small = scale == 1 || (2 * w <= target_w && 2 * h <= target_h);
+            let w = i64::from(CARD_MAX.0) * i64::from(scale);
+            let small = scale == 1 || 2 * w <= target_w;
             let ok = fits(scale, image) && (scale == 1 || (small && fits(scale, CARD_MAX)));
             if !ok {
                 return None;
@@ -747,10 +744,10 @@ mod tests {
 
     #[test]
     fn without_a_palette_the_card_takes_the_top_left_below_cell_scale() {
-        // The biggest card (176 rows) at the grid's 4 would be 704 of 720
-        // rows, and at 3, 528: both over half; 2 is 352, 288 wide.
+        // The biggest card (144×176) at the grid's 4 is 576 of 1280 columns
+        // and, with the 8-pixel margin, 712 of 720 rows: it fits.
         let c = CardLayout::fit((1280, 720), &grid(), None, Top, (144, 80)).unwrap();
-        assert_eq!((c.scale, c.origin), (2, (4, 4)));
+        assert_eq!((c.scale, c.origin), (4, (8, 8)));
         // A coarse grid still gets at least scale 2 where it fits.
         let g = Layout::fit((320, 180), (320, 180));
         assert_eq!(g.scale, 1);
@@ -768,11 +765,14 @@ mod tests {
     }
 
     #[test]
-    fn above_scale_1_the_biggest_card_covers_at_most_half_the_target() {
-        // 144×176 at the grid's 4 would be 704 of 720 rows; at 3, 528; at 2,
-        // 352 (of 360).
+    fn above_scale_1_the_biggest_card_covers_at_most_half_the_width() {
+        // 144 columns at 4 is 576 of 1280: under half. It may be taller than
+        // half the target (712 of 720 rows) as long as it fits.
         let c = CardLayout::fit((1280, 720), &grid(), None, Top, (144, 100)).unwrap();
-        assert_eq!(c.scale, 2);
+        assert_eq!(c.scale, 4);
+        // Too tall at 4 (720 rows don't fit in 700), so 3.
+        let c = CardLayout::fit((1280, 700), &grid(), None, Top, (144, 100)).unwrap();
+        assert_eq!(c.scale, 3);
         // A phone-sized canvas: scale 2 (288 of 512 columns) is too wide.
         let g = Layout::fit((128, 72), (512, 288));
         let c = CardLayout::fit((512, 288), &g, None, Top, (144, 100)).unwrap();
@@ -820,14 +820,12 @@ mod tests {
             }
         }
         // And at the sizes where the guppy used to drop a scale, the two
-        // match: a card is 2 only where the biggest card is under half.
+        // match at 2: readable, 288 of 850 columns, 352 + 4 of 450 rows.
         let target = (850, 450);
         let grid = Layout::fit((425, 225), target);
         let at = |card: Card| CardLayout::fit(target, &grid, None, Top, size(card)).unwrap();
-        assert_eq!(
-            at(Card::Creature(guppy, None)).scale,
-            at(Card::Creature(goldfish, None)).scale
-        );
+        assert_eq!(at(Card::Creature(guppy, None)).scale, 2);
+        assert_eq!(at(Card::Creature(goldfish, None)).scale, 2);
     }
 
     #[test]
