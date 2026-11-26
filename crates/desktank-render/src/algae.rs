@@ -1,9 +1,9 @@
-//! The split grid's algae look atlas (`algae-baked.wgsl`). Chrome 68's
-//! `SwiftShader` has no registers to spare for the spot and slime patterns
-//! that the one-pass grid works out per texel (`algae-procedural.wgsl`), nor
-//! memory for the dynamically indexed looks in the view uniform, so the
-//! split grid reads both from this texture. The patterns here follow the
-//! procedural shader step for step.
+//! Baked algae look atlas read by `tank.wgsl` (`look_atlas`). Pre-baking
+//! the spot and slime patterns and storing variety colours in a texture
+//! avoids dynamically indexed uniform arrays and repeated value-noise
+//! inlining in fragment shaders, keeping both Chrome 68's `SwiftShader`
+//! within its register/memory limits and modern `SwiftShader` fast to
+//! compile.
 
 use desktank_sim::AlgaeLook;
 

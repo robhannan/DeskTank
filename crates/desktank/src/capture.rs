@@ -59,7 +59,7 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
         &instance,
         None,
         GpuOptions {
-            split_grid: opts.split_grid,
+            split_grid: Some(opts.split_grid),
             ..GpuOptions::default()
         },
     ))?;

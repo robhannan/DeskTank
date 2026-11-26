@@ -114,7 +114,11 @@ const dprCap = ((v) => (v > 0 ? v : build === "webos" ? 1 : Infinity))(Number(pa
 // Draw the grid in more passes with smaller shaders (?grid=split or
 // ?grid=single, else split on the webOS build): Chrome 68's SwiftShader, and
 // it seems the TV's driver, can't compile the one-pass shaders.
-const splitGrid = params.has("grid") ? params.get("grid") === "split" : build === "webos";
+const splitGrid: boolean | undefined = params.has("grid")
+  ? params.get("grid") === "split"
+  : build === "webos"
+    ? true
+    : undefined;
 // An sRGB canvas format (?srgb=1 or 0; not on the webOS build): the same
 // colours either way, but WebGL2 presents a non-sRGB canvas with a blit,
 // where wgpu's sRGB present shader draws nothing on Chrome 68's SwiftShader.

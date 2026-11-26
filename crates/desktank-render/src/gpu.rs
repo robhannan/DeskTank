@@ -10,11 +10,15 @@ pub struct GpuOptions {
     pub timestamps: bool,
     /// Draw the grid and sprites with smaller shaders in more passes (the
     /// split grid, `tank.wgsl`), for GPUs that can't compile the one-pass
-    /// shaders: Chrome 68's `SwiftShader` caps a fragment shader at 4096
-    /// temporary registers (webOS, D26). Same picture, except where a
-    /// translucent plant texel blends over the ground on an sRGB target.
-    /// DX12 always draws it ([`Gpu::split_grid`]).
-    pub split_grid: bool,
+    /// shaders quickly or within register limits: Chrome 68's `SwiftShader`
+    /// caps a fragment shader at 4096 temporary registers (webOS, D26), and
+    /// modern `SwiftShader` takes ~6.5 s to compile the monolithic one-pass
+    /// shader (#393). Same picture, except where a translucent plant texel
+    /// blends over the ground on an sRGB target. `None` (default) chooses
+    /// automatically: split on DX12 and software renderers, one-pass
+    /// elsewhere; `Some(true)` forces split and `Some(false)` forces
+    /// one-pass (except DX12, where FXC miscompiles one-pass).
+    pub split_grid: Option<bool>,
 }
 
 /// Error finding an adapter or opening a device.
@@ -81,11 +85,16 @@ impl Gpu {
                 ..Default::default()
             })
             .await?;
+        let info = adapter.get_info();
+        let split_grid = info.backend == wgpu::Backend::Dx12
+            || options
+                .split_grid
+                .unwrap_or_else(|| is_software_adapter(&info));
         Ok(Self {
-            split_grid: options.split_grid || adapter.get_info().backend == wgpu::Backend::Dx12,
             adapter,
             device,
             queue,
+            split_grid,
         })
     }
 
@@ -96,4 +105,13 @@ impl Gpu {
             .features()
             .contains(wgpu::Features::TIMESTAMP_QUERY)
     }
+}
+
+/// Whether `info` describes a CPU/software rasteriser. On WebGL2 this relies
+/// on `WEBGL_debug_renderer_info` exposing `SwiftShader` in `info.name`; on
+/// native Vulkan/Android emulators software ICDs report `DeviceType::Cpu`.
+fn is_software_adapter(info: &wgpu::AdapterInfo) -> bool {
+    info.device_type == wgpu::DeviceType::Cpu
+        || info.name.contains("SwiftShader")
+        || info.name.contains("llvmpipe")
 }

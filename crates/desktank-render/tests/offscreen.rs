@@ -13,15 +13,22 @@ const H: u32 = 32;
 
 fn gpu() -> Option<&'static Gpu> {
     static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    GPU.get_or_init(|| open_gpu(GpuOptions::default())).as_ref()
+    GPU.get_or_init(|| {
+        open_gpu(GpuOptions {
+            split_grid: Some(false),
+            ..GpuOptions::default()
+        })
+    })
+    .as_ref()
 }
 
 fn gpu_with(options: GpuOptions) -> Option<&'static Gpu> {
     static SPLIT_GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    if !options.split_grid {
-        return gpu();
+    if options.split_grid == Some(true) {
+        SPLIT_GPU.get_or_init(|| open_gpu(options)).as_ref()
+    } else {
+        gpu()
     }
-    SPLIT_GPU.get_or_init(|| open_gpu(options)).as_ref()
 }
 
 fn open_gpu(options: GpuOptions) -> Option<Gpu> {
@@ -764,7 +771,7 @@ fn magnifier_zooms_cells_and_sprites_in_single_and_split_grid() {
     let mut single_2x: Option<Vec<u8>> = None;
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;
@@ -944,7 +951,7 @@ fn waterlogged_driftwood_renders_darker_than_dry_in_single_and_split_grid() {
     let mut single_frame = None;
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;
@@ -1014,7 +1021,7 @@ fn hob_filter_draws_air_above_surface_ripples_outlet_and_sorts_fish_in_front_of_
     let mut single_with_fish = None;
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;
@@ -1147,7 +1154,7 @@ fn strong_surface_current_ripples_water_while_weak_current_stays_calm() {
     let mut single_high = None;
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;
@@ -1209,7 +1216,7 @@ fn rigid_bodies_occlude_sprites_behind_them_in_both_pipelines() {
     let size = (320, 192);
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;
@@ -1366,7 +1373,7 @@ fn overlay_aligns_to_the_floor_and_composites_water_and_sprites() {
     };
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;
@@ -1439,7 +1446,7 @@ fn clown_vomit_gravel_renders_multiple_saturated_pebble_colours() {
     let mut single: Option<Vec<u8>> = None;
     for split_grid in [false, true] {
         let Some(gpu) = gpu_with(GpuOptions {
-            split_grid,
+            split_grid: Some(split_grid),
             ..GpuOptions::default()
         }) else {
             return;

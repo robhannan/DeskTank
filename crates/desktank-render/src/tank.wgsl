@@ -76,10 +76,6 @@ struct View {
     // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
     // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
     ripples: array<vec4<f32>, 16>,
-    // Algae variety looks by id (D28, #369): the dark shade (rgb) and style
-    // (w: 0 film, 1 slime, 2 spots, 3 dust), then the light shade (rgb) and
-    // strength (w) at 2 × id and 2 × id + 1.
-    looks: array<vec4<f32>, 32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -109,8 +105,8 @@ struct View {
 // Front, back, left and right glass film per 8x8-cell field block, each a
 // variety (high nibble) and density (low nibble); read by texel, not filtered.
 @group(0) @binding(11) var glass: texture_2d<f32>;
-// The split grid's baked spot and slime patterns and variety colours
-// (algae.rs, algae-baked.wgsl); a 1x1 placeholder for the one-pass grid.
+// Baked spot and slime patterns (at 2 and 4 texels per cell) and variety
+// colours (algae.rs).
 @group(0) @binding(12) var look_atlas: texture_2d<f32>;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
@@ -423,14 +419,13 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if need_ground {
         var bg: vec4<f32>;
         if water_behind {
-            let fine = FINE_PLANTS && fine_scale();
-            bg = vec4<f32>(water_bg(at, quarter, fine, rear_film_behind(at, quarter, fine)), water_opacity());
+            bg = vec4<f32>(water_bg(at, quarter, fine_scale(), vec4<f32>(0.0)), water_opacity());
         } else {
             bg = ground(at, ground_texel, quarter);
-            var under = 1.0;
-            let film = ground_film(at, ground_texel, quarter, &under);
-            bg = vec4<f32>(mix(bg.rgb, film.rgb, film.a), bg.a);
         }
+        var under = 1.0;
+        let film = ground_film(at, ground_texel, quarter, water_behind, &under);
+        bg = vec4<f32>(mix(bg.rgb, film.rgb, film.a), bg.a);
         if overlay_enabled() && plant_alpha > 0.0 {
             // Match the split passes: blend in the attachment's colour space.
             let under = layer_out(grid_post(bg.rgb, cell), bg.a);
@@ -476,7 +471,7 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if nbr.x >= 0 {
             ground_texel = textureLoad(cells, nbr, 0);
         } else if src.swayed_away || overlay_enabled() {
-            let fine = FINE_PLANTS && fine_scale();
+            let fine = fine_scale();
             let rgb = water_bg(at, quarter, fine, vec4<f32>(0.0));
             return layer_out(grid_post(rgb, cell), water_opacity());
         }
@@ -502,23 +497,20 @@ fn fs_ground_film(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = textureLoad(cells, at, 0);
     let quarter = quarter_of(grid_pos, cell);
     var ground_texel = texel;
+    var water_behind = false;
     let src = grid_source(grid_pos, at, texel, quarter);
     if (src.part >= 0 && !src.from_sway) || src.swayed_away {
         let nbr = behind_cell(at, quarter);
         if nbr.x >= 0 {
             ground_texel = textureLoad(cells, nbr, 0);
         } else if src.swayed_away || overlay_enabled() {
-            let film = rear_film_behind(at, quarter, FINE_PLANTS && fine_scale());
-            if film.a <= 0.0 {
-                discard;
-            }
-            return vec4<f32>(out(grid_post(film.rgb, cell)).rgb * water_opacity(), film.a);
+            water_behind = true;
         } else {
             discard;
         }
     }
     var under = 1.0;
-    let film = ground_film(at, ground_texel, quarter, &under);
+    let film = ground_film(at, ground_texel, quarter, water_behind, &under);
     if film.a <= 0.0 {
         discard;
     }
@@ -657,12 +649,9 @@ fn film_mottle(p: vec2<i32>) -> vec2<f32> {
     );
 }
 
-// Algae varieties (D28, #369) are drawn from the sim's look table: the dark
-// shade and style, then the light shade and strength. The one-pass grid
-// reads it from the view uniform and works out the spot and slime patterns
-// as it goes (algae-procedural.wgsl). The split grid reads both from a
-// baked atlas (algae-baked.wgsl), as Chrome 68 runs out of registers for
-// the noise and of memory for the dynamically indexed uniform.
+// Algae varieties (D28, #369) are drawn from the baked look atlas (algae.rs):
+// two pattern tiles (at two and four texels per cell) followed by two colour
+// columns indexed by variety id (dark shade + style, light shade + strength).
 const ALGAE_FILM: u32 = 0u;
 const ALGAE_SLIME: u32 = 1u;
 const ALGAE_SPOTS: u32 = 2u;
@@ -670,7 +659,7 @@ const ALGAE_DUST: u32 = 3u;
 
 // Texels per cell side: two, or four at fine scales.
 fn texel_density() -> i32 {
-    return select(2, 4, FINE_PLANTS && fine_scale());
+    return select(2, 4, fine_scale());
 }
 
 // The spot and slime patterns repeat every LOOK_TILE texels (algae.rs
@@ -679,6 +668,33 @@ const LOOK_TILE: i32 = 240;
 
 fn look_wrap(p: vec2<i32>, n: vec2<i32>) -> vec2<i32> {
     return ((p % n) + n) % n;
+}
+
+fn look_dark(id: u32) -> vec4<f32> {
+    let dark = textureLoad(look_atlas, vec2<i32>(2 * LOOK_TILE, i32(id & 15u)), 0);
+    return vec4<f32>(dark.rgb, dark.a * 255.0);
+}
+
+fn look_light(id: u32) -> vec4<f32> {
+    return textureLoad(look_atlas, vec2<i32>(2 * LOOK_TILE + 1, i32(id & 15u)), 0);
+}
+
+fn look_texel(p: vec2<i32>) -> vec4<f32> {
+    let fine = select(0, LOOK_TILE, texel_density() == 4);
+    return textureLoad(look_atlas, look_wrap(p, vec2<i32>(LOOK_TILE)) + vec2<i32>(fine, 0), 0);
+}
+
+// The chance (r) and the rim shade (low 7 bits of g) and highlight (top bit).
+fn spot_texel(p: vec2<i32>) -> vec3<f32> {
+    let t = look_texel(p);
+    let shade = u32(round(t.g * 255.0));
+    return vec3<f32>(t.r, f32(shade & 127u) / 127.0, f32(shade >> 7u));
+}
+
+// The threshold (b) and the darkening, offset and scaled into 0..1 (a).
+fn slime_texel(p: vec2<i32>) -> vec2<f32> {
+    let t = look_texel(p);
+    return vec2<f32>(t.b, (t.a - 0.5) * 1.22);
 }
 
 // `look_dark(id).w` is the style id, `look_light(id).w` the strength.
@@ -854,7 +870,13 @@ fn film_over(top: vec4<f32>, bottom: vec4<f32>) -> vec4<f32> {
 // detritus, stone and wood) and its strands over water. fs_main blends it
 // over ground(); the split grid draws it in fs_ground_film, since fs_ground
 // has no registers to spare. `under` gets the opacity of what it lies over.
-fn ground_film(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>, under: ptr<function, f32>) -> vec4<f32> {
+fn ground_film(
+    at: vec2<i32>,
+    t: vec4<f32>,
+    quarter: vec2<i32>,
+    water_behind: bool,
+    under: ptr<function, f32>,
+) -> vec4<f32> {
     *under = 1.0;
     if view.algae.x <= 0.0 && view.algae.y <= 0.0 {
         return vec4<f32>(0.0);
@@ -868,50 +890,57 @@ fn ground_film(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>, under: ptr<funct
     }
     let rigid = (flags & 128) != 0;
     let host = rigid || raw_style == STYLE_SAND || raw_style == STYLE_GRAVEL || raw_style == STYLE_AQUASOIL;
-    if view.scale < 2.0 {
-        let s = i32(round(textureLoad(palette, vec2<i32>(mat, i32(v)), 0).a * 255.0)) & 127;
-        if s == STYLE_WATER || s == STYLE_FERTILISER {
-            *under = ground_opacity(s);
-            return rear_film_at(at, at, vec2<f32>(at) + 0.5);
-        }
-        return select(vec4<f32>(0.0), host_coat(at, at, rigid, !rigid), host);
-    }
-    let fine = FINE_PLANTS && fine_scale();
+    let coarse_1x = !water_behind && view.scale < 2.0;
+    let fine = fine_scale();
     let sub = quarter / 2;
-    let p = select(at * 2 + sub, at * 4 + quarter, fine);
-    let rear = rear_film_at(at, p, vec2<f32>(at) + (vec2<f32>(quarter) + 0.5) * 0.25);
-    let style = i32(round(textureLoad(palette, vec2<i32>(mat, i32(v & 1u)), 0).a * 255.0)) & 127;
-    if style == STYLE_WATER || style == STYLE_FERTILISER {
-        *under = ground_opacity(style);
-        if style == STYLE_FERTILISER {
-            return rear;
-        }
-        return film_over(coat_fringe(at, quarter, fine, -1.0), rear);
-    }
-    let row = select(sub.y, quarter.y, fine);
-    var shows = true;
-    if style == STYLE_SAND {
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
-        let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
-        let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
-        shows = row >= loose_top(open_up, open_l, open_r, at, quarter, fine);
-    } else if style == STYLE_GRAVEL || style == STYLE_AQUASOIL {
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
-        shows = row >= loose_top_at(at, mat, open_up, quarter, fine);
-    } else if style == STYLE_ROCK || style == STYLE_DRIFTWOOD {
-        let own = outline_of(t);
-        shows = own == 0xffffu || rigid_drawn(at, mat, own, quarter, fine);
-    } else if style == STYLE_DETRITUS {
-        let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
-        shows = !is_water(at + vec2<i32>(0, -1)) || row >= loose_top_at(at, mat, open_up, quarter, fine);
-    } else {
-        return vec4<f32>(0.0);
-    }
-    if !shows {
+    let p = select(select(at * 2 + sub, at * 4 + quarter, fine), at, coarse_1x);
+    let rear_pos = select(vec2<f32>(at) + (vec2<f32>(quarter) + 0.5) * 0.25, vec2<f32>(at) + 0.5, coarse_1x);
+    var style = 0;
+    var want_rear = false;
+    var want_fringe = false;
+    if water_behind {
         *under = water_opacity();
+        want_rear = true;
+    } else {
+        style = i32(round(textureLoad(palette, vec2<i32>(mat, i32(select(v & 1u, v, coarse_1x))), 0).a * 255.0)) & 127;
+        if style == STYLE_WATER || style == STYLE_FERTILISER {
+            *under = ground_opacity(style);
+            want_rear = true;
+            want_fringe = !coarse_1x && style == STYLE_WATER;
+        } else if !coarse_1x {
+            let row = select(sub.y, quarter.y, fine);
+            var shows = true;
+            if style == STYLE_SAND {
+                let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+                let open_l = is_open_fluid(at + vec2<i32>(-1, 0), mat);
+                let open_r = is_open_fluid(at + vec2<i32>(1, 0), mat);
+                shows = row >= loose_top(open_up, open_l, open_r, at, quarter, fine);
+            } else if style == STYLE_GRAVEL || style == STYLE_AQUASOIL {
+                let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+                shows = row >= loose_top_at(at, mat, open_up, quarter, fine);
+            } else if style == STYLE_ROCK || style == STYLE_DRIFTWOOD {
+                let own = outline_of(t);
+                shows = own == 0xffffu || rigid_drawn(at, mat, own, quarter, fine);
+            } else if style == STYLE_DETRITUS {
+                let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
+                shows = !is_water(at + vec2<i32>(0, -1)) || row >= loose_top_at(at, mat, open_up, quarter, fine);
+            } else {
+                return vec4<f32>(0.0);
+            }
+            if !shows {
+                *under = water_opacity();
+                want_rear = true;
+            }
+        }
+    }
+    if want_rear {
+        let rear = rear_film_at(at, p, rear_pos);
+        if want_fringe {
+            return film_over(coat_fringe(at, quarter, fine, -1.0), rear);
+        }
         return rear;
     }
-    if !host || style == STYLE_DETRITUS {
+    if !host || (!coarse_1x && style == STYLE_DETRITUS) {
         return vec4<f32>(0.0);
     }
     return host_coat(at, p, rigid, !rigid);
@@ -1029,12 +1058,6 @@ fn rear_film_at(at: vec2<i32>, p: vec2<i32>, grid_pos: vec2<f32>) -> vec4<f32> {
     // the weight back to a whole (0.36 is a fully coated side wall).
     let look = glass_look(id, min(weight / 0.36, 1.0), p, grid_pos, 0.6);
     return vec4<f32>(depth_cue(look.rgb * shade, BACK_BAND), look.a);
-}
-
-fn rear_film_behind(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec4<f32> {
-    let p = select(at * 2 + quarter / 2, at * 4 + quarter, fine);
-    let grid_pos = vec2<f32>(at) + (vec2<f32>(quarter) + 0.5) * 0.25;
-    return rear_film_at(at, p, grid_pos);
 }
 
 // Depth darkening multiplier for water/fertiliser at vertical position `y`.
@@ -1415,7 +1438,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         mat = max(i32(round(select(view.plant_parts.w, view.plant_parts2.w, f32(at.y) < view.surface_row))), 0);
     }
     let flat = view.scale < 2.0;
-    let fine = FINE_PLANTS && fine_scale();
+    let fine = fine_scale();
     let sub = quarter / 2;
     let p = select(at * 2 + sub, at * 4 + quarter, fine);
     // ground_film draws the algae over all of this.
@@ -2054,11 +2077,6 @@ fn behind_cell(at: vec2<i32>, quarter: vec2<i32>) -> vec2<i32> {
     return vec2<i32>(-1, -1);
 }
 
-// Whether the pipeline may draw four-texel plants: the renderer compiles a
-// second grid pipeline with this false for scales that don't, so the fine
-// code is dropped there rather than skipped per fragment (renderer.rs).
-override FINE_PLANTS: bool = true;
-
 // Quarter-cell art is shown only when each texel covers whole screen pixels.
 fn fine_scale() -> bool {
     return u32(view.scale) % 4u == 0u;
@@ -2113,7 +2131,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
     let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
     let sizes = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0) * 255.0);
     let pos = position_of(me);
-    let fine = FINE_PLANTS && fine_scale();
+    let fine = fine_scale();
     let top = sub.y == 0;
     var covered = true;
     var step = noise_step(me);
@@ -2454,7 +2472,7 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
     let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
     let sizes = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0) * 255.0);
     let pos = position_of(me);
-    let fine = FINE_PLANTS && fine_scale();
+    let fine = fine_scale();
     let top = sub.y == 0;
     var covered = true;
     var step = noise_step(me);
@@ -2968,7 +2986,7 @@ fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
         return true;
     }
     let mat = i32(round(t.r * 255.0));
-    return rigid_drawn(at, mat, own, quarter_of(grid_pos, cell), FINE_PLANTS && fine_scale());
+    return rigid_drawn(at, mat, own, quarter_of(grid_pos, cell), fine_scale());
 }
 
 // Whether loose substrate (sand, gravel, aquasoil) covers the pixel at
@@ -3139,7 +3157,7 @@ fn sprite_colour(v: SpriteOut, hidden: bool) -> vec4<f32> {
         let at = vec2<i32>(cell);
         if is_water(at) {
             let quarter = quarter_of(grid_pos, cell);
-            let fringe = coat_fringe(at, quarter, FINE_PLANTS && fine_scale(), v.depth);
+            let fringe = coat_fringe(at, quarter, fine_scale(), v.depth);
             lit = mix(lit, fringe.rgb * view.daylight.rgb, fringe.a);
         }
     }

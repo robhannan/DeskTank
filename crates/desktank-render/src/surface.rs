@@ -22,9 +22,10 @@ pub struct TankSurface {
 }
 
 impl TankSurface {
-    /// Configures `surface` for `width`×`height` pixels: sRGB if available,
-    /// vsynced, opaque, at most one frame queued (frames are rare, latency
-    /// matters more than throughput).
+    /// Configures `surface` for `width`×`height` pixels: sRGB if available
+    /// (or non-sRGB when [`Gpu::split_grid`] is enabled so split algae passes
+    /// blend in encoded space), vsynced, opaque, at most one frame queued
+    /// (frames are rare, latency matters more than throughput).
     ///
     /// # Errors
     ///
@@ -39,10 +40,11 @@ impl TankSurface {
     }
 
     /// [`TankSurface::new`], preferring a non-sRGB format if `srgb` is
-    /// false. The colours are the same either way (the shader encodes for
-    /// the target), but on WebGL2 wgpu presents an sRGB surface with a
-    /// shader pass that Chrome 68's `SwiftShader` draws nothing with, and
-    /// a non-sRGB one with a plain blit (webOS, D26).
+    /// false or [`Gpu::split_grid`] is enabled. The shader encodes for
+    /// either target, but the split grid's alpha-blended algae passes must
+    /// blend in encoded space to match the one-pass grid, and on WebGL2 a
+    /// non-sRGB surface presents with a plain blit instead of an extra
+    /// shader pass (webOS, D26).
     ///
     /// # Errors
     ///
@@ -79,6 +81,7 @@ impl TankSurface {
         srgb: bool,
         transparent: bool,
     ) -> Result<Self, SurfaceError> {
+        let srgb = srgb && !gpu.split_grid;
         let caps = surface.get_capabilities(&gpu.adapter);
         let format = caps
             .formats
