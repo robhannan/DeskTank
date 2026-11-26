@@ -1170,7 +1170,7 @@ function showMorphs(focus = false) {
   const names = tank.creatureMorphCycles() ? ["", ...morphs] : morphs;
   const caption = document.createElement("span");
   caption.className = "as";
-  caption.textContent = "morph";
+  caption.textContent = "Morph";
   caption.setAttribute("aria-hidden", "true");
   setChildren(
     morphsEl,
