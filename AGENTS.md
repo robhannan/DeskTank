@@ -12,6 +12,13 @@ and open decisions.
 - Build/test: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all`.
 - Keep the simulation/rendering core OS-agnostic; platform code lives behind `cfg(target_os = …)` boundaries.
 - Minimal resource use is a core requirement: no uncapped redraws; pause when hidden.
+- Every piece of work that ends in a PR (features, fixes, docs, config, art, skills) follows this flow:
+  1. Find the GitHub Issue for the work. If none exists, create one with a goal and acceptance criteria.
+  2. Before building, open a **draft** PR linked to the issue with `Closes #<n>` in its body. Use an empty first commit if needed.
+  3. Do the work in that PR. When it is complete (checks pass, review addressed, CI green), mark it **ready for review**.
+  4. If the work should be split across several PRs, open them as a PR stack on the original: each PR branches from the one below it and targets that PR's branch. Every PR in the stack says `Part of #<n>`, except the top one (the last to merge), which says `Closes #<n>`. Move `Closes` up to the new top PR when you add one.
+
+  GitHub moves the issue's Status for you: a linked draft PR sets In progress, and ready for review sets In review. Check the Status and set it by hand only if the automation didn't fire.
 - For features and fixes, follow the shared developer workflow (`.agents/skills/desktank-developer/SKILL.md`): one PR per increment, never commit to `main`. Prefer stacking PRs when multiple PRs are in flight or related (branch each upper PR from the lower PR's branch and target that branch as its PR base, rather than leaving overlapping PRs unstacked against `main`). Before opening or handing off a stacked PR, check whether its base PR has already merged; if so, rebase onto `origin/main` and retarget the PR base to `main`. The orchestrator assigns bounded implementation parcels to Sol (Codex), Sonnet (Claude), or Flash (Gemini) and owns integration, review and CI. In T3 Code use `delegate_task`; elsewhere use the named developer and reviewer agents as described in the skill.
 - Creature art (a new species, a sex or a carrying look) follows `.agents/skills/desktank-creature-sprites/SKILL.md`: trace a reference picture with `scripts/sprite-art.ts`, shade it in the house style, and show the owner each creature before the next.
 - Backlog grooming follows `.agents/skills/desktank-product-owner/SKILL.md`, run weekly (Mondays after the 08:00 GMT usage reset) or on request. Issues carry a native Status (Backlog → Todo → In progress → In review → Done). The coordinator delegates drafting to `desktank-refiner` models, applies every GitHub change itself, and posts a summary to the pinned "Backlog grooming log" discussion.

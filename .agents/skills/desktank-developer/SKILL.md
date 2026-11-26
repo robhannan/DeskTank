@@ -57,10 +57,14 @@ orchestrator.
    **Backlog grooming log** discussion orders the Todo batch: visible play
    features first, then technical, milestone and fix work. Skip Todo issues
    that already have an open PR, and say why when you pass over the first in
-   line.
-   Set the issue to In progress when you start and In review when its PR
-   opens. Look up the status IDs each time, because they can change, and
-   set one with the issue's node ID (`id` above, or `node_id` in REST):
+   line. For any other work you are asked to do, find its issue; if none
+   exists, create one (goal and acceptance criteria) before starting.
+   GitHub moves the Status itself: linking a draft PR sets In progress,
+   marking it ready for review sets In review, and linking a non-draft PR
+   sets In review. Check the Status after each step and set it by hand only
+   if the automation didn't fire. Look up the status IDs each time, because
+   they can change, and set one with the issue's node ID (`id` above, or
+   `node_id` in REST):
 
    ```sh
    gh api graphql -f query='{repository(owner:"robhannan",name:"DeskTank"){planningStatuses(first:20){nodes{id name}}}}'
@@ -80,7 +84,20 @@ orchestrator.
    `git checkout -b feat/<short-slug> origin/<base>` (where `<base>` is `main`
    or `<lower-branch>`). Never commit to `main`.
    If the working tree has changes you did not make, stop and report.
-4. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
+4. Open a **draft** PR right away, before building: push the branch (with
+   an empty first commit, `git commit --allow-empty`, if there is nothing
+   yet), then create the PR as a draft (`draft: true` in
+   `pull_request_create`, or `gh pr create --draft`). Put `Closes #<n>` in
+   its body so GitHub links it to the issue. A short placeholder body is
+   fine; fill in the template (see Pull request) before marking it ready.
+   Do all the work for this increment in that PR.
+5. If the work turns out to need several PRs, keep the original draft as
+   the bottom of a stack. Branch each further PR from the one below it,
+   target that branch as its base, and open it as a draft too. Every PR in
+   the stack says `Part of #<n>`, except the top one (the last to merge),
+   which says `Closes #<n>`. When you add a PR on top, move `Closes` up to
+   it and change the PR below to `Part of`.
+6. If the Cargo workspace or CI doesn't exist yet on `main`, the first PR
    must be the scaffold (workspace, toolchain, lints, `deny.toml`, CI);
    don't build features until it has merged. Install missing tools such as
    `cargo-deny` with `cargo install --locked`.
@@ -174,14 +191,17 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   resolution, shading, colour response). If a change fixes wrong
   behaviour, use 🐛 even when the fix is a speed-up; use ⚡️ only for
   speed with no behaviour change.
-- Push the branch and open a PR against `main` (or against the lower PR's
-  branch when stacking — prefer stacking when multiple PRs are in flight or
-  related; confirm the lower PR is still open first, and if it has already
-  merged, rebase onto `origin/main` and target `main`). Fill in the sections of
+- The draft PR (see Before you start) targets `main`, or the lower PR's
+  branch when stacking. Prefer stacking when multiple PRs are in flight or
+  related. Confirm the lower PR is still open first; if it has already
+  merged, rebase onto `origin/main` and target `main`. Before marking it
+  ready, fill in the sections of
   `.github/pull_request_template.md` (summary, screenshot or GIF, resource
   use, testing) and delete its HTML comments. Keep the body to about 300
   words and say plainly what you could not verify. End with a “🤖 Generated with” credit naming the agent used.
-- Once the PR is open, set its issue to In review (see Before you start).
+- Keep the PR in draft while you build, review and fix. Mark it ready for
+  review only at hand-off (see CI and hand-off), with `pull_request_update`
+  `ready: true` in T3 Code or `gh pr ready <n>`.
 - Don't hard-wrap PR bodies or PR comments: GitHub renders single
   newlines as line breaks, so write each paragraph or bullet on one
   line (code blocks excepted).
@@ -282,7 +302,9 @@ Put scratch output under `target/shots/` (`mkdir -p target/shots`):
   retarget the PR base to `main` (and drop any stale stacking note in the
   body), force-push with lease, and wait for CI on the rebased head.
 - When CI is green on your latest commit and both the agent review and
-  any non-Low Copilot findings are addressed, stop.
+  any non-Low Copilot findings are addressed, mark the PR ready for
+  review, check that the issue moved to In review, and stop.
+  In a stack, mark each PR ready when its own work is complete.
   Hand off the reviewed PR. Recommend either "merge" or "escalate to the owner" in
   your report. Escalate for anything risky, architectural, hard to reverse,
   security-sensitive, needing new OS permissions or entitlements, or
