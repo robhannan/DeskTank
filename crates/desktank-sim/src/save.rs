@@ -22,7 +22,8 @@
 //! `save::v6::Save` for 6, `save::v7::Save` for 7, `save::v8::Save` for 8,
 //! `save::v9::Save` for 9, `save::v10::Save` for 10, `save::v11::Save` for 11,
 //! `save::v12::Save` for 12, `save::v13::Save` for 13, `save::v14::Save`
-//! for 14, `save::v15::Save` for 15, `save::v16::Save` for 16).
+//! for 14, `save::v15::Save` for 15, `save::v16::Save` for 16,
+//! `save::v17::Save` for 17).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -49,7 +50,9 @@
 //! the device table (D27, version 12), device filtration (version 13),
 //! ball rotation (version 14), and whether each creature is asleep for
 //! the night and how long it stays up after being woken (version 15),
-//! and the pane each creature crawls (version 16).
+//! the pane each creature crawls (version 16), and surface and glass algae
+//! film (version 17). Earlier algae material cells become water and
+//! surfaces start bare.
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -107,6 +110,7 @@ pub(crate) mod v13;
 pub(crate) mod v14;
 pub(crate) mod v15;
 pub(crate) mod v16;
+pub(crate) mod v17;
 pub(crate) mod v2;
 pub(crate) mod v3;
 pub(crate) mod v4;
@@ -119,7 +123,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 16;
+pub const FORMAT_VERSION: u16 = 17;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -166,7 +170,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v16();
+    let snapshot = world.to_v17();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     wrap(FORMAT_VERSION, &raw)
@@ -196,52 +200,29 @@ fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
 /// version, or the snapshot doesn't fit the tables or itself.
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
-    if version == 16 {
-        let raw = decompress(payload)?;
-        let snapshot: v16::Save =
-            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        let mut world = World::from_v16(snapshot, materials)?;
-        world.adopt_legacy_bubblers();
-        return Ok(world);
+    let mut world = match version {
+        17 => World::from_v17(decode_snapshot(payload)?, materials)?,
+        16 => World::from_v16(decode_snapshot(payload)?, materials)?,
+        15 => World::from_v15(decode_snapshot(payload)?, materials)?,
+        14 => World::from_v14(decode_snapshot(payload)?, materials)?,
+        13 => World::from_v13(decode_snapshot(payload)?, materials)?,
+        12 => World::from_v12(decode_snapshot(payload)?, materials)?,
+        _ => {
+            let mut world = decode_v11(version, payload, materials)?;
+            world.adopt_legacy_outlets();
+            world
+        }
+    };
+    if version < 17 {
+        world.migrate_algae();
     }
-    if version == 15 {
-        let raw = decompress(payload)?;
-        let snapshot: v15::Save =
-            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        let mut world = World::from_v15(snapshot, materials)?;
-        world.adopt_legacy_bubblers();
-        return Ok(world);
-    }
-    if version == 14 {
-        let raw = decompress(payload)?;
-        let snapshot: v14::Save =
-            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        let mut world = World::from_v14(snapshot, materials)?;
-        world.adopt_legacy_bubblers();
-        return Ok(world);
-    }
-    if version == 13 {
-        let raw = decompress(payload)?;
-        let snapshot: v13::Save =
-            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        let mut world = World::from_v13(snapshot, materials)?;
-        world.adopt_legacy_bubblers();
-        return Ok(world);
-    }
-    if version == 12 {
-        let raw = decompress(payload)?;
-        let snapshot: v12::Save =
-            postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))?;
-        let mut world = World::from_v12(snapshot, materials)?;
-        world.adopt_legacy_bubblers();
-        return Ok(world);
-    }
-    // Version 11 and older: their filter outlet cells become internal
-    // filters (D27) and legacy bubbler cells become prefab bubblers (DV7).
-    let mut world = decode_v11(version, payload, materials)?;
-    world.adopt_legacy_outlets();
     world.adopt_legacy_bubblers();
     Ok(world)
+}
+
+fn decode_snapshot<T: serde::de::DeserializeOwned>(payload: &[u8]) -> Result<T, SaveError> {
+    let raw = decompress(payload)?;
+    postcard::from_bytes(&raw).map_err(|e| SaveError::Payload(e.to_string()))
 }
 
 /// Decodes a version 1–11 payload.
@@ -415,6 +396,80 @@ pub(crate) fn unrun<T: Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v15_and_v16_algae_material_migrates_to_water() {
+        let materials = MaterialTable::builtin().unwrap();
+        let mut w = World::new(
+            crate::WorldConfig {
+                width: 16,
+                height: 16,
+                ..crate::WorldConfig::default()
+            },
+            materials.clone(),
+        )
+        .unwrap();
+        let sand = materials.id("sand").unwrap();
+        let (algae, water) = (
+            materials.id("algae").unwrap(),
+            materials.id("water").unwrap(),
+        );
+        w.set_cell(3, 15, sand).unwrap();
+        let with_algae = |grid: &mut v1::Grid| {
+            let mut ids = unrun(&grid.materials, 16 * 16, "test grid").unwrap();
+            ids[14 * 16 + 3] = algae.0;
+            grid.materials = runs(ids);
+        };
+        let mut v15 = w.to_v15();
+        with_algae(&mut v15.base.base.base.base.base.base.grid);
+        // Version 16 (the snails' panes) predates the coat too.
+        let mut v16 = w.to_v16();
+        with_algae(&mut v16.base.base.base.base.base.base.base.grid);
+        for bytes in [
+            wrap(15, &postcard::to_allocvec(&v15).unwrap()),
+            wrap(16, &postcard::to_allocvec(&v16).unwrap()),
+        ] {
+            let migrated = decode(&bytes, materials.clone()).unwrap();
+            assert_eq!(migrated.cell(3, 14).unwrap().material, water);
+            assert_eq!(migrated.cell(3, 15).unwrap().material, sand);
+            assert!(migrated.coat().iter().all(|&v| v == 0));
+            assert_eq!(migrated.material_counts()[usize::from(algae.0)], 0);
+            assert_eq!(check(&encode(&migrated)), Ok(FORMAT_VERSION));
+        }
+    }
+
+    #[test]
+    fn v17_rejects_reserved_coat_varieties() {
+        let materials = MaterialTable::builtin().unwrap();
+        let mut w = World::new(
+            crate::WorldConfig {
+                width: 16,
+                height: 16,
+                ..crate::WorldConfig::default()
+            },
+            materials.clone(),
+        )
+        .unwrap();
+        let sand = materials.id("sand").unwrap();
+        w.set_cell(3, 15, sand).unwrap();
+        assert!(w.set_algae_coat(3, 15, 7));
+        let mut coat = w.coat().to_vec();
+        assert_eq!(coat[15 * 16 + 3], 0x17);
+        assert!(decode(&encode(&w), materials.clone()).is_ok());
+        for variety in [0u8, 2, 15] {
+            coat[15 * 16 + 3] = variety << 4 | 7;
+            let mut saved = w.to_v17();
+            saved.coat = runs(coat.iter().copied());
+            let bytes = wrap(17, &postcard::to_allocvec(&saved).unwrap());
+            assert!(
+                matches!(
+                    decode(&bytes, materials.clone()),
+                    Err(SaveError::Invalid(_))
+                ),
+                "variety {variety}"
+            );
+        }
+    }
 
     #[test]
     fn runs_round_trip() {

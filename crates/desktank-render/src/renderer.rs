@@ -1,7 +1,7 @@
 //! GPU resources for one grid and one target format: the cell and plant
 //! band textures, the palette, the uniforms, the sprite atlas and
-//! instances, and the two pipelines (the grid, then the creature sprites
-//! over it, back to front, hidden where a nearer plant cell covers them).
+//! instances. The grid draws first, then depth-sorted sprites, then any
+//! film on the front glass.
 
 use std::collections::BTreeMap;
 
@@ -18,8 +18,8 @@ use crate::{Gpu, timer::GpuTimer};
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (176 base + 16 ripple vec4s).
-const VIEW_BYTES: u64 = 176 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (192 base + 16 ripple vec4s).
+const VIEW_BYTES: u64 = 192 + (desktank_sim::MAX_DEVICES as u64) * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -40,6 +40,7 @@ pub struct Renderer {
     /// with [`Gpu::split_grid`].
     pipelines: Pipelines,
     coarse_pipelines: Pipelines,
+    front_film: wgpu::RenderPipeline,
     /// Border and centre reticle drawn over the magnified lens.
     lens_frame: wgpu::RenderPipeline,
     /// The layout both bind groups use, kept to rebuild them when the grid
@@ -65,6 +66,7 @@ pub struct Renderer {
     /// Each plant or rigid cell's depth, uploaded with the cell texture.
     bands: wgpu::Texture,
     band_scratch: Vec<u8>,
+    algae: AlgaeTextures,
     /// Each plant's base cell when its bands were last uploaded, and the
     /// plants version then: a stem plant's leaf bands follow its base
     /// column, which can move without its leaf cells changing.
@@ -128,6 +130,7 @@ impl Renderer {
         ];
         let hud = create_hud(d);
         let (fields, flow, fields_size) = create_fields(d, world);
+        let algae = AlgaeTextures::new(d, grid, fields_size);
         let atlas = Atlas::build(world.species(), world.device_kinds());
         let atlas_texture = create_atlas(gpu, &atlas);
         let instances = d.create_buffer(&wgpu::BufferDescriptor {
@@ -136,18 +139,8 @@ impl Renderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("view"),
-            size: VIEW_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let lens_view_buffer = d.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lens view"),
-            size: VIEW_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let view_buffer = create_view_buffer(d, "view");
+        let lens_view_buffer = create_view_buffer(d, "lens view");
         let bind_layout = create_bind_layout(d);
         let textures = [
             &cells,
@@ -159,16 +152,20 @@ impl Renderer {
             &species,
             &bands,
             &flow,
+            &algae.coat,
+            &algae.glass,
         ];
-        let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
-        let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
-        let ([pipelines, coarse_pipelines], lens_frame) =
+        let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures, &algae.sampler);
+        let lens_bind_group =
+            create_bind_group(d, &bind_layout, &lens_view_buffer, textures, &algae.sampler);
+        let ([pipelines, coarse_pipelines], [lens_frame, front_film]) =
             create_pipelines(gpu, &bind_layout, format);
         Self {
             format,
             grid,
             pipelines,
             coarse_pipelines,
+            front_film,
             lens_frame,
             bind_layout,
             bind_group,
@@ -185,6 +182,7 @@ impl Renderer {
             cells,
             bands,
             band_scratch: Vec::new(),
+            algae,
             plant_bases: BTreeMap::new(),
             bases_version: None,
             palette,
@@ -216,13 +214,15 @@ impl Renderer {
     }
 
     /// Forgets what was uploaded for the previous world, so a new world's
-    /// cells, plant bases, tints, fields, flow and sprites are all written
+    /// cells, plant bases, tints, fields, flow, algae and sprites are all written
     /// afresh. Textures and pipelines stay.
     pub fn reset_world(&mut self) {
         self.plant_bases.clear();
         self.bases_version = None;
         self.fields_version = None;
         self.flow_version = None;
+        self.algae.coat_version = None;
+        self.algae.glass_version = None;
         self.plant_tints.invalidate();
         self.instance_bytes.clear();
         self.view.clear();
@@ -238,6 +238,8 @@ impl Renderer {
         self.cells = create_grid_texture(d, "cells", self.grid, wgpu::TextureFormat::Rgba8Unorm);
         self.bands = create_grid_texture(d, "depth bands", self.grid, wgpu::TextureFormat::R8Unorm);
         (self.fields, self.flow, self.fields_size) = create_fields(d, world);
+        [self.algae.coat, self.algae.glass] =
+            AlgaeTextures::textures(d, self.grid, self.fields_size);
         let textures = [
             &self.cells,
             &self.palette,
@@ -248,11 +250,29 @@ impl Renderer {
             &self.species,
             &self.bands,
             &self.flow,
+            &self.algae.coat,
+            &self.algae.glass,
         ];
-        self.bind_group = create_bind_group(d, &self.bind_layout, &self.view_buffer, textures);
-        self.lens_bind_group =
-            create_bind_group(d, &self.bind_layout, &self.lens_view_buffer, textures);
+        self.bind_group = create_bind_group(
+            d,
+            &self.bind_layout,
+            &self.view_buffer,
+            textures,
+            &self.algae.sampler,
+        );
+        self.lens_bind_group = create_bind_group(
+            d,
+            &self.bind_layout,
+            &self.lens_view_buffer,
+            textures,
+            &self.algae.sampler,
+        );
         self.reset_world();
+    }
+
+    /// Uploads the packed coat and glass planes when their shared version changes.
+    pub fn upload_algae(&mut self, gpu: &Gpu, world: &World) {
+        self.algae.upload(gpu, world, &mut self.scratch);
     }
 
     /// Copies the waiting dirty rectangles (or the whole grid) into the cell
@@ -537,6 +557,12 @@ impl Renderer {
         .chain(target_info)
         .chain(self.plant_parts)
         .chain(lens)
+        .chain([
+            f32::from(self.algae.coat_visible),
+            f32::from(self.algae.rear_film_visible),
+            f32::from(self.algae.front_film_visible && overlay_water_alpha.is_none()),
+            0.0,
+        ])
         .chain(ripple_slots.into_iter().flatten())
         .flat_map(f32::to_le_bytes)
         .collect()
@@ -647,7 +673,9 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        self.draw_view(&mut pass, &self.bind_group, layout.scale);
+        let front_pass = self.algae.front_film_visible
+            && (!front_in_layers(self.format, gpu.split_grid) || overlay_water_alpha.is_some());
+        self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
         if let Some(ml) = lens_layout {
             pass.set_scissor_rect(
                 ml.lens_origin.0,
@@ -655,7 +683,7 @@ impl Renderer {
                 ml.lens_size.0,
                 ml.lens_size.1,
             );
-            self.draw_view(&mut pass, &self.lens_bind_group, ml.scale);
+            self.draw_view(&mut pass, &self.lens_bind_group, ml.scale, front_pass);
             if ml.frame_size.0 > 0 && ml.frame_size.1 > 0 {
                 pass.set_scissor_rect(
                     ml.frame_origin.0,
@@ -670,16 +698,29 @@ impl Renderer {
     }
 
     /// Draws the grid and creature sprites with `bind_group` at cell `scale`.
-    fn draw_view(&self, pass: &mut wgpu::RenderPass<'_>, bind_group: &wgpu::BindGroup, scale: u32) {
+    fn draw_view(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        bind_group: &wgpu::BindGroup,
+        scale: u32,
+        front_pass: bool,
+    ) {
         let pipelines = if fine_scale(scale) {
             &self.pipelines
         } else {
             &self.coarse_pipelines
         };
         pass.set_bind_group(0, bind_group, &[]);
-        for p in &pipelines.grid {
+        for (i, p) in pipelines.grid.iter().enumerate() {
             pass.set_pipeline(p);
             pass.draw(0..3, 0..1);
+            if let Some(film) = &pipelines.ground_film
+                && i == 0
+                && (self.algae.coat_visible || self.algae.rear_film_visible)
+            {
+                pass.set_pipeline(film);
+                pass.draw(0..3, 0..1);
+            }
         }
         if self.sprite_count > 0 {
             pass.set_vertex_buffer(0, self.instances.slice(..));
@@ -688,7 +729,110 @@ impl Renderer {
                 pass.draw(0..6, 0..self.sprite_count);
             }
         }
+        if front_pass {
+            pass.set_pipeline(&self.front_film);
+            pass.draw(0..3, 0..1);
+        }
     }
+}
+
+#[derive(Debug)]
+struct AlgaeTextures {
+    coat: wgpu::Texture,
+    glass: wgpu::Texture,
+    sampler: wgpu::Sampler,
+    coat_version: Option<u64>,
+    glass_version: Option<u64>,
+    coat_visible: bool,
+    rear_film_visible: bool,
+    front_film_visible: bool,
+}
+
+impl AlgaeTextures {
+    fn new(d: &wgpu::Device, grid: (u32, u32), fields: (u32, u32)) -> Self {
+        let [coat, glass] = Self::textures(d, grid, fields);
+        let sampler = d.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("glass film"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Self {
+            coat,
+            glass,
+            sampler,
+            coat_version: None,
+            glass_version: None,
+            coat_visible: false,
+            rear_film_visible: false,
+            front_film_visible: false,
+        }
+    }
+
+    fn textures(d: &wgpu::Device, grid: (u32, u32), fields: (u32, u32)) -> [wgpu::Texture; 2] {
+        [
+            create_grid_texture(d, "algae coat", grid, wgpu::TextureFormat::R8Unorm),
+            create_grid_texture(d, "glass film", fields, wgpu::TextureFormat::Rgba8Unorm),
+        ]
+    }
+
+    fn upload(&mut self, gpu: &Gpu, world: &World, scratch: &mut Vec<u8>) {
+        let version = world.coat_version();
+        if self.coat_version != Some(version) {
+            self.coat_version = Some(version);
+            self.coat_visible = world.coated_cells() != 0;
+            if self.coat_visible {
+                let rect = desktank_sim::Rect {
+                    x0: 0,
+                    y0: 0,
+                    x1: world.width(),
+                    y1: world.height(),
+                };
+                write_rect(gpu, &self.coat, rect, world.coat(), 1);
+            }
+        }
+        let version = world.glass_version();
+        if self.glass_version == Some(version) {
+            return;
+        }
+        self.glass_version = Some(version);
+        let front = world.front_glass_algae();
+        let back = world.back_glass_algae();
+        let sides = world.side_glass_algae();
+        self.front_film_visible = front.iter().any(|&v| v != 0);
+        self.rear_film_visible =
+            back.iter().any(|&v| v != 0) || sides.iter().any(|&row| row != [0; 2]);
+        // Empty layers are ignored by the shader, so stale texels may stay.
+        if self.front_film_visible || self.rear_film_visible {
+            let width = world.field(FieldKind::Light).width();
+            scratch.clear();
+            for ((front, back), &[left, right]) in front
+                .chunks_exact(width)
+                .zip(back.chunks_exact(width))
+                .zip(sides)
+            {
+                for (&front, &back) in front.iter().zip(back) {
+                    scratch.extend([front, back, left, right].map(|v| v * 17));
+                }
+            }
+            let rect = desktank_sim::Rect {
+                x0: 0,
+                y0: 0,
+                x1: width,
+                y1: sides.len(),
+            };
+            write_rect(gpu, &self.glass, rect, scratch, 4);
+        }
+    }
+}
+
+fn create_view_buffer(d: &wgpu::Device, label: &str) -> wgpu::Buffer {
+    d.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: VIEW_BYTES,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }
 
 /// Writes `texels` (`r`'s cells, row by row, `bytes` each) into `texture`
@@ -906,15 +1050,13 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, wgpu::Textu
     (texture, flow, size)
 }
 
-/// The one bind group layout both pipelines share: the view uniform and
-/// nine textures (cells, palette, HUD, fields, sprite atlas, plant tints,
-/// plant species, plant bands, 2D flow).
+/// The shared view, eleven textures and the glass film's linear sampler.
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
+    let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            sample_type: wgpu::TextureSampleType::Float { filterable },
             view_dimension: wgpu::TextureViewDimension::D2,
             multisampled: false,
         },
@@ -934,25 +1076,34 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
                 },
                 count: None,
             },
-            texture_entry(1),
-            texture_entry(2),
-            texture_entry(3),
-            texture_entry(4),
-            texture_entry(5),
-            texture_entry(6),
-            texture_entry(7),
-            texture_entry(8),
-            texture_entry(9),
+            texture_entry(1, false),
+            texture_entry(2, false),
+            texture_entry(3, false),
+            texture_entry(4, false),
+            texture_entry(5, false),
+            texture_entry(6, false),
+            texture_entry(7, false),
+            texture_entry(8, false),
+            texture_entry(9, false),
+            texture_entry(10, false),
+            texture_entry(11, true),
+            wgpu::BindGroupLayoutEntry {
+                binding: 12,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–9.
+/// The bind group: `view` at binding 0, then `textures` at 1–11 and the sampler.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 9],
+    textures: [&wgpu::Texture; 11],
+    glass_sampler: &wgpu::Sampler,
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {
@@ -965,6 +1116,10 @@ fn create_bind_group(
             resource: wgpu::BindingResource::TextureView(v),
         });
     }
+    entries.push(wgpu::BindGroupEntry {
+        binding: 12,
+        resource: wgpu::BindingResource::Sampler(glass_sampler),
+    });
     d.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("tank"),
         layout,
@@ -1033,8 +1188,21 @@ fn fine_scale(scale: u32) -> bool {
 #[derive(Debug)]
 struct Pipelines {
     grid: Vec<wgpu::RenderPipeline>,
+    /// The split grid's algae over the ground (`fs_ground_film`), drawn after
+    /// `fs_ground` only while a coat or a rear or side film shows.
+    ground_film: Option<wgpu::RenderPipeline>,
     sprites: Vec<wgpu::RenderPipeline>,
 }
+
+/// `fs_ground_film` blends the algae's colour and keeps the ground's alpha.
+const FILM_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendState::ALPHA_BLENDING.color,
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
 
 /// The grid's fragment entry points: `fs_main`, or with the split grid
 /// `fs_ground` and then the plant passes, which blend over it.
@@ -1045,13 +1213,13 @@ const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
 const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
 /// The grid and sprite pipelines with and without four-texel plant art,
-/// plus the magnifier lens frame pipeline, drawing into `format`, one pass
+/// plus the lens frame and front film pipelines, drawing into `format`, one pass
 /// each or split ([`Gpu::split_grid`]).
 fn create_pipelines(
     gpu: &Gpu,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> ([Pipelines; 2], wgpu::RenderPipeline) {
+) -> ([Pipelines; 2], [wgpu::RenderPipeline; 2]) {
     let d = &gpu.device;
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
@@ -1113,28 +1281,34 @@ fn create_pipelines(
     } else {
         (GRID_ENTRIES, SPRITE_ENTRIES)
     };
+    let in_layers = f64::from(front_in_layers(format, gpu.split_grid));
     let level = |fine: bool| {
-        let (suffix, constants): (&str, &[(&str, f64)]) = if fine {
-            ("", &[])
-        } else {
-            (" (coarse plants)", &[("FINE_PLANTS", 0.0)])
-        };
+        let suffix = if fine { "" } else { " (coarse plants)" };
+        let constants = [
+            ("FINE_PLANTS", f64::from(fine)),
+            ("FRONT_IN_LAYERS", in_layers),
+        ];
         Pipelines {
             grid: grid_entries
                 .iter()
                 .enumerate()
                 .map(|(i, entry)| {
                     let blend = (i > 0).then_some(wgpu::BlendState::ALPHA_BLENDING);
-                    pipeline(&format!("tank {entry}{suffix}"), entry, blend, constants)
+                    pipeline(&format!("tank {entry}{suffix}"), entry, blend, &constants)
                 })
                 .collect(),
+            ground_film: gpu.split_grid.then(|| {
+                let label = format!("tank fs_ground_film{suffix}");
+                pipeline(&label, "fs_ground_film", Some(FILM_BLEND), &constants)
+            }),
             sprites: sprite_entries
                 .iter()
                 .map(|entry| {
                     // Sprites blend only a glow's halo (alpha below 1); every
                     // other sprite fragment is opaque or discarded.
                     let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
-                    pipeline(&format!("sprites {entry}{suffix}"), entry, blend, constants)
+                    let label = format!("sprites {entry}{suffix}");
+                    pipeline(&label, entry, blend, &constants)
                 })
                 .collect(),
         }
@@ -1145,7 +1319,20 @@ fn create_pipelines(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         &[],
     );
-    ([level(true), level(false)], lens_frame)
+    let front_film = pipeline(
+        "front glass film",
+        "fs_front_film",
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        &[],
+    );
+    ([level(true), level(false)], [lens_frame, front_film])
+}
+
+/// Whether the grid and sprites apply the front film before encoding into
+/// an sRGB `format` (see `FRONT_IN_LAYERS` in `tank.wgsl`). The split grid
+/// has no room for it in `fs_ground`, so it draws the film's own pass.
+fn front_in_layers(format: wgpu::TextureFormat, split_grid: bool) -> bool {
+    format.is_srgb() && !split_grid
 }
 
 /// The sRGB-encoded backdrop and the overlay water opacity (-1 for opaque mode).

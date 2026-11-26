@@ -62,6 +62,7 @@ impl World {
     /// is a shrimp (DV4).
     pub(super) fn anything_to_eat(&self, k: &Kind) -> bool {
         self.life.food_cells() > 0
+            || (k.grazes_algae && (self.algae.coated > 0 || self.algae.glass > 0))
             || (k.eats_corpses && !self.creatures.corpses.is_empty())
             || (k.is_shrimp && self.has_grazeable_device())
     }

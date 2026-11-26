@@ -13,6 +13,7 @@ pub struct GpuOptions {
     /// shaders: Chrome 68's `SwiftShader` caps a fragment shader at 4096
     /// temporary registers (webOS, D26). Same picture, except where a
     /// translucent plant texel blends over the ground on an sRGB target.
+    /// DX12 always draws it ([`Gpu::split_grid`]).
     pub split_grid: bool,
 }
 
@@ -37,7 +38,9 @@ pub struct Gpu {
     pub device: wgpu::Device,
     /// The device's queue.
     pub queue: wgpu::Queue,
-    /// [`GpuOptions::split_grid`].
+    /// [`GpuOptions::split_grid`], or a DX12 adapter: wgpu's default DX12
+    /// compiler there, FXC, miscompiles the one-pass grid shader (plants
+    /// lose their leaves, the water stripes), but not the split passes.
     pub split_grid: bool,
 }
 
@@ -79,7 +82,7 @@ impl Gpu {
             })
             .await?;
         Ok(Self {
-            split_grid: options.split_grid,
+            split_grid: options.split_grid || adapter.get_info().backend == wgpu::Backend::Dx12,
             adapter,
             device,
             queue,

@@ -10,7 +10,8 @@
 // registers: the one-pass grid shader exceeds it, as the TV's driver seems
 // to, so the check catches a pass that grows past the limit. It checks that
 // the page starts and draws with no GPU error, that the depth scene (plants
-// and fish, at scale 4) matches the native reference like the render tests
+// and fish, at scale 4) and the algae film scene (whose passes SwiftShader
+// compiles only once algae shows) match the native references like the render tests
 // (at most 0.5% of pixels over CIEDE2000 ΔE 2), and that the one-pass
 // shaders (?grid=single) fail with the error on screen, not a black tank.
 // Screenshots go to target/shots/chrome68-*.png.
@@ -204,19 +205,23 @@ try {
   const error = await cdp.eval<string>(statusText);
   if (error) throw new Error(`the page shows an error: ${error}`);
 
-  // 2. The depth scene matches the native capture.
-  const toml = readFileSync(path.join(root, "crates", "desktank", "tests", "scenes", "depth.toml"), "utf8");
+  // 2. The depth scene and the algae film scene match the native captures.
+  // The algae passes draw only while algae shows, so SwiftShader compiles
+  // them (and can run out of memory) only then.
   // Out of the way of the scene's pixels (it sits over the canvas).
   await cdp.eval("document.getElementById('debug').style.display = 'none'");
-  await cdp.eval(`window.desktank.loadScene(${JSON.stringify(toml)}, 7, 640, 360)`);
-  const got = decodePng(await cdp.screenshot("depth_x4", { width: 640, height: 360 }));
-  const want = decodePng(readFileSync(path.join(root, "crates", "desktank", "tests", "reference", "depth_x4.png")));
-  const diff = compare(got.rgba, want.rgba, 2);
-  const share = diff.over / diff.total;
-  console.log(`depth_x4: ${diff.over} of ${diff.total} pixels over ΔE 2 (${(share * 100).toFixed(3)}%), max ΔE ${diff.max.toFixed(2)}`);
-  if (share > 0.005) throw new Error("the depth scene doesn't match the native reference");
-  const sceneError = await cdp.eval<string>(statusText);
-  if (sceneError) throw new Error(`the page shows an error: ${sceneError}`);
+  for (const [scene, reference] of [["depth", "depth_x4"], ["algae_film", "algae_film_x4"]]) {
+    const toml = readFileSync(path.join(root, "crates", "desktank", "tests", "scenes", `${scene}.toml`), "utf8");
+    await cdp.eval(`window.desktank.loadScene(${JSON.stringify(toml)}, 7, 640, 360)`);
+    const got = decodePng(await cdp.screenshot(reference, { width: 640, height: 360 }));
+    const want = decodePng(readFileSync(path.join(root, "crates", "desktank", "tests", "reference", `${reference}.png`)));
+    const diff = compare(got.rgba, want.rgba, 2);
+    const share = diff.over / diff.total;
+    console.log(`${reference}: ${diff.over} of ${diff.total} pixels over ΔE 2 (${(share * 100).toFixed(3)}%), max ΔE ${diff.max.toFixed(2)}`);
+    const sceneError = await cdp.eval<string>(statusText);
+    if (sceneError) throw new Error(`the page shows an error in ${scene}: ${sceneError}`);
+    if (share > 0.005) throw new Error(`the ${scene} scene doesn't match the native reference`);
+  }
 
   // 3. The one-pass shaders fail here, and say so on screen.
   await openPage(cdp, "?grid=single");

@@ -544,7 +544,9 @@ impl World {
                 .collect();
             for (cell, &(_, _, tx, ty)) in moved.into_iter().zip(&plan) {
                 self.write_cell(tx, ty, cell.material, &mut None);
-                self.cells[ty * self.width + tx] = cell;
+                let i = ty * self.width + tx;
+                self.write_coat(i, 0);
+                self.cells[i] = cell;
             }
         }
         for (cx, cy) in cells {

@@ -98,7 +98,7 @@ cells. Filters come first (four kinds); the bubbler follows (DV7).
   HOB spillway ripples (DV5). The Flow overlay renders speed tint and
   per-block directional arrows.
 - **Filtration** (DV3). Intakes capture suspended particles (food,
-  waste, detritus, algae in the water) into the device's **media load**.
+  waste and detritus) into the device's **media load**.
   Load clogs the filter and flow drops as it clogs, but **never below
   about 30%** at full clog: the screensaver and lock screen can't rinse,
   so an unrinsed filter must not kill the tank. A **Rinse** action

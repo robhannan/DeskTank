@@ -201,8 +201,8 @@ fn advance(mut w: World, ticks: u32) -> World {
     w
 }
 
-/// A second consecutive grazing tick: ten walkers bite an algae/detritus
-/// film while twenty other fish swim. The previous bites have woken the bed.
+/// A second consecutive feeding tick for ten walkers on a bed with
+/// surface algae at one end and detritus at the other.
 fn grazing() -> World {
     let t = MaterialTable::builtin().expect("materials");
     let mut w = World::new(WorldConfig::default(), t).expect("world");
@@ -219,17 +219,27 @@ fn grazing() -> World {
     )
     .expect("bed");
     w = advance(w, 100);
-    let [algae, mulm] = ["algae", "detritus"].map(|n| w.materials().id(n).expect("film"));
+    let mulm = w.materials().id("detritus").expect("mulm");
     for x in 0..640 {
-        w.set_cell(x, 347, if x % 2 == 0 { algae } else { mulm })
-            .expect("film");
+        if x < 320 {
+            assert!(w.set_algae_coat(x, 348, 15));
+        } else {
+            w.set_cell(x, 347, mulm).expect("mulm");
+        }
     }
-    for (name, row) in [("neon_tetra", 180), ("betta", 90), ("corydoras", 344)] {
+    for (name, row) in [("neon_tetra", 180), ("betta", 90), ("corydoras", 345)] {
         let species = w.species().id(name).expect("fish");
         for x in (20..640).step_by(64) {
             w.add_creature(species, x, row).expect("stock");
         }
     }
+    let density = |w: &World| {
+        w.coat()
+            .iter()
+            .map(|&coat| u32::from(coat & 15))
+            .sum::<u32>()
+    };
+    let before = density(&w);
     w.tick();
     let bites = |w: &World| {
         w.creatures()
@@ -238,9 +248,11 @@ fn grazing() -> World {
             .sum::<u32>()
     };
     assert_eq!(bites(&w), 10);
+    assert!(density(&w) < before);
     let mut check = w.clone();
     check.tick();
     assert_eq!(bites(&check), 20);
+    assert!(density(&check) < density(&w));
     w
 }
 

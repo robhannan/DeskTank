@@ -35,7 +35,7 @@ use crate::save::{SaveError, v1};
 
 /// Living cells visited per tick by default (SPEC §2.1: 256 per display).
 pub const RANDOM_TICK_BUDGET: usize = 256;
-/// Most columns that can attempt to spawn algae in one coarse step.
+/// Most columns that can attempt a surface spawn in one coarse step.
 const CATCH_UP_SPAWN_COLUMNS: usize = 256;
 
 /// Stream id for the life RNG: above any chunk id.
@@ -90,10 +90,10 @@ pub struct Ecosystem {
     pub plant_cells: usize,
     /// Pollutant cells.
     pub pollutant_cells: usize,
-    /// Algae cells.
+    /// Cells with an algae coat.
     pub algae_cells: usize,
     /// Fraction of the substrate surface covered by algae: of the columns
-    /// with any non-fluid cell, those whose top non-fluid cell is algae.
+    /// with any non-fluid cell, those whose top non-fluid cell has a coat.
     pub algae_coverage: f32,
 }
 
@@ -181,7 +181,10 @@ pub(super) struct Life {
     /// Per material: how much light a cell blocks, in 1/255.
     opacity_of: Vec<u8>,
     /// Per field cell: mean opacity and fraction of watery cells.
-    opacity: Vec<(f32, f32)>,
+    opacity: Vec<(f32, f32, f32)>,
+    /// Water counts from the opacity scan, also used by surface film.
+    film_water: Vec<u8>,
+    film_water_total: usize,
     /// Scratch: field columns whose light needs recomputing.
     columns: Vec<bool>,
     /// Field cells whose opacity needs recounting.
@@ -246,7 +249,7 @@ impl Life {
     ) -> Self {
         let (width, height) = size;
         let water = materials.id("water");
-        let algae = eco.quality.algae;
+        let algae = materials.id("algae");
         let egg = materials.id("egg");
         // Unknown IDs behave as solid (see `World`), so they block light and flow.
         let mut flags = vec![SOLID_BLOCKING; 256];
@@ -313,7 +316,9 @@ impl Life {
             co2: field.clone(),
             light: field,
             opacity_of,
-            opacity: vec![(0.0, 0.0); blocks],
+            opacity: vec![(0.0, 0.0, 0.0); blocks],
+            film_water: vec![0; blocks],
+            film_water_total: 0,
             columns: Vec::new(),
             opacity_dirty: vec![true; blocks],
             any_opacity_dirty: true,
@@ -529,7 +534,10 @@ impl World {
     pub fn ecosystem(&self) -> Ecosystem {
         let q = self.life.eco.quality;
         let nutrient = &self.life.nutrient;
-        let mut e = Ecosystem::default();
+        let mut e = Ecosystem {
+            algae_cells: self.algae.coated,
+            ..Ecosystem::default()
+        };
         let mut nutrient_sum = 0.0_f64;
         for (i, c) in self.cells.iter().enumerate() {
             let m = c.material;
@@ -538,17 +546,16 @@ impl World {
                 nutrient_sum += f64::from(nutrient.at_cell(i % self.width, i / self.width));
             }
             e.pollutant_cells += usize::from(q.pollutants.contains(m));
-            e.algae_cells += usize::from(Some(m) == q.algae);
         }
         e.plant_cells = self.plant_cells();
         let (mut surface, mut covered) = (0usize, 0usize);
         for x in 0..self.width {
-            if let Some(m) = (0..self.height)
-                .map(|y| self.cells[y * self.width + x].material)
-                .find(|&m| !self.is_fluid(m))
+            if let Some(i) = (x..self.cells.len())
+                .step_by(self.width)
+                .find(|&i| !self.is_fluid(self.cells[i].material))
             {
                 surface += 1;
-                covered += usize::from(Some(m) == q.algae);
+                covered += usize::from(self.algae.coat[i] != 0);
             }
         }
         #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // counts ≪ 2^24
@@ -731,6 +738,7 @@ impl World {
         self.run_current();
         self.random_ticks();
         self.run_spawns();
+        self.preserve_plant_seed_sequence();
         // Plants grow, drop leaves and die after their cells were sampled;
         // the tidy then keeps the table matching the grid.
         self.update_plants();
@@ -763,6 +771,7 @@ impl World {
         }
         if self.tick.is_multiple_of(FIELD_EVERY) {
             self.step_fields();
+            self.step_algae();
         }
     }
 
@@ -778,9 +787,7 @@ impl World {
                 self.last_change_tick = self.tick;
             }
         }
-        if self.life.any_opacity_dirty {
-            self.update_light();
-        }
+        self.refresh_light_if_dirty();
     }
 
     pub(super) fn catch_up_current(&mut self) {
@@ -903,7 +910,11 @@ impl World {
         let stride = self.width.div_ceil(CATCH_UP_SPAWN_COLUMNS);
         for s in 0..self.life.eco.spawns.len() {
             let rule = self.life.eco.spawns[s];
-            let chance = 1.0 - (1.0 - rule.per_column_tick).powf(f64::from(ticks));
+            let chance = 1.0
+                - powu(
+                    1.0 - rule.per_column_tick,
+                    u16::try_from(ticks).unwrap_or(u16::MAX),
+                );
             let offset = if stride == 1 {
                 0
             } else {
@@ -1154,6 +1165,22 @@ impl World {
             self.life.field_mut(c.field).add_at_cell(x, y, -c.amount);
         }
         true
+    }
+
+    /// The retired algae spawn rule drew once to round its attempt count
+    /// and once per attempt before plant growth. Preserve that position
+    /// in the shared stream so unchanged planted scenes keep their layout.
+    fn preserve_plant_seed_sequence(&mut self) {
+        const LEGACY_SPAWNS_PER_COLUMN: f64 = 0.2_f32 as f64 / (64.0 * 20.0);
+        if self.plant_count() == 0 || self.legacy_algae.is_none() || self.life.eco.algae.is_none() {
+            return;
+        }
+        #[allow(clippy::cast_precision_loss)] // width <= MAX_SIDE
+        let expected = LEGACY_SPAWNS_PER_COLUMN * self.width as f64;
+        let round_up = self.life.chance(expected.fract());
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=2 at MAX_SIDE
+        let draws = expected as u64 + u64::from(round_up);
+        self.life.rng.advance(draws);
     }
 
     /// Spores: each `[[spawn]]` makes its attempts for this tick, each at a
@@ -1819,6 +1846,19 @@ impl World {
         }
     }
 
+    pub(super) fn mark_film_light_dirty(&mut self, block: usize) {
+        self.life.opacity_dirty[block] = true;
+        self.life.any_opacity_dirty = true;
+    }
+
+    pub(super) fn algae_field_water(&self, block: usize) -> usize {
+        usize::from(self.life.film_water[block])
+    }
+
+    pub(super) fn algae_water_cells(&self) -> usize {
+        self.life.film_water_total
+    }
+
     fn refresh_light(&mut self) {
         // Cells changed since the registries were refreshed this tick
         // (plants growing, spawns) are counted now too, as a tank loaded
@@ -1837,6 +1877,10 @@ impl World {
             }
             self.life.any_opacity_dirty = true;
         }
+        self.refresh_light_if_dirty();
+    }
+
+    pub(super) fn refresh_light_if_dirty(&mut self) {
         if self.life.any_opacity_dirty {
             self.update_light();
         }
@@ -1861,18 +1905,30 @@ impl World {
                 (x0 + FIELD_SCALE).min(self.width),
                 (y0 + FIELD_SCALE).min(self.height),
             );
-            let (mut opaque, mut watery) = (0u32, 0u32);
+            let (mut opaque, mut watery, mut film, mut water) = (0u32, 0u32, 0u32, 0u8);
             for y in y0..y1 {
-                for c in &self.cells[y * self.width + x0..y * self.width + x1] {
-                    let m = usize::from(c.material.0);
+                for i in y * self.width + x0..y * self.width + x1 {
+                    let m = usize::from(self.cells[i].material.0);
                     opaque += u32::from(life.opacity_of[m]);
                     watery += u32::from(life.flags[m] & WATERY != 0);
+                    water += u8::from(Some(self.cells[i].material) == life.water);
+                    film += u32::from(self.algae.coat[i] & super::algae::DENSITY_MASK);
                 }
+            }
+            life.film_water_total =
+                life.film_water_total + usize::from(water) - usize::from(life.film_water[b]);
+            life.film_water[b] = water;
+            if water == 0 && self.algae.glass != 0 {
+                self.algae.clear_dry_glass(b, fw);
             }
             #[allow(clippy::cast_precision_loss)] // ≤ 64
             let area = ((x1 - x0) * (y1 - y0)) as f32;
             #[allow(clippy::cast_precision_loss)] // ≤ 64 × 255
-            let frac = (opaque as f32 / (area * 255.0), watery as f32 / area);
+            let frac = (
+                opaque as f32 / (area * 255.0),
+                watery as f32 / area,
+                film as f32 / (area * 15.0),
+            );
             life.opacity[b] = frac;
         }
         let cfg = life.eco.light;
@@ -1885,8 +1941,8 @@ impl World {
                     life.light.set(b, l);
                     changed = true;
                 }
-                let (o, w) = life.opacity[b];
-                l *= (1.0 - cfg.opaque * o) * (1.0 - cfg.water * w);
+                let (o, w, film) = life.opacity[b];
+                l *= (1.0 - cfg.opaque * o) * (1.0 - cfg.water * w) * (1.0 - 0.5 * film);
             }
         }
         life.columns = columns;

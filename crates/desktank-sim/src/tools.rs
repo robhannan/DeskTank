@@ -1281,7 +1281,6 @@ mod tests {
                     "marimo",
                 ],
             ),
-            ("plants/algae", vec!["algae"]),
             (
                 "fish/schooling",
                 vec!["neon_tetra", "guppy", "harlequin_rasbora"],

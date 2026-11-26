@@ -21,6 +21,7 @@ use crate::species::SpeciesId;
 use bodies::Body;
 pub use bodies::{BodyId, BodyInfo, DRIFTWOOD_AIR_DROP, DRIFTWOOD_DRY_DIV, DRIFTWOOD_SOAK_EVERY};
 
+mod algae;
 mod catch_up;
 mod creatures;
 mod devices;
@@ -107,6 +108,9 @@ pub enum WorldError {
     /// The material ID isn't in the table.
     #[error("unknown material id {}", .0.0)]
     UnknownMaterial(MaterialId),
+    /// The old algae material is reserved for save migration.
+    #[error("algae grows as a surface film")]
+    LegacyAlgae,
     /// The built-in reaction table or field settings are invalid.
     #[error("ecology: {0}")]
     Ecology(String),
@@ -218,6 +222,8 @@ pub struct World {
     materials: MaterialTable,
     props: Vec<Props>,
     cells: Vec<Cell>,
+    algae: algae::Algae,
+    legacy_algae: Option<MaterialId>,
     moved: Vec<u32>,
     chunks_x: usize,
     chunks_y: usize,
@@ -325,6 +331,7 @@ impl World {
         );
 
         let driftwood = materials.id("driftwood");
+        let legacy_algae = materials.id("algae");
         let mut world = Self {
             width,
             height,
@@ -336,6 +343,8 @@ impl World {
             materials,
             props,
             cells,
+            algae: algae::Algae::new(width, height, chunks.len()),
+            legacy_algae,
             moved: vec![0; width * height],
             chunks_x,
             chunks_y,
@@ -443,7 +452,7 @@ impl World {
     }
 
     /// A stable 64-bit hash of the size, tick, every cell, the nutrient
-    /// and CO₂ fields, the creatures, the plant table and the devices.
+    /// and CO₂ fields, the algae film, the creatures, the plant table and the devices.
     #[must_use]
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv64::new();
@@ -455,6 +464,7 @@ impl World {
             h.write(&[c.material.0, c.variant, s0, s1]);
         }
         self.hash_life(&mut h);
+        self.hash_algae(&mut h);
         self.hash_creatures(&mut h);
         self.hash_plants(&mut h);
         self.hash_masks(&mut h);
@@ -659,6 +669,9 @@ impl World {
     }
 
     fn check_material(&self, material: MaterialId) -> Result<(), WorldError> {
+        if Some(material) == self.legacy_algae {
+            return Err(WorldError::LegacyAlgae);
+        }
         self.materials
             .get(material)
             .map(|_| ())
@@ -723,6 +736,7 @@ impl World {
                 }
             }
         }
+        self.write_coat(i, 0);
         self.cells[i] = cell;
         self.mark_changed(x, y);
         // A device's cell takes the whole device with it (D27).
@@ -766,6 +780,7 @@ impl World {
                 if let Some(into) = p.pops_into
                     && self.pops(x, y, into)
                 {
+                    self.write_coat(i, 0);
                     self.cells[i] = Cell::new(into, cell.variant);
                     self.moved[i] = self.stamp;
                     self.mark_changed(x, y);
@@ -842,6 +857,11 @@ impl World {
     fn swap(&mut self, i: usize, j: usize) {
         if self.is_rigid(i) || self.is_rigid(j) {
             self.swap_masks(i, j);
+        }
+        if self.algae.coat[i] != self.algae.coat[j] {
+            let old = self.algae.coat[i];
+            self.write_coat(i, self.algae.coat[j]);
+            self.write_coat(j, old);
         }
         self.cells.swap(i, j);
         self.moved[i] = self.stamp;

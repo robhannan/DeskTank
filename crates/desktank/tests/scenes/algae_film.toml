@@ -1,0 +1,68 @@
+# D28: fertiliser grows film across the glass and on the exposed sand,
+# stone and wood. Fish stocked at the end show through the front pane.
+ticks = 7600
+
+[world]
+water_level = 0.90
+
+[[pour]]
+repeat = 41
+x = 0
+y = 95
+dx = 4
+radius = 13
+material = "sand"
+
+[[pour]]
+x = 47
+y = 74
+radius = 13
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 103
+y = 74
+repeat = 7
+dx = 3
+radius = 5
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 120
+y = 67
+repeat = 4
+dx = 2
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 100
+x = 0
+y = 45
+dx = 5
+repeat = 33
+radius = 11
+material = "liquid_fertiliser"
+brush = "replace"
+
+[[creature]]
+tick = 7200
+species = "neon_tetra"
+x = 27
+y = 36
+count = 6
+dx = 17
+
+[[creature]]
+tick = 7200
+species = "guppy"
+x = 64
+y = 55
+count = 3
+dx = 21

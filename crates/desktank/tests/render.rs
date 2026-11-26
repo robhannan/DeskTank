@@ -164,6 +164,12 @@ fn layers_scene_matches_reference() {
     check("layers");
 }
 
+/// D28: surface coats on sand, rock and driftwood, with glass around the fish.
+#[test]
+fn algae_film_scene_matches_reference() {
+    check_named("algae_film", "algae_film_x4", None, SIZE_X4);
+}
+
 /// Day and night (T6): the planted tank at night, dawn, midday and dusk.
 #[test]
 fn planted_scene_matches_reference_at_four_times_of_day() {
@@ -272,8 +278,8 @@ fn climbing_scene_matches_reference() {
     check("climbing");
 }
 
-/// Shrimp and crabs: cherry and amano shrimp on an aquasoil bed grazing
-/// algae, and Thai micro crabs on the plants and rock.
+/// Shrimp and crabs: cherry and amano shrimp on an aquasoil bed, and Thai
+/// micro crabs on the plants and rock.
 #[test]
 fn invertebrates_scene_matches_reference() {
     check("invertebrates");
@@ -339,11 +345,14 @@ fn blinker_scene_matches_reference_by_day_and_night() {
 /// The split grid with what only some frames show: swaying plants (a
 /// neighbour's leaf drawn over a cell, or a cell's own leaf swayed away)
 /// at both plant-art levels, and the field overlay and night tint, which
-/// the plant passes apply before blending over the ground.
+/// the plant passes apply before blending over the ground; and the algae
+/// coat, whose strands over water the split grid draws in a pass of their
+/// own, with the front film drawn after the sprites.
 #[test]
 fn split_grid_matches_one_pass_with_sway_and_overlays() {
     for (scene, size, time, extra) in [
         ("depth", SIZE_X4, None, &["--sway"][..]),
+        ("algae_film", SIZE_X4, None, &[][..]),
         (
             "plant_floaters",
             SIZE,

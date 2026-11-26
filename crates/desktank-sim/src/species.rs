@@ -264,6 +264,8 @@ pub struct Species {
     pub max_speed: f32,
     /// Materials it eats.
     pub diet: Vec<MaterialId>,
+    /// Whether it grazes the green film on surfaces and glass.
+    pub grazes_algae: bool,
     /// Real-world body length in cm, nose to tail without antennae or an
     /// outsized fin tail such as a male guppy's (a crab's carapace), drawn
     /// at [`CELLS_PER_CM`]: the sprite is at least this long and adds only
@@ -363,6 +365,9 @@ impl Species {
             .filter_map(|&id| materials.get(id))
             .map(|material| material.name.replace('_', " "))
             .collect();
+        if self.grazes_algae {
+            items.push("algae".to_owned());
+        }
         if self.eats_corpses {
             items.push("corpses".to_owned());
         }
@@ -970,6 +975,9 @@ fn validate(
     }
     let mut diet = Vec::with_capacity(d.diet.len());
     for food in &d.diet {
+        if food == "algae" {
+            continue;
+        }
         match materials.id(food) {
             Some(id) => diet.push(id),
             None if skip_unknown_food => {}
@@ -1093,6 +1101,7 @@ fn validate(
         speed: d.speed,
         max_speed: d.max_speed,
         diet,
+        grazes_algae: d.diet.iter().any(|food| food == "algae"),
         length_cm: d.length_cm,
         female_length_cm,
         reach: d.reach,
@@ -1586,7 +1595,7 @@ mod tests {
             ),
             (
                 "cherry_shrimp",
-                "algae, detritus, algae wafer, sinking pellet, flake food",
+                "detritus, algae wafer, sinking pellet, flake food, algae",
                 "peaceful, bottom dweller, hops, livebearer",
                 "min depth 6 cm",
             ),
@@ -1598,7 +1607,7 @@ mod tests {
             ),
             (
                 "blinker",
-                "flake food, sinking pellet, bloodworm, algae wafer, algae, detritus, dead plant, corpses, prey up to 1.5 cm",
+                "flake food, sinking pellet, bloodworm, algae wafer, detritus, dead plant, algae, corpses, prey up to 1.5 cm",
                 "peaceful, mid-water swimmer, glows at night",
                 "min depth 24 cm",
             ),
@@ -1748,12 +1757,11 @@ mod tests {
         assert!(betta.breathes_air);
         assert_eq!(betta.zone, Zone::Surface);
         // Shrimp walk the bottom and hop; the crab crawls and filter-feeds.
-        let algae = m.id("algae").unwrap();
         for name in ["cherry_shrimp", "amano_shrimp"] {
             let s = t.get(t.id(name).unwrap()).unwrap();
             assert_eq!(s.zone, Zone::Bottom);
             assert!(s.hop_every.is_some(), "{name} hops");
-            assert!(s.eats(algae), "{name} grazes algae");
+            assert!(s.grazes_algae, "{name} grazes algae");
         }
         let crab = t.get(t.id("thai_micro_crab").unwrap()).unwrap();
         assert_eq!(
@@ -1788,7 +1796,7 @@ mod tests {
         );
         let oto = t.get(t.id("otocinclus").unwrap()).unwrap();
         assert_eq!((oto.zone, oto.size()), (Zone::Surfaces, (7, 3)));
-        assert!(oto.eats(algae));
+        assert!(oto.grazes_algae);
     }
 
     /// The cheat-only crabs (SPEC §2.5): peaceful bottom walkers that never
@@ -1807,7 +1815,6 @@ mod tests {
             "sinking_pellet",
             "bloodworm",
             "algae_wafer",
-            "algae",
             "detritus",
             "dead_plant",
         ];
@@ -1829,7 +1836,7 @@ mod tests {
             for food in never {
                 assert!(!crab.eats(m.id(food).unwrap()), "{} eats {food}", crab.name);
             }
-            assert!(crab.eats_corpses);
+            assert!(crab.grazes_algae && crab.eats_corpses);
             assert!(crab.bioload() >= 10.0 * stocked_bioload.max(1.0));
         }
         assert_eq!(crabs[0].home_carpet, None);
@@ -1857,12 +1864,12 @@ mod tests {
         assert_eq!(blinker.sprite.frames.len(), 4);
         // It needs more water than it is tall.
         assert!(blinker.min_depth >= 2 * blinker.size().1);
+        assert!(blinker.grazes_algae);
         for food in [
             "flake_food",
             "sinking_pellet",
             "bloodworm",
             "algae_wafer",
-            "algae",
             "detritus",
             "dead_plant",
         ] {

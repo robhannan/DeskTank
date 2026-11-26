@@ -104,7 +104,6 @@ const TREE: &[TopDef] = &[
             sub("carpet", "Carpet", Holds::Plants),
             sub("floating", "Floating", Holds::Plants),
             sub("moss", "Moss & epiphytes", Holds::Plants),
-            sub("algae", "Algae", Holds::Materials),
         ],
     },
     TopDef {

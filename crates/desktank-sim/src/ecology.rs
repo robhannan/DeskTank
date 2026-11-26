@@ -10,12 +10,12 @@
 //! - `[[emit]]`: a cell adds `rate` per second to a field, up to `up_to`;
 //! - `[[buffer]]`: a cell stores up to `capacity` and trades with a field
 //!   towards `level`;
-//! - `[[grow]]` (T6): a cell grows a new cell into a neighbour (algae),
+//! - `[[grow]]` (T6): a cell grows a new cell into a neighbour,
 //!   while fields allow, up to a structure size (plants are individuals of
 //!   species from T6b, `desktank_sim::plants`);
 //! - `[[wilt]]` (T6): a cell turns into another while a need fails or it
 //!   touches none of the materials it must cling to;
-//! - `[[spawn]]` (T6): cells appear on exposed surfaces (algae spores).
+//! - `[[spawn]]` (T6): cells appear on exposed surfaces.
 //!
 //! `assets/fields.toml` holds the field constants, the filter outlet's
 //! current, the bubbler, the water change and the water-quality score. Material names are resolved against a
@@ -297,7 +297,6 @@ struct QualityDef {
     plant_bonus: f32,
     #[serde(default = "default_filter_bonus")]
     filter_bonus: f32,
-    algae: String,
 }
 
 fn default_filter_bonus() -> f32 {
@@ -328,6 +327,19 @@ impl Default for FiltrationDef {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AlgaeDef {
+    surfaces: Vec<String>,
+    nutrient: f32,
+    light: f32,
+    seed_rate: f32,
+    creep_rate: f32,
+    growth_rate: f32,
+    die_back_rate: f32,
+    co2_boost: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FieldsFile {
     nutrient: DiffusingDef,
     co2: DiffusingDef,
@@ -338,6 +350,7 @@ struct FieldsFile {
     quality: QualityDef,
     #[serde(default)]
     filtration: FiltrationDef,
+    algae: Option<AlgaeDef>,
 }
 
 /// A field amount added when a rule fires.
@@ -533,8 +546,6 @@ pub struct QualityConfig {
     pub plant_bonus: f32,
     /// Score added by a mature running filter, at most (DV3).
     pub filter_bonus: f32,
-    /// The material whose cover of the substrate is reported.
-    pub algae: Option<MaterialId>,
     pub(crate) pollutants: MaterialSet,
 }
 
@@ -604,6 +615,20 @@ pub struct BubblerConfig {
     pub rate: f32,
 }
 
+/// Surface film thresholds and density changes per world second.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AlgaeConfig {
+    pub surfaces: MaterialSet,
+    pub nutrient: f32,
+    pub light: f32,
+    pub seed_rate: f32,
+    pub creep_rate: f32,
+    pub growth_rate: f32,
+    pub die_back_rate: f32,
+    /// Plant competition grows by this fraction per unit of CO₂ in a block.
+    pub co2_boost: f32,
+}
+
 /// The resolved reaction table, processes, field and device settings for
 /// one material table.
 #[derive(Clone, Debug, PartialEq)]
@@ -628,6 +653,7 @@ pub struct Ecology {
     pub quality: QualityConfig,
     /// Mechanical and biological filtration (DV3).
     pub filtration: FiltrationConfig,
+    pub(crate) algae: Option<AlgaeConfig>,
 }
 
 impl Ecology {
@@ -687,6 +713,11 @@ impl Ecology {
             water_change: water_change(&f.water_change, materials, strict)?,
             quality: quality(&f.quality, materials, strict)?,
             filtration: filtration(&f.filtration, materials, strict)?,
+            algae: f
+                .algae
+                .as_ref()
+                .map(|d| algae(d, materials, strict))
+                .transpose()?,
         };
         for (name, d) in [("nutrient", eco.nutrient), ("co2", eco.co2)] {
             if !stable(d.diffusion, eco.current.speed) {
@@ -1097,8 +1128,52 @@ fn quality(
         plant_full: d.plant_full,
         plant_bonus: d.plant_bonus,
         filter_bonus: d.filter_bonus,
-        algae: lookup(&d.algae, materials, strict)?,
         pollutants: set(&d.pollutants, materials, strict)?,
+    })
+}
+
+fn algae(
+    d: &AlgaeDef,
+    materials: &MaterialTable,
+    strict: bool,
+) -> Result<AlgaeConfig, EcologyError> {
+    let what = || "algae".to_owned();
+    if ![
+        d.nutrient,
+        d.light,
+        d.seed_rate,
+        d.creep_rate,
+        d.growth_rate,
+        d.die_back_rate,
+    ]
+    .into_iter()
+    .all(|v| v.is_finite() && v > 0.0)
+        || d.light > 1.0
+    {
+        return Err(invalid(
+            &what,
+            "thresholds and rates must be finite and positive, with light <= 1",
+        ));
+    }
+    if !(d.co2_boost.is_finite() && d.co2_boost >= 0.0) {
+        return Err(invalid(&what, "co2_boost must be finite and >= 0"));
+    }
+    let surfaces = set(&d.surfaces, materials, strict)?;
+    if materials
+        .iter()
+        .any(|m| surfaces.contains(m.id) && m.class.is_fluid())
+    {
+        return Err(invalid(&what, "surfaces must be non-fluid"));
+    }
+    Ok(AlgaeConfig {
+        surfaces,
+        nutrient: d.nutrient,
+        light: d.light,
+        seed_rate: d.seed_rate,
+        creep_rate: d.creep_rate,
+        growth_rate: d.growth_rate,
+        die_back_rate: d.die_back_rate,
+        co2_boost: d.co2_boost,
     })
 }
 
@@ -1284,13 +1359,12 @@ mod tests {
         assert!(!b("sand").is_living());
         assert_eq!(eco.current.material, t.id("filter_outlet"));
         assert_eq!(eco.bubbler.emits, t.id("air_bubble"));
-        // T6: algae (plants are species from T6b, `crate::plants`).
-        assert_eq!(b("algae").grows.len(), 1);
-        assert!(b("algae").wilt.is_some() && !b("stem").is_living());
+        assert!(!b("algae").is_living() && !b("stem").is_living());
         assert!(b("dead_plant").decay.is_some());
-        assert_eq!(eco.spawns.len(), 1);
-        assert_eq!(eco.spawns[0].material, t.id("algae").unwrap());
-        assert_eq!(eco.quality.algae, t.id("algae"));
+        assert_eq!(eco.spawns.len(), 0);
+        let algae = eco.algae.unwrap();
+        assert!(algae.surfaces.contains(t.id("rock").unwrap()));
+        assert!(!algae.surfaces.contains(t.id("water").unwrap()));
         assert!(eco.water_change.siphon.contains(t.id("detritus").unwrap()));
         assert!(!eco.water_change.siphon.contains(t.id("sand").unwrap()));
     }
