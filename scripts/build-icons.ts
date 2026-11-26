@@ -683,7 +683,9 @@ function desktopIcon(size: number, small: Image, tank: Image): Image {
     const scene = downsample(small, size);
     const cover = roundedCoverage(size, size, 0, 0, size, size, size * 0.2);
     for (let i = 0; i < size * size; i++) {
-      out.data.set([scene.data[i * 4], scene.data[i * 4 + 1], scene.data[i * 4 + 2], Math.round(cover[i] * 255)], i * 4);
+      const a = Math.round(cover[i] * 255);
+      if (a === 0) continue;
+      out.data.set([scene.data[i * 4], scene.data[i * 4 + 1], scene.data[i * 4 + 2], a], i * 4);
     }
     return out;
   }
@@ -706,14 +708,15 @@ function desktopIcon(size: number, small: Image, tank: Image): Image {
       const ta = cover[i];
       const sa = shadow[i] * SHADOW_ALPHA;
       const alpha = ta + sa * (1 - ta);
-      if (alpha === 0) continue;
+      const a = Math.round(alpha * 255);
+      if (a === 0) continue;
       const inTile = x >= margin && x < margin + tile && y >= margin && y < margin + tile;
       const t = inTile ? (y - margin) * tile + (x - margin) : 0;
       const rgb = [0, 1, 2].map((c) => {
         const tc = inTile ? scene.data[t * 4 + c] : 0;
         return Math.round((tc * ta + SHADOW_RGB[c] * sa * (1 - ta)) / alpha);
       });
-      out.data.set([rgb[0], rgb[1], rgb[2], Math.round(alpha * 255)], i * 4);
+      out.data.set([rgb[0], rgb[1], rgb[2], a], i * 4);
     }
   }
   return out;
@@ -743,17 +746,26 @@ function encodeIco(frames: { size: number; png: Buffer }[]): Buffer {
 function decodeIco(file: Buffer): Buffer[] {
   if (file.length < 6 || file.readUInt16LE(0) !== 0 || file.readUInt16LE(2) !== 1) throw new Error("not an ICO");
   const count = file.readUInt16LE(4);
-  if (file.length < 6 + 16 * count) throw new Error("corrupt ICO: truncated directory");
+  const dirEnd = 6 + 16 * count;
+  if (file.length < dirEnd) throw new Error("corrupt ICO: truncated directory");
   return Array.from({ length: count }, (_, i) => {
     const at = 6 + 16 * i;
+    const w = file[at] === 0 ? 256 : file[at];
+    const h = file[at + 1] === 0 ? 256 : file[at + 1];
+    const planes = file.readUInt16LE(at + 4);
+    const bpp = file.readUInt16LE(at + 6);
+    if (w !== h || planes !== 1 || bpp !== 32) throw new Error(`unexpected ICO directory entry (${w}x${h}, planes ${planes}, bpp ${bpp})`);
     const [len, offset] = [file.readUInt32LE(at + 8), file.readUInt32LE(at + 12)];
-    if (offset + len > file.length) throw new Error("corrupt ICO: frame out of bounds");
-    return file.subarray(offset, offset + len);
+    if (offset < dirEnd || offset + len > file.length) throw new Error("corrupt ICO: frame out of bounds");
+    const png = file.subarray(offset, offset + len);
+    const img = decodePng(png);
+    if (img.w !== w || img.h !== h) throw new Error(`ICO entry ${w}x${h} mismatches PNG ${img.w}x${img.h}`);
+    return png;
   });
 }
 
 const WINDOWS_SIZES = [16, 24, 32, 48, 64, 128, 256];
-const LINUX_SIZES = [16, 32, 48, 128, 256, 512];
+const LINUX_SIZES = [16, 32, 48, 64, 128, 256, 512];
 const FAVICON_SIZES = [16, 32];
 
 /** The Windows, Linux and web favicon icons, as [path, bytes]. */
