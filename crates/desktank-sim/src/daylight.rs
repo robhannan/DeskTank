@@ -267,7 +267,7 @@ impl DaylightSchedule {
         if lat.cos().abs() < 1e-9 {
             // At a pole the sun's height is the declination, all day.
             let height = lat.signum() * decl;
-            return polar(height > -(core::f64::consts::FRAC_PI_2 - zenith));
+            return polar(height > core::f64::consts::FRAC_PI_2 - zenith);
         }
         let cos_ha = zenith.cos() / (lat.cos() * decl.cos()) - lat.tan() * decl.tan();
         if cos_ha <= -1.0 {

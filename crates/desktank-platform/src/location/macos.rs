@@ -113,8 +113,9 @@ impl Backend {
         let manager = if let Some(manager) = &self.manager {
             manager.clone()
         } else {
-            // SAFETY: `+new` on a Cocoa class returns a retained instance.
-            let manager: Retained<AnyObject> = unsafe { msg_send![class, new] };
+            // SAFETY: `+new` on a Cocoa class returns a retained instance or nil.
+            let manager: Option<Retained<AnyObject>> = unsafe { msg_send![class, new] };
+            let manager = manager?;
             self.manager = Some(manager.clone());
             manager
         };
@@ -222,13 +223,12 @@ fn read_fix(manager: &AnyObject) -> Option<(Coordinates, Duration)> {
             msg_send![&*location, horizontalAccuracy],
         )
     };
-    // SAFETY: `-timestamp` returns a non-nil `NSDate`, and
-    // `-timeIntervalSinceNow` an `NSTimeInterval` (`double`), negative for
+    // SAFETY: `-timestamp` returns an optional `NSDate` (documented non-nil),
+    // and `-timeIntervalSinceNow` an `NSTimeInterval` (`double`), negative for
     // the past.
-    let age: f64 = unsafe {
-        let timestamp: Retained<AnyObject> = msg_send![&*location, timestamp];
-        msg_send![&*timestamp, timeIntervalSinceNow]
-    };
+    let timestamp: Option<Retained<AnyObject>> = unsafe { msg_send![&*location, timestamp] };
+    let timestamp = timestamp?;
+    let age: f64 = unsafe { msg_send![&*timestamp, timeIntervalSinceNow] };
     let fix = valid_fix(raw, accuracy)?;
     Some((fix, Duration::try_from_secs_f64((-age).max(0.0)).ok()?))
 }
