@@ -63,6 +63,21 @@
     ones); assets without one aren't offered.
     `desktank_sim::tools::Tools::palette_tree` gives every host the same
     tree.
+
+    Selecting a creature or plant shows its **species card** below the
+    palette (top-left on the web, whose palette is DOM): its name, Latin
+    name, sprite (male and female side by side where they are drawn
+    differently; a sprout in a plant's colours), adult size (both sexes'
+    where they differ), diet, behaviour, needs (or a plant's form and
+    needs) and description, all from the species data. It is drawn in
+    the canvas on every host from a second region of the HUD texture, in
+    a small CPU-built pixel font (`desktank_render::font`, meant for the
+    in-tank inspect card too), so it needs no new pipeline and is
+    WebGL2-safe. It is built only when
+    the selection changes and costs nothing while nothing is selected.
+    Above pixel scale 1 it covers at most half the canvas each way, so a
+    phone keeps most of the tank clear. Clicks on it never reach the
+    tank; a click closes it until another species is selected.
 - **Tools:**
   - **pour** the selected material: left-drag, with the scroll wheel
     setting brush size;
