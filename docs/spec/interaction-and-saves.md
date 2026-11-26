@@ -48,21 +48,29 @@
     items, and sub-tabs are framed in their own colour, so the two
     levels never read as one row of the same kind. Every tab, sub-tab
     and chip is square-cornered pixel art; on the web the sub-tabs and
-    propagule chips are smaller, lighter bevelled buttons, the open one
-    drawn pressed in.
+    propagule and colour morph chips are smaller, lighter bevelled
+    buttons, with the active choice drawn pressed in.
     Chaos materials (not built yet, §2.2) will name categories too and
     be offered only while their setting is on.
     `G` / `Shift+G` step the top tabs, `H` / `Shift+H` the sub-tabs, `1`–`0`
     pick within the open sub-category, `P` picks how the selected plant
-    starts, and scrolling over the palette steps through the
-    sub-categories on into the next tab. Where an asset is offered is
-    data: `palette = "top/sub"` (or `"top"` for a tab with one
-    sub-category) in its material, plant or species TOML, checked at
+    starts, and `C` picks the selected creature’s colour morph. Scrolling
+    over the palette steps through the sub-categories on into the next
+    tab. The `palette = "top/sub"` field in each material, plant or
+    species TOML sets where it appears. A tab with one sub-category can
+    use `"top"`. The field is checked at
     load against the tree in `desktank_sim::palette` (an unknown path, or
     one for another kind of asset, is a load error naming the valid
     ones); assets without one aren't offered.
     `desktank_sim::tools::Tools::palette_tree` gives every host the same
     tree.
+
+    Selecting a creature with multiple colour morphs shows a picker
+    below the palette items. Each species keeps its pick across selection
+    changes and tank resets. Species that cycle through colours when
+    stocked offer a **Cycle** choice to restore that behaviour.
+    A named pick sets the colour for every new placement of that species
+    and updates its sprite in the species card.
 
     Selecting a creature or plant shows its **species card** below the
     palette (top-left on the web, whose palette is DOM): its name, Latin
@@ -73,8 +81,8 @@
     the canvas on every host from a second region of the HUD texture, in
     a small CPU-built pixel font (`desktank_render::font`, shared with
     the in-tank inspect card), so it needs no new pipeline and is
-    WebGL2-safe. It is built only when
-    the selection changes and costs nothing while nothing is selected.
+    WebGL2-safe. It is built only when the species or morph selection
+    changes and costs nothing while nothing is selected.
     Above pixel scale 1 it covers at most half the canvas each way, so a
     phone keeps most of the tank clear. Clicks on it never reach the
     tank; a click closes it until another species is selected.

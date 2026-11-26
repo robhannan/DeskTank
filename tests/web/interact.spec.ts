@@ -9,6 +9,7 @@ import {
   cellPoint,
   choose,
   decodePng,
+  framesDrawn,
   gridSize,
   materialAt,
   open,
@@ -145,6 +146,76 @@ test.describe("mouse", () => {
     await clickCell(x, h - 1);
     await expect(inspect).toHaveText(/^Under-gravel panel #\d+ · on the floor · connected · cell /);
     await expect(actions).toBeHidden();
+  });
+
+  test("the palette picks a morph for each species and can restore cycling", async ({ page }) => {
+    const errors = watchErrors(page);
+    await openPaused(page);
+    const [w, h] = await gridSize(page);
+    const row = page.getByRole("radiogroup", { name: "Colour morph" });
+    const chip = (name: string) => row.getByRole("radio", { name, exact: true });
+    const inspect = page.locator("#inspect-sr");
+    const clickWater = async (x: number, y: number) => {
+      const p = await cellPoint(page, Math.round(w * x), Math.round(h * y));
+      await page.mouse.click(p.x, p.y);
+    };
+
+    await choose(page, "Betta");
+    await expect(row.getByRole("radio")).toHaveText([
+      "Cycle", "Wild", "Royal blue", "Copper", "Koi", "Marble", "Butterfly", "Yellow", "Lavender",
+    ]);
+    await expect(chip("Cycle")).toHaveAttribute("aria-checked", "true");
+    await chip("Cycle").press("Shift+c");
+    await expect(chip("Wild")).toBeFocused();
+    await expect(chip("Wild")).toHaveAttribute("aria-checked", "true");
+    await chip("Wild").press("ArrowLeft");
+    await expect(chip("Cycle")).toBeFocused();
+    await expect(chip("Cycle")).toHaveAttribute("aria-checked", "true");
+
+    const frames = await framesDrawn(page);
+    await chip("Koi").click();
+    await expect(chip("Koi")).toHaveAttribute("aria-checked", "true");
+    await expect.poll(() => framesDrawn(page)).toBeGreaterThan(frames);
+    await clickWater(0.55, 0.55);
+    await clickWater(0.8, 0.55);
+    await choose(page, "Inspect");
+    await clickWater(0.55, 0.55);
+    await expect(inspect).toHaveText(/^Betta #1 · .* · Koi · /);
+    await choose(page, "Betta");
+    await expect(chip("Koi")).toHaveAttribute("aria-checked", "true");
+    await choose(page, "Inspect");
+    await clickWater(0.8, 0.55);
+    await expect(inspect).toHaveText(/^Betta #2 · .* · Koi · /);
+
+    // Cycle resumes at the morph indexed by the two already in the tank.
+    await choose(page, "Betta");
+    await chip("Cycle").click();
+    await expect(chip("Cycle")).toHaveAttribute("aria-checked", "true");
+    await clickWater(0.65, 0.7);
+    await choose(page, "Inspect");
+    await clickWater(0.65, 0.7);
+    await expect(inspect).toHaveText(/^Betta #3 · .* · Copper · /);
+
+    await choose(page, "Cherry shrimp");
+    await expect(row.getByRole("radio")).toHaveText(["Red", "Wild", "Blue", "Yellow"]);
+    await expect(chip("Red")).toHaveAttribute("aria-checked", "true");
+    await chip("Blue").click();
+    await clickWater(0.85, 0.7);
+    await choose(page, "Inspect");
+    await clickWater(0.85, 0.7);
+    await expect(inspect).toHaveText(/^Cherry shrimp #4 · .* · Blue · /);
+
+    await choose(page, "Neon tetra");
+    await expect(row).toBeHidden();
+    await clickWater(0.55, 0.8);
+    expect(await page.evaluate(() => window.desktank.tank.creatures())).toBe(5);
+    await page.keyboard.press("c");
+    await expect(page.locator("#inspect")).toHaveText("Select a creature with morphs, then C picks its colour");
+
+    await choose(page, "Cherry shrimp");
+    await page.getByRole("button", { name: "Reset" }).click();
+    await expect(chip("Blue")).toHaveAttribute("aria-checked", "true");
+    expect(errors).toEqual([]);
   });
 
   test("creatures: add, inspect, net and lift out", async ({ page }) => {
@@ -379,6 +450,12 @@ test.describe("touch", () => {
       expect(heights.length, sel).toBeGreaterThan(0);
       expect(Math.min(...heights), sel).toBeGreaterThanOrEqual(44);
     }
+    await choose(page, "Betta");
+    const morphs = page.locator("#morphs");
+    await expect(morphs).toBeVisible();
+    expect(await morphs.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(false);
+    const morphHeights = await morphs.getByRole("radio").evaluateAll((els: HTMLElement[]) => els.map((b) => b.offsetHeight));
+    expect(Math.min(...morphHeights)).toBeGreaterThanOrEqual(44);
     // Every item can be reached through its tab and sub-tab.
     await choose(page, "Neon tetra");
     await expect(page.getByRole("tab", { name: "Fish", exact: true })).toHaveAttribute("aria-selected", "true");

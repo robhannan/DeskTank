@@ -49,7 +49,8 @@ use desktank_sim::tools::{
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
-    Mount, Propagule, RinseKind, Script, World, WorldConfig, catch_up_seconds, cheats, save,
+    Mount, Propagule, RinseKind, Script, Species, World, WorldConfig, catch_up_seconds, cheats,
+    save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -461,6 +462,76 @@ impl WebTank {
         self.tools.keep_plant_picks(&old.tools);
     }
 
+    /// The selected species' morph names, when it offers a choice.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = creatureMorphs))]
+    #[must_use]
+    pub fn creature_morphs(&self) -> Vec<String> {
+        self.selected_multi_morph_species()
+            .map_or_else(Vec::new, |s| s.morphs.clone())
+    }
+
+    /// Whether the selected species offers automatic cycling.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = creatureMorphCycles))]
+    #[must_use]
+    pub fn creature_morph_cycles(&self) -> bool {
+        self.selected_multi_morph_species()
+            .is_some_and(|s| s.cycle_palette)
+    }
+
+    /// The selected morph's name, or an empty string for Cycle or no choice.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = creatureMorph))]
+    #[must_use]
+    pub fn creature_morph(&self) -> String {
+        let Some(species) = self.selected_multi_morph_species() else {
+            return String::new();
+        };
+        let picked = self.tools.creature_morph(self.tank.world());
+        let morph = picked.or_else(|| (!species.cycle_palette).then_some(species.palette_morph));
+        morph
+            .and_then(|i| species.morphs.get(usize::from(i)))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Picks a morph by name, or clears the pick when given an empty string.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setCreatureMorph))]
+    pub fn set_creature_morph(&mut self, name: &str) -> bool {
+        let pick = if name.is_empty() {
+            None
+        } else {
+            let Some(index) = self.selected_multi_morph_species().and_then(|s| {
+                s.morphs
+                    .iter()
+                    .position(|m| m.eq_ignore_ascii_case(name))
+                    .and_then(|i| u8::try_from(i).ok())
+            }) else {
+                return false;
+            };
+            Some(index)
+        };
+        let changed = self.tools.set_creature_morph(self.tank.world(), pick);
+        if changed {
+            self.sync_cursor();
+        }
+        changed
+    }
+
+    /// Advances the selected morph, including Cycle as an empty string.
+    /// Returns `None` when the selection has no morph choice.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = nextCreatureMorph))]
+    pub fn next_creature_morph(&mut self) -> Option<String> {
+        self.tools.next_creature_morph(self.tank.world())?;
+        self.sync_cursor();
+        Some(self.creature_morph())
+    }
+
+    /// Carries per-species colour picks over to a replacement tank.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = keepCreaturePicks))]
+    pub fn keep_creature_picks(&mut self, old: &WebTank) {
+        self.tools.keep_creature_picks(&old.tools);
+        self.sync_cursor();
+    }
+
     /// Plants in the tank.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantCount))]
     #[must_use]
@@ -693,7 +764,10 @@ impl WebTank {
         };
         // A click on the species card closes it.
         if self.over_card(x, y) {
-            self.closed_card = self.tank.card();
+            self.closed_card = self.tank.card().map(|card| match card {
+                Card::Creature(id, _) => Card::Creature(id, None),
+                plant @ Card::Plant(_) => plant,
+            });
             self.sync_cursor();
             return 0;
         }
@@ -1378,6 +1452,14 @@ impl WebTank {
         }
     }
 
+    fn selected_multi_morph_species(&self) -> Option<&Species> {
+        self.tank
+            .world()
+            .species()
+            .get(self.tools.selected_creature()?)
+            .filter(|s| s.morphs.len() > 1)
+    }
+
     /// Gives the tank the brush outline and magnifier lens to draw (or none).
     fn sync_cursor(&mut self) {
         // The selected creature's or plant's species card, unless closed.
@@ -1391,8 +1473,15 @@ impl WebTank {
             // Another species (or none) is selected: its card opens.
             self.closed_card = None;
         }
-        self.tank
-            .set_card(card.filter(|&c| self.closed_card != Some(c)));
+        let card = card
+            .filter(|&c| self.closed_card != Some(c))
+            .map(|c| match c {
+                Card::Creature(id, _) => {
+                    Card::Creature(id, self.tools.creature_morph(self.tank.world()))
+                }
+                plant @ Card::Plant(_) => plant,
+            });
+        self.tank.set_card(card);
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
         let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
