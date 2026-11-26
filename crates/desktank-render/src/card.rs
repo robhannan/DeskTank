@@ -12,6 +12,7 @@
 //! a sprout in the plant's colours for a plant) and its `describe_*` lines
 //! and description, set in the [`crate::font`] pixel font.
 
+use desktank_sim::tools::{PaletteItem, Tool};
 use desktank_sim::{
     MaterialTable, PlantSpecies, PlantSpeciesId, PlantSpeciesTable, Species, SpeciesId,
     SpeciesTable,
@@ -30,6 +31,19 @@ pub enum Card {
     Creature(SpeciesId),
     /// A plant species.
     Plant(PlantSpeciesId),
+}
+
+impl Card {
+    /// The card for a selected palette item: a creature's or a plant's
+    /// species; `None` for materials, devices and other tools.
+    #[must_use]
+    pub fn of(item: PaletteItem) -> Option<Self> {
+        match item {
+            PaletteItem::Tool(Tool::AddCreature(s)) => Some(Self::Creature(s)),
+            PaletteItem::Tool(Tool::Plant(s)) => Some(Self::Plant(s)),
+            _ => None,
+        }
+    }
 }
 
 /// Card width in card pixels.
@@ -96,17 +110,14 @@ pub fn build(
     Some(page.finish())
 }
 
-/// A name from its data id: `home_owning_crab` is "Home Owning Crab".
+/// A name from its data id, as the palette and inspect card write it:
+/// `home_owning_crab` is "Home owning crab".
 fn display_name(name: &str) -> String {
-    name.split('_')
-        .map(|word| {
-            let mut chars = word.chars();
-            chars.next().map_or_else(String::new, |first| {
-                first.to_uppercase().chain(chars).collect()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    let name = name.replace('_', " ");
+    let mut chars = name.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 /// A sprite to draw: its coarse size in texels, its first frame and the
@@ -131,10 +142,12 @@ fn creature_sprites(sp: &Species) -> Vec<Art<'_>> {
         .collect()
 }
 
-/// A creature: its sprites, diet, behaviour and needs, and description.
+/// A creature: its sprites, adult size, diet, behaviour and needs, and
+/// description.
 fn creature(page: &mut Page, sp: &Species, materials: &MaterialTable) {
     page.heading(&display_name(&sp.name), &sp.scientific_name);
     page.sprites(&creature_sprites(sp));
+    page.field("Size:", &sp.describe_size());
     page.field("Diet:", &sp.describe_diet(materials));
     page.field("Behaviour:", &sp.describe_behaviour());
     page.field("Needs:", &sp.describe_requirements());
@@ -336,8 +349,10 @@ impl CardLayout {
     /// palette's scale and sits just below it, left-aligned with it (two
     /// palette pixels under it, as it is from the top), or, with no
     /// palette, in the top-left at the grid's cell scale (at least 2). The
-    /// scale drops until the card fits inside `target`; `None` if it
-    /// doesn't even at 1.
+    /// scale drops until the card fits inside `target` and, above scale 1,
+    /// covers at most half its width and half its height, so a small
+    /// canvas (a phone) keeps most of the tank clear; `None` if it doesn't
+    /// fit even at 1.
     #[must_use]
     pub fn fit(
         target: (u32, u32),
@@ -353,11 +368,15 @@ impl CardLayout {
             let origin = palette.map_or((2 * scale, 2 * scale), |p| {
                 (p.origin.0, p.origin.1 + p.size().1 + 2 * scale)
             });
-            let fits = u64::from(origin.0) + u64::from(image.0) * u64::from(scale)
-                <= u64::from(target.0)
-                && u64::from(origin.1) + u64::from(image.1) * u64::from(scale)
-                    <= u64::from(target.1);
-            fits.then_some(Self {
+            let (w, h) = (
+                u64::from(image.0) * u64::from(scale),
+                u64::from(image.1) * u64::from(scale),
+            );
+            let fits = u64::from(origin.0) + w <= u64::from(target.0)
+                && u64::from(origin.1) + h <= u64::from(target.1);
+            let small =
+                scale == 1 || (2 * w <= u64::from(target.0) && 2 * h <= u64::from(target.1));
+            (fits && small).then_some(Self {
                 origin,
                 scale,
                 image,
@@ -477,7 +496,7 @@ mod tests {
     #[test]
     fn display_names_come_from_the_data_name() {
         assert_eq!(display_name("guppy"), "Guppy");
-        assert_eq!(display_name("african_dwarf_frog"), "African Dwarf Frog");
+        assert_eq!(display_name("african_dwarf_frog"), "African dwarf frog");
         assert_eq!(display_name(""), "");
     }
 
@@ -572,21 +591,21 @@ mod tests {
     fn the_card_sits_below_the_palette_at_its_scale() {
         let g = grid();
         let p = PaletteLayout::fit((1280, 720), &g, 9, 0, 4);
-        let c = CardLayout::fit((1280, 720), &g, Some(&p), (144, 100)).unwrap();
+        let c = CardLayout::fit((1280, 720), &g, Some(&p), (144, 80)).unwrap();
         assert_eq!(c.scale, p.scale);
         assert_eq!(c.origin.0, p.origin.0);
         // The palette's bottom (8 + 23 * 4) and a 2-pixel gap at scale 4.
         assert_eq!(c.origin.1, p.origin.1 + p.size().1 + 8);
-        assert_eq!(c.size(), (144 * 4, 100 * 4));
+        assert_eq!(c.size(), (144 * 4, 80 * 4));
         assert!(c.contains(f64::from(c.origin.0), f64::from(c.origin.1)));
-        assert!(c.contains(f64::from(c.origin.0 + 575), f64::from(c.origin.1 + 399)));
+        assert!(c.contains(f64::from(c.origin.0 + 575), f64::from(c.origin.1 + 319)));
         assert!(!c.contains(f64::from(c.origin.0 + 576), f64::from(c.origin.1)));
         assert!(!c.contains(f64::from(c.origin.0) - 0.5, f64::from(c.origin.1)));
     }
 
     #[test]
     fn without_a_palette_the_card_takes_the_top_left_at_cell_scale() {
-        let c = CardLayout::fit((1280, 720), &grid(), None, (144, 100)).unwrap();
+        let c = CardLayout::fit((1280, 720), &grid(), None, (144, 80)).unwrap();
         assert_eq!((c.scale, c.origin), (4, (8, 8)));
         // A coarse grid still gets at least scale 2.
         let g = Layout::fit((320, 180), (320, 180));
@@ -597,10 +616,21 @@ mod tests {
             (640, 360),
             &Layout::fit((320, 180), (640, 360)),
             None,
-            (144, 100),
+            (144, 80),
         )
         .unwrap();
         assert_eq!((c.scale, c.origin), (2, (4, 4)));
+    }
+
+    #[test]
+    fn above_scale_1_the_card_covers_at_most_half_the_target() {
+        // 144×100 at the grid's 4 would be 400 of 720 rows: scale 3.
+        let c = CardLayout::fit((1280, 720), &grid(), None, (144, 100)).unwrap();
+        assert_eq!(c.scale, 3);
+        // A phone-sized canvas: scale 2 (288 of 512 columns) is too wide.
+        let g = Layout::fit((128, 72), (512, 288));
+        let c = CardLayout::fit((512, 288), &g, None, (144, 100)).unwrap();
+        assert_eq!(c.scale, 1, "only scale 1 may cover more than half");
     }
 
     #[test]
