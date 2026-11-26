@@ -8,6 +8,7 @@
     "node": ">=22.18"
   },
   "scripts": {
+    "build:icons": "node scripts/build-icons.ts",
     "build:web": "node scripts/build-web.ts",
     "build:web:webos": "node scripts/build-web.ts --legacy",
     "check:webos": "node scripts/check-webos.ts",

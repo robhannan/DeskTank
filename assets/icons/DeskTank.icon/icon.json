@@ -1,0 +1,66 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.075,0.25,0.37,1.0"
+  },
+  "groups": [
+    {
+      "name": "Gravel",
+      "layers": [
+        {
+          "name": "Gravel",
+          "image-name": "Gravel.png"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.45
+      },
+      "specular": true
+    },
+    {
+      "name": "Reeds",
+      "layers": [
+        {
+          "name": "Reeds",
+          "image-name": "Reeds.png"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.45
+      },
+      "specular": true
+    },
+    {
+      "name": "Betta",
+      "layers": [
+        {
+          "name": "Betta",
+          "image-name": "Betta.png"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.45
+      },
+      "specular": true
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
