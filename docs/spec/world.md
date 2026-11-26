@@ -432,6 +432,6 @@ and does not look for it. A smaller bite feeds that percentage of a full
 one, and scrapes that share of a full bite's four density levels rounded
 to whole levels, at least one: up to 37% scrapes one, 38% to 62% two.
 
-The brown, green and dusty looks are procedural in `tank.wgsl`; see
-[architecture](architecture.md). The threads, tufts and green-water
+The brown, green and dusty looks are drawn in `tank.wgsl`, from a baked
+atlas on the split grid; see [architecture](architecture.md). The threads, tufts and green-water
 varieties of the issue follow in later increments.

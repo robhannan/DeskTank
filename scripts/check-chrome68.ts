@@ -10,8 +10,8 @@
 // registers: the one-pass grid shader exceeds it, as the TV's driver seems
 // to, so the check catches a pass that grows past the limit. It checks that
 // the page starts and draws with no GPU error, that the depth scene (plants
-// and fish, at scale 4) and the algae film scene (whose passes SwiftShader
-// compiles only once algae shows) match the native references like the render tests
+// and fish, at scale 4) and the algae film and varieties scenes (whose passes
+// SwiftShader compiles only once algae shows) match the native references like the render tests
 // (at most 0.5% of pixels over CIEDE2000 ΔE 2), and that the one-pass
 // shaders (?grid=single) fail with the error on screen, not a black tank.
 // Screenshots go to target/shots/chrome68-*.png.
@@ -205,12 +205,17 @@ try {
   const error = await cdp.eval<string>(statusText);
   if (error) throw new Error(`the page shows an error: ${error}`);
 
-  // 2. The depth scene and the algae film scene match the native captures.
+  // 2. The depth scene and the algae scenes match the native captures.
   // The algae passes draw only while algae shows, so SwiftShader compiles
-  // them (and can run out of memory) only then.
+  // them (and can run out of memory) only then; the varieties scene draws
+  // every look from the baked atlas.
   // Out of the way of the scene's pixels (it sits over the canvas).
   await cdp.eval("document.getElementById('debug').style.display = 'none'");
-  for (const [scene, reference] of [["depth", "depth_x4"], ["algae_film", "algae_film_x4"]]) {
+  for (const [scene, reference] of [
+    ["depth", "depth_x4"],
+    ["algae_film", "algae_film_x4"],
+    ["algae_varieties", "algae_varieties_x4"],
+  ]) {
     const toml = readFileSync(path.join(root, "crates", "desktank", "tests", "scenes", `${scene}.toml`), "utf8");
     await cdp.eval(`window.desktank.loadScene(${JSON.stringify(toml)}, 7, 640, 360)`);
     const got = decodePng(await cdp.screenshot(reference, { width: 640, height: 360 }));

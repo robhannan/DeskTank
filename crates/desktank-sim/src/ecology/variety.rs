@@ -20,7 +20,7 @@ pub const HOST_FRONT_GLASS: u8 = 4;
 /// A variety grows on the back wall and both side walls.
 pub const HOST_REAR_GLASS: u8 = 8;
 
-/// How the shader draws a variety (`tank.wgsl`, `STYLE_*` of the coat).
+/// How the shader draws a variety (`tank.wgsl` `ALGAE_*`).
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[repr(u8)]
@@ -40,7 +40,7 @@ pub enum AlgaeStyle {
 pub struct AlgaeLook {
     /// The variety id: the coat byte's high nibble.
     pub id: u8,
-    /// Which procedural look the shader draws.
+    /// Which look the shader draws.
     pub style: AlgaeStyle,
     /// The shade for thin or shadowed coat, sRGB-encoded.
     pub dark: [f32; 3],

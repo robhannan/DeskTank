@@ -103,6 +103,9 @@ struct View {
 // Front, back, left and right glass film per 8x8-cell field block, each a
 // variety (high nibble) and density (low nibble); read by texel, not filtered.
 @group(0) @binding(11) var glass: texture_2d<f32>;
+// The split grid's baked spot and slime patterns and variety colours
+// (algae.rs, algae-baked.wgsl); a 1x1 placeholder for the one-pass grid.
+@group(0) @binding(12) var look_atlas: texture_2d<f32>;
 
 // The back band (DEPTH_BANDS - 1; renderer.rs checks it).
 const BACK_BAND: f32 = 7.0;
@@ -640,8 +643,12 @@ fn film_mottle(p: vec2<i32>) -> vec2<f32> {
     );
 }
 
-// Algae varieties (D28, #369) are drawn from the sim's look table in the view
-// uniform: the dark shade and style, then the light shade and strength.
+// Algae varieties (D28, #369) are drawn from the sim's look table: the dark
+// shade and style, then the light shade and strength. The one-pass grid
+// reads it from the view uniform and works out the spot and slime patterns
+// as it goes (algae-procedural.wgsl). The split grid reads both from a
+// baked atlas (algae-baked.wgsl), as Chrome 68 runs out of registers for
+// the noise and of memory for the dynamically indexed uniform.
 const ALGAE_FILM: u32 = 0u;
 const ALGAE_SLIME: u32 = 1u;
 const ALGAE_SPOTS: u32 = 2u;
@@ -652,14 +659,15 @@ fn texel_density() -> i32 {
     return select(2, 4, FINE_PLANTS && fine_scale());
 }
 
-fn look_dark(id: u32) -> vec4<f32> {
-    return view.looks[(id & 15u) * 2u];
+// The spot and slime patterns repeat every LOOK_TILE texels (algae.rs
+// `TILE`), which their lattices divide at both texel densities.
+const LOOK_TILE: i32 = 240;
+
+fn look_wrap(p: vec2<i32>, n: vec2<i32>) -> vec2<i32> {
+    return ((p % n) + n) % n;
 }
 
-fn look_light(id: u32) -> vec4<f32> {
-    return view.looks[(id & 15u) * 2u + 1u];
-}
-
+// `look_dark(id).w` is the style id, `look_light(id).w` the strength.
 fn look_style(id: u32) -> u32 {
     return u32(look_dark(id).w + 0.5);
 }
@@ -682,40 +690,18 @@ fn spread_coat(film: vec2<f32>, source: vec2<f32>, k: f32) -> vec2<f32> {
     return select(film, vec2<f32>(source.x * k, source.y), source.x * k > film.x);
 }
 
-// Smooth value noise in cells: hashes at whole numbers, blended between.
-fn value_noise(q: vec2<f32>) -> f32 {
-    let i = vec2<i32>(floor(q));
-    let f = fract(q);
-    let u = f * f * (3.0 - 2.0 * f);
-    return mix(
-        mix(unit_hash(i), unit_hash(i + vec2<i32>(1, 0)), u.x),
-        mix(unit_hash(i + vec2<i32>(0, 1)), unit_hash(i + vec2<i32>(1, 1)), u.x),
-        u.y,
-    );
-}
-
 // Crisp round spots, at most one in each square of a loose lattice (a little
 // over two cells across), with a chance that rises with the density, a random
-// size and a random centre that keeps it inside its square. The rim is the
-// dark shade, the middle the light one, with a bright pixel at the top left.
-// Alpha 1 inside a spot, else 0. No loop: Chrome 68's SwiftShader miscompiled
-// one that looked into the neighbouring squares.
+// size and a random centre that keeps it inside its square (`spot_texel`).
+// The rim is the dark shade, the middle the light one, with a bright pixel at
+// the top left. Alpha 1 inside a spot, else 0.
 fn algae_spots(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>) -> vec4<f32> {
-    let tpc = texel_density();
-    let size = f32(5 * tpc / 2);
-    let home = floor(vec2<f32>(p) / size);
-    let h = hash(vec2<i32>(home) + vec2<i32>(31, 7));
-    let radius = f32(tpc) * (0.4 + 0.25 * f32((h >> 24u) & 3u) / 3.0) + 0.3;
-    let span = max(size - 2.0 * radius, 0.0);
-    let pick = vec2<f32>(f32((h >> 8u) & 255u), f32((h >> 16u) & 255u)) / 255.0;
-    let off = vec2<f32>(p) + 0.5 - (home * size + radius + pick * span);
-    let d2 = dot(off, off);
-    if f32(h & 255u) / 255.0 >= density * 0.8 || d2 > radius * radius {
+    let spot = spot_texel(p);
+    if spot.x >= density * 0.8 {
         return vec4<f32>(0.0);
     }
-    let into = clamp(d2 / (radius * radius), 0.0, 1.0);
-    var rgb = mix(light, dark, smoothstep(0.35, 0.95, into));
-    if off.x < -0.5 && off.y < -0.5 && d2 > 0.5 && into < 0.75 {
+    var rgb = mix(light, dark, spot.y);
+    if spot.z > 0.5 {
         rgb = min(rgb * 1.25 + vec3<f32>(0.04), vec3<f32>(1.0));
     }
     return vec4<f32>(rgb, 1.0);
@@ -732,16 +718,12 @@ fn algae_dust(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>, pea
     return vec4<f32>(rgb, select(veil, max(veil, peak * (0.55 + 0.45 * tone)), speck));
 }
 
-// A smooth slimy sheen in broad patches and tall streaks, nearly continuous
-// once the coat is moderate and darker where it is thick, with a little grain.
+// A smooth slimy sheen in broad patches and tall streaks (`slime_texel`),
+// nearly continuous once the coat is moderate and darker where it is thick.
 fn algae_slime(p: vec2<i32>, density: f32, dark: vec3<f32>, light: vec3<f32>) -> vec4<f32> {
-    let cells = vec2<f32>(p) / f32(texel_density());
-    let broad = value_noise(cells / 6.0 + vec2<f32>(3.0, 8.0));
-    let streak = value_noise(vec2<f32>(cells.x * 1.1, cells.y * 0.15) + vec2<f32>(9.0, 1.0));
-    let grain = unit_hash(p);
-    let noise = broad * 0.45 + streak * 0.4 + grain * 0.15;
-    let cover = smoothstep(noise * 0.75 - 0.1, noise * 0.75 + 0.14, density * 1.3);
-    let thick = clamp(density * 0.55 + (broad - 0.5) * 0.6 + (streak - 0.5) * 0.5 - (grain - 0.5) * 0.12, 0.0, 1.0);
+    let slime = slime_texel(p);
+    let cover = smoothstep(slime.x * 0.75 - 0.1, slime.x * 0.75 + 0.14, density * 1.3);
+    let thick = clamp(density * 0.55 + slime.y, 0.0, 1.0);
     return vec4<f32>(mix(light, dark, thick), cover);
 }
 
