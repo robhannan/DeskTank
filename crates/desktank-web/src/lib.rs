@@ -638,6 +638,58 @@ impl WebTank {
             })
     }
 
+    /// Lets this tab name creatures in the inspect card (the owner; a
+    /// viewer's card only shows a name that is there): an unnamed
+    /// creature's Name row then offers the prompt and can be clicked. Call
+    /// [`WebTank::frame`] after a change.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setNamingAllowed))]
+    pub fn set_naming_allowed(&mut self, allowed: bool) {
+        self.tank.set_inspect_naming(allowed);
+    }
+
+    /// Draws `edit` in the inspect card's Name row with a caret and a
+    /// hint (the page mirrors what is typed in its hidden input), or with
+    /// `None` goes back to the creature's name. Cut to the longest name;
+    /// ignored unless a creature is inspected and naming is allowed. Costs
+    /// a card rebuild and a frame only when the text changes.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setInspectNameEdit))]
+    // wasm-bindgen takes an optional string by value, not as `Option<&str>`.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn set_inspect_name_edit(&mut self, edit: Option<String>) {
+        self.tank.set_inspect_name_edit(edit.as_deref());
+    }
+
+    /// Whether the inspect card's Name row is being edited.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectNameEditing))]
+    #[must_use]
+    pub fn inspect_name_editing(&self) -> bool {
+        self.tank.inspect_name_edit().is_some()
+    }
+
+    /// Where the inspect card's Name row is drawn, as canvas pixels `[x, y,
+    /// width, height]`, or empty unless naming is allowed and a creature's
+    /// live page is shown. A click on it starts editing (the page's job)
+    /// instead of turning the page.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectNameRect))]
+    #[must_use]
+    pub fn inspect_name_rect(&self) -> Vec<u32> {
+        self.tank
+            .inspect_name_rect(self.size)
+            .map_or_else(Vec::new, |r| {
+                vec![r.origin.0, r.origin.1, r.size.0, r.size.1]
+            })
+    }
+
+    /// Whether canvas pixel `(x, y)` is over the inspect card's Name row
+    /// (see [`WebTank::inspect_name_rect`]).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = nameRowAt))]
+    #[must_use]
+    pub fn name_row_at(&self, x: f64, y: f64) -> bool {
+        self.tank
+            .inspect_name_rect(self.size)
+            .is_some_and(|r| r.contains(x, y))
+    }
+
     /// The inspect card's page: 1 (live) or 2 (species), or 0 if none is
     /// shown.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = inspectPage))]
@@ -770,6 +822,11 @@ impl WebTank {
                 plant @ Card::Plant(_) => plant,
             });
             self.sync_cursor();
+            return 0;
+        }
+        // A click on the Name row starts editing (the page's job), not
+        // turning the page.
+        if self.name_row_at(x, y) {
             return 0;
         }
         // A click on the inspect card turns its page.

@@ -15,11 +15,34 @@ import {
   open,
   openPaused,
   stateHash,
+  type Point,
   touchscreen,
   watchErrors,
 } from "./support.ts";
 
 const glued = (page: Page) => page.evaluate(() => window.desktank.tank.gluedBodies());
+const editing = (page: Page) => page.evaluate(() => window.desktank.tank.inspectNameEditing());
+
+// CSS pixels per canvas pixel.
+async function canvasScale(page: Page) {
+  const canvas = await boxOf(page.locator("#tank"));
+  return canvas.width / (await page.evaluate(() => document.querySelector("canvas")!.width));
+}
+
+// The invisible name input's box, which sits over the inspect card's Name
+// row in the canvas: checks it lies where the tank says the row is.
+async function nameBox(page: Page) {
+  const rect = await page.evaluate(() => window.desktank.tank.inspectNameRect());
+  expect(rect.length).toBe(4);
+  const canvas = await boxOf(page.locator("#tank"));
+  const k = await canvasScale(page);
+  const box = await boxOf(page.locator("#name-input"));
+  expect(box.x).toBeCloseTo(canvas.x + rect[0] * k, 0);
+  expect(box.y).toBeCloseTo(canvas.y + rect[1] * k, 0);
+  expect(box.width).toBeCloseTo(rect[2] * k, 0);
+  expect(box.height).toBeCloseTo(rect[3] * k, 0);
+  return box;
+}
 
 test.describe("mouse", () => {
   test("pour, drag, scoop and the scoop tool change the cells", async ({ page }) => {
@@ -241,23 +264,71 @@ test.describe("mouse", () => {
     );
     expect(await stateHash(page)).toBe(hash);
 
-    // N opens its name field; Enter names it, and the card shows the name.
-    await expect(page.locator("#name")).toBeVisible();
+    // Naming happens in the card, drawn in the canvas: no DOM name panel,
+    // just an invisible input laid over the card's Name row. N starts
+    // editing, Enter names it.
+    await expect(page.locator("#name")).toHaveCount(0);
+    await expect(page.locator("#name-input")).toBeEnabled();
+    expect(await nameBox(page)).toBeTruthy();
+    await expect(page.locator("#name-input")).not.toBeFocused();
+    expect(await editing(page)).toBe(false);
     await page.keyboard.press("n");
     await expect(page.locator("#name-input")).toBeFocused();
+    expect(await editing(page)).toBe(true);
+    // Typing mirrors into the card, and the page's shortcuts don't see it
+    // ("g" would open the next palette tab, "f" cycle the field overlay).
+    const tab = await page.locator("#tabs [aria-selected=true]").getAttribute("data-tab");
+    await page.keyboard.type("  Big   Blue gf");
+    await expect(page.locator("#name-input")).toHaveValue("  Big   Blue gf");
+    expect(await page.locator("#tabs [aria-selected=true]").getAttribute("data-tab")).toBe(tab);
+    // Escape cancels: the name is untouched.
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#name-input")).not.toBeFocused();
+    expect(await editing(page)).toBe(false);
+    expect(await page.evaluate(() => window.desktank.tank.creatureName(1))).toBe("");
+    // Again, with Enter.
+    await page.keyboard.press("n");
     await page.keyboard.type("  Big   Blue ");
     await page.keyboard.press("Enter");
     await expect(page.locator("#inspect-sr")).toHaveText(/^Big Blue · Neon tetra #1 · adult male · /);
-    await expect(page.locator("#name-input")).toHaveValue("Big Blue");
-    // Inspecting it again shows the name it keeps.
+    expect(await page.evaluate(() => window.desktank.tank.creatureName(1))).toBe("Big Blue");
+    expect(await editing(page)).toBe(false);
+    // Inspecting it again keeps the name; a click on the Name row (the
+    // invisible input is over it) starts editing from it, and doesn't turn
+    // the page. Names are cut to the cap.
     await page.mouse.click(p.x, p.y);
     await expect(page.locator("#inspect-sr")).toHaveText(/^Big Blue · Neon tetra #1 · /);
+    const row = await nameBox(page);
+    await page.mouse.click(row.x + row.width / 2, row.y + row.height / 2);
+    await expect(page.locator("#name-input")).toBeFocused();
+    expect(await page.evaluate(() => window.desktank.tank.inspectPage())).toBe(1);
     await expect(page.locator("#name-input")).toHaveValue("Big Blue");
-    // Inspecting water hides the name field.
+    await page.keyboard.type("x".repeat(40));
+    expect((await page.locator("#name-input").inputValue()).length).toBe(24);
+    // Blank removes the name.
+    await page.locator("#name-input").fill("");
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => window.desktank.tank.creatureName(1))).toBe("");
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Neon tetra #1 · adult male · /);
+    // A click elsewhere on the card turns the page; the name row is gone
+    // on page 2, and N brings page 1 back to edit.
+    const card = await page.evaluate(() => window.desktank.tank.inspectRect());
+    const canvas = await boxOf(page.locator("#tank"));
+    const k = await canvasScale(page);
+    await page.mouse.click(canvas.x + (card[0] + 2) * k, canvas.y + (card[1] + 2) * k);
+    expect(await page.evaluate(() => window.desktank.tank.inspectPage())).toBe(2);
+    await expect(page.locator("#name-input")).toBeDisabled();
+    await page.keyboard.press("n");
+    expect(await page.evaluate(() => window.desktank.tank.inspectPage())).toBe(1);
+    await expect(page.locator("#name-input")).toBeFocused();
+    await page.keyboard.press("Escape");
+    // Inspecting water takes the card, and the input, away.
     const water = await cellPoint(page, 2, y);
     await page.mouse.click(water.x, water.y);
     await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell /);
-    await expect(page.locator("#name")).toBeHidden();
+    await expect(page.locator("#name-input")).toBeDisabled();
+    await page.keyboard.press("n");
+    await expect(page.locator("#name-input")).not.toBeFocused();
 
     // The net carries it up out of the water: it's gone.
     await choose(page, "Net");
@@ -346,6 +417,35 @@ test.describe("touch", () => {
     await touch.end();
     await expect(page.locator("#inspect-sr")).toHaveText(/^Water · cell \d+, \d+$/);
     expect(await cellCount(page, "gravel")).toBe(before);
+    expect(errors).toEqual([]);
+  });
+
+  test("a tap on the inspect card's Name row focuses the name input", async ({ page }) => {
+    const errors = watchErrors(page);
+    await openPaused(page);
+    const touch = await touchscreen(page);
+    const [w, h] = await gridSize(page);
+    const [x, y] = [Math.round(w / 2), Math.round(h / 2)];
+    const tap = async (p: Point) => {
+      await touch.start([p]);
+      await touch.end();
+    };
+    await choose(page, "Neon tetra");
+    await tap(await cellPoint(page, x, y));
+    await choose(page, "Inspect");
+    await tap(await cellPoint(page, x, y));
+    await expect(page.locator("#inspect-sr")).toHaveText(/^Neon tetra #1 · /);
+    // The tap lands on the invisible input over the row: its keyboard opens.
+    const row = await nameBox(page);
+    await expect(page.locator("#name-input")).not.toBeFocused();
+    await tap({ x: row.x + row.width / 2, y: row.y + row.height / 2 });
+    await expect(page.locator("#name-input")).toBeFocused();
+    expect(await editing(page)).toBe(true);
+    expect(await page.evaluate(() => window.desktank.tank.inspectPage())).toBe(1);
+    await page.keyboard.type("Zip");
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => window.desktank.tank.creatureName(1))).toBe("Zip");
+    await expect(page.locator("#name-input")).not.toBeFocused();
     expect(errors).toEqual([]);
   });
 

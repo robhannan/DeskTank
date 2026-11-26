@@ -44,7 +44,7 @@ pub use gpu::{Gpu, GpuError, GpuOptions};
 pub use hud::{
     BrushPreview, Magnifier, MagnifierLayout, Palette, PaletteHit, PaletteLayout, PaletteMorphs,
 };
-pub use inspect::{InspectPage, Inspected};
+pub use inspect::{InspectPage, Inspected, ScreenRect};
 pub use layout::{Layout, even_scale};
 pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;

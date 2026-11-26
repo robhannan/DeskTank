@@ -12,14 +12,23 @@
 //! provides beyond the tank: a screensaver or wallpaper can show it as well
 //! as an interactive window.
 //!
+//! A creature's live page also has a **Name** row (SPEC §2.5): its name, or,
+//! where the host allows naming, a prompt. The host starts editing by a click
+//! or tap on the row ([`InspectCard::name_rect`] says where it is) or the `N`
+//! key and then mirrors what is typed into [`InspectCard::set_name_edit`];
+//! the row shows it with a caret (steady, so a blink never asks for frames)
+//! and a hint. The card never reads the keyboard itself.
+//!
 //! The live page is rebuilt only when its text changes (energy moves a
-//! percent, a day passes), never per frame; while nothing is inspected
-//! nothing is built, uploaded or drawn.
+//! percent, a day passes, a letter is typed), never per frame; while nothing
+//! is inspected nothing is built, uploaded or drawn.
 
 use desktank_sim::tools::Inspection;
-use desktank_sim::{CreatureId, DeviceId, Mount, MovementClass, PlantId, UnmetNeed, World};
+use desktank_sim::{
+    CreatureId, DeviceId, MAX_NAME_CHARS, Mount, MovementClass, PlantId, UnmetNeed, World,
+};
 
-use crate::card::{self, CARD_MAX, Card, CardImage, CardLayout, Page, display_name};
+use crate::card::{self, CARD_MAX, CARD_W, Card, CardImage, CardLayout, Page, display_name};
 use crate::layout::Layout;
 
 /// The row of the HUD texture where the inspect card's region starts (below
@@ -110,6 +119,13 @@ pub(crate) struct InspectCard {
     pub(crate) image: Option<CardImage>,
     /// The image needs uploading.
     pub(crate) dirty: bool,
+    /// Whether the host lets the viewer name creatures.
+    can_name: bool,
+    /// The name being typed, while editing.
+    edit: Option<String>,
+    /// The name row in the image, as `[x, y, width, height]` in card
+    /// pixels (none unless the live page shows it and naming is allowed).
+    name_row: Option<[u32; 4]>,
 }
 
 impl InspectCard {
@@ -121,8 +137,71 @@ impl InspectCard {
         }
         self.what = what;
         self.page = InspectPage::Live;
+        self.edit = None;
         self.refresh(world, true);
         true
+    }
+
+    /// Allows (or stops) naming creatures, which shows (or hides) the
+    /// prompt on an unnamed creature's Name row; stopping drops any edit.
+    /// Returns whether a frame is needed.
+    pub(crate) fn set_can_name(&mut self, world: &World, can_name: bool) -> bool {
+        if self.can_name == can_name {
+            return false;
+        }
+        self.can_name = can_name;
+        if !can_name {
+            self.edit = None;
+        }
+        self.what.is_some() && self.refresh(world, false)
+    }
+
+    /// Starts editing the creature's name from `edit` (`None`: stops),
+    /// showing the live page if it was on the species page. The text is cut
+    /// to [`MAX_NAME_CHARS`] and has no control characters; it only counts
+    /// for a creature when naming is allowed. Returns whether a frame is
+    /// needed.
+    pub(crate) fn set_name_edit(&mut self, world: &World, edit: Option<&str>) -> bool {
+        let edit = edit
+            .filter(|_| self.can_name && matches!(self.what, Some(Inspected::Creature(_))))
+            .map(|text| {
+                text.chars()
+                    .filter(|c| !c.is_control())
+                    .take(MAX_NAME_CHARS)
+                    .collect::<String>()
+            });
+        if self.edit == edit {
+            return false;
+        }
+        self.edit = edit;
+        if self.edit.is_some() && self.page != InspectPage::Live {
+            self.page = InspectPage::Live;
+            return self.refresh(world, true);
+        }
+        self.what.is_some() && self.refresh(world, false)
+    }
+
+    /// The name being typed, if editing.
+    pub(crate) fn name_edit(&self) -> Option<&str> {
+        self.edit.as_deref()
+    }
+
+    /// Where the name row is in a `target`-pixel surface laid out as
+    /// `grid`, for hit tests; `None` unless naming is allowed and the live
+    /// page of a creature's card is shown and fits.
+    pub(crate) fn name_rect(
+        &self,
+        world: &World,
+        target: (u32, u32),
+        grid: &Layout,
+    ) -> Option<ScreenRect> {
+        let [left, top, width, height] = self.name_row.filter(|_| self.can_name)?;
+        let at = self.layout(world, target, grid)?;
+        let scale = at.scale;
+        Some(ScreenRect {
+            origin: (at.origin.0 + left * scale, at.origin.1 + top * scale),
+            size: (width * scale, height * scale),
+        })
     }
 
     /// Shows `page` (only the live page for a card without a species
@@ -144,14 +223,22 @@ impl InspectCard {
             self.live = None;
             return self.image.take().is_some() || force;
         };
-        let Some(live) = live(world, what) else {
-            *self = Self::default();
+        let Some(mut live) = live(world, what) else {
+            *self = Self {
+                can_name: self.can_name,
+                ..Self::default()
+            };
             return true;
         };
+        if let Some(row) = &mut live.name {
+            row.can_name = self.can_name;
+            row.editing.clone_from(&self.edit);
+        }
         let changed = self.live.as_ref() != Some(&live);
         let rebuild = force || (changed && self.page == InspectPage::Live);
         if rebuild {
-            self.image = build(world, what, self.page, &live);
+            let built = build(world, what, self.page, &live);
+            (self.image, self.name_row) = built.map_or((None, None), |(i, r)| (Some(i), r));
             self.dirty = true;
         }
         if changed {
@@ -178,7 +265,44 @@ pub(crate) struct Live {
     title: String,
     subtitle: String,
     fields: Vec<(&'static str, String)>,
+    /// A creature's Name row.
+    name: Option<NameRow>,
 }
+
+/// A creature's Name row: what is drawn changes with any of these.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct NameRow {
+    /// Its name, if it has one.
+    name: Option<String>,
+    /// Whether the host allows naming (so an unnamed creature shows the
+    /// prompt, and the row can be clicked).
+    can_name: bool,
+    /// The text being typed, while editing.
+    editing: Option<String>,
+}
+
+/// A rectangle in a target's pixels, such as the name row's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScreenRect {
+    /// Top-left.
+    pub origin: (u32, u32),
+    /// Width and height.
+    pub size: (u32, u32),
+}
+
+impl ScreenRect {
+    /// Whether target pixel `(px, py)` is inside it.
+    #[must_use]
+    pub fn contains(&self, px: f64, py: f64) -> bool {
+        let (x, y) = (px - f64::from(self.origin.0), py - f64::from(self.origin.1));
+        x >= 0.0 && y >= 0.0 && x < f64::from(self.size.0) && y < f64::from(self.size.1)
+    }
+}
+
+/// What the Name row says where naming is allowed and there is no name.
+const NAME_PROMPT: &str = "N or tap to name";
+/// What it says under the text being typed.
+const NAME_HINT: &str = "Enter saves, Esc cancels";
 
 /// The live page of `what`, or `None` if it is gone (died, netted out,
 /// eaten away) or its species is unknown.
@@ -212,6 +336,7 @@ fn cell_live(world: &World, x: usize, y: usize) -> Option<Live> {
             ("Kind:", class_name(material.class).to_owned()),
             ("Cell:", format!("{x}, {y}")),
         ],
+        name: None,
     })
 }
 
@@ -254,6 +379,7 @@ fn device_live(world: &World, id: DeviceId) -> Option<Live> {
         title: format!("{} #{}", art.label, id.0),
         subtitle: String::new(),
         fields,
+        name: None,
     })
 }
 
@@ -265,10 +391,6 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
     let card = world.creature_card(id)?;
     let species = world.creature(id)?.species();
     let kind = format!("{} #{}", display_name(&card.species), id.0);
-    let (title, subtitle) = match card.name {
-        Some(name) => (name, kind),
-        None => (kind, String::new()),
-    };
     let sex = if card.female { "female" } else { "male" };
     let mut fields = vec![
         ("Stage:", format!("{} {sex}", card.stage.name())),
@@ -298,9 +420,13 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
         None => {}
     }
     Some(Live {
-        title,
-        subtitle,
+        title: kind,
+        subtitle: String::new(),
         fields,
+        name: Some(NameRow {
+            name: card.name,
+            ..NameRow::default()
+        }),
     })
 }
 
@@ -330,27 +456,51 @@ fn plant_live(world: &World, id: PlantId) -> Option<Live> {
             ),
             ("Growth:", p.limit.describe()),
         ],
+        name: None,
     })
 }
 
-/// Draws the live page, numbered if there is a second.
-pub(crate) fn build_live(live: &Live, numbered: bool) -> CardImage {
+/// Draws the live page, numbered if there is a second, and where its Name
+/// row is (`[x, y, width, height]` in card pixels) if it has one the host
+/// can click.
+pub(crate) fn build_live(live: &Live, numbered: bool) -> (CardImage, Option<[u32; 4]>) {
     let mut page = Page::new(numbered.then(|| InspectPage::Live.tag()));
     page.heading(&live.title, &live.subtitle);
+    let row = live.name.as_ref().and_then(|row| name_row(&mut page, row));
     for (label, text) in &live.fields {
         page.field(label, text);
     }
-    page.finish()
+    (page.finish(), row)
 }
 
-/// Draws `page` of the card for `what`, given its live page; `None` if its
-/// species is unknown.
+/// Draws a creature's Name row, if it shows one: the name; for an
+/// unnamed creature where naming is allowed, the prompt; while editing, the
+/// text typed with a caret and the hint. Returns its rect (`None` if naming
+/// is not allowed, so there is nothing to click).
+fn name_row(page: &mut Page, row: &NameRow) -> Option<[u32; 4]> {
+    let top = match (&row.editing, &row.name) {
+        (Some(text), _) => {
+            let top = page.field_in("Name:", &format!("{text}_"), card::TITLE);
+            page.paragraph(NAME_HINT, card::LATIN);
+            top
+        }
+        (None, Some(name)) => page.field_in("Name:", name, card::BODY),
+        (None, None) if row.can_name => page.field_in("Name:", NAME_PROMPT, card::LATIN),
+        (None, None) => return None,
+    };
+    let bottom = page.bottom().min(CARD_MAX.1);
+    row.can_name
+        .then_some([1, top, CARD_W - 2, bottom.saturating_sub(top)])
+}
+
+/// Draws `page` of the card for `what`, given its live page, with the Name
+/// row's rect (see [`build_live`]); `None` if its species is unknown.
 pub(crate) fn build(
     world: &World,
     what: Inspected,
     page: InspectPage,
     live: &Live,
-) -> Option<CardImage> {
+) -> Option<(CardImage, Option<[u32; 4]>)> {
     match page {
         InspectPage::Live => Some(build_live(live, what.has_species_page())),
         InspectPage::Species => {
@@ -369,6 +519,7 @@ pub(crate) fn build(
                 world.plant_species(),
                 Some(page.tag()),
             )
+            .map(|image| (image, None))
         }
     }
 }
@@ -485,6 +636,7 @@ impl CardLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::font;
     use desktank_sim::{MaterialTable, WorldConfig};
 
     fn world() -> World {
@@ -531,8 +683,8 @@ mod tests {
                 "{text}"
             );
         }
-        let one = build(&w, what, InspectPage::Live, &live).unwrap();
-        let two = build(&w, what, InspectPage::Species, &live).unwrap();
+        let (one, _) = build(&w, what, InspectPage::Live, &live).unwrap();
+        let (two, _) = build(&w, what, InspectPage::Species, &live).unwrap();
         assert!(!one.clipped && !two.clipped);
         assert_eq!(one.size.0, card::CARD_W);
         assert_ne!(one, two);
@@ -546,14 +698,130 @@ mod tests {
         .unwrap();
         assert_eq!(two.size.0, plain.size.0);
         assert_ne!(two.pixels, plain.pixels, "the tag is drawn");
-        // A name becomes the title, the species the subtitle.
+        // A name is the Name row's, not the title.
         w.set_creature_name(id, "Bubbles");
         let named = super::live(&w, what).unwrap();
+        assert_eq!(named.title, live.title);
         assert_eq!(
-            (named.title.as_str(), named.subtitle.as_str()),
-            ("Bubbles", live.title.as_str())
+            named.name.as_ref().and_then(|row| row.name.as_deref()),
+            Some("Bubbles")
         );
         assert_ne!(named, live);
+    }
+
+    /// A creature's live page for a card with these name settings.
+    fn creature_page(
+        w: &World,
+        id: CreatureId,
+        can_name: bool,
+        editing: Option<&str>,
+    ) -> (CardImage, Option<[u32; 4]>) {
+        let what = Inspected::Creature(id);
+        let mut live = live(w, what).unwrap();
+        let row = live.name.as_mut().unwrap();
+        row.can_name = can_name;
+        row.editing = editing.map(str::to_owned);
+        build(w, what, InspectPage::Live, &live).unwrap()
+    }
+
+    #[test]
+    fn a_creature_card_has_a_name_row_that_prompts_shows_and_edits() {
+        let mut w = world();
+        let guppy = w.species().id("guppy").unwrap();
+        let id = w.add_creature(guppy, 80, 40).unwrap();
+
+        // A viewer sees no row for an unnamed creature, the owner a prompt.
+        let (viewer, none) = creature_page(&w, id, false, None);
+        let (owner, row) = creature_page(&w, id, true, None);
+        assert_eq!(none, None);
+        assert_ne!(viewer.pixels, owner.pixels);
+        let [x, y, rw, rh] = row.unwrap();
+        // The row is inside the card, under the heading, as wide as it.
+        assert!(x >= 1 && x + rw < card::CARD_W && y > 0 && y + rh <= owner.size.1);
+        assert!((font::LINE..2 * font::LINE + 8).contains(&rh));
+
+        // Editing: the text typed with a caret, and the hint under it, so
+        // the row is taller and the card too; each letter changes the image.
+        let (empty, empty_row) = creature_page(&w, id, true, Some(""));
+        let (typed, typed_row) = creature_page(&w, id, true, Some("Bub"));
+        assert_ne!(empty.pixels, typed.pixels);
+        assert_ne!(owner.pixels, empty.pixels);
+        assert!(empty.size.1 > owner.size.1);
+        assert!(empty_row.unwrap()[3] > rh);
+        assert_eq!(
+            typed_row.unwrap()[..2],
+            [x, y],
+            "it starts where the prompt did"
+        );
+        assert!(!typed.clipped);
+        // The caret is drawn: the same text without it is a different image.
+        let mut plain = live(&w, Inspected::Creature(id)).unwrap();
+        plain.name.as_mut().unwrap().name = Some("Bub".to_owned());
+        plain.name.as_mut().unwrap().can_name = true;
+        let (named, _) = build_live(&plain, true);
+        assert_ne!(typed.pixels, named.pixels);
+
+        // A name is shown (a viewer sees it too, with no row to click).
+        w.set_creature_name(id, "Bubbles");
+        let (viewer, none) = creature_page(&w, id, false, None);
+        let (owner, row) = creature_page(&w, id, true, None);
+        assert_eq!(none, None);
+        assert!(row.is_some());
+        assert_eq!(
+            viewer.size, owner.size,
+            "the prompt and a name are one line"
+        );
+
+        // The longest name, and the longest typed, fit the card's width on
+        // one line each (so truncating or wrapping is never needed).
+        let longest = "W".repeat(MAX_NAME_CHARS);
+        assert!(font::width(&format!("Name: {longest}_")) <= CARD_W - 8);
+        let (long, _) = creature_page(&w, id, true, Some(&longest));
+        assert_eq!(long.size, creature_page(&w, id, true, Some("")).0.size);
+        assert!(!long.clipped);
+        for text in [NAME_PROMPT, NAME_HINT] {
+            assert!(text.chars().all(|c| font::glyph(c).is_some()), "{text}");
+            assert!(font::width(&format!("Name: {text}")) <= CARD_W - 8);
+        }
+    }
+
+    #[test]
+    fn the_name_row_follows_the_card_and_is_hit_testable() {
+        let g = grid();
+        let mut w = world();
+        let guppy = w.species().id("guppy").unwrap();
+        let id = w.add_creature(guppy, 80, 40).unwrap();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(id)));
+        let target = (1280, 720);
+        // Not allowed: nothing to click. Allowed: a rect inside the card.
+        assert_eq!(card.name_rect(&w, target, &g), None);
+        assert!(card.set_can_name(&w, true));
+        assert!(!card.set_can_name(&w, true));
+        let at = card.layout(&w, target, &g).unwrap();
+        let rect = card.name_rect(&w, target, &g).unwrap();
+        let [x, y, rw, rh] = card.name_row.unwrap();
+        assert_eq!(
+            rect.origin,
+            (at.origin.0 + x * at.scale, at.origin.1 + y * at.scale)
+        );
+        assert_eq!(rect.size, (rw * at.scale, rh * at.scale));
+        // The page-two card has no row.
+        assert!(card.set_page(&w, InspectPage::Species));
+        assert_eq!(card.name_rect(&w, target, &g), None);
+        // Editing returns to page one and edits are cut and cleaned.
+        assert!(card.set_name_edit(&w, Some("A\tb")));
+        assert_eq!(card.page, InspectPage::Live);
+        assert_eq!(card.name_edit(), Some("Ab"));
+        assert!(!card.set_name_edit(&w, Some("Ab")));
+        assert!(card.name_rect(&w, target, &g).is_some());
+        // Stopping naming stops the edit; a plant or a cell is not named.
+        assert!(card.set_can_name(&w, false));
+        assert_eq!(card.name_edit(), None);
+        assert!(card.set_can_name(&w, true));
+        assert!(card.set(&w, Some(Inspected::Cell { x: 5, y: 60 })));
+        assert!(!card.set_name_edit(&w, Some("x")));
+        assert_eq!(card.name_rect(&w, target, &g), None);
     }
 
     #[test]
@@ -597,8 +865,9 @@ mod tests {
         );
         assert!(!cell.has_species_page());
         assert!(build(&w, cell, InspectPage::Species, &page_text).is_none());
-        let page = build(&w, cell, InspectPage::Live, &page_text).unwrap();
-        assert_ne!(page, build_live(&page_text, true), "no page number");
+        let (page, row) = build(&w, cell, InspectPage::Live, &page_text).unwrap();
+        assert_ne!(page, build_live(&page_text, true).0, "no page number");
+        assert_eq!(row, None, "only a creature has a name row");
         assert_eq!(anchor(&w, cell), Some([10.0, 60.0, 11.0, 61.0]));
         assert!(live(&w, Inspected::Cell { x: 999, y: 0 }).is_none());
 
@@ -612,6 +881,7 @@ mod tests {
             .unwrap();
         let f = live(&w, Inspected::Device(filter)).unwrap();
         assert_eq!(f.title, format!("Internal filter #{}", filter.0));
+        assert_eq!(f.name, None);
         let labels: Vec<_> = f.fields.iter().map(|f| f.0).collect();
         assert_eq!(labels, ["On:", "Flow:", "Load:", "Maturity:", "Guard:"]);
         assert_eq!(f.fields[0].1, "left glass");

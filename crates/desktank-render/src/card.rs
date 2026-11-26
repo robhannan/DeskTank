@@ -80,10 +80,10 @@ const SPRITE_MAX_H: u32 = 48;
 const SPROUT_SCALE: u32 = 3;
 
 /// Text colours (the frame and background are the palette's).
-const TITLE: [u8; 3] = SELECTED;
+pub(crate) const TITLE: [u8; 3] = SELECTED;
 const LABEL: [u8; 3] = OPEN;
 pub(crate) const BODY: [u8; 3] = ICON_FG;
-const LATIN: [u8; 3] = [0x8f, 0xa6, 0xc0];
+pub(crate) const LATIN: [u8; 3] = [0x8f, 0xa6, 0xc0];
 
 /// The card as an RGBA image.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,6 +254,14 @@ impl Page {
 
     /// `label` in the label colour, then `text`, wrapped as one paragraph.
     pub(crate) fn field(&mut self, label: &str, text: &str) {
+        self.field_in(label, text, BODY);
+    }
+
+    /// [`field`](Self::field) with `text` in `colour`. Returns the top of
+    /// its rows in card pixels, its gap above included; [`bottom`](Self::bottom)
+    /// after it is the bottom, so a click just off its text still lands.
+    pub(crate) fn field_in(&mut self, label: &str, text: &str, colour: [u8; 3]) -> u32 {
+        let top = self.y.saturating_sub(PARA_GAP);
         let full = format!("{label} {text}");
         let label_len = label.chars().count();
         for (i, line) in font::wrap(&full, Self::inner()).iter().enumerate() {
@@ -262,13 +270,19 @@ impl Page {
                 let rest: String = line.chars().skip(label_len).collect();
                 let rest_x = PAD + font::ADVANCE * u32::try_from(label_len).unwrap_or(0);
                 self.text(PAD, label, LABEL);
-                self.text(rest_x, &rest, BODY);
+                self.text(rest_x, &rest, colour);
             } else {
-                self.text(PAD, line, BODY);
+                self.text(PAD, line, colour);
             }
             self.y += font::LINE;
         }
         self.y += PARA_GAP;
+        top
+    }
+
+    /// Top of the next thing to draw, in card pixels.
+    pub(crate) fn bottom(&self) -> u32 {
+        self.y
     }
 
     /// The sprites (coarse frame texels, sRGB RGBA, alpha 0 or 255) side by
