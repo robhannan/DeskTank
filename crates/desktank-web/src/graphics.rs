@@ -44,10 +44,11 @@ impl Graphics {
     /// `backend` is `"webgpu"` or `"webgl2"` to force one; anything else
     /// tries WebGPU and falls back to WebGL2 if there is no adapter or the
     /// device request fails. `split_grid` draws with smaller shaders in more
-    /// passes, for GPUs that can't compile the one-pass ones (the webOS
-    /// build, D26; see `GpuOptions::split_grid`); `srgb` false picks a
-    /// non-sRGB canvas format, which WebGL2 presents with a blit instead of
-    /// a shader pass (see `TankSurface::with_srgb`).
+    /// passes (`Some(true)` forces split, `Some(false)` forces one-pass,
+    /// `None` auto-selects split on software adapters; see
+    /// `GpuOptions::split_grid`); `srgb` false (or an active split grid)
+    /// picks a non-sRGB canvas format, which WebGL2 presents with a blit
+    /// instead of a shader pass (see `TankSurface::with_srgb`).
     ///
     /// # Errors
     ///

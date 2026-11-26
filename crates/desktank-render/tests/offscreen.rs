@@ -13,16 +13,21 @@ const H: u32 = 32;
 
 fn gpu() -> Option<&'static Gpu> {
     static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    GPU.get_or_init(|| open_gpu(GpuOptions::default())).as_ref()
+    GPU.get_or_init(|| {
+        open_gpu(GpuOptions {
+            split_grid: Some(false),
+            ..GpuOptions::default()
+        })
+    })
+    .as_ref()
 }
 
 fn gpu_with(options: GpuOptions) -> Option<&'static Gpu> {
-    static SINGLE_GPU: OnceLock<Option<Gpu>> = OnceLock::new();
     static SPLIT_GPU: OnceLock<Option<Gpu>> = OnceLock::new();
-    match options.split_grid {
-        None => gpu(),
-        Some(false) => SINGLE_GPU.get_or_init(|| open_gpu(options)).as_ref(),
-        Some(true) => SPLIT_GPU.get_or_init(|| open_gpu(options)).as_ref(),
+    if options.split_grid == Some(true) {
+        SPLIT_GPU.get_or_init(|| open_gpu(options)).as_ref()
+    } else {
+        gpu()
     }
 }
 

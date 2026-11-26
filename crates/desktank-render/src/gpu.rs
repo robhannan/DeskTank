@@ -107,6 +107,9 @@ impl Gpu {
     }
 }
 
+/// Whether `info` describes a CPU/software rasteriser. On WebGL2 this relies
+/// on `WEBGL_debug_renderer_info` exposing `SwiftShader` in `info.name`; on
+/// native Vulkan/Android emulators software ICDs report `DeviceType::Cpu`.
 fn is_software_adapter(info: &wgpu::AdapterInfo) -> bool {
     info.device_type == wgpu::DeviceType::Cpu
         || info.name.contains("SwiftShader")

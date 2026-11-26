@@ -22,9 +22,10 @@ pub struct TankSurface {
 }
 
 impl TankSurface {
-    /// Configures `surface` for `width`×`height` pixels: sRGB if available,
-    /// vsynced, opaque, at most one frame queued (frames are rare, latency
-    /// matters more than throughput).
+    /// Configures `surface` for `width`×`height` pixels: sRGB if available
+    /// (or non-sRGB when [`Gpu::split_grid`] is enabled so split algae passes
+    /// blend in encoded space), vsynced, opaque, at most one frame queued
+    /// (frames are rare, latency matters more than throughput).
     ///
     /// # Errors
     ///
