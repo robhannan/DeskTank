@@ -1346,7 +1346,10 @@ impl World {
             self.plants.species.get(species).is_some_and(|s| {
                 matches!(s.form, Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_))
             });
-        if rooted_form && !self.piece_anchored(piece, species) {
+        let stem = self.plants.material(Part::Stem);
+        let has_stem =
+            stem.is_some() && piece.iter().any(|&i| Some(self.cells[i].material) == stem);
+        if rooted_form && has_stem && !self.piece_anchored(piece, species) {
             self.plants.rafts.entry(id).or_insert_with(Raft::new);
         }
         self.wake_raft(id);
