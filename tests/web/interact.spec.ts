@@ -804,7 +804,7 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await page.keyboard.press("ArrowRight");
   await expect(tab("Hardscape")).toBeFocused();
   await expect(tab("Hardscape")).toHaveAttribute("aria-selected", "true");
-  await expect(radios).toHaveText(["Rock", "Driftwood"]);
+  await expect(radios).toHaveText(["Rock", "Dragon stone", "Seiryu stone", "Driftwood"]);
   await expect(page.locator("#sub-build-substrate")).toHaveAttribute("data-holds", "");
 
   // Arrows on the tabs open the next tab; one with a single sub-category

@@ -5,6 +5,8 @@ id = 14
 name = "driftwood"
 # Where the palette offers it: a "top/sub" category path (SPEC §2.5).
 palette = "build/hardscape"
+# After the stones, which have later IDs.
+palette_order = 1
 class = "rigid"
 density = 0.7
 colour = "#6b4a2f"

@@ -1,0 +1,11 @@
+# Seiryu stone: dense blue-grey limestone, finely pitted, with pale calcite
+# patches and thin tan veins. A rigid body (D17) that topples, settles, glues
+# and scoops like `rock`; the texture is the renderer's `STYLE_SEIRYU`. The
+# ID is appended so saves load unchanged.
+id = 82
+name = "seiryu_stone"
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
+palette = "build/hardscape"
+class = "rigid"
+density = 2.7
+colour = "#6b6f72"

@@ -1461,7 +1461,9 @@ mod tests {
             ["green_film", "diatoms", "green_spot", "green_dust"].map(id),
             [1, 2, 3, 4]
         );
-        assert!(algae.hardscape.contains(t.id("driftwood").unwrap()));
+        for stone in ["rock", "dragon_stone", "seiryu_stone", "driftwood"] {
+            assert!(algae.hardscape.contains(t.id(stone).unwrap()), "{stone}");
+        }
         assert!(!algae.hardscape.contains(t.id("sand").unwrap()));
         assert!(algae.surfaces.contains(t.id("aquasoil").unwrap()));
         // Neither spots nor dust grow on the bed; the film and diatoms do.

@@ -262,7 +262,7 @@ matter, aren't offered):
 | Palette category | Materials |
 |---|---|
 | Build › Substrate | sand, gravel, aquasoil (holds nutrients), clown vomit gravel (neon pebbles, same physics as gravel) |
-| Build › Hardscape | rock (rigid), driftwood (rigid, starts lighter than water; waterlogs per cell, darkening and sinking over time, and dries in air) |
+| Build › Hardscape | rock (rigid), dragon stone (rigid, khaki clay rock pitted with dark holes, lighter than rock; material `dragon_stone`) and Seiryu stone (rigid, dense grey limestone with white calcite patches and tan veins; material `seiryu_stone`), each behaving exactly like rock and with its own texture, driftwood (rigid, starts lighter than water; waterlogs per cell, darkening and sinking over time, and dries in air) |
 | Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
 | Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders), frozen brine shrimp (sinks and rots; material ID 34, `brine_shrimp`); live bloodworms and brine shrimp are offered from Food › Live (§2.4 *Live food*, D25) |
 | Care | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), waste and **detritus** (waste, dead plant matter and corpses sink and become detritus, which slowly disintegrates into nutrients) |

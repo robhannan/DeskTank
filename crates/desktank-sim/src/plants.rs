@@ -1805,7 +1805,7 @@ mod tests {
         assert_eq!(anubias.describe_form(), "epiphyte");
         assert_eq!(
             anubias.describe_requirements(&m),
-            "low light, clings to rock, driftwood"
+            "low light, clings to rock, dragon stone, seiryu stone, driftwood"
         );
         assert_eq!(anubias.describe_propagation(), "fragments");
 
@@ -1813,7 +1813,7 @@ mod tests {
         assert_eq!(moss.describe_form(), "mat");
         assert_eq!(
             moss.describe_requirements(&m),
-            "low light, clings to rock, driftwood"
+            "low light, clings to rock, dragon stone, seiryu stone, driftwood"
         );
 
         let duckweed = get("duckweed");
@@ -1863,7 +1863,7 @@ mod tests {
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
         let moss = t.get(t.id("java_moss").unwrap()).unwrap();
-        assert!(matches!(&moss.form, Form::Mat(m) if m.on.len() == 2));
+        assert!(matches!(&moss.form, Form::Mat(m) if m.on.len() == 4));
         assert_eq!(t.for_state(0).unwrap().id, first.id);
         assert_eq!(t.for_state(u16::from(moss.id.0)).unwrap().id, moss.id);
         assert_eq!(
@@ -2119,7 +2119,7 @@ mod tests {
             assert!(bacopa.hardiness.tolerance > other.hardiness.tolerance);
         }
         // Christmas moss: a frond mat, brighter than java moss and slower.
-        assert!(matches!(&xmas.form, Form::Mat(f) if f.on.len() == 2));
+        assert!(matches!(&xmas.form, Form::Mat(f) if f.on.len() == 4));
         assert_eq!(
             (java.look.stem, xmas.look.stem),
             (StemShape::Fuzz, StemShape::Frond)

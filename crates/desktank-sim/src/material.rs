@@ -136,6 +136,9 @@ pub struct Material {
     /// The palette sub-category it is poured from, or `None` if it isn't
     /// offered for pouring (air, the tissue plants grow, device cells).
     pub palette: Option<PalettePath>,
+    /// Where it sits within its palette sub-category: lower first, and
+    /// materials of equal order by ID.
+    pub palette_order: u8,
 }
 
 /// Error loading or validating materials.
@@ -201,6 +204,8 @@ struct MaterialDef {
     passable: bool,
     colour: String,
     palette: Option<String>,
+    #[serde(default)]
+    palette_order: u8,
 }
 
 /// The palette embedded in the binary (SPEC T1, T5, T6). Our own values.
@@ -238,6 +243,8 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/rhizome.toml"),
     include_str!("../../../assets/materials/egg.toml"),
     include_str!("../../../assets/materials/algae.toml"),
+    include_str!("../../../assets/materials/dragon_stone.toml"),
+    include_str!("../../../assets/materials/seiryu_stone.toml"),
 ];
 
 /// All materials, ordered by ID.
@@ -400,6 +407,7 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         passable: d.passable,
         colour,
         palette,
+        palette_order: d.palette_order,
     })
 }
 
@@ -426,6 +434,8 @@ mod tests {
             "gravel",
             "clown_vomit_gravel",
             "rock",
+            "dragon_stone",
+            "seiryu_stone",
             "air_bubble",
             "flake_food",
         ] {
