@@ -1780,7 +1780,7 @@ fn px_at(img: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
 /// set.
 #[test]
 fn the_inspect_card_shows_need_meters_in_two_columns_or_one() {
-    #[path = "../src/testing.rs"]
+    #[path = "../../src/testing.rs"]
     mod testing;
 
     let Some(gpu) = gpu() else { return };

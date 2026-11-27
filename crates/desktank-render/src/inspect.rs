@@ -23,7 +23,9 @@
 //! labelled meters (SPEC §2.5, [`crate::needs`]): how well each need is met
 //! and which way it is moving, taken from the simulation's own per-creature
 //! satisfaction and a short history of it that lasts only while it is
-//! inspected.
+//! inspected. A plant's live page has the same section for its care: how
+//! well its light, CO₂ and nutrients suit it ([`World::plant_needs`]),
+//! beside the **Growth** line that names what holds it back most.
 //!
 //! The live page is rebuilt only when what it shows changes (energy moves a
 //! percent, a meter's fill or trend moves a step, a day passes, a letter is
@@ -32,7 +34,8 @@
 
 use desktank_sim::tools::Inspection;
 use desktank_sim::{
-    CreatureId, DeviceId, MAX_NAME_CHARS, Mount, MovementClass, PlantId, UnmetNeed, World,
+    CreatureId, DeviceId, MAX_NAME_CHARS, Mount, MovementClass, NeedReading, PlantId, UnmetNeed,
+    World,
 };
 
 use crate::camera::ViewRect;
@@ -49,6 +52,10 @@ pub const TEXTURE_Y: u32 = card::TEXTURE_Y + CARD_MAX.1;
 
 /// Target pixels between the inspected thing and the card, per card pixel.
 const GAP: u32 = 3;
+
+/// Points a plant's need reading may drift from the one shown before the
+/// meter follows it (see [`InspectCard::hold`]).
+const HOLD: u8 = 2;
 
 /// What the inspect card is pinned to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +154,9 @@ pub(crate) struct InspectCard {
     narrow: bool,
     /// The history the needs' trends are read from.
     trends: Trends,
+    /// The plant readings last shown, which a reading that has only
+    /// wobbled does not replace (see [`HOLD`]).
+    held: Vec<NeedReading>,
 }
 
 impl InspectCard {
@@ -159,8 +169,9 @@ impl InspectCard {
         self.what = what;
         self.page = InspectPage::Live;
         self.edit = None;
-        // A trend belongs to one creature: the next starts afresh.
+        // A trend belongs to one creature or plant: the next starts afresh.
         self.trends.reset();
+        self.held.clear();
         self.refresh(world, true);
         true
     }
@@ -271,7 +282,7 @@ impl InspectCard {
             self.live = None;
             return self.image.take().is_some() || force;
         };
-        let Some(mut live) = live(world, what) else {
+        let Some((mut live, readings)) = live_with_readings(world, what) else {
             *self = Self {
                 can_name: self.can_name,
                 narrow: self.narrow,
@@ -285,9 +296,7 @@ impl InspectCard {
             row.editing.clone_from(&self.edit);
         }
         live.narrow = self.narrow;
-        if let Inspected::Creature(id) = what {
-            self.read_trends(world, id, &mut live);
-        }
+        self.read_trends(world, what, readings, &mut live);
         let changed = self.live.as_ref() != Some(&live);
         let rebuild = force || (changed && self.page == InspectPage::Live);
         if rebuild {
@@ -301,14 +310,53 @@ impl InspectCard {
         rebuild
     }
 
-    /// Fills in the trend of each of `live`'s need meters from the history.
-    fn read_trends(&mut self, world: &World, id: CreatureId, live: &mut Live) {
-        let Some(c) = world.creature(id) else { return };
-        let readings = world.creature_needs(c);
-        let trends = self.trends.observe(id, world.tick_count(), &readings);
+    /// Fills in the trend of each of `live`'s need meters from the history
+    /// (a creature's or plant's own; nothing else has needs).
+    fn read_trends(
+        &mut self,
+        world: &World,
+        what: Inspected,
+        readings: LiveReadings,
+        live: &mut Live,
+    ) {
+        let observed: Vec<NeedReading> = match readings {
+            LiveReadings::None => return,
+            LiveReadings::Creature(r) => r,
+            LiveReadings::Plant(mut r) => {
+                self.hold(&mut r);
+                live.needs = r
+                    .iter()
+                    .take(needs::MAX_NEEDS)
+                    .map(|&r| NeedBar::of(r))
+                    .collect();
+                Vec::from(r)
+            }
+        };
+        let trends = self.trends.observe(what, world.tick_count(), &observed);
         for (bar, trend) in live.needs.iter_mut().zip(trends) {
             bar.trend = trend;
         }
+    }
+
+    /// Steadies a plant's `now` against what was last shown: the light,
+    /// CO₂ and nutrient fields a plant reads shimmer by a point or two from
+    /// tick to tick, which would flicker a meter's end between two steps
+    /// and rebuild the card for nothing. A reading within [`HOLD`] points of
+    /// the one shown stays as it was, except that full and empty are shown
+    /// as soon as they are reached.
+    fn hold(&mut self, now: &mut [NeedReading; 3]) {
+        if self.held.len() == now.len()
+            && self.held.iter().zip(&*now).all(|(a, b)| a.need == b.need)
+        {
+            for (n, shown) in now.iter_mut().zip(&self.held) {
+                let end = n.satisfaction == 0 || n.satisfaction >= 100;
+                if !end && n.satisfaction.abs_diff(shown.satisfaction) <= HOLD {
+                    n.satisfaction = shown.satisfaction;
+                }
+            }
+        }
+        self.held.clear();
+        self.held.extend_from_slice(now);
     }
 
     /// Where it is drawn in a `target`-pixel surface laid out as `grid`,
@@ -341,8 +389,8 @@ pub(crate) struct Live {
     fields: Vec<(&'static str, String)>,
     /// A creature's Name row.
     name: Option<NameRow>,
-    /// A creature's need meters, in display order (none for a species
-    /// without supported needs).
+    /// A creature's or plant's need meters, in display order (none for a
+    /// species without supported needs).
     needs: Vec<NeedBar>,
     /// Whether the needs take one column, not two.
     narrow: bool,
@@ -383,15 +431,34 @@ const NAME_PROMPT: &str = "N or tap to name";
 /// What it says under the text being typed.
 const NAME_HINT: &str = "Enter saves, Esc cancels";
 
-/// The live page of `what`, or `None` if it is gone (died, netted out,
-/// eaten away) or its species is unknown.
-pub(crate) fn live(world: &World, what: Inspected) -> Option<Live> {
+enum LiveReadings {
+    None,
+    Creature(Vec<NeedReading>),
+    Plant([NeedReading; 3]),
+}
+
+fn live_with_readings(world: &World, what: Inspected) -> Option<(Live, LiveReadings)> {
     match what {
         Inspected::Creature(id) => creature_live(world, id),
         Inspected::Plant(id) => plant_live(world, id),
-        Inspected::Device(id) => device_live(world, id),
-        Inspected::Cell { x, y } => cell_live(world, x, y),
+        Inspected::Device(id) => Some((device_live(world, id)?, LiveReadings::None)),
+        Inspected::Cell { x, y } => Some((cell_live(world, x, y)?, LiveReadings::None)),
     }
+}
+
+/// The live page of `what`, or `None` if it is gone (died, netted out,
+/// eaten away) or its species is unknown.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn live(world: &World, what: Inspected) -> Option<Live> {
+    let (mut page, readings) = live_with_readings(world, what)?;
+    if let LiveReadings::Plant(r) = readings {
+        page.needs = r
+            .iter()
+            .take(needs::MAX_NEEDS)
+            .map(|&r| NeedBar::of(r))
+            .collect();
+    }
+    Some(page)
 }
 
 /// What a material does, in a few words.
@@ -479,7 +546,7 @@ fn age_text(days: u32) -> String {
     }
 }
 
-fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
+fn creature_live(world: &World, id: CreatureId) -> Option<(Live, LiveReadings)> {
     let card = world.creature_card(id)?;
     let species = world.creature(id)?.species();
     let kind = format!("{} #{}", display_name(&card.species), id.0);
@@ -504,47 +571,55 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
         Some(UnmetNeed::Air) => fields.push(("Lacks:", "air at the surface".to_owned())),
         None => {}
     }
-    Some(Live {
-        title: kind,
-        subtitle: String::new(),
-        fields,
-        name: Some(NameRow {
-            name: card.name,
-            ..NameRow::default()
-        }),
-        needs: card
-            .needs
-            .iter()
-            .take(crate::needs::MAX_NEEDS)
-            .map(|&r| NeedBar::of(r))
-            .collect(),
-        narrow: false,
-    })
+    let needs = card
+        .needs
+        .iter()
+        .take(crate::needs::MAX_NEEDS)
+        .map(|&r| NeedBar::of(r))
+        .collect();
+    Some((
+        Live {
+            title: kind,
+            subtitle: String::new(),
+            fields,
+            name: Some(NameRow {
+                name: card.name,
+                ..NameRow::default()
+            }),
+            needs,
+            narrow: false,
+        },
+        LiveReadings::Creature(card.needs),
+    ))
 }
 
-fn plant_live(world: &World, id: PlantId) -> Option<Live> {
+fn plant_live(world: &World, id: PlantId) -> Option<(Live, LiveReadings)> {
     let p = world.plant(id)?;
     let sp = world.plant_species().get(p.species)?;
     let [roots, stem, leaves] = p.parts;
-    Some(Live {
-        title: format!("{} #{}", display_name(&sp.name), id.0),
-        subtitle: String::new(),
-        fields: vec![
-            ("Age:", age_text(p.age_days())),
-            ("Health:", percent(p.health)),
-            (
-                "Size:",
-                format!(
-                    "{} cells (roots {roots}, stem {stem}, leaves {leaves})",
-                    p.size()
+    let readings = world.plant_needs(id)?;
+    Some((
+        Live {
+            title: format!("{} #{}", display_name(&sp.name), id.0),
+            subtitle: String::new(),
+            fields: vec![
+                ("Age:", age_text(p.age_days())),
+                ("Health:", percent(p.health)),
+                (
+                    "Size:",
+                    format!(
+                        "{} cells (roots {roots}, stem {stem}, leaves {leaves})",
+                        p.size()
+                    ),
                 ),
-            ),
-            ("Growth:", p.limit.describe()),
-        ],
-        name: None,
-        needs: Vec::new(),
-        narrow: false,
-    })
+                ("Growth:", p.limit.describe()),
+            ],
+            name: None,
+            needs: Vec::new(),
+            narrow: false,
+        },
+        LiveReadings::Plant(readings),
+    ))
 }
 
 /// Draws the live page, numbered if there is a second, and where its Name
@@ -1579,6 +1654,474 @@ mod tests {
         let g = Layout::fit((160, 90), (320, 180));
         card.set_narrow(&w, false);
         assert!(card.layout(&w, (320, 180), &g, None, None, 0).is_some());
+    }
+
+    // ---- Plants: light, CO₂ and nutrient meters. ----
+
+    /// Four ludwigia 40 columns apart in a tank with a bed, grown for a
+    /// minute and left at their own conditions: `[open, shaded, ...]`, left
+    /// to right. Nothing is dosed, so CO₂ holds each back.
+    fn garden() -> (World, [PlantId; 4]) {
+        let mut w = world();
+        let soil = w.materials().id("aquasoil").unwrap();
+        w.fill_rect(
+            desktank_sim::Rect {
+                x0: 0,
+                y0: 84,
+                x1: 160,
+                y1: 90,
+            },
+            soil,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+        let ludwigia = w.plant_species().id("ludwigia").unwrap();
+        for x in [20, 60, 100, 140] {
+            w.paint_plant(x, 60, 0, ludwigia, desktank_sim::Propagule::Cuttings)
+                .unwrap();
+        }
+        for _ in 0..1200 {
+            w.tick();
+        }
+        let mut plants: Vec<_> = w.plants().collect();
+        plants.sort_by_key(|p| p.base.0);
+        let ids: Vec<_> = plants.iter().map(|p| p.id).collect();
+        (w, ids.try_into().expect("four plants rooted"))
+    }
+
+    /// Adds `amount` of `kind` to every field cell around plant `id`, as
+    /// many times as it takes to be seen.
+    fn pour(w: &mut World, id: PlantId, kind: desktank_sim::FieldKind, amount: f32) {
+        let p = w.plant(id).unwrap();
+        for y in p.bounds.y0.saturating_sub(6)..p.bounds.y1 + 6 {
+            for x in p.bounds.x0.saturating_sub(10)..p.bounds.x1 + 10 {
+                w.add_to_field(kind, x, y, amount);
+            }
+        }
+    }
+
+    /// A plant's reading of `need`.
+    fn reading(w: &World, id: PlantId, need: desktank_sim::Need) -> u8 {
+        w.plant_needs(id)
+            .unwrap()
+            .iter()
+            .find(|r| r.need == need)
+            .unwrap()
+            .satisfaction
+    }
+
+    /// Doses CO₂ around `id` until its CO₂ reading reaches `to`.
+    fn dose_co2(w: &mut World, id: PlantId, to: u8) {
+        dose(
+            w,
+            id,
+            desktank_sim::FieldKind::Co2,
+            desktank_sim::Need::Co2,
+            to,
+        );
+    }
+
+    /// Pours `kind` around `id` a little at a time until its `need` reading
+    /// reaches `to`.
+    fn dose(
+        w: &mut World,
+        id: PlantId,
+        kind: desktank_sim::FieldKind,
+        need: desktank_sim::Need,
+        to: u8,
+    ) {
+        for _ in 0..200 {
+            if reading(w, id, need) >= to {
+                return;
+            }
+            pour(w, id, kind, 0.002);
+        }
+        panic!("{need:?} never reached {to}");
+    }
+
+    /// A rock lid glued over columns `x0..x1` at the surface.
+    fn shade(w: &mut World, x0: usize, x1: usize) {
+        let rock = w.materials().id("rock").unwrap();
+        w.fill_rect(
+            desktank_sim::Rect {
+                x0,
+                y0: 8,
+                x1,
+                y1: 13,
+            },
+            rock,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+        let body = w.body_at(x0, 8).unwrap();
+        assert!(w.set_anchored(body, true));
+    }
+
+    /// The four conditions of the issue, one per plant of a garden:
+    /// thriving, light-limited, CO₂-limited and nutrient-limited. With
+    /// `settle` ticks the plants first update under them (every five
+    /// seconds), so their Growth lines name what limits them now.
+    fn conditions(settle: u32) -> (World, [PlantId; 4]) {
+        let (mut w, [thriving, shaded, co2, starved]) = garden();
+        shade(&mut w, 44, 80);
+        for round in 0..2 {
+            if round == 1 {
+                for _ in 0..settle {
+                    w.tick();
+                }
+            }
+            dose_co2(&mut w, thriving, 95);
+            dose_co2(&mut w, shaded, 95);
+            // The CO₂-limited one is left as it is.
+            dose_co2(&mut w, starved, 95);
+            pour(&mut w, starved, desktank_sim::FieldKind::Nutrient, -50.0);
+        }
+        for _ in 0..5 {
+            w.tick();
+        }
+        (w, [thriving, shaded, co2, starved])
+    }
+
+    fn bar_fills(card: &InspectCard) -> Vec<u8> {
+        card.live
+            .as_ref()
+            .unwrap()
+            .needs
+            .iter()
+            .map(|b| b.fill)
+            .collect()
+    }
+
+    #[test]
+    fn a_plant_live_page_has_light_co2_and_nutrient_bars_beside_its_growth() {
+        let (w, [a, ..]) = garden();
+        let live = live(&w, Inspected::Plant(a)).unwrap();
+        let labels: Vec<_> = live.needs.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["Light", "CO₂", "Nutrients"]);
+        // The bars are the simulation's own per-plant readings.
+        let readings = w.plant_needs(a).unwrap();
+        for (bar, reading) in live.needs.iter().zip(readings) {
+            assert_eq!(*bar, NeedBar::of(reading));
+        }
+        // The Growth line is still there, and the card fits in both
+        // layouts with the Needs section in.
+        assert!(live.fields.iter().any(|(label, _)| *label == "Growth:"));
+        let mut plain = live.clone();
+        plain.needs.clear();
+        let without = build_live(&plain, true).0;
+        for narrow in [false, true] {
+            let mut live = live.clone();
+            live.narrow = narrow;
+            let (image, row) = build_live(&live, true);
+            assert!(!image.clipped, "narrow {narrow}");
+            assert!(
+                image.size.1 <= card::CARD_MAX.1,
+                "{narrow}: {:?}",
+                image.size
+            );
+            assert!(image.size.1 > without.size.1 + font::LINE);
+            assert_eq!(row, None, "plants have no name row");
+        }
+        // Two rows of meters in two columns, three in one.
+        let rows = |narrow| {
+            let mut live = live.clone();
+            live.narrow = narrow;
+            build_live(&live, true).0.size.1
+        };
+        assert!(rows(true) > rows(false));
+    }
+
+    #[test]
+    fn thriving_and_limited_plants_read_differently_in_each_factor() {
+        use desktank_sim::Need;
+        let (w, [thriving, shaded, co2, starved]) = conditions(0);
+        let fills = |id| {
+            live(&w, Inspected::Plant(id))
+                .unwrap()
+                .needs
+                .iter()
+                .map(|b| (b.label, b.fill, b.level))
+                .collect::<Vec<_>>()
+        };
+        let (ok, dim, flat, hungry) = (fills(thriving), fills(shaded), fills(co2), fills(starved));
+        // Thriving: every bar comfortable.
+        assert!(
+            ok.iter().all(|b| b.2 >= desktank_sim::NeedLevel::Middling),
+            "{ok:?}"
+        );
+        // Each limited plant is short in exactly its own factor.
+        assert!(dim[0].1 + 10 < ok[0].1, "light: {dim:?} vs {ok:?}");
+        assert!(flat[1].1 + 10 < ok[1].1, "CO₂: {flat:?} vs {ok:?}");
+        assert!(
+            hungry[2].1 + 10 < ok[2].1,
+            "nutrients: {hungry:?} vs {ok:?}"
+        );
+        assert!(dim[1].1 > dim[0].1 && hungry[1].1 > hungry[2].1);
+        assert!(reading(&w, co2, Need::Co2) < 75);
+        // Each read from the card is the simulation's reading.
+        for id in [thriving, shaded, co2, starved] {
+            let readings = w.plant_needs(id).unwrap();
+            let bars = live(&w, Inspected::Plant(id)).unwrap().needs;
+            assert_eq!(
+                bars,
+                readings.iter().map(|&r| NeedBar::of(r)).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn changing_tank_conditions_moves_a_plants_bars_and_trends() {
+        use desktank_sim::{FieldKind, Need};
+        let (mut w, [a, ..]) = garden();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Plant(a)));
+        run(&mut w, &mut card, 12);
+        // Steady conditions, no trend.
+        let steady = bars(&card);
+        assert!(steady.iter().all(|&(_, trend)| trend == 0), "{steady:?}");
+        let before = bar_fills(&card);
+        // Strip the nutrients: the nutrient bar falls, its trend points
+        // down, and the light and CO₂ bars stay put.
+        pour(&mut w, a, FieldKind::Nutrient, -50.0);
+        run(&mut w, &mut card, 6);
+        let after = bars(&card);
+        assert!(after[2].0 < before[2], "{before:?} -> {after:?}");
+        assert!(after[2].1 < 0, "falling: {after:?}");
+        assert_eq!(after[0].1, 0);
+        assert_eq!(after[1].1, 0);
+        assert_eq!(reading(&w, a, Need::Light).div_ceil(2), after[0].0);
+        // Feed them back: it rises again, and the trend turns.
+        dose(&mut w, a, FieldKind::Nutrient, Need::Nutrients, 90);
+        run(&mut w, &mut card, 6);
+        let fed = bars(&card);
+        assert!(fed[2].0 > after[2].0, "{after:?} -> {fed:?}");
+        // Dim the light: the light bar falls with a falling trend.
+        let p = w.plant(a).unwrap();
+        shade(&mut w, p.bounds.x0.saturating_sub(10), p.bounds.x1 + 10);
+        run(&mut w, &mut card, 8);
+        let dim = bars(&card);
+        assert!(dim[0].0 + 4 < fed[0].0, "{fed:?} -> {dim:?}");
+        assert!(dim[0].1 < 0, "falling: {dim:?}");
+        // A changed bar is a changed image, built from the live page.
+        let rebuilt = build_live(card.live.as_ref().unwrap(), true).0;
+        assert_eq!(card.image.as_ref(), Some(&rebuilt));
+    }
+
+    #[test]
+    fn a_plants_shimmering_reading_is_held_steady_but_real_moves_and_the_ends_show() {
+        use desktank_sim::Need;
+        let at = |l, c, n| {
+            [
+                NeedReading {
+                    need: Need::Light,
+                    satisfaction: l,
+                },
+                NeedReading {
+                    need: Need::Co2,
+                    satisfaction: c,
+                },
+                NeedReading {
+                    need: Need::Nutrients,
+                    satisfaction: n,
+                },
+            ]
+        };
+        let shown = |mut r: [NeedReading; 3], card: &mut InspectCard| {
+            card.hold(&mut r);
+            r.map(|r| r.satisfaction)
+        };
+        let mut card = InspectCard::default();
+        // The first reading is shown as it is.
+        assert_eq!(shown(at(60, 50, 76), &mut card), [60, 50, 76]);
+        // A point or two either way is the field shimmering: held.
+        assert_eq!(shown(at(61, 48, 77), &mut card), [60, 50, 76]);
+        assert_eq!(shown(at(58, 52, 75), &mut card), [60, 50, 76]);
+        // Three points is a move, and is held from there.
+        assert_eq!(shown(at(63, 50, 73), &mut card), [63, 50, 73]);
+        assert_eq!(shown(at(64, 50, 72), &mut card), [63, 50, 73]);
+        // Full and empty show at once, and stay while the reading is within
+        // reach of them.
+        assert_eq!(shown(at(100, 0, 74), &mut card), [100, 0, 73]);
+        assert_eq!(shown(at(99, 1, 74), &mut card), [100, 0, 73]);
+        assert_eq!(shown(at(97, 3, 74), &mut card), [97, 3, 73]);
+        // A new subject starts from nothing.
+        card.held.clear();
+        assert_eq!(shown(at(1, 2, 3), &mut card), [1, 2, 3]);
+    }
+
+    #[test]
+    fn switching_between_plants_shows_each_individuals_values_at_once() {
+        let (w, [thriving, shaded, co2, starved]) = conditions(0);
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Plant(thriving)));
+        let t_bars = bars(&card);
+        let mut seen = vec![t_bars.clone()];
+        for id in [shaded, co2, starved, thriving] {
+            assert!(card.set(&w, Some(Inspected::Plant(id))));
+            let now = bars(&card);
+            // Straight away this plant's own readings, no trend carried
+            // from the last one.
+            let own: Vec<_> = w
+                .plant_needs(id)
+                .unwrap()
+                .iter()
+                .map(|r| (r.satisfaction.div_ceil(2), 0))
+                .collect();
+            assert_eq!(now, own, "{id:?}");
+            let rebuilt = build_live(card.live.as_ref().unwrap(), true).0;
+            assert_eq!(card.image.as_ref(), Some(&rebuilt));
+            seen.push(now);
+        }
+        assert_eq!(seen[0], seen[4], "back to the first, the same bars");
+        assert!(
+            seen[..4]
+                .iter()
+                .enumerate()
+                .all(|(i, a)| { seen[..4].iter().skip(i + 1).all(|b| a != b) }),
+            "four plants, four different sets of bars: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn the_plant_card_is_rebuilt_only_when_a_meter_moves_and_not_at_all_when_closed() {
+        let (mut w, [a, ..]) = garden();
+        let mut card = InspectCard::default();
+        run(&mut w, &mut card, 50);
+        assert!(card.image.is_none() && !card.dirty && card.trends.is_empty());
+        assert!(!card.refresh(&w, false));
+
+        card.set(&w, Some(Inspected::Plant(a)));
+        card.dirty = false;
+        let (mut rebuilds, mut previous) = (0, card.image.clone());
+        for _ in 0..600 {
+            w.tick();
+            if card.refresh(&w, false) {
+                rebuilds += 1;
+                assert!(card.dirty);
+                assert_ne!(card.image, previous, "rebuilt only for a change");
+            } else {
+                assert_eq!(card.image, previous, "no change, no rebuild");
+                assert!(!card.dirty);
+            }
+            card.dirty = false;
+            previous.clone_from(&card.image);
+        }
+        // A settled plant rarely moves a meter: well under once a second.
+        assert!(rebuilds < 30, "{rebuilds} rebuilds in 600 ticks");
+        // Closing forgets the history and does no more work.
+        assert!(card.set(&w, None));
+        assert!(card.image.is_none() && card.trends.is_empty());
+        card.dirty = false;
+        run(&mut w, &mut card, 100);
+        assert!(card.image.is_none() && !card.dirty && card.trends.is_empty());
+    }
+
+    #[test]
+    fn a_narrow_plant_card_stacks_the_bars_and_the_species_page_still_turns() {
+        let (w, [a, ..]) = garden();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Plant(a)));
+        let wide = card.image.clone().unwrap();
+        card.dirty = false;
+        assert!(card.set_narrow(&w, true));
+        assert!(card.dirty);
+        let narrow = card.image.clone().unwrap();
+        assert!(narrow.size.1 > wide.size.1, "one column is taller");
+        assert!(!narrow.clipped && !wide.clipped);
+        assert!(narrow.size.1 <= card::CARD_MAX.1);
+        assert_eq!(bars(&card).len(), 3);
+        // 1/2 and 2/2 both ways, the bars back as they were.
+        assert!(card.set_page(&w, InspectPage::Species));
+        assert_eq!(card.page.tag(), "2/2");
+        assert_ne!(card.image.as_ref(), Some(&narrow));
+        assert!(card.set_page(&w, InspectPage::Live));
+        assert_eq!(card.page.tag(), "1/2");
+        assert_eq!(card.image.as_ref(), Some(&narrow));
+        // Turning to the species card does not drop the history.
+        assert!(card.set_narrow(&w, false));
+        assert_eq!(card.image.as_ref(), Some(&wide));
+        // The card fits a phone and a desktop target at scale 1 and up.
+        for narrow in [false, true] {
+            card.set_narrow(&w, narrow);
+            let g = Layout::fit((320, 180), (360, 640));
+            assert!(card.layout(&w, (360, 640), &g, None, 0).is_some());
+        }
+        // A plant that is gone closes the card.
+        let mut w = w;
+        let p = w.plant(a).unwrap();
+        w.fill_rect(
+            p.bounds,
+            w.materials().id("water").unwrap(),
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+        w.tick();
+        assert!(card.refresh(&w, false));
+        assert!(card.what.is_none() && card.image.is_none());
+    }
+
+    /// Writes the plant examples of the issue as PNGs to
+    /// `target/shots/plant-inspect-need-bars/` when `INSPECT_SHOTS` is set:
+    /// the four conditions side by side, then one card in two columns and in
+    /// one.
+    #[test]
+    fn writes_plant_card_shots_on_request() {
+        if std::env::var_os("INSPECT_SHOTS").is_none() {
+            return;
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/plant-inspect-need-bars");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut w, ids) = conditions(110);
+        let write = |name: &str, images: &[CardImage], scale: u32| {
+            let gap = 6;
+            let total_w: u32 = images.iter().map(|i| i.size.0).sum::<u32>()
+                + gap * u32::try_from(images.len() - 1).unwrap();
+            let height = images.iter().map(|i| i.size.1).max().unwrap();
+            let mut sheet = vec![0_u8; (total_w * height * 4) as usize];
+            let mut x0 = 0;
+            for image in images {
+                for y in 0..image.size.1 {
+                    for x in 0..image.size.0 {
+                        let i = ((y * image.size.0 + x) * 4) as usize;
+                        let o = ((y * total_w + x0 + x) * 4) as usize;
+                        sheet[o..o + 4].copy_from_slice(&image.pixels[i..i + 4]);
+                    }
+                }
+                x0 += image.size.0 + gap;
+            }
+            std::fs::write(
+                dir.join(name),
+                crate::testing::png(
+                    &crate::needs::tests::enlarge(&sheet, (total_w, height), scale),
+                    (total_w * scale, height * scale),
+                ),
+            )
+            .unwrap();
+        };
+        let card_of = |w: &World, id: PlantId, narrow: bool| {
+            let mut card = InspectCard::default();
+            card.set_narrow(w, narrow);
+            card.set(w, Some(Inspected::Plant(id)));
+            card.image.unwrap()
+        };
+        // Thriving, light-, CO₂- and nutrient-limited, two columns.
+        let cards: Vec<_> = ids.iter().map(|&id| card_of(&w, id, false)).collect();
+        write("thriving-and-limited-two-column.png", &cards, 4);
+        let cards: Vec<_> = ids.iter().map(|&id| card_of(&w, id, true)).collect();
+        write("thriving-and-limited-narrow.png", &cards, 4);
+        // Desktop two-column and narrow single-column, with trends: the
+        // CO₂-limited plant just dosed, its nutrients stripped meanwhile.
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Plant(ids[2])));
+        run(&mut w, &mut card, 10);
+        dose_co2(&mut w, ids[2], 95);
+        pour(&mut w, ids[2], desktank_sim::FieldKind::Nutrient, -50.0);
+        run(&mut w, &mut card, 6);
+        let wide = card.image.clone().unwrap();
+        card.set_narrow(&w, true);
+        let narrow = card.image.clone().unwrap();
+        write("trends-desktop-and-narrow.png", &[wide, narrow], 5);
     }
 
     /// Writes a tetra's live card, just after a first bite, in two columns

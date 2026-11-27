@@ -50,7 +50,7 @@ use std::sync::Arc;
 
 use rand_core::Rng as _;
 
-use super::creatures::DEPTH_BANDS;
+use super::creatures::{DEPTH_BANDS, Need, NeedReading};
 use super::{World, WorldError, variant};
 use crate::ecology::{DIRS, keep_per_tick, powu};
 use crate::field::FieldKind;
@@ -407,6 +407,75 @@ impl World {
             .table
             .get(&id.0)
             .map(|p| self.plant_info(id.0, p))
+    }
+
+    /// How well each care factor suits plant `id` right now, in display
+    /// order (light, CO₂, nutrients): 100 at the species' optimum, less
+    /// towards the edges of its range, 0 outside it. Every species depends
+    /// on all three (its [`Preferences`](crate::plants::Preferences)), so
+    /// every plant has three readings. `None` if there is no such plant.
+    ///
+    /// Each reading is the species' response to the mean of the field over
+    /// the plant's own cells, taken the way its update samples them (light
+    /// at stems, leaves and rhizomes; a root feeder's nutrients at its
+    /// roots), so it moves with the tank as the plant's growth does but is
+    /// not smoothed by the sample window. It is derived from the world, so
+    /// it is not saved and does not touch the simulation.
+    #[must_use]
+    pub fn plant_needs(&self, id: PlantId) -> Option<[NeedReading; 3]> {
+        let p = self.plants.table.get(&id.0)?;
+        let s = self.plants.species.get(p.species)?;
+        let (bx, by) = (p.base % self.width, p.base / self.width);
+        let mut sums = [0.0_f32; 3];
+        let mut counts = [0_u32; 3];
+        let r = self.clip_to_grid(p.bounds);
+        for y in r.y0..r.y1 {
+            let row = y * self.width;
+            for x in r.x0..r.x1 {
+                let c = self.cells[row + x];
+                if c.state != id.0 {
+                    continue;
+                }
+                let Some(part) = self.plants.part(c.material) else {
+                    continue;
+                };
+                let light = part
+                    .sees_light()
+                    .then(|| self.field(FieldKind::Light).at_cell(x, y));
+                let nutrient = (!s.growth.root_feeder || !part.sees_light())
+                    .then(|| self.field(FieldKind::Nutrient).at_cell(x, y));
+                let co2 = self.field(FieldKind::Co2).at_cell(x, y);
+                for (k, v) in [light, nutrient, Some(co2)].into_iter().enumerate() {
+                    if let Some(v) = v {
+                        sums[k] += v;
+                        counts[k] += 1;
+                    }
+                }
+            }
+        }
+        let at_base = |f: FieldKind| self.field(f).at_cell(bx, by);
+        let base = [
+            at_base(FieldKind::Light),
+            at_base(FieldKind::Nutrient),
+            at_base(FieldKind::Co2),
+        ];
+        let reading = |need: Need, factor: Factor, k: usize| {
+            #[allow(clippy::cast_precision_loss)] // cell counts are small
+            let mean = if counts[k] > 0 {
+                sums[k] / counts[k] as f32
+            } else {
+                base[k]
+            };
+            let response = s.prefer.range(factor).response(mean).clamp(0.0, 1.0);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0..=100
+            let satisfaction = (response * 100.0).round() as u8;
+            NeedReading { need, satisfaction }
+        };
+        Some([
+            reading(Need::Light, Factor::Light, 0),
+            reading(Need::Co2, Factor::Co2, 2),
+            reading(Need::Nutrients, Factor::Nutrient, 1),
+        ])
     }
 
     /// The plant the cell at `(x, y)` belongs to, if any.

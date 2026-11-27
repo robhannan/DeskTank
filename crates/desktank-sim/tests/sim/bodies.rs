@@ -305,8 +305,8 @@ name = "wood"
 class = "rigid"
 density = 0.6
 colour = "#7a5a3a""##;
-    let water = include_str!("../../../assets/materials/water.toml");
-    let air = include_str!("../../../assets/materials/air.toml");
+    let water = include_str!("../../../../assets/materials/water.toml");
+    let air = include_str!("../../../../assets/materials/air.toml");
     let table = MaterialTable::from_toml_sources(&[water, air, wood]).unwrap();
     let config = WorldConfig {
         width: 64,
