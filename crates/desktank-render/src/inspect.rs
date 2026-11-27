@@ -127,6 +127,7 @@ impl InspectPage {
 /// The inspect card a tank shows: what it is pinned to, its page and its
 /// image, kept up to date with the world by [`InspectCard::refresh`].
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // independent card states
 pub(crate) struct InspectCard {
     /// What it is pinned to, if anything.
     pub(crate) what: Option<Inspected>,
@@ -140,6 +141,10 @@ pub(crate) struct InspectCard {
     pub(crate) dirty: bool,
     /// Whether the host lets the viewer name creatures.
     can_name: bool,
+    /// The card only shows, as on the screensaver tour (D29): it takes no
+    /// name, whatever the host allows, so the Name row shows a name that is
+    /// there, read-only, and no prompt.
+    read_only: bool,
     /// The name being typed, while editing.
     edit: Option<String>,
     /// The name row in the image, as `[x, y, width, height]` in card
@@ -188,11 +193,32 @@ impl InspectCard {
         if self.can_name == can_name {
             return false;
         }
+        let was = self.can_name();
         self.can_name = can_name;
         if !can_name {
             self.edit = None;
         }
-        self.what.is_some() && self.refresh(world, false)
+        self.what.is_some() && self.can_name() != was && self.refresh(world, false)
+    }
+
+    /// Whether the viewer may name creatures: the host allows it and the
+    /// card isn't read-only.
+    fn can_name(&self) -> bool {
+        self.can_name && !self.read_only
+    }
+
+    /// Makes the card read-only (or not): it then never shows the name
+    /// prompt nor takes a name edit, whatever [`Self::set_can_name`] says.
+    /// Returns whether a frame is needed.
+    pub(crate) fn set_read_only(&mut self, world: &World, read_only: bool) -> bool {
+        if self.read_only == read_only {
+            return false;
+        }
+        self.read_only = read_only;
+        if read_only {
+            self.edit = None;
+        }
+        self.what.is_some() && self.can_name && self.refresh(world, false)
     }
 
     /// Starts editing the creature's name from `edit` (`None`: stops),
@@ -202,7 +228,7 @@ impl InspectCard {
     /// needed.
     pub(crate) fn set_name_edit(&mut self, world: &World, edit: Option<&str>) -> bool {
         let edit = edit
-            .filter(|_| self.can_name && matches!(self.what, Some(Inspected::Creature(_))))
+            .filter(|_| self.can_name() && matches!(self.what, Some(Inspected::Creature(_))))
             .map(|text| {
                 text.chars()
                     .filter(|c| !c.is_control())
@@ -229,7 +255,7 @@ impl InspectCard {
     /// [`Self::layout`]), for hit tests; `None` unless naming is allowed
     /// and the live page of a creature's card is shown.
     pub(crate) fn name_rect(&self, at: &CardLayout) -> Option<ScreenRect> {
-        let [left, top, width, height] = self.name_row.filter(|_| self.can_name)?;
+        let [left, top, width, height] = self.name_row.filter(|_| self.can_name())?;
         let scale = at.scale;
         Some(ScreenRect {
             origin: (at.origin.0 + left * scale, at.origin.1 + top * scale),
@@ -260,12 +286,13 @@ impl InspectCard {
             *self = Self {
                 can_name: self.can_name,
                 narrow: self.narrow,
+                read_only: self.read_only,
                 ..Self::default()
             };
             return true;
         };
         if let Some(row) = &mut live.name {
-            row.can_name = self.can_name;
+            row.can_name = self.can_name();
             row.editing.clone_from(&self.edit);
         }
         live.narrow = self.narrow;
@@ -1028,6 +1055,67 @@ mod tests {
                 .and_then(|at| card.name_rect(&at)),
             None
         );
+    }
+
+    #[test]
+    fn a_read_only_card_never_offers_or_takes_a_name_whatever_the_host_allows() {
+        let g = grid();
+        let mut w = world();
+        let guppy = w.species().id("guppy").unwrap();
+        let id = w.add_creature(guppy, 80, 40).unwrap();
+        let target = (1280, 720);
+        let rect = |card: &InspectCard, w: &World| {
+            card.layout(w, target, &g, None, None, 0)
+                .and_then(|at| card.name_rect(&at))
+        };
+
+        // What a viewer's card looks like: no prompt for an unnamed creature.
+        let mut viewer = InspectCard::default();
+        viewer.set(&w, Some(Inspected::Creature(id)));
+        let viewer_image = viewer.image.clone();
+
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(id)));
+        assert!(card.set_can_name(&w, true));
+        assert!(rect(&card, &w).is_some(), "the owner's card offers a name");
+        assert_ne!(card.image, viewer_image, "with its prompt");
+
+        // Read-only drops the prompt (and any edit) and the click target.
+        assert!(card.set_name_edit(&w, Some("Bub")));
+        assert!(card.set_read_only(&w, true));
+        assert!(!card.set_read_only(&w, true));
+        assert_eq!(card.image, viewer_image);
+        assert_eq!(card.name_edit(), None);
+        assert_eq!(rect(&card, &w), None);
+        // Naming allowed again, or edits asked for, change nothing.
+        assert!(!card.set_can_name(&w, false));
+        assert!(!card.set_can_name(&w, true));
+        assert!(!card.set_name_edit(&w, Some("Bub")));
+        assert_eq!(card.name_edit(), None);
+        assert_eq!(card.image, viewer_image);
+
+        // A creature that has a name still shows it, read-only; and it
+        // stays read-only when the card is pinned to another creature.
+        w.set_creature_name(id, "Bubbles");
+        assert!(card.refresh(&w, false));
+        assert_ne!(card.image, viewer_image, "the name row is there");
+        assert_eq!(rect(&card, &w), None, "but nothing to click");
+        let other = w.add_creature(guppy, 90, 40).unwrap();
+        card.set(&w, Some(Inspected::Creature(other)));
+        let mut viewer = InspectCard::default();
+        viewer.set(&w, Some(Inspected::Creature(other)));
+        assert_eq!(card.image, viewer.image, "no prompt on an unnamed one");
+        assert_eq!(rect(&card, &w), None);
+        // The creature goes: the card goes, and stays read-only.
+        w.remove_creature(other);
+        assert!(card.refresh(&w, false));
+        assert_eq!(card.what, None);
+        assert!(card.read_only);
+
+        // Turning it off gives the owner's card back.
+        card.set(&w, Some(Inspected::Creature(id)));
+        assert!(card.set_read_only(&w, false));
+        assert!(rect(&card, &w).is_some());
     }
 
     #[test]

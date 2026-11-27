@@ -2262,6 +2262,147 @@ fn camera_screenshots() {
     );
 }
 
+// The screensaver camera tour (D29), driven by the tank as a screensaver host
+// would: a target size, `set_tour`, and then only simulation steps and draws.
+
+/// A 160×90 tank with a rock, a few leaves and eight creatures, for the tour.
+fn tour_tank() -> Tank {
+    let materials = MaterialTable::builtin().unwrap();
+    let rock = materials.id("rock").unwrap();
+    let leaf = materials.id("leaf").unwrap();
+    let mut world = World::new(
+        WorldConfig {
+            width: 160,
+            height: 90,
+            seed: 11,
+            water_level: 1.0,
+        },
+        materials,
+    )
+    .unwrap();
+    world.paint(110, 80, 9, rock, Brush::Replace).unwrap();
+    for (x, h) in [(20, 14), (26, 9), (130, 12)] {
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: x,
+                    y0: 88 - h,
+                    x1: x + 3,
+                    y1: 88,
+                },
+                leaf,
+                Brush::Replace,
+            )
+            .unwrap();
+    }
+    let names: Vec<String> = world.species().iter().map(|s| s.name.clone()).collect();
+    for (i, name) in (0..8_i64).zip(&names) {
+        let sp = world.species().id(name).unwrap();
+        world
+            .add_creature(sp, 20 + 16 * i, 22 + 9 * (i % 3))
+            .unwrap();
+    }
+    let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_saver_mode(true);
+    tank
+}
+
+#[test]
+fn a_touring_tank_draws_the_tours_view_and_card_without_being_told_the_size() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = (640, 360);
+    let settings = desktank_render::TourSettings {
+        seed: 4,
+        card: true,
+    };
+    let mut plain = tour_tank();
+    let plain_image = render_sized(gpu, &mut plain, format, target);
+
+    let mut tank = tour_tank();
+    tank.set_tour(Some(settings));
+    assert_eq!(tank.camera(), None, "no size known yet");
+    // The first draw tells it the size, and the camera is on that frame (the
+    // full-tank view, before the tour's first step).
+    render_sized(gpu, &mut tank, format, target);
+    assert_eq!(tank.camera(), Some(tank.camera_fit(target)));
+
+    // Step until a glide has settled: the card is drawn beside its creature.
+    let mut card = None;
+    for _ in 0..60 * 20 {
+        tank.step();
+        card = tank.tour_card();
+        if card.is_some() {
+            break;
+        }
+    }
+    let card = card.expect("a focus settled");
+    assert_ne!(
+        tank.camera(),
+        Some(tank.camera_fit(target)),
+        "the view has moved in"
+    );
+    assert_eq!(
+        tank.inspected(),
+        Some(desktank_render::Inspected::Creature(card.creature))
+    );
+    let with_card = render_sized(gpu, &mut tank, format, target);
+    let at = tank.inspect_layout(target).expect("the card has a place");
+    assert!(at.origin.0 + at.size().0 <= target.0 && at.origin.1 + at.size().1 <= target.1);
+    // Without the card setting the same view draws without it.
+    tank.set_tour(Some(desktank_render::TourSettings {
+        card: false,
+        ..settings
+    }));
+    assert_eq!(tank.inspected(), None);
+    let without_card = render_sized(gpu, &mut tank, format, target);
+    assert!(with_card != without_card, "the card is in the picture");
+
+    // Turning the tour off draws the plain tank again, byte for byte.
+    let mut off = tour_tank();
+    off.set_tour(Some(settings));
+    render_sized(gpu, &mut off, format, target);
+    off.set_tour(None);
+    assert_eq!(render_sized(gpu, &mut off, format, target), plain_image);
+}
+
+/// Writes a frame sequence of the tour (the card on) to `target/shots/tour/`
+/// when `DESKTANK_SHOTS` is set: 12 frames, 15 s of world time apart.
+#[test]
+fn tour_screenshots() {
+    let Some(gpu) = gpu() else { return };
+    if std::env::var_os("DESKTANK_SHOTS").is_none() {
+        return;
+    }
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = (1280, 720);
+    let mut tank = tour_tank();
+    tank.set_target_size(target);
+    tank.set_tour(Some(desktank_render::TourSettings {
+        seed: 7,
+        card: true,
+    }));
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/shots/tour");
+    std::fs::create_dir_all(&dir).unwrap();
+    for frame in 0..12 {
+        for _ in 0..15 * 20 {
+            tank.step();
+        }
+        let img = render_sized(gpu, &mut tank, format, target);
+        let file = std::fs::File::create(dir.join(format!("tour_{frame:02}.png"))).unwrap();
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), target.0, target.1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&img).unwrap();
+        eprintln!(
+            "frame {frame}: {} card {:?} view {:?}",
+            (frame + 1) * 15,
+            tank.tour_card().map(|c| c.page),
+            tank.camera()
+        );
+    }
+}
+
 /// A honey gourami's inspect card shows `Hunger` and `Shelter` (and no
 /// `Social`): the shelter bar falls while it is out in open water and rises
 /// again once it has gone to plant cover, and with no cover in the tank it

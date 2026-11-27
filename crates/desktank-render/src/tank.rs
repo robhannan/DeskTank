@@ -14,6 +14,7 @@ use crate::layout::Layout;
 use crate::pacing::{FrameRequest, Pacer};
 use crate::renderer::{Overlay, Renderer};
 use crate::timer::GpuTimer;
+use crate::tour::{Stage, Tour, TourCard};
 use crate::{Gpu, TankSurface};
 
 /// Frame-rate cap for optional plant sway (SPEC §2.7, T6d).
@@ -84,6 +85,31 @@ impl Default for TankConfig {
         Self { max_fps: 30 }
     }
 }
+
+/// The screensaver camera tour (D29; see [`Tank::set_tour`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TourSettings {
+    /// Seeds the tour's choices of creature, timing and glide: the same
+    /// seed over the same tank and steps gives the same tour.
+    pub seed: u64,
+    /// Shows the inspect card of the creature in focus, read-only (the
+    /// tour card, off by default in every host).
+    pub card: bool,
+}
+
+/// A tour in progress.
+#[derive(Debug)]
+struct TourRun {
+    settings: TourSettings,
+    director: Tour,
+    /// Whether the card now pinned is the tour's (and so the tour's to
+    /// take away).
+    card_pinned: bool,
+}
+
+/// World time a simulation step advances the tour by.
+#[allow(clippy::cast_precision_loss)] // 20 ticks a second
+const TOUR_STEP: f32 = 1.0 / TICKS_PER_SECOND as f32;
 
 /// Error drawing a frame.
 #[derive(Debug, Error)]
@@ -162,6 +188,11 @@ pub struct Tank {
     /// The part of the grid the target shows, if not the whole tank at its
     /// integer layout (see [`Tank::set_camera`]).
     camera: Option<ViewRect>,
+    /// The screensaver camera tour, if on (see [`Tank::set_tour`]).
+    tour: Option<TourRun>,
+    /// The size in pixels of the target the tank is shown in (zero until
+    /// the host says, see [`Tank::set_target_size`]).
+    target_size: (u32, u32),
     /// The field tinted over the tank (debug overlay), if any.
     field_overlay: Option<crate::FieldOverlay>,
     /// Field version last drawn with the overlay.
@@ -213,6 +244,8 @@ impl Tank {
             ghost: None,
             magnifier: None,
             camera: None,
+            tour: None,
+            target_size: (0, 0),
             field_overlay: None,
             fields_drawn: 0,
             overlay_water_alpha: None,
@@ -270,9 +303,10 @@ impl Tank {
         self.sway.set_flag(SWAY_HIDDEN, hidden);
         if hidden {
             self.sway.last_frame = None;
-        } else if was && self.sway.enabled() {
+        } else if was && (self.sway.enabled() || self.tour.is_some()) {
             // The last frame may be swayed and sway may have been turned
-            // off (battery, saver) while hidden: redraw once on return.
+            // off (battery, saver) while hidden, and the tour stood still:
+            // redraw once on return.
             self.needs_frame = true;
         }
     }
@@ -806,6 +840,136 @@ impl Tank {
         self.view(target).screen_to_grid(target, px)
     }
 
+    /// Turns the screensaver camera tour on, with `settings`, or with `None`
+    /// off (D29). The tour drives the camera (see [`Tank::set_camera`], which
+    /// a host leaves alone meanwhile) over world time: it focuses on a live
+    /// creature at 2–3× for 20–40 s, following it, glides to another over
+    /// 6–10 s, and every 3–5 focuses pulls back to the whole tank for about
+    /// 20 s. With no creatures the view drifts slowly round the tank. The
+    /// director is deterministic: `settings.seed` and the world fix every
+    /// view, and it reads no clock.
+    ///
+    /// It runs on [`Tank::tick`] (or [`Tank::step`]) and needs the target's
+    /// size: call [`Tank::set_target_size`] first (a draw tells it too).
+    /// While the tour moves the view the tank asks for frames, at the frame
+    /// cap and no faster; while hidden ([`Tank::set_hidden`]) it asks for
+    /// none and the tour doesn't advance. Changing only `card` keeps the
+    /// tour going; a new seed starts it again.
+    ///
+    /// With `settings.card`, once a glide has settled the inspect card is
+    /// pinned to the creature in focus, turning from its live page to its
+    /// species page and back every 12 s, and removed when the next glide or
+    /// pull-back starts. It is read-only: it never shows a name prompt or
+    /// takes a name edit ([`Tank::set_inspect_naming`] and
+    /// [`Tank::set_inspect_name_edit`] change nothing), and shows a name
+    /// only a creature already has.
+    ///
+    /// `None` takes the camera away, and the tour's card with it (a card
+    /// pinned some other way stays).
+    pub fn set_tour(&mut self, settings: Option<TourSettings>) {
+        let Some(settings) = settings else {
+            if let Some(run) = self.tour.take() {
+                if run.card_pinned {
+                    self.set_inspected(None);
+                }
+                self.needs_frame |= self.inspect.set_read_only(&self.world, false);
+                self.set_camera(None);
+            }
+            return;
+        };
+        match &mut self.tour {
+            Some(run) if run.settings.seed == settings.seed => run.settings = settings,
+            _ => {
+                let card_pinned = self.tour.as_ref().is_some_and(|run| run.card_pinned);
+                self.tour = Some(TourRun {
+                    settings,
+                    director: Tour::new(settings.seed),
+                    card_pinned,
+                });
+            }
+        }
+        self.needs_frame |= self.inspect.set_read_only(&self.world, settings.card);
+        self.apply_tour();
+    }
+
+    /// The tour's settings, if it is on.
+    #[must_use]
+    pub fn tour(&self) -> Option<TourSettings> {
+        self.tour.as_ref().map(|run| run.settings)
+    }
+
+    /// The tour card the tour wants now: the creature in focus and its page,
+    /// once a glide has settled and the card setting is on; `None` during
+    /// glides, pull-backs and drifts. (The tank pins and turns the inspect
+    /// card to it by itself.)
+    #[must_use]
+    pub fn tour_card(&self) -> Option<TourCard> {
+        let run = self.tour.as_ref().filter(|run| run.settings.card)?;
+        run.director.card()
+    }
+
+    /// Tells the tank the size in pixels of the target it is shown in, for
+    /// the tour to size its views (see [`Tank::set_tour`]). Call it at
+    /// start-up and on every resize; a draw sets it too. A zero size counts
+    /// as unknown: the tour keeps its last view until a size is known.
+    pub fn set_target_size(&mut self, size: (u32, u32)) {
+        if self.target_size == size {
+            return;
+        }
+        self.target_size = size;
+        if self.tour.is_some() {
+            self.apply_tour();
+            self.needs_frame = true;
+        }
+    }
+
+    /// Where the tour is shown, once the target's size is known.
+    fn tour_stage(&self) -> Option<Stage> {
+        let target = self.target_size;
+        (target.0 > 0 && target.1 > 0).then(|| Stage {
+            layout: self.layout(target),
+            target,
+        })
+    }
+
+    /// Moves the tour on by one simulation step. Nothing moves while hidden.
+    fn advance_tour(&mut self) {
+        if self.sway.hidden() {
+            return;
+        }
+        let Some(stage) = self.tour_stage() else {
+            return;
+        };
+        if let Some(run) = self.tour.as_mut() {
+            run.director.advance(TOUR_STEP, &self.world, &stage);
+            self.apply_tour();
+        }
+    }
+
+    /// Points the camera at the tour's view and pins, turns or removes the
+    /// tour card to match. A view that hasn't moved asks for no frame.
+    fn apply_tour(&mut self) {
+        let Some(stage) = self.tour_stage() else {
+            return;
+        };
+        let Some(run) = self.tour.as_ref() else {
+            return;
+        };
+        let view = run.director.view(&stage);
+        let card = run.settings.card.then(|| run.director.card()).flatten();
+        let pinned = run.card_pinned;
+        self.set_camera(Some(view));
+        if let Some(card) = card {
+            self.set_inspected(Some(Inspected::Creature(card.creature)));
+            self.set_inspect_page(card.page);
+        } else if pinned {
+            self.set_inspected(None);
+        }
+        if let Some(run) = self.tour.as_mut() {
+            run.card_pinned = card.is_some();
+        }
+    }
+
     /// The world.
     #[must_use]
     pub fn world(&self) -> &World {
@@ -828,9 +992,12 @@ impl Tank {
         let world_wanted = self.frame_wanted();
         let sway_on = self.sway_active();
         let sway_wanted = sway_on && self.sway.frame_due(now);
-        // Hiding gates only sway (via `sway_active`): the host pauses the
+        // Hiding gates sway (via `sway_active`) and a touring tank's frames
+        // (the tour's view is only worth drawing to be seen, and it keeps
+        // the frame waiting for the return); otherwise the host pauses the
         // tank itself when hidden, and a world change still needs its frame.
-        let wanted = world_wanted || sway_wanted;
+        let hidden_tour = self.tour.is_some() && self.sway.hidden();
+        let wanted = (world_wanted || sway_wanted) && !hidden_tour;
         let redraw = wanted && self.pacer.frame_allowed(now);
         if redraw {
             self.pacer.frame_drawn(now);
@@ -871,6 +1038,7 @@ impl Tank {
             }
         }
         self.refresh_inspect();
+        self.advance_tour();
         for r in self.world.dirty_rects() {
             self.dirty.add(r);
         }
@@ -1022,6 +1190,8 @@ impl Tank {
         // Fit the narrow/wide breakpoint before refreshing so a resize never
         // rebuilds the inspect card twice in one frame.
         self.fit_inspect(size);
+        // The tour's views are of this size from here on.
+        self.set_target_size(size);
         // Edits made through `world_mut` while paused may have removed it.
         self.refresh_inspect();
         let layout = self.layout(size);
@@ -1814,6 +1984,312 @@ mod tests {
         let other = tank.world_mut().add_creature(guppy, 40, 20).unwrap();
         tank.set_inspected(Some(Inspected::Creature(other)));
         assert!(tank.inspect_name_rect(target).is_some());
+    }
+
+    const TOUR_TARGET: (u32, u32) = (1280, 720);
+
+    /// A settled planted tank with `fish` guppies, touring in a 1280×720
+    /// target.
+    fn touring_tank(fish: i64, settings: TourSettings) -> Tank {
+        let mut tank = settled_planted_tank();
+        let guppy = tank.world().species().id("guppy").unwrap();
+        for i in 0..fish {
+            tank.world_mut()
+                .add_creature(guppy, 10 + 9 * (i % 5), 12 + 7 * (i % 3))
+                .unwrap();
+        }
+        tank.set_target_size(TOUR_TARGET);
+        tank.set_tour(Some(settings));
+        tank
+    }
+
+    /// Steps `tank` until the tour card shows, at most `seconds` of world time.
+    fn step_to_a_tour_card(tank: &mut Tank, seconds: u32) -> TourCard {
+        for _ in 0..seconds * 20 {
+            tank.step();
+            if let Some(card) = tank.tour_card() {
+                return card;
+            }
+        }
+        panic!("no tour card within {seconds} s");
+    }
+
+    #[test]
+    fn a_tour_moves_the_camera_and_asks_for_frames_at_the_cap_only() {
+        for fish in [0, 3] {
+            let mut tank = touring_tank(fish, TourSettings::default());
+            assert!(tank.camera().is_some(), "the camera is set at once");
+            assert_eq!(tank.tour(), Some(TourSettings::default()));
+            let before = tank.camera();
+            // 100 Hz host ticks: the view moves every 20 Hz sim step, and
+            // frames never come faster than the 30 fps cap allows.
+            let frames = count_frames_every(&mut tank, Duration::ZERO, 20, 10);
+            assert!(
+                (380..=601).contains(&frames),
+                "{fish} fish: {frames} frames in 20 s"
+            );
+            assert_ne!(tank.camera(), before, "the view moved");
+            // Without a tour, the same settled tank asks for none.
+            let mut still = settled_planted_tank();
+            assert_eq!(count_frames_every(&mut still, Duration::ZERO, 20, 10), 0);
+        }
+    }
+
+    #[test]
+    fn a_hidden_tank_neither_asks_for_frames_nor_advances_the_tour() {
+        // With nothing swimming, and with fish whose moves would want frames.
+        for fish in [0, 3] {
+            let mut tank = touring_tank(fish, TourSettings::default());
+            count_frames_every(&mut tank, Duration::ZERO, 5, 10);
+            tank.set_hidden(true);
+            let view = tank.camera();
+            let start = Duration::from_secs(5);
+            let frames = count_frames_every(&mut tank, start, 30, 10);
+            assert_eq!(frames, 0, "{fish} fish: no frames while hidden");
+            assert_eq!(tank.camera(), view, "the tour stood still");
+            // Back in view, it redraws and goes on.
+            tank.set_hidden(false);
+            assert!(tank.frame_wanted());
+            let frames = count_frames_every(&mut tank, start + Duration::from_secs(30), 5, 10);
+            assert!(frames > 50, "{fish} fish: {frames}");
+            assert_ne!(tank.camera(), view);
+        }
+    }
+
+    #[test]
+    fn a_paused_touring_tank_goes_idle_like_a_plain_paused_one() {
+        for fish in [0, 3] {
+            let mut tank = touring_tank(fish, TourSettings::default());
+            count_frames_every(&mut tank, Duration::ZERO, 5, 10);
+            // A host holding the clock (a paused owner, a viewer) pauses the
+            // tank before every tick: no step runs, so the view is still.
+            let view = tank.camera();
+            let mut frames = 0;
+            for step in 1..=300u64 {
+                let now = Duration::from_secs(5) + Duration::from_millis(step * 10);
+                tank.pause();
+                let req = tank.tick(now);
+                assert_eq!(req.sim_ticks, 0);
+                if req.redraw {
+                    tank.mark_drawn();
+                    frames += 1;
+                }
+            }
+            // The one draw owed for the change in flight is fine; a stream
+            // of identical frames is not.
+            assert!(frames <= 1, "{fish} fish: {frames} frames in 3 s paused");
+            assert!(!tank.frame_wanted(), "{fish} fish: still wants a frame");
+            assert_eq!(tank.camera(), view);
+        }
+    }
+
+    #[test]
+    fn the_tour_waits_for_a_target_size_and_follows_a_resize() {
+        let mut tank = settled_planted_tank();
+        let guppy = tank.world().species().id("guppy").unwrap();
+        tank.world_mut().add_creature(guppy, 16, 20).unwrap();
+        tank.set_tour(Some(TourSettings::default()));
+        for _ in 0..40 {
+            tank.step();
+        }
+        assert_eq!(tank.camera(), None, "no size, no view");
+        tank.set_target_size(TOUR_TARGET);
+        let view = tank.camera().unwrap();
+        assert!(view.is_valid());
+        assert!(tank.frame_wanted());
+        tank.mark_drawn();
+        // A resize turns the same tour into a view of the new target.
+        for _ in 0..400 {
+            tank.step();
+        }
+        tank.set_target_size((1680, 720));
+        let wide = tank.camera().unwrap();
+        assert!(wide.is_valid());
+        assert!((wide.w / wide.h - 1680.0 / 720.0).abs() < 0.01, "{wide:?}");
+        assert!(tank.frame_wanted());
+        // The same size again changes nothing.
+        tank.mark_drawn();
+        tank.set_target_size((1680, 720));
+        assert!(!tank.frame_wanted());
+    }
+
+    #[test]
+    fn turning_the_tour_off_clears_the_camera_and_the_tour_card_only() {
+        let mut tank = touring_tank(
+            4,
+            TourSettings {
+                seed: 1,
+                card: true,
+            },
+        );
+        let card = step_to_a_tour_card(&mut tank, 60);
+        assert_eq!(tank.inspected(), Some(Inspected::Creature(card.creature)));
+        assert!(tank.camera().is_some());
+        tank.mark_drawn();
+        tank.set_tour(None);
+        assert_eq!(tank.tour(), None);
+        assert_eq!(tank.camera(), None);
+        assert_eq!(tank.inspected(), None);
+        assert_eq!(tank.tour_card(), None);
+        assert!(tank.inspect.image.is_none());
+        assert!(tank.frame_wanted(), "the plain tank needs its frame");
+        // The tank stands still again.
+        tank.mark_drawn();
+        for _ in 0..200 {
+            tank.step();
+        }
+        assert_eq!(tank.camera(), None);
+        tank.set_tour(None);
+
+        // A card pinned by hand stays when a tour without a card goes.
+        let mut tank = touring_tank(2, TourSettings::default());
+        let id = tank.world().creatures()[0].id();
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        for _ in 0..600 {
+            tank.step();
+        }
+        assert_eq!(tank.inspected(), Some(Inspected::Creature(id)));
+        tank.set_tour(None);
+        assert_eq!(tank.inspected(), Some(Inspected::Creature(id)));
+        assert_eq!(tank.camera(), None);
+    }
+
+    #[test]
+    fn changing_only_the_card_setting_keeps_the_tour_going_and_a_new_seed_restarts_it() {
+        let mut tank = touring_tank(4, TourSettings::default());
+        for _ in 0..300 {
+            tank.step();
+        }
+        let view = tank.camera();
+        let same = TourSettings::default();
+        tank.set_tour(Some(same));
+        assert_eq!(tank.camera(), view);
+        tank.set_tour(Some(TourSettings { card: true, ..same }));
+        assert_eq!(tank.camera(), view, "the tour went on");
+        assert!(tank.tour().unwrap().card);
+        tank.set_tour(Some(TourSettings {
+            seed: 9,
+            card: true,
+        }));
+        assert_ne!(tank.camera(), view, "a new seed starts over");
+    }
+
+    #[test]
+    fn the_tour_card_pins_to_the_creature_in_focus_turns_pages_and_goes_with_the_glide() {
+        let mut tank = touring_tank(
+            4,
+            TourSettings {
+                seed: 3,
+                card: true,
+            },
+        );
+        // Not while gliding in; then once it has settled.
+        assert_eq!(tank.inspected(), None);
+        let card = step_to_a_tour_card(&mut tank, 60);
+        let id = card.creature;
+        assert_eq!(card.page, InspectPage::Live);
+        assert_eq!(tank.inspected(), Some(Inspected::Creature(id)));
+        assert_eq!(tank.inspect_page(), InspectPage::Live);
+        assert!(tank.inspect_layout(TOUR_TARGET).is_some(), "it is drawn");
+        // Live for 12 s, then species, then live (checked away from the
+        // turns at 12 s and 24 s).
+        for (turn, (seconds, page)) in [
+            (11, InspectPage::Live),
+            (2, InspectPage::Species),
+            (9, InspectPage::Species),
+            (4, InspectPage::Live),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for _ in 0..seconds * 20 {
+                tank.step();
+            }
+            if tank.tour_card().is_none() {
+                // A focus lasts 20 s at least: the 24 s mark may be past it.
+                assert!(turn >= 2, "the focus ended after {turn} turns");
+                break;
+            }
+            assert_eq!(tank.inspect_page(), page);
+            assert_eq!(tank.inspected(), Some(Inspected::Creature(id)));
+        }
+        // The card goes when the next glide starts, and stays gone.
+        let mut gone = false;
+        for _ in 0..60 * 20 {
+            tank.step();
+            if tank.tour_card().is_none() {
+                assert_eq!(tank.inspected(), None);
+                assert!(tank.inspect.image.is_none());
+                gone = true;
+                break;
+            }
+        }
+        assert!(gone, "the focus ended");
+        for _ in 0..4 * 20 {
+            tank.step();
+            assert_eq!(tank.inspected(), None, "no card while gliding");
+        }
+        // It comes back on whoever is next.
+        let next = step_to_a_tour_card(&mut tank, 60);
+        assert_eq!(tank.inspected(), Some(Inspected::Creature(next.creature)));
+        assert_eq!(tank.inspect_page(), InspectPage::Live);
+    }
+
+    #[test]
+    fn a_tour_without_the_card_setting_pins_no_card() {
+        let mut tank = touring_tank(4, TourSettings::default());
+        for _ in 0..90 * 20 {
+            tank.step();
+            assert_eq!(tank.inspected(), None);
+            assert_eq!(tank.tour_card(), None);
+        }
+    }
+
+    #[test]
+    fn the_tour_card_never_shows_the_name_prompt_even_with_naming_allowed() {
+        let settings = TourSettings {
+            seed: 5,
+            card: true,
+        };
+        let mut tank = touring_tank(4, settings);
+        tank.set_inspect_naming(true);
+        let card = step_to_a_tour_card(&mut tank, 60);
+        let id = card.creature;
+        // Whatever the host allows: no row to click, no edit taken.
+        assert_eq!(tank.inspect_name_rect(TOUR_TARGET), None);
+        tank.set_inspect_name_edit(Some("Bub"));
+        assert_eq!(tank.inspect_name_edit(), None);
+        // The card is the one a viewer sees, with no prompt on an unnamed
+        // creature (and the owner's would have one).
+        let mut viewer = InspectCard::default();
+        viewer.set(tank.world(), Some(Inspected::Creature(id)));
+        assert_eq!(tank.inspect.image, viewer.image);
+        viewer.set_can_name(tank.world(), true);
+        assert_ne!(
+            tank.inspect.image, viewer.image,
+            "the owner's card has a prompt"
+        );
+
+        // A creature that already has a name shows it, still read-only.
+        let mut named = touring_tank(1, settings);
+        let only = named.world().creatures()[0].id();
+        named.world_mut().set_creature_name(only, "Bubbles");
+        named.set_inspect_naming(true);
+        step_to_a_tour_card(&mut named, 60);
+        let mut viewer = InspectCard::default();
+        viewer.set(named.world(), Some(Inspected::Creature(only)));
+        assert_eq!(
+            named.inspect.image, viewer.image,
+            "the viewer's card, with its name row"
+        );
+        assert_eq!(named.inspect_name_rect(TOUR_TARGET), None);
+        named.set_inspect_name_edit(Some("Bub"));
+        assert_eq!(named.inspect_name_edit(), None);
+        assert_eq!(
+            named.world().creature(only).and_then(|c| c.name()),
+            Some("Bubbles"),
+            "and nothing renames it"
+        );
     }
 
     #[test]
