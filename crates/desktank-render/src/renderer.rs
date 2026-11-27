@@ -18,6 +18,7 @@ use crate::layout::Layout;
 use crate::palette;
 use crate::plants::{self, PlantTints};
 use crate::post::{Offscreen, Post};
+use crate::ruler;
 use crate::sprites::{self, Atlas};
 use crate::{Gpu, timer::GpuTimer};
 
@@ -48,13 +49,16 @@ pub struct Overlay {
     pub magnifier: Option<Magnifier>,
     /// The field tinted over the tank.
     pub field: Option<crate::FieldOverlay>,
+    /// The centimetre ruler on the bottom and left edges: `Some` with the
+    /// smallest art pixel in target pixels (0 for none) when shown.
+    pub ruler: Option<u32>,
 }
 
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (256 base + 16 ripple vec4s).
-const VIEW_BYTES: u64 = 256 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (272 base + 16 ripple vec4s).
+const VIEW_BYTES: u64 = 272 + (desktank_sim::MAX_DEVICES as u64) * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -78,6 +82,8 @@ pub struct Renderer {
     /// overlay pipeline when a camera is first set.
     shader: wgpu::ShaderModule,
     pipeline_layout: wgpu::PipelineLayout,
+    /// The centimetre ruler's strips over the finished tank.
+    ruler: wgpu::RenderPipeline,
     /// The layout both bind groups use, kept to rebuild them when the grid
     /// textures change size.
     bind_layout: wgpu::BindGroupLayout,
@@ -215,7 +221,7 @@ impl Renderer {
         ];
         let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
         let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
-        let (pipelines, [lens_frame, front_film], shader, pipeline_layout) =
+        let (pipelines, [lens_frame, front_film, ruler], shader, pipeline_layout) =
             create_pipelines(gpu, &bind_layout, format);
         Self {
             format,
@@ -225,6 +231,7 @@ impl Renderer {
             lens_frame,
             shader,
             pipeline_layout,
+            ruler,
             bind_layout,
             bind_group,
             lens_bind_group,
@@ -567,7 +574,11 @@ impl Renderer {
     }
 
     /// Packs the `View` uniform block bytes for one pass (main tank or lens).
-    #[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        clippy::cast_precision_loss
+    )]
     fn pack_view(
         &self,
         size: (u32, u32),
@@ -590,8 +601,14 @@ impl Renderer {
             inspect,
             cursor,
             field,
+            ruler,
             ..
         } = overlay;
+        let ruler = ruler.map_or([0.0; 4], |min_px| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let scale = scale.max(1.0).round() as u32;
+            ruler::Plan::new(scale, min_px, self.grid).uniform()
+        });
         let field_mode = field_mode(field);
         let hud = palette.map_or(
             [
@@ -676,6 +693,7 @@ impl Renderer {
             f32::from(self.algae.front_film_visible && overlay_water_alpha.is_none()),
             f32::from(oled_applies(overlay_water_alpha, oled)),
         ])
+        .chain(ruler)
         .chain(ripple_slots.into_iter().flatten())
         .flat_map(f32::to_le_bytes)
         .collect()
@@ -690,7 +708,7 @@ impl Renderer {
     /// cards, brush outline, lens) draws over that in screen space; without
     /// one the tank and overlay draw straight into `target`, with no
     /// offscreen image.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one frame's inputs
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one frame's inputs and passes
     pub fn encode(
         &mut self,
         gpu: &Gpu,
@@ -785,6 +803,7 @@ impl Renderer {
                 surface_ripple_threshold,
                 Overlay {
                     cursor: None,
+                    ruler: None,
                     ..overlay
                 },
                 lens_info,
@@ -799,11 +818,25 @@ impl Renderer {
         }
         let front_pass = self.algae.front_film_visible
             && (!front_in_layers(self.format, gpu.split_grid) || overlay_water_alpha.is_some());
-
         let Some(view) = camera else {
             self.offscreen = None;
             let mut pass = begin_pass(encoder, "tank", target, timer.map(GpuTimer::pass_writes));
             self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
+            if let Some(min_px) = overlay.ruler {
+                // Only the edge strips are shaded; the rest of the tank is untouched.
+                let strips = ruler::Plan::new(layout.scale, min_px, self.grid).strips(
+                    layout.offset,
+                    self.grid,
+                    layout.scale,
+                    size,
+                );
+                pass.set_pipeline(&self.ruler);
+                for (x, y, w, h) in strips.into_iter().flatten() {
+                    pass.set_scissor_rect(x, y, w, h);
+                    pass.draw(0..3, 0..1);
+                }
+                pass.set_scissor_rect(0, 0, size.0, size.1);
+            }
             if let Some(ml) = lens_layout {
                 self.draw_lens(&mut pass, &ml, front_pass);
             }
@@ -1568,7 +1601,7 @@ const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
 /// the pixels over one kind of plant part.
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
 const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
-/// The grid and sprite pipelines, plus the lens frame and front film
+/// The grid and sprite pipelines, plus the lens frame, front film and ruler
 /// pipelines, drawing into `format`, one pass each or split ([`Gpu::split_grid`]),
 /// and the shader and layout they were built from.
 #[allow(clippy::too_many_lines)] // one pipeline per pass, built from one shader module
@@ -1578,7 +1611,7 @@ fn create_pipelines(
     format: wgpu::TextureFormat,
 ) -> (
     Pipelines,
-    [wgpu::RenderPipeline; 2],
+    [wgpu::RenderPipeline; 3],
     wgpu::ShaderModule,
     wgpu::PipelineLayout,
 ) {
@@ -1689,7 +1722,18 @@ fn create_pipelines(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         &[],
     );
-    (pipelines, [lens_frame, front_film], shader, pipeline_layout)
+    let ruler = pipeline(
+        "ruler",
+        "fs_ruler",
+        Some(wgpu::BlendState::ALPHA_BLENDING),
+        &[],
+    );
+    (
+        pipelines,
+        [lens_frame, front_film, ruler],
+        shader,
+        pipeline_layout,
+    )
 }
 
 /// Whether the grid and sprites apply the front film before encoding into

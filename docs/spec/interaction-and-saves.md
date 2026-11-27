@@ -233,6 +233,16 @@
 - On Wayland, global key state isn't readable. There, the CLI
   `desktank interact toggle` talks to the running app over IPC, so you
   can bind it to a key in the compositor (§4.3).
+- **Ruler overlay.** A centimetre scale drawn along the bottom and left
+  edges of the tank, 0 cm at the bottom-left corner, one centimetre per
+  `CELLS_PER_CM` cells (the scale the creatures' sizes use), so a fish
+  can be read against it. Off by default. `U` toggles it in `window` and
+  on the web (`--ruler` starts `window` and `capture` with it on; the
+  web also has a "Ruler overlay (cm)" checkbox in Settings, saved with
+  the other settings and restored by Defaults). The host passes it to
+  the renderer (`Tank::set_ruler`). While off it costs nothing, and
+  changing it only asks for one frame: no pipeline is rebuilt and an
+  idle tank still draws no extra frames.
 
 ### 2.6 Time and persistence
 

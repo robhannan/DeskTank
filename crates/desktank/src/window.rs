@@ -20,7 +20,8 @@
 //! (or press 1–9, then 0 for the tenth) to select it. Scrolling over the
 //! palette steps through the sub-categories, on into the next category. A device
 //! (bubbler, filter outlet) is placed once per click. `F` cycles a debug
-//! tint of the nutrient, CO₂ and light fields; `W` changes the water and
+//! tint of the nutrient, CO₂ and light fields; `U` toggles the centimetre
+//! ruler overlay (`--ruler` starts with it on); `W` changes the water and
 //! `Q` shows the water quality in the title bar. `--time HH:MM` lights the
 //! tank for that time of day (default noon). `--daylight-schedule location`
 //! with `--latitude` and `--longitude` (or the `[daylight]` config) sets
@@ -140,6 +141,7 @@ pub fn run(
     demo_pour: Option<u64>,
     time: Option<u16>,
     fish: usize,
+    ruler: bool,
     saves: Saves,
     cli: CliOverrides,
 ) -> anyhow::Result<()> {
@@ -203,6 +205,7 @@ pub fn run(
         origin: Instant::now(),
         time,
         fish,
+        ruler,
         cli,
         config_path,
         settings: config::merge(settings.unwrap_or_default(), cli),
@@ -232,6 +235,8 @@ struct App {
     time: Option<u16>,
     /// Creatures to stock the tank with.
     fish: usize,
+    /// Whether the centimetre ruler overlay starts on (`--ruler`).
+    ruler: bool,
     cli: CliOverrides,
     config_path: Option<PathBuf>,
     settings: Config,
@@ -1280,6 +1285,7 @@ impl ApplicationHandler<Wake> for App {
                 }
                 apply_daylight(&mut s.tank, self.settings.daylight);
                 s.tank.set_oled(self.settings.display.oled);
+                s.tank.set_ruler(self.ruler);
                 s.tank.set_sway(self.settings.plants.sway);
                 s.tank
                     .set_allow_sway_on_battery(self.settings.plants.sway_on_battery);
@@ -1457,6 +1463,23 @@ impl ApplicationHandler<Wake> for App {
                             format!("DeskTank — {} field", f.name())
                         });
                         s.window.set_title(&title);
+                    }
+                    // U toggles the centimetre ruler overlay (R is the filter
+                    // rinse).
+                    Key::Character(c)
+                        if c.eq_ignore_ascii_case("u")
+                            && !event.repeat
+                            && !s.command()
+                            && !s.modifiers.alt_key() =>
+                    {
+                        let next = !s.tank.ruler();
+                        s.tank.set_ruler(next);
+                        s.window.request_redraw();
+                        s.window.set_title(if next {
+                            "DeskTank — ruler overlay (cm)"
+                        } else {
+                            "DeskTank"
+                        });
                     }
                     // X mirrors the next flippable device placed onto the other
                     // glass (D27); the ghost shows where it goes.

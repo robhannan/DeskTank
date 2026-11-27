@@ -2534,3 +2534,167 @@ fn a_gourami_card_shows_shelter_in_the_open_in_cover_and_without_any() {
     assert_eq!(labels, ["Hunger", "Social"]);
     shot(&mut tetra, "neon-tetra");
 }
+
+/// The ruler's ink colour, `#f4e9c8` (see `fs_ruler`).
+const RULER_INK: [u8; 3] = [0xf4, 0xe9, 0xc8];
+
+/// A water-only tank of `cells`, so the only pale-ivory pixels are the ruler's.
+fn ruler_tank(cells: (usize, usize)) -> Tank {
+    let config = WorldConfig {
+        width: cells.0,
+        height: cells.1,
+        seed: 3,
+        water_level: 1.0,
+    };
+    let world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+    Tank::new(world, TankConfig::default())
+}
+
+fn is_ink(p: [u8; 3]) -> bool {
+    p.iter().zip(RULER_INK).all(|(a, b)| a.abs_diff(b) <= 2)
+}
+
+/// Off, the ruler changes nothing. On, at 1×, 2×, 4×, 6× and 8× cells, it
+/// shades only the bottom and left strips, with a tick every centimetre
+/// (`CELLS_PER_CM` cells) from 0 cm at the bottom-left corner, along the
+/// bottom row and the left column, and a "0" label above the first tick.
+#[test]
+fn the_ruler_ticks_every_cm_from_the_bottom_left_in_both_pipelines() {
+    let cells_per_cm = desktank_sim::species::CELLS_PER_CM;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    for split in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid: Some(split),
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        for scale in [1u32, 2, 4, 6, 8] {
+            // 20 × 10 cm.
+            let (cw, ch) = (40u32, 20u32);
+            let (w, h) = (cw * scale, ch * scale);
+            let at = |img: &[u8], x: u32, y: u32| px_at(img, w, x, y);
+            let mut tank = ruler_tank((cw as usize, ch as usize));
+            assert!(!tank.ruler());
+            let off = render_sized(gpu, &mut tank, format, (w, h));
+            // A second render with the ruler still off is identical.
+            assert_eq!(render_sized(gpu, &mut tank, format, (w, h)), off);
+            assert!(!off.chunks(4).any(|p| is_ink([p[0], p[1], p[2]])));
+
+            tank.set_ruler(true);
+            let on = render_sized(gpu, &mut tank, format, (w, h));
+            // The art pixel is a quarter of a cell, and at least one pixel.
+            let art = (scale / 4).max(1);
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 2 cells per cm
+            let cm_px = (f64::from(scale) * f64::from(cells_per_cm)) as u32;
+            let (strip_h, strip_w) = (12 * art, 19 * art);
+
+            // Only the strips change.
+            for y in 0..h {
+                for x in 0..w {
+                    let in_strip = y >= h - strip_h || x < strip_w;
+                    if !in_strip {
+                        assert_eq!(at(&on, x, y), at(&off, x, y), "{scale}x ({x}, {y})");
+                    }
+                }
+            }
+            assert_ne!(on, off, "{scale}x: the strips drew");
+
+            // Bottom row: a one-art-pixel tick at every cm, none between.
+            let bottom = h - 1;
+            for x in 0..w {
+                let want = x % cm_px < art;
+                assert_eq!(
+                    is_ink(at(&on, x, bottom)),
+                    want,
+                    "{scale}x split {split}: bottom row x {x}"
+                );
+            }
+            // Left column: the 0 cm tick (5 art pixels tall) at the corner,
+            // plus a tick at every cm across the full height (including inside
+            // the bottom strip above the 0 cm tick).
+            for rel in 0..h - 1 {
+                let y = h - 1 - rel;
+                let want = rel < 5 * art || rel % cm_px < art;
+                assert_eq!(
+                    is_ink(at(&on, 0, y)),
+                    want,
+                    "{scale}x split {split}: left column {rel} up"
+                );
+            }
+            // The "0" label's top row (art row 10, columns 2 to 4) is ink,
+            // and the hole of its middle rows (art row 8, column 3) is not.
+            let label_px = |col: u32, row: u32| at(&on, col * art, h - 1 - row * art);
+            for col in 2..5 {
+                assert!(is_ink(label_px(col, 10)), "{scale}x: 0's top at {col}");
+            }
+            assert!(is_ink(label_px(2, 8)) && !is_ink(label_px(3, 8)));
+            // Between labels and ticks the strip is the dark backing.
+            assert!(!is_ink(label_px(30, 11)));
+        }
+    }
+}
+
+/// The ruler is encoded like the rest of the tank on sRGB targets, covers
+/// no HUD, and in OLED mode shades the strips black so only the ink lights pixels.
+#[test]
+fn the_ruler_respects_srgb_targets_oled_mode_and_the_hud() {
+    let Some(gpu) = gpu() else { return };
+    let (w, h) = (160u32, 80u32);
+    let at = |img: &[u8], x: u32, y: u32| px_at(img, w, x, y);
+
+    // sRGB and linear targets show the same ink; the translucent backing
+    // blends in linear light on an sRGB target, so it differs a little more.
+    let mut tank = ruler_tank((40, 20));
+    tank.set_ruler(true);
+    let linear = render_sized(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm, (w, h));
+    let srgb = render_sized(gpu, &mut tank, wgpu::TextureFormat::Rgba8UnormSrgb, (w, h));
+    // Scale 4, art pixel 1: row 11 is empty backing, the corner tick is ink.
+    for (x, y, tolerance) in [(0, h - 1, 2), (70, h - 12, 6), (3, 3, 20)] {
+        let (a, b) = (at(&linear, x, y), at(&srgb, x, y));
+        for (p, q) in a.iter().zip(b) {
+            assert!(p.abs_diff(q) <= tolerance, "({x}, {y}): {a:?} vs {b:?}");
+        }
+    }
+    assert!(is_ink(at(&srgb, 0, h - 1)));
+    assert!(is_ink(at(&linear, 0, h - 1)));
+
+    // OLED: the backing is exactly black, the ink survives.
+    tank.set_oled(true);
+    let oled = render_sized(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm, (w, h));
+    assert_eq!(
+        at(&oled, 70, h - 12),
+        [0, 0, 0],
+        "backing in the bottom strip"
+    );
+    assert_eq!(at(&oled, 3, 3), [0, 0, 0], "backing in the left strip");
+    assert!(is_ink(at(&oled, 0, h - 1)) && is_ink(at(&oled, 0, h - 1 - 16)));
+    let lit = oled.chunks(4).filter(|p| p[..3] != [0, 0, 0]).count();
+    assert!(lit > 0 && lit < 400, "{lit} lit pixels");
+
+    // The species card is drawn over the ruler: with the card on, the ruler
+    // changes no pixel under it.
+    let (w, h) = (320u32, 180u32);
+    let at = |img: &[u8], x: u32, y: u32| px_at(img, w, x, y);
+    let mut tank = ruler_tank((80, 45));
+    let guppy = tank.world().species().id("guppy").unwrap();
+    tank.set_ruler(true);
+    tank.set_card(Some(desktank_render::Card::Creature(guppy, None)));
+    let layout = tank.card_layout((w, h)).unwrap();
+    let (cw, ch) = layout.size();
+    let (x0, y0) = layout.origin;
+    // The card sits over the left strip.
+    assert!(x0 < 19 && y0 + ch > 3, "{layout:?} meets the left strip");
+    let with_ruler = render_sized(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm, (w, h));
+    tank.set_ruler(false);
+    let without = render_sized(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm, (w, h));
+    for y in y0..(y0 + ch).min(h) {
+        for x in x0..(x0 + cw).min(w) {
+            assert_eq!(at(&with_ruler, x, y), at(&without, x, y), "({x}, {y})");
+        }
+    }
+    assert_ne!(
+        with_ruler, without,
+        "the ruler still shows outside the card"
+    );
+}

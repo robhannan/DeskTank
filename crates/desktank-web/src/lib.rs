@@ -1174,6 +1174,20 @@ impl WebTank {
         self.tank.oled()
     }
 
+    /// Turns the centimetre ruler overlay on or off (off by default): ticks
+    /// along the bottom and left edges. Only the next frame changes; no
+    /// pipeline is rebuilt.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setRuler))]
+    pub fn set_ruler(&mut self, enabled: bool) {
+        self.tank.set_ruler(enabled);
+    }
+
+    /// Whether the ruler overlay is on.
+    #[must_use]
+    pub fn ruler(&self) -> bool {
+        self.tank.ruler()
+    }
+
     /// Whether optional plant sway is enabled.
     #[must_use]
     pub fn sway(&self) -> bool {

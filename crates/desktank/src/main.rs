@@ -159,6 +159,10 @@ struct WindowArgs {
     /// it off when the config file enables it).
     #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
     oled: Option<bool>,
+    /// Draw the centimetre ruler overlay along the bottom and left edges
+    /// (`U` toggles it in the window).
+    #[arg(long)]
+    ruler: bool,
     #[command(flatten)]
     plant_sway: SwayArgs,
 }
@@ -205,6 +209,7 @@ enum InteractState {
 }
 
 #[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools)] // independent command-line flags
 struct CaptureArgs {
     /// World seed.
     #[arg(long, default_value_t = 1)]
@@ -230,6 +235,9 @@ struct CaptureArgs {
     /// OLED mode: true black water, air and letterbox.
     #[arg(long)]
     oled: bool,
+    /// Draw the centimetre ruler overlay along the bottom and left edges.
+    #[arg(long)]
+    ruler: bool,
     /// Draw with the split grid (smaller shaders in more passes), as the
     /// webOS web build does.
     #[arg(long)]
@@ -283,6 +291,7 @@ fn main() -> ExitCode {
             args.demo_pour,
             args.time,
             usize::from(args.fish),
+            args.ruler,
             if args.no_save {
                 window::Saves::Off
             } else if args.fresh {
@@ -338,6 +347,7 @@ fn main() -> ExitCode {
             field: args.field,
             sway: args.sway,
             oled: args.oled,
+            ruler: args.ruler,
             split_grid: args.split_grid,
             out: args.out.clone(),
         }),
@@ -498,6 +508,29 @@ mod tests {
         assert_eq!(oled(&["--oled"]), Some(true));
         assert_eq!(oled(&["--oled=false"]), Some(false));
         assert!(Cli::try_parse_from(["desktank", "capture", "--out", "x", "--oled"]).is_ok());
+    }
+
+    #[test]
+    fn parses_the_ruler_flag() {
+        let window = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("not a window command");
+            };
+            w.ruler
+        };
+        assert!(!window(&[]));
+        assert!(window(&["--ruler"]));
+        let capture = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "capture", "--out", "x"].iter().chain(args))
+                .unwrap();
+            let Command::Capture(c) = cli.command else {
+                panic!("not a capture command");
+            };
+            c.ruler
+        };
+        assert!(!capture(&[]));
+        assert!(capture(&["--ruler"]));
     }
 
     #[test]
