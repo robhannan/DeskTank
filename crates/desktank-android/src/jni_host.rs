@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Mutex, Once, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, TankSurface, wgpu};
+use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, TankSurface, TourSettings, wgpu};
 use desktank_sim::scene;
 use jni::EnvUnowned;
 use jni::errors::ThrowRuntimeExAndDefault;
@@ -28,8 +28,8 @@ use crate::brush::Brush;
 use crate::persist::{Persistence, start_world};
 use crate::touch::{Touch, TouchEvent};
 use crate::{
-    Drawable, Event, HostId, HostKind, Hosts, backend_order, log_enabled, log_override, phone_grid,
-    tv_grid,
+    Drawable, Event, HostId, HostKind, Hosts, SEED, TourPrefs, backend_order, log_enabled,
+    log_override, phone_grid, tour_seed, tv_grid,
 };
 
 /// Logcat tag for everything this crate logs, wgpu's lines included.
@@ -78,6 +78,8 @@ enum Callback {
     Touch(TouchEvent, Duration),
     /// OLED mode on or off for the shared tank.
     Oled(bool),
+    /// The Dream's tour preferences, sent just before it starts.
+    Tour(TourPrefs),
 }
 
 fn millis(time: jlong) -> Duration {
@@ -154,6 +156,9 @@ struct Host {
     /// OLED mode (true black water and air), from the shim's saved flag; kept
     /// here because it can arrive before the tank exists.
     oled: bool,
+    /// The tour the Dream runs (D29): from the preferences it last started
+    /// with, seeded once per start so a resize doesn't restart the tour.
+    dream_tour: Option<TourSettings>,
 }
 
 /// The render thread: applies commands and draws until every sender is
@@ -199,6 +204,7 @@ impl Host {
             touch: Touch::default(),
             brush: None,
             oled: false,
+            dream_tour: None,
         }
     }
 
@@ -221,6 +227,16 @@ impl Host {
                 if let Some(tank) = &mut self.tank {
                     tank.set_oled(enabled);
                 }
+                return;
+            }
+            Callback::Tour(prefs) => {
+                let seed = tour_seed(
+                    SEED,
+                    u64::try_from(self.settings.now().as_millis()).unwrap_or(0),
+                );
+                self.dream_tour = prefs.settings(seed);
+                // Apply the new settings at the next frame.
+                self.drawn = None;
                 return;
             }
             Callback::Created(window) => {
@@ -439,7 +455,12 @@ impl Host {
         let s = self.surfaces.get_mut(&active.id)?;
         if self.drawn != Some(active) {
             // A different host or size needs a frame on this surface.
-            tank.set_saver_mode(active.kind == HostKind::Dream);
+            let dream = active.kind == HostKind::Dream;
+            tank.set_saver_mode(dream);
+            // The camera tour is the Dream's alone, and the size is known
+            // before its first frame.
+            tank.set_target_size(active.size);
+            tank.set_tour(self.dream_tour.filter(|_| dream));
             tank.invalidate();
             self.drawn = Some(active);
         }
@@ -589,15 +610,25 @@ pub extern "system" fn Java_io_github_robhannan_desktank_Native_surfaceDestroyed
     }
 }
 
-/// `Native.started(id, app)`.
+/// `Native.started(id, app, tour, tourCard)`. The Dream passes its tour
+/// preferences; the Activity's are ignored.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_robhannan_desktank_Native_started<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
     id: jlong,
     app: jboolean,
+    tour: jboolean,
+    tour_card: jboolean,
 ) {
     let kind = if app { HostKind::App } else { HostKind::Dream };
+    if !app {
+        let prefs = TourPrefs {
+            tour,
+            card: tour_card,
+        };
+        forward(&mut env, id, Callback::Tour(prefs));
+    }
     forward(&mut env, id, Callback::Lifecycle(Event::Started(kind)));
 }
 

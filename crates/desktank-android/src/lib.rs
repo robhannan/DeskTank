@@ -23,7 +23,7 @@ mod brush;
 #[cfg(target_os = "android")]
 mod jni_host;
 
-use desktank_render::{even_scale, wgpu};
+use desktank_render::{TourSettings, even_scale, wgpu};
 use desktank_sim::{MaterialError, MaterialTable, World, WorldConfig, WorldError, scene};
 use log::{Level, LevelFilter};
 
@@ -44,6 +44,50 @@ pub const SEED: u64 = 7;
 
 /// Creatures a new tank is stocked with (the §6.1 reference load).
 pub const STOCK: usize = 30;
+
+/// The screensaver tour settings the Dream reads from `SharedPreferences`
+/// (SPEC §3.6, D29): the `tour` and `tour_card` booleans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TourPrefs {
+    /// Run the camera tour (`tour`, on by default).
+    pub tour: bool,
+    /// Pin the read-only inspect card to the creature in focus
+    /// (`tour_card`, off by default).
+    pub card: bool,
+}
+
+impl Default for TourPrefs {
+    fn default() -> Self {
+        Self {
+            tour: true,
+            card: false,
+        }
+    }
+}
+
+impl TourPrefs {
+    /// The tank's tour settings, or `None` with the tour off. The `seed`
+    /// comes from [`tour_seed`].
+    #[must_use]
+    pub fn settings(self, seed: u64) -> Option<TourSettings> {
+        self.tour.then_some(TourSettings {
+            seed,
+            card: self.card,
+        })
+    }
+}
+
+/// A tour seed that is stable for one Dream start and different for the
+/// next: the world `seed` mixed with `started_ms`, a clock reading when the
+/// Dream started (host code, so the host's clock is fine).
+#[must_use]
+pub fn tour_seed(seed: u64, started_ms: u64) -> u64 {
+    // One splitmix64 round, so nearby start times give unrelated seeds.
+    let mut z = seed ^ started_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
 
 /// A grid and the scale it is drawn at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +268,36 @@ mod tests {
         assert_eq!(world.creatures().len(), STOCK);
         let sand = scene::material(&world, "sand").unwrap();
         assert!(world.material_counts()[usize::from(sand.0)] > 0);
+    }
+
+    #[test]
+    fn tour_defaults_to_on_without_the_card() {
+        let prefs = TourPrefs::default();
+        assert_eq!(
+            prefs.settings(5),
+            Some(TourSettings {
+                seed: 5,
+                card: false
+            })
+        );
+        let card = TourPrefs {
+            tour: true,
+            card: true,
+        };
+        assert_eq!(card.settings(5).map(|t| t.card), Some(true));
+        // Off wins over the card.
+        let off = TourPrefs {
+            tour: false,
+            card: true,
+        };
+        assert_eq!(off.settings(5), None);
+    }
+
+    #[test]
+    fn tour_seed_varies_with_the_start_time_and_repeats_for_the_same_one() {
+        assert_eq!(tour_seed(SEED, 1000), tour_seed(SEED, 1000));
+        assert_ne!(tour_seed(SEED, 1000), tour_seed(SEED, 1001));
+        assert_ne!(tour_seed(SEED, 1000), tour_seed(SEED + 1, 1000));
     }
 
     #[test]
