@@ -183,13 +183,14 @@
       material and the 16-cell block of the dab, so a drag sweeps one
       polygon (flat faces, sharp corners) and the faces step where it
       crosses into the next block. `layered` (dragon stone) takes a
-      world-fixed field of ledges along one ridge direction (up and a
-      little to the right, as the texture's slots and strata run; each
-      stratum, in ledges, sits in or out by its own amount) and hash-placed
-      bites,
-      so overlapping dabs agree on the edge and drawing over a spot again
-      changes nothing. The same seed and strokes give the same stone, which
-      saves keep as masks and bodies keep through every move.
+      world-fixed field of broad teeth with straight flanks and shallow
+      steps along the ridge direction (up and a little to the right, as
+      the texture's slots and strata run). Where the slots reach the edge
+      they open into notches. The trim is lighter beneath each dab, leaving
+      a broad foot, and spurs too thin to contain a cell-sized square are
+      clipped outside the core. Drawing over a spot again changes nothing.
+      The same seed and strokes give the same stone, which saves keep as
+      masks and bodies keep through every move.
     - **Depth.** A body occupies one band per four cells of its shorter
       reference dimension, rounded up and capped at eight. The world seed
       and body ID determine its placement. Motion and rotation preserve

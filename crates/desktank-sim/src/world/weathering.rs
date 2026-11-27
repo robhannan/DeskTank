@@ -15,13 +15,13 @@
 //!   seed and the material, so overlapping dabs (joined by
 //!   [`super::World::paint_into`]) agree on the edge. The field follows the
 //!   grain the renderer's slots follow (the ridge direction): saw teeth in
-//!   columns across the grain, each leaning and ending in a point, their
-//!   edges stepped along it, at two sizes (big shards, fine jaggies); and
+//!   wide columns across the grain with blunt crowns and straight flanks,
+//!   their edges stepping back along it; and
 //!   the renderer's own slot field is mirrored here ([`slot_measure`]), so a
 //!   hole that reaches the edge breaks through it as a notch. Teeth cut
 //!   less on the underside of a dab than on its top and sides (the one
 //!   dab-local factor), so a stone stands on a broad foot and tapers up to
-//!   its points.
+//!   its teeth. Thin spurs left between cutouts are trimmed away.
 //!
 //! No clock and no unseeded randomness: the same seed and strokes give the
 //! same stone. Each dab keeps an untrimmed core (the layered field cuts no
@@ -159,7 +159,7 @@ impl Weathering {
                         // sides: a broad foot.
                         let under = ((oy / dist - 0.2) / 0.6).clamp(0.0, 1.0);
                         let top = ((-oy / dist - 0.3) / 0.5).clamp(0.0, 1.0);
-                        let reach = (1.0 - 0.65 * under) * (1.0 + 0.3 * top);
+                        let reach = (1.0 - 0.70 * under) * (1.0 + 0.3 * top);
                         radius - dist >= (self.layered(px, py, cut_max) * reach).min(1.0) * cut_max
                     }
                 };
@@ -174,7 +174,7 @@ impl Weathering {
         }
         if facets.is_none() {
             fill_enclosed(&mut raw, side);
-            // The filled texels join the kept core's reach below.
+            raw = trim_spurs(&raw, &kept, side);
         }
         // Keep only what reaches the core, so nothing floats free of the stone.
         while let Some((ix, iy)) = stack.pop() {
@@ -236,38 +236,35 @@ impl Weathering {
         if hole_at(a, b) {
             return 1.0;
         }
-        let big = self.teeth(
+        self.teeth(
             (a, b),
-            (0.3 * cut_max).clamp(2.5, 6.0),
-            (0.7 * cut_max).clamp(5.0, 12.0),
-            1,
-        );
-        let fine = self.teeth((a, b), 1.5, 3.0, 5);
-        (big + 0.25 * fine).min(1.0)
+            (0.42 * cut_max).clamp(3.5, 9.0),
+            (0.85 * cut_max).clamp(6.0, 16.0),
+        )
     }
 
-    /// Saw teeth in `0..1` (0 at a tip, 1 in a valley) for columns `width`
-    /// cells wide across the grain: each column has its own tip, off-centre
-    /// (a lean), and valleys of their own depth between columns, joined by
-    /// straight flanks; along the grain a tooth steps back in sawtooth
-    /// ledges `period` cells long, ramping out to a point and dropping sharply.
-    fn teeth(self, ridge: (f32, f32), width: f32, period: f32, salt: u64) -> f32 {
+    /// Each column has a broad, slightly off-centre crown and straight
+    /// flanks that meet at shared valleys. A shallow step along the grain
+    /// offsets the crown and flanks together.
+    fn teeth(self, ridge: (f32, f32), width: f32, period: f32) -> f32 {
         let column = (ridge.0 / width).floor();
         let frac = ridge.0 / width - column;
         let col = to_i64_f(column);
-        let hash = self.hash(salt, col, 0);
-        // Where the tip sits across the column, and how sharp it is.
-        let lean = 0.2 + 0.6 * unit(hash >> 8);
-        let tip = 0.25 * unit(hash >> 32);
-        let valley = |c: i64| 0.55 + 0.45 * unit(self.hash(salt + 1, c, 0));
-        let flank = if frac < lean {
-            valley(col) + (tip - valley(col)) * frac / lean
+        let hash = self.hash(1, col, 0);
+        let crown_start = 0.22 + 0.16 * unit(hash >> 8);
+        let crown_end = crown_start + 0.40;
+        let crown = 0.10 + 0.10 * unit(hash >> 32);
+        let valley = |c: i64| 0.40 + 0.14 * unit(self.hash(2, c, 0));
+        let flank = if frac < crown_start {
+            crown + (valley(col) - crown) * (crown_start - frac) / crown_start
+        } else if frac > crown_end {
+            crown + (valley(col + 1) - crown) * (frac - crown_end) / (1.0 - crown_end)
         } else {
-            tip + (valley(col + 1) - tip) * (frac - lean) / (1.0 - lean)
+            crown
         };
         let phase = ridge.1 / period + unit(hash >> 16);
-        let ramp = 1.0 - (phase - phase.floor());
-        (0.6 * flank + 0.5 * ramp - 0.1).max(0.0)
+        let ledge = (1.0 - (phase - phase.floor()) * 1.5).max(0.0);
+        flank + 0.12 * ledge
     }
 
     /// Piecewise-linear value noise in `0..1` at lattice coordinates
@@ -437,6 +434,24 @@ fn fill_enclosed(raw: &mut [bool], side: usize) {
     }
 }
 
+/// Outside the protected core, keep only texels that fit within a solid
+/// cell-sized square. This clips slivers between slot notches and the edge.
+fn trim_spurs(raw: &[bool], core: &[bool], side: usize) -> Vec<bool> {
+    const WIDTH: usize = 4;
+    let mut solid = core.to_vec();
+    for y in 0..=side - WIDTH {
+        for x in 0..=side - WIDTH {
+            let rows = (y..y + WIDTH).map(|row| row * side + x..row * side + x + WIDTH);
+            if rows.clone().all(|row| raw[row].iter().all(|&drawn| drawn)) {
+                for row in rows {
+                    solid[row].fill(true);
+                }
+            }
+        }
+    }
+    solid
+}
+
 /// The low 24 bits of a hash as a value in `0..1`.
 fn unit(h: u64) -> f32 {
     #[allow(clippy::cast_precision_loss)] // 24 bits fit f32 exactly
@@ -510,6 +525,44 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn layered_teeth_have_broad_crowns_and_shallow_valleys() {
+        let field = Weathering::new(OutlineShape::Layered, 3, 9);
+        let width = 8.0;
+        for col in -8..8 {
+            let cut = |frac| field.teeth(((to_f32(col) + frac) * width, 7.0), width, 15.0);
+            let crown = cut(0.5);
+            // Every slightly offset crown covers the middle fifth of its column.
+            assert!((cut(0.4) - crown).abs() < f32::EPSILON);
+            assert!((cut(0.6) - crown).abs() < f32::EPSILON);
+            for valley in [cut(0.0), cut(0.999)] {
+                assert!((0.18..0.46).contains(&(valley - crown)));
+            }
+        }
+    }
+
+    #[test]
+    fn trimming_a_spur_preserves_a_broad_tooth_and_its_notch() {
+        let rows = [
+            "..#......",
+            "..#......",
+            "########.",
+            "########.",
+            "########.",
+            "########.",
+            "#####....",
+            "#####....",
+            "#####....",
+        ];
+        let raw: Vec<_> = rows
+            .iter()
+            .flat_map(|s| s.bytes().map(|b| b == b'#'))
+            .collect();
+        let solid = trim_spurs(&raw, &[false; 81], 9);
+        assert!(solid[..18].iter().all(|&drawn| !drawn));
+        assert_eq!(solid[18..], raw[18..]);
     }
 
     #[test]
