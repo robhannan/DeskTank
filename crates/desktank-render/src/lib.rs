@@ -34,6 +34,7 @@ mod plant_sprite;
 mod plants;
 mod post;
 mod renderer;
+mod ruler;
 mod sprites;
 mod surface;
 mod tank;

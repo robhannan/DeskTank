@@ -78,6 +78,10 @@ struct View {
     // and OLED mode (w: 1 when the tank is opaque and its background is true
     // black, 0 otherwise; see `oled`).
     algae: vec4<f32>,
+    // Centimetre ruler (`ruler.rs`): art pixel size in target pixels (x; 0
+    // when off), target pixels per cm (y), label step in cm (z) and the
+    // smallest tick step in cm (w).
+    ruler: vec4<f32>,
     // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
     // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
     ripples: array<vec4<f32>, 16>,
@@ -3709,4 +3713,175 @@ fn fs_lens_frame(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     discard;
     // HLSL FXC requires a return statement on all control paths even after discard.
     return vec4<f32>(0.0);
+}
+
+// Centimetre ruler along the bottom and left edges, 0 cm at the bottom-left
+// corner. Everything sits on a grid of art pixels (`view.ruler.x` target
+// pixels a side) anchored there. The bottom strip is RULER_BOTTOM art rows
+// tall, the left strip RULER_LEFT columns wide above it; `ruler.rs` has the
+// same sizes and the draw's scissor rectangles.
+const RULER_BOTTOM: f32 = 12.0;
+const RULER_LEFT: f32 = 19.0;
+// First art row of the "cm" unit label on the left strip (5 rows), and the
+// first row a numeric label may start on above it.
+const RULER_UNIT_ROW: f32 = 13.0;
+const RULER_LABEL_ROW: f32 = 18.0;
+
+// 3x5 glyph bitmaps from `font.rs`, one bit per pixel, row-major from the
+// top-left: digits 0 to 9, then 10 = c and 11 = m (checked by a test).
+fn ruler_glyph(g: u32) -> u32 {
+    switch g {
+        case 0u: { return 0x7b6fu; }
+        case 1u: { return 0x749au; }
+        case 2u: { return 0x73e7u; }
+        case 3u: { return 0x79e7u; }
+        case 4u: { return 0x49edu; }
+        case 5u: { return 0x79cfu; }
+        case 6u: { return 0x7bcfu; }
+        case 7u: { return 0x2527u; }
+        case 8u: { return 0x7befu; }
+        case 9u: { return 0x79efu; }
+        case 10u: { return 0x6270u; }
+        case 11u: { return 0x5fc0u; }
+        default: { return 0u; }
+    }
+}
+
+fn ruler_bit(g: u32, col: i32, row: i32) -> bool {
+    if col < 0 || col > 2 || row < 0 || row > 4 {
+        return false;
+    }
+    return ((ruler_glyph(g) >> u32(row * 3 + col)) & 1u) == 1u;
+}
+
+// `a` modulo `b` for whole numbers held in floats.
+fn ruler_mod(a: f32, b: f32) -> f32 {
+    return a - b * floor(a / b);
+}
+
+// Whether the whole number `n` (under 1000) has ink at column `col`, row
+// `row` (0 at the top) of its label: 3x5 digits one column apart.
+fn ruler_number_ink(n: i32, col: i32, row: i32) -> bool {
+    let digits = 1 + i32(n >= 10) + i32(n >= 100);
+    if col < 0 || col >= digits * 4 - 1 || (col % 4) == 3 {
+        return false;
+    }
+    let place = digits - 1 - col / 4;
+    var divisor = 1;
+    if place == 1 {
+        divisor = 10;
+    } else if place == 2 {
+        divisor = 100;
+    }
+    return ruler_bit(u32((n / divisor) % 10), col % 4, row);
+}
+
+fn ruler_number_width(n: f32) -> f32 {
+    return 4.0 * (1.0 + f32(n >= 10.0) + f32(n >= 100.0)) - 1.0;
+}
+
+// The art column or row holding the tick of `n` cm.
+fn ruler_at(n: f32) -> f32 {
+    return floor(n * view.ruler.y / view.ruler.x);
+}
+
+// The cm whose tick falls in art column or row `a`, or -1.
+fn ruler_tick_cm(a: f32) -> f32 {
+    let n = ceil((a * view.ruler.x - 0.001) / view.ruler.y);
+    let into = n * view.ruler.y - a * view.ruler.x;
+    if into < view.ruler.x - 0.001 && ruler_mod(n, view.ruler.w) == 0.0 {
+        return n;
+    }
+    return -1.0;
+}
+
+// Tick length in art pixels: long on labels and every 10 cm, medium every 5.
+fn ruler_tick_len(n: f32) -> f32 {
+    if ruler_mod(n, 10.0) == 0.0 || ruler_mod(n, view.ruler.z) == 0.0 {
+        return 5.0;
+    }
+    if ruler_mod(n, 5.0) == 0.0 {
+        return 3.0;
+    }
+    return 2.0;
+}
+
+// The largest label multiple (in cm) whose tick is at or before `edge` art
+// pixels (exclusive of ones that start at `edge` itself).
+fn ruler_label_before(edge: f32) -> f32 {
+    let step = view.ruler.z;
+    return step * (ceil(edge * view.ruler.x / (step * view.ruler.y)) - 1.0);
+}
+
+// Ink on the bottom strip: ticks hang up from the edge, labels sit above them
+// to the right of their tick.
+fn ruler_bottom_ink(art: vec2<f32>, tank_art_w: f32) -> bool {
+    let tick = ruler_tick_cm(art.x);
+    if tick >= 0.0 && art.y < ruler_tick_len(tick) {
+        return true;
+    }
+    let c = art.x - 2.0;
+    if art.y >= 6.0 && art.y < 11.0 && c >= 0.0 {
+        let n = ruler_label_before(c + 1.0);
+        let start = ruler_at(n);
+        if n >= 0.0 && n < 1000.0 && start + 2.0 + ruler_number_width(n) <= tank_art_w {
+            return ruler_number_ink(i32(n), i32(c - start), i32(10.0 - art.y));
+        }
+    }
+    return false;
+}
+
+// Ink on the left strip: ticks run right from the edge, labels sit just above
+// their tick, and "cm" sits above the bottom strip.
+fn ruler_left_ink(art: vec2<f32>, tank_art_h: f32) -> bool {
+    let tick = ruler_tick_cm(art.y);
+    if tick >= 0.0 && art.x < ruler_tick_len(tick) {
+        return true;
+    }
+    let col = i32(art.x) - 6;
+    if art.y >= RULER_UNIT_ROW && art.y < RULER_UNIT_ROW + 5.0 && col >= 0 && col < 7 {
+        let row = i32(RULER_UNIT_ROW + 4.0 - art.y);
+        if col < 3 {
+            return ruler_bit(10u, col, row);
+        }
+        return col >= 4 && ruler_bit(11u, col - 4, row);
+    }
+    let n = ruler_label_before(art.y);
+    let at = ruler_at(n);
+    if n >= 1.0 && n < 1000.0 && at >= RULER_LABEL_ROW && at + 6.0 <= tank_art_h {
+        let row = art.y - (at + 1.0);
+        if row >= 0.0 && row < 5.0 {
+            return ruler_number_ink(i32(n), col, i32(4.0 - row));
+        }
+    }
+    return false;
+}
+
+// The centimetre ruler: a translucent backing strip along the bottom and left
+// edges with pale pixel-art ticks and numbers on it. The palette and cards stay
+// on top.
+@fragment
+fn fs_ruler(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let px = view.ruler.x;
+    let tank = view.grid * view.scale;
+    // Whole pixels from the tank's left and bottom edges.
+    let rel = vec2<f32>(floor(pos.x - view.offset.x), floor(view.offset.y + tank.y - pos.y));
+    let art = floor(rel / px);
+    let in_bottom = art.y < RULER_BOTTOM;
+    if px <= 0.0 || any(rel < vec2<f32>(0.0)) || any(rel >= tank) || !(in_bottom || art.x < RULER_LEFT)
+        || hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    var ink = false;
+    if in_bottom {
+        ink = ruler_bottom_ink(art, floor(tank.x / px));
+    } else {
+        ink = ruler_left_ink(art, floor(tank.y / px));
+    }
+    if ink {
+        return vec4<f32>(out(vec3<f32>(0.957, 0.914, 0.784)).rgb, 1.0);
+    }
+    // The backing is black in OLED mode so the tank stays true black.
+    let backing = select(vec3<f32>(0.043, 0.071, 0.110), vec3<f32>(0.0), view.algae.w > 0.5);
+    return vec4<f32>(out(backing).rgb, 0.62);
 }

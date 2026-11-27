@@ -152,6 +152,7 @@ enum Background {
 /// A simulated world plus everything needed to show it. The host calls
 /// [`Tank::tick`] on its clock and [`Tank::draw`] (or [`Tank::render_to`])
 /// when the returned [`FrameRequest`] asks for a frame.
+#[allow(clippy::struct_excessive_bools)] // independent render toggles, not a state machine
 pub struct Tank {
     world: World,
     pacer: Pacer,
@@ -195,6 +196,8 @@ pub struct Tank {
     target_size: (u32, u32),
     /// The field tinted over the tank (debug overlay), if any.
     field_overlay: Option<crate::FieldOverlay>,
+    /// The centimetre ruler is shown (see [`Tank::set_ruler`]).
+    ruler: bool,
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
     overlay_water_alpha: Option<f32>,
@@ -239,6 +242,7 @@ impl Tank {
             card_dirty: false,
             card_anchor: CardAnchor::default(),
             card_min_scale: 0,
+            ruler: false,
             inspect: InspectCard::default(),
             cursor: None,
             ghost: None,
@@ -463,6 +467,27 @@ impl Tank {
     #[must_use]
     pub fn field_overlay(&self) -> Option<crate::FieldOverlay> {
         self.field_overlay
+    }
+
+    /// Shows or hides the centimetre ruler (off by default): pixel-art ticks
+    /// and labels along the tank's bottom and left edges, 0 cm at the
+    /// bottom-left corner, at the scale creatures are drawn at (see
+    /// `desktank_sim::species::CELLS_PER_CM`). Labels grow with
+    /// [`Tank::set_card_min_scale`] on high-density displays. Off, it costs
+    /// no draw and no memory; on, it adds one blended pass over the two edge
+    /// strips and never asks for a frame by itself. A change asks for a frame;
+    /// setting the same value again costs nothing.
+    pub fn set_ruler(&mut self, enabled: bool) {
+        if self.ruler != enabled {
+            self.ruler = enabled;
+            self.needs_frame = true;
+        }
+    }
+
+    /// Whether the ruler is shown (see [`Tank::set_ruler`]).
+    #[must_use]
+    pub fn ruler(&self) -> bool {
+        self.ruler
     }
 
     /// Shows (or with `None`, hides) the interact palette. A change asks
@@ -1262,6 +1287,7 @@ impl Tank {
                 cursor: self.cursor,
                 magnifier: self.magnifier,
                 field: self.field_overlay,
+                ruler: self.ruler.then_some(self.card_min_scale),
             },
             oled,
             self.timer.as_ref(),
@@ -1424,6 +1450,23 @@ mod tests {
         assert!(!tank.sway_active());
         let frames = count_frames(&mut tank, Duration::ZERO, 10);
         assert_eq!(frames, 0, "settled tank with sway off drew {frames} frames");
+    }
+
+    #[test]
+    fn the_ruler_is_off_by_default_and_asks_for_one_frame_per_change() {
+        let mut tank = settled_planted_tank();
+        assert!(!tank.ruler(), "the ruler must be off by default");
+        tank.set_ruler(false);
+        assert!(!tank.needs_frame, "off to off changes nothing");
+        tank.set_ruler(true);
+        assert!(tank.ruler() && tank.needs_frame);
+        tank.mark_drawn();
+        tank.set_ruler(true);
+        assert!(!tank.needs_frame, "on to on changes nothing");
+        // A settled tank with the ruler on draws no extra frames.
+        assert_eq!(count_frames(&mut tank, Duration::ZERO, 10), 0);
+        tank.set_ruler(false);
+        assert!(!tank.ruler() && tank.needs_frame);
     }
 
     #[test]
