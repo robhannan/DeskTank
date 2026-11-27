@@ -9,14 +9,19 @@
 //!   16-cell block the dab sits in, so every dab of a drag shares one
 //!   polygon: the stroke sweeps it, keeping flat faces and sharp corners,
 //!   and where a drag crosses into the next block the faces step.
-//! * **Layered** (dragon stone): a world-fixed field, not per-dab. A quarter
-//!   of a dab's disc is dropped when it lies less than `d(p)` inside the
-//!   disc's edge, where `d` depends only on the quarter's world position,
-//!   the world seed and the material, so overlapping dabs (joined by
-//!   [`super::World::paint_into`]) agree on the edge and drawing over a spot
-//!   again changes nothing. Strata run along one ridge direction; each
-//!   stratum, in ledges along the ridge, sits in or out by its own amount,
-//!   so the edge steps, and hash-placed bites take notches out of it.
+//! * **Layered** (dragon stone): a world-fixed field, not per-dab. A texel of
+//!   a dab's disc is dropped when it lies less than `d(p)` inside the disc's
+//!   edge, where `d` depends only on the texel's world position, the world
+//!   seed and the material, so overlapping dabs (joined by
+//!   [`super::World::paint_into`]) agree on the edge. The field follows the
+//!   grain the renderer's slots follow (the ridge direction): saw teeth in
+//!   columns across the grain, each leaning and ending in a point, their
+//!   edges stepped along it, at two sizes (big shards, fine jaggies); and
+//!   the renderer's own slot field is mirrored here ([`slot_measure`]), so a
+//!   hole that reaches the edge breaks through it as a notch. Teeth cut
+//!   less on the underside of a dab than on its top and sides (the one
+//!   dab-local factor), so a stone stands on a broad foot and tapers up to
+//!   its points.
 //!
 //! No clock and no unseeded randomness: the same seed and strokes give the
 //! same stone. Each dab keeps an untrimmed core (the layered field cuts no
@@ -35,9 +40,9 @@ use crate::rng::splitmix64;
 /// Smallest brush radius, in cells, that is weathered.
 const MIN_RADIUS: i64 = 3;
 /// Deepest cut, as a fraction of the brush radius.
-const MAX_CUT: f32 = 0.40;
+const MAX_CUT: f32 = 0.60;
 /// Deepest cut, in texels (quarter cells), however big the brush.
-const MAX_CUT_TEXELS: f32 = 22.0;
+const MAX_CUT_TEXELS: f32 = 30.0;
 /// Deepest chip out of a polygon's edge, in texels.
 const CHIP_TEXELS: f32 = 2.5;
 /// The ridge direction of layered stone, as a unit vector (along the
@@ -141,17 +146,21 @@ impl Weathering {
                         to_f32(origin.0 + to_i64(ix)) + 0.5,
                         to_f32(origin.1 + to_i64(iy)) + 0.5,
                     );
-                    match &facets {
-                        Some(facets) => {
-                            // How far inside the polygon's nearest face, less
-                            // the chips taken out of its edge.
-                            let inset = facets
-                                .iter()
-                                .map(|&(n, d)| d - (n.0 * ox + n.1 * oy))
-                                .fold(f32::INFINITY, f32::min);
-                            inset >= self.chip(px, py) * CHIP_TEXELS
-                        }
-                        None => radius - dist >= self.layered(px, py, radius, cut_max),
+                    if let Some(facets) = &facets {
+                        // How far inside the polygon's nearest face, less
+                        // the chips taken out of its edge.
+                        let inset = facets
+                            .iter()
+                            .map(|&(n, d)| d - (n.0 * ox + n.1 * oy))
+                            .fold(f32::INFINITY, f32::min);
+                        inset >= self.chip(px, py) * CHIP_TEXELS
+                    } else {
+                        // Teeth cut less under the dab than on top and at its
+                        // sides: a broad foot.
+                        let under = ((oy / dist - 0.2) / 0.6).clamp(0.0, 1.0);
+                        let top = ((-oy / dist - 0.3) / 0.5).clamp(0.0, 1.0);
+                        let reach = (1.0 - 0.65 * under) * (1.0 + 0.3 * top);
+                        radius - dist >= (self.layered(px, py, cut_max) * reach).min(1.0) * cut_max
                     }
                 };
                 if raw[at] && dist <= core {
@@ -162,6 +171,10 @@ impl Weathering {
                     }
                 }
             }
+        }
+        if facets.is_none() {
+            fill_enclosed(&mut raw, side);
+            // The filled texels join the kept core's reach below.
         }
         // Keep only what reaches the core, so nothing floats free of the stone.
         while let Some((ix, iy)) = stack.pop() {
@@ -211,32 +224,50 @@ impl Weathering {
         self.lattice(px / 4.5, py / 4.5, 2)
     }
 
-    /// How deep, in texels, ledges and bites cut at world texel `(px, py)`.
-    fn layered(self, px: f32, py: f32, radius: f32, cut_max: f32) -> f32 {
-        let thick = (radius / 5.0).round().clamp(4.0, 9.0);
-        let along = px * RIDGE.0 + py * RIDGE.1;
-        let across = px * RIDGE_NORMAL.0 + py * RIDGE_NORMAL.1;
-        let layer = to_i64_f((across / thick).floor());
-        let ledge = to_i64_f((along / (2.5 * thick)).floor());
-        // Each ledge of each layer sits in or out by its own amount.
-        let step = unit(self.hash(3, layer, ledge));
-        let layer_bias = unit(self.hash(4, layer, 0));
-        let mut cut = 0.05 + 0.95 * step * step * (0.4 + layer_bias);
-        // Bites: a circle per lattice square now and then.
-        let size = (radius / 3.0).round().clamp(6.0, 16.0);
-        let (col, row) = ((px / size).floor(), (py / size).floor());
-        let hash = self.hash(5, to_i64_f(col), to_i64_f(row));
-        if hash & 0b111 < 3 {
-            let (bx, by) = (
-                (col + unit(hash >> 8)) * size,
-                (row + unit(hash >> 24)) * size,
-            );
-            let bite = (0.18 + 0.2 * unit(hash >> 40)) * size;
-            if (px - bx) * (px - bx) + (py - by) * (py - by) < bite * bite {
-                cut = cut.max(1.3);
-            }
+    /// How deep the grain cuts at world texel `(px, py)`, as a fraction of
+    /// the deepest cut: `1` where a hole of the renderer's slot field
+    /// breaks the edge, otherwise saw teeth along the grain.
+    fn layered(self, px: f32, py: f32, cut_max: f32) -> f32 {
+        // Cells, then ridge coordinates: `a` across the grain, `b` along it
+        // (the shader's `dragon_stone_colour`).
+        let (wx, wy) = (px / 4.0, py / 4.0);
+        let a = wx * RIDGE_NORMAL.0 + wy * RIDGE_NORMAL.1;
+        let b = wx * RIDGE.0 + wy * RIDGE.1;
+        if hole_at(a, b) {
+            return 1.0;
         }
-        (cut * cut_max).clamp(0.0, cut_max)
+        let big = self.teeth(
+            (a, b),
+            (0.3 * cut_max).clamp(2.5, 6.0),
+            (0.7 * cut_max).clamp(5.0, 12.0),
+            1,
+        );
+        let fine = self.teeth((a, b), 1.5, 3.0, 5);
+        (big + 0.25 * fine).min(1.0)
+    }
+
+    /// Saw teeth in `0..1` (0 at a tip, 1 in a valley) for columns `width`
+    /// cells wide across the grain: each column has its own tip, off-centre
+    /// (a lean), and valleys of their own depth between columns, joined by
+    /// straight flanks; along the grain a tooth steps back in sawtooth
+    /// ledges `period` cells long, ramping out to a point and dropping sharply.
+    fn teeth(self, ridge: (f32, f32), width: f32, period: f32, salt: u64) -> f32 {
+        let column = (ridge.0 / width).floor();
+        let frac = ridge.0 / width - column;
+        let col = to_i64_f(column);
+        let hash = self.hash(salt, col, 0);
+        // Where the tip sits across the column, and how sharp it is.
+        let lean = 0.2 + 0.6 * unit(hash >> 8);
+        let tip = 0.25 * unit(hash >> 32);
+        let valley = |c: i64| 0.55 + 0.45 * unit(self.hash(salt + 1, c, 0));
+        let flank = if frac < lean {
+            valley(col) + (tip - valley(col)) * frac / lean
+        } else {
+            tip + (valley(col + 1) - tip) * (frac - lean) / (1.0 - lean)
+        };
+        let phase = ridge.1 / period + unit(hash >> 16);
+        let ramp = 1.0 - (phase - phase.floor());
+        (0.6 * flank + 0.5 * ramp - 0.1).max(0.0)
     }
 
     /// Piecewise-linear value noise in `0..1` at lattice coordinates
@@ -308,6 +339,104 @@ impl Dab {
     }
 }
 
+/// Whether the renderer's dragon stone slot field has a hole at `(a, b)`
+/// (ridge coordinates in cells), a little dilated so a notch is wider than
+/// the dark slot it opens.
+fn hole_at(a: f32, b: f32) -> bool {
+    let dens = smoothstep(0.30, 0.70, value_noise(a * 0.10 + 5.0, b * 0.07 + 5.0));
+    let big = slot_measure(a, b, 3.3, 9.5, 211, dens * 0.65);
+    if big < 1.8 {
+        big < 1.3
+    } else {
+        slot_measure(a, b, 1.7, 4.6, 57, dens * 0.40 + 0.03) < 1.35
+    }
+}
+
+/// `dragon_slot` of `tank.wgsl`: columns `wid` wide across the grain, each
+/// shifted along it by its own offset and cut into segments `seg` long,
+/// a segment holding a slot with probability `dens`. Returns the slot
+/// measure (below 1 inside, large when none). (The edge's exponent is 2.5,
+/// not 2.4, to stay off `powf`, whose results differ between platforms.)
+fn slot_measure(a: f32, b: f32, wid: f32, seg: f32, salt: i32, dens: f32) -> f32 {
+    let col = to_i32((a / wid).floor());
+    let hc = gpu_hash(col, salt);
+    let bo = b + f32_from(hc & 255) / 255.0 * seg;
+    let row = to_i32((bo / seg).floor());
+    let h = gpu_hash(col + salt * 7, row + salt + 3);
+    if f32_from(h & 255) / 255.0 >= dens {
+        return 9.0;
+    }
+    let hw = (0.17 + f32_from((h >> 8) & 7) / 7.0 * 0.17) * wid;
+    let mut hl = (0.13 + f32_from((h >> 11) & 7) / 7.0 * 0.19) * seg;
+    if (h >> 14).trailing_zeros() >= 3 {
+        hl *= 1.6;
+    }
+    hl = hl.min(seg * 0.46);
+    let ca = hw + (wid - 2.0 * hw) * (f32_from((h >> 17) & 15) / 15.0);
+    let cb = hl + (seg - 2.0 * hl) * (f32_from((h >> 21) & 15) / 15.0);
+    let salt = to_f32(i64::from(salt));
+    let mut dx = (a - to_f32(i64::from(col)) * wid - ca) / hw;
+    let dy = (bo - to_f32(i64::from(row)) * seg - cb) / hl;
+    dx += (value_noise(a * 1.3 + salt, b * 0.6 + salt) - 0.5) * 0.8;
+    let dy = dy + (value_noise(a * 0.7 + salt + 31.0, b * 1.1 + salt + 31.0) - 0.5) * 0.4;
+    dx /= (1.0 - 0.45 * dy * dy).max(0.3);
+    dx * dx + dy.abs() * dy.abs().sqrt() * dy.abs()
+}
+
+/// The renderer's integer hash (`hash` in `tank.wgsl`).
+fn gpu_hash(x: i32, y: i32) -> u32 {
+    let mut h =
+        x.cast_unsigned().wrapping_mul(0x8da6_b343) ^ y.cast_unsigned().wrapping_mul(0xd816_3841);
+    h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
+    h ^ (h >> 15)
+}
+
+/// The renderer's smooth value noise (`vnoise`), one lattice step per unit.
+fn value_noise(x: f32, y: f32) -> f32 {
+    let (i, j) = (x.floor(), y.floor());
+    let (fx, fy) = (x - i, y - j);
+    let (ux, uy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+    let (i, j) = (to_i32(i), to_i32(j));
+    let at = |a: i32, b: i32| f32_from(gpu_hash(a, b) & 1023) / 1024.0;
+    let low = at(i, j) + (at(i + 1, j) - at(i, j)) * ux;
+    let high = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * ux;
+    low + (high - low) * uy
+}
+
+fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Fills every undrawn texel of the `side`×`side` bitmap that the outside
+/// (its border, through 8-connected undrawn texels) cannot reach, so a
+/// notch only exists where it opens onto the edge.
+fn fill_enclosed(raw: &mut [bool], side: usize) {
+    let mut outside = vec![false; side * side];
+    let mut stack = Vec::new();
+    for i in 0..side {
+        for (x, y) in [(i, 0), (i, side - 1), (0, i), (side - 1, i)] {
+            if !raw[y * side + x] && !outside[y * side + x] {
+                outside[y * side + x] = true;
+                stack.push((x, y));
+            }
+        }
+    }
+    while let Some((x, y)) = stack.pop() {
+        for ny in y.saturating_sub(1)..=(y + 1).min(side - 1) {
+            for nx in x.saturating_sub(1)..=(x + 1).min(side - 1) {
+                if !raw[ny * side + nx] && !outside[ny * side + nx] {
+                    outside[ny * side + nx] = true;
+                    stack.push((nx, ny));
+                }
+            }
+        }
+    }
+    for (drawn, out) in raw.iter_mut().zip(&outside) {
+        *drawn |= !out;
+    }
+}
+
 /// The low 24 bits of a hash as a value in `0..1`.
 fn unit(h: u64) -> f32 {
     #[allow(clippy::cast_precision_loss)] // 24 bits fit f32 exactly
@@ -321,6 +450,16 @@ fn to_f32(x: i64) -> f32 {
     x as f32
 }
 
+#[allow(clippy::cast_precision_loss)] // small hash fields
+fn f32_from(x: u32) -> f32 {
+    x as f32
+}
+
+#[allow(clippy::cast_possible_truncation)] // floored lattice coordinates are small
+fn to_i32(x: f32) -> i32 {
+    x as i32
+}
+
 #[allow(clippy::cast_possible_truncation)] // floored lattice coordinates are small
 fn to_i64_f(x: f32) -> i64 {
     x as i64
@@ -329,4 +468,65 @@ fn to_i64_f(x: f32) -> i64 {
 #[allow(clippy::cast_possible_wrap)] // quarter indices are 0..4
 const fn to_i64(x: usize) -> i64 {
     x as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The texels of a layered dab's disc that are trimmed away, split into
+    /// those above the centre and those below it.
+    fn trimmed_halves(cx: i64, cy: i64, r: i64) -> (usize, usize) {
+        let dab = Weathering::new(OutlineShape::Layered, 3, 9).dab(cx, cy, r);
+        let radius = to_f32(disc_limit(r)).sqrt() / 2.0;
+        let half = to_f32(to_i64(dab.side) / 2);
+        let (mut above, mut below) = (0, 0);
+        for iy in 0..dab.side {
+            for ix in 0..dab.side {
+                let (ox, oy) = (
+                    to_f32(to_i64(ix)) + 0.5 - half,
+                    to_f32(to_i64(iy)) + 0.5 - half,
+                );
+                if ox * ox + oy * oy <= radius * radius && !dab.kept[iy * dab.side + ix] {
+                    if oy < 0.0 {
+                        above += 1;
+                    } else {
+                        below += 1;
+                    }
+                }
+            }
+        }
+        (above, below)
+    }
+
+    #[test]
+    fn layered_dabs_are_trimmed_harder_on_top_than_underneath() {
+        for r in [5, 7, 9] {
+            for (cx, cy) in [(40, 40), (47, 61), (90, 13), (13, 77)] {
+                let (above, below) = trimmed_halves(cx, cy, r);
+                assert!(
+                    above * 10 > below * 13,
+                    "r {r} at ({cx}, {cy}): {above} trimmed above, {below} below"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_slot_field_has_holes_in_some_places_only() {
+        let (mut holes, mut total) = (0, 0);
+        for j in 0..120 {
+            for i in 0..120 {
+                holes += usize::from(hole_at(to_f32(i) * 0.5, to_f32(j) * 0.5));
+                total += 1;
+            }
+        }
+        assert!(holes * 50 > total, "{holes} of {total}: holes are rare");
+        assert!(
+            holes * 3 < total,
+            "{holes} of {total}: holes are everywhere"
+        );
+        // No slot where the density says none.
+        assert!((slot_measure(0.1, 0.1, 3.3, 9.5, 211, 0.0) - 9.0).abs() < f32::EPSILON);
+    }
 }
