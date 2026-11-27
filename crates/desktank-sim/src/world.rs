@@ -113,6 +113,9 @@ pub enum WorldError {
     /// The water level isn't within `0.0..=1.0`.
     #[error("water level {0} is outside 0..=1")]
     BadWaterLevel(f32),
+    /// The built-in materials are invalid.
+    #[error("materials: {0}")]
+    Materials(String),
     /// The material table lacks a material the world needs.
     #[error("material table has no {0:?} material")]
     MissingMaterial(&'static str),

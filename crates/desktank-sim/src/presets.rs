@@ -124,7 +124,8 @@ impl NewTankConfig {
     /// Returns an error if the built-in materials are invalid or the size or
     /// water level is out of range.
     pub fn build(&self) -> Result<World, WorldError> {
-        let materials = MaterialTable::builtin().map_err(|e| WorldError::Ecology(e.to_string()))?;
+        let materials =
+            MaterialTable::builtin().map_err(|e| WorldError::Materials(e.to_string()))?;
         self.build_with_materials(materials)
     }
 
@@ -170,7 +171,7 @@ const BED_HIGH_PCT: usize = 12;
 
 /// A uniform value in `lo..=hi` (`hi` raised to `lo` if smaller).
 fn between(rng: &mut Pcg32, lo: usize, hi: usize) -> usize {
-    let span = u64::try_from(hi.max(lo) - lo + 1).unwrap_or(1);
+    let span = u64::try_from(hi.max(lo) - lo).map_or(1, |d| d.saturating_add(1));
     lo + usize::try_from(u64::from(rng.next_u32()) % span).unwrap_or(0)
 }
 
@@ -202,7 +203,7 @@ fn bed_profile(rng: &mut Pcg32, width: usize, low: usize, high: usize) -> Vec<us
         .collect()
 }
 
-/// The Artificial preset: gravel bed, rocks, then (optionally) devices.
+/// The Artificial preset: gravel bed, (optionally) devices, then rocks.
 fn artificial(world: &mut World, seed: u64, include_devices: bool) -> Result<(), WorldError> {
     let (w, h) = (world.width(), world.height());
     let gravel = crate::scene::material(world, "clown_vomit_gravel")?;
