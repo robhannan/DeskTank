@@ -31,6 +31,8 @@ wgpu = { version = "30.0.2", default-features = false, features = ["webgpu", "we
 
 [dev-dependencies]
 pollster = "1.0.2"
+# Writes the camera screenshots in tests/offscreen.rs (same version as the CLI).
+png = "0.18.1"
 
 [lints]
 workspace = true

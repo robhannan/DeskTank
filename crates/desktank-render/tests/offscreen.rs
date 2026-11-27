@@ -1852,3 +1852,412 @@ fn the_inspect_card_shows_need_meters_in_two_columns_or_one() {
     }
     assert!(heights[1] > heights[0], "one column is taller: {heights:?}");
 }
+
+// The camera (D29): the tank drawn offscreen at its integer layout, then a
+// view of it resampled over the target.
+
+/// An 80×45 tank with a 6×6 rock block at cells (30..36, 20..26) and a
+/// tetra at (45, 20); drawn into a 640×360 target (scale 8).
+fn camera_tank() -> (Tank, desktank_sim::CreatureId) {
+    let materials = MaterialTable::builtin().unwrap();
+    let rock = materials.id("rock").unwrap();
+    let mut world = World::new(
+        WorldConfig {
+            width: 80,
+            height: 45,
+            seed: 7,
+            water_level: 1.0,
+        },
+        materials,
+    )
+    .unwrap();
+    world
+        .fill_rect(
+            desktank_sim::Rect {
+                x0: 30,
+                y0: 20,
+                x1: 36,
+                y1: 26,
+            },
+            rock,
+            Brush::Replace,
+        )
+        .unwrap();
+    let tetra = world.species().id("neon_tetra").unwrap();
+    let id = world.add_creature(tetra, 45, 20).unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_saver_mode(true);
+    (tank, id)
+}
+
+const CAMERA_TARGET: (u32, u32) = (640, 360);
+
+fn colour_distance(a: [u8; 3], b: [u8; 3]) -> u32 {
+    a.iter()
+        .zip(b)
+        .map(|(&a, b)| u32::from(a.abs_diff(b)))
+        .sum()
+}
+
+#[test]
+fn clearing_the_camera_draws_exactly_the_plain_tank() {
+    let Some(gpu) = gpu() else { return };
+    for format in [
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    ] {
+        let (mut plain, _) = camera_tank();
+        let expected = render_sized(gpu, &mut plain, format, CAMERA_TARGET);
+
+        let (mut tank, _) = camera_tank();
+        // A frame before the camera, with it, and after it goes.
+        assert!(render_sized(gpu, &mut tank, format, CAMERA_TARGET) == expected);
+        tank.set_camera(Some(tank.camera_cover(CAMERA_TARGET, (40.0, 22.0), 2.0)));
+        assert!(tank.frame_wanted(), "setting a camera asks for a frame");
+        let zoomed = render_sized(gpu, &mut tank, format, CAMERA_TARGET);
+        assert!(zoomed != expected, "{format:?}: the zoomed view differs");
+        tank.set_camera(None);
+        assert!(tank.frame_wanted(), "clearing it asks for a frame");
+        assert!(
+            render_sized(gpu, &mut tank, format, CAMERA_TARGET) == expected,
+            "{format:?}: no camera draws the plain picture, byte for byte"
+        );
+    }
+}
+
+#[test]
+fn the_full_view_camera_reproduces_the_plain_picture() {
+    let Some(gpu) = gpu() else { return };
+    for format in [
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+    ] {
+        // A letterboxed target: 80×45 cells at scale 8 in 700×400.
+        let target = (700, 400);
+        let (mut plain, _) = camera_tank();
+        let expected = render_sized(gpu, &mut plain, format, target);
+        let (mut tank, _) = camera_tank();
+        tank.set_camera(Some(tank.camera_fit(target)));
+        let fit = render_sized(gpu, &mut tank, format, target);
+        // The sharp filter picks each pixel exactly at one to one, so the
+        // letterbox and the tank come back unchanged (allow a level for GPUs
+        // that blend the exact centre).
+        let worst = fit
+            .iter()
+            .zip(&expected)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(worst <= 1, "{format:?}: fit camera differs by {worst}");
+    }
+}
+
+#[test]
+fn a_zoomed_camera_puts_a_cell_where_the_mapping_says() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = CAMERA_TARGET;
+    let (mut plain, _) = camera_tank();
+    let plain_img = render_sized(gpu, &mut plain, format, target);
+    // The plain picture's rock (cell 32, 22 at scale 8) and open water.
+    let rock = px_at(&plain_img, target.0, 32 * 8 + 4, 22 * 8 + 4);
+    let water = px_at(&plain_img, target.0, 60 * 8, 10 * 8);
+    assert!(colour_distance(rock, water) > 60, "{rock:?} {water:?}");
+
+    let (mut tank, _) = camera_tank();
+    // Zoom 2.5 on the rock block's centre: 20 pixels per cell.
+    let view = tank.camera_cover(target, (33.0, 23.0), 2.5);
+    tank.set_camera(Some(view));
+    assert_eq!(tank.camera(), Some(view));
+    let img = render_sized(gpu, &mut tank, format, target);
+    let at = |x: f64, y: f64| {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        px_at(&img, target.0, x as u32, y as u32)
+    };
+    // The block's corners and centre on screen.
+    let (left, top) = tank.grid_to_screen(target, (30.0, 20.0));
+    let (right, bottom) = tank.grid_to_screen(target, (36.0, 26.0));
+    assert!((right - left - 120.0).abs() < 0.01 && (bottom - top - 120.0).abs() < 0.01);
+    let (cx, cy) = tank.grid_to_screen(target, (33.0, 23.0));
+    assert!((cx - 320.0).abs() < 0.01 && (cy - 180.0).abs() < 0.01);
+    // Pixels inside the block read as rock, pixels past its edge as water.
+    let nearest = |p: [u8; 3]| colour_distance(p, rock) < colour_distance(p, water);
+    for (x, y) in [
+        (cx, cy),
+        (left + 4.0, top + 4.0),
+        (right - 4.0, bottom - 4.0),
+        (left + 4.0, bottom - 4.0),
+    ] {
+        assert!(
+            nearest(at(x, y)),
+            "({x}, {y}) should be rock: {:?}",
+            at(x, y)
+        );
+    }
+    for (x, y) in [
+        (left - 4.0, cy),
+        (right + 4.0, cy),
+        (cx, top - 4.0),
+        (cx, bottom + 4.0),
+    ] {
+        assert!(
+            !nearest(at(x, y)),
+            "({x}, {y}) should be water: {:?}",
+            at(x, y)
+        );
+    }
+    // And screen_to_grid undoes it, so a click lands on the right cell.
+    let (gx, gy) = tank.screen_to_grid(target, (left + 5.0, top + 5.0));
+    assert_eq!((gx.floor(), gy.floor()), (30.0, 20.0));
+}
+
+/// The sharp-bilinear filter on the CPU: each source pixel is a flat block
+/// with about one output pixel of blend at its edges. `view` is in cells of
+/// `scale` source pixels (the grid at the source's origin); `src` and the
+/// result are `size` pixels of RGBA.
+fn sharp_bilinear(
+    src: &[u8],
+    size: (u32, u32),
+    scale: f64,
+    view: &desktank_render::ViewRect,
+) -> Vec<u8> {
+    let (width, height) = (f64::from(size.0), f64::from(size.1));
+    let step = (
+        f64::from(view.w) * scale / width,
+        f64::from(view.h) * scale / height,
+    );
+    let inverse = (1.0 / step.0, 1.0 / step.1);
+    let tap = |x: i64, y: i64, c: usize| {
+        let x = usize::try_from(x.clamp(0, i64::from(size.0) - 1)).unwrap();
+        let y = usize::try_from(y.clamp(0, i64::from(size.1) - 1)).unwrap();
+        f64::from(src[(y * size.0 as usize + x) * 4 + c])
+    };
+    let axis = |pos: f64, k: f64| {
+        let flat_half = (0.5 - 0.5 / k).max(0.0);
+        let from_centre = pos - pos.floor() - 0.5;
+        let blend = (from_centre - from_centre.clamp(-flat_half, flat_half)) * k + 0.5;
+        let t = pos.floor() + blend - 0.5;
+        (t.floor(), t - t.floor())
+    };
+    let mut out = Vec::with_capacity(src.len());
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            let sx = f64::from(view.x) * scale + (f64::from(x) + 0.5) * step.0;
+            let sy = f64::from(view.y) * scale + (f64::from(y) + 0.5) * step.1;
+            let ((cx, wx), (cy, wy)) = (axis(sx, inverse.0), axis(sy, inverse.1));
+            #[allow(clippy::cast_possible_truncation)]
+            let (cx, cy) = (cx as i64, cy as i64);
+            for c in 0..4 {
+                let top = tap(cx, cy, c) * (1.0 - wx) + tap(cx + 1, cy, c) * wx;
+                let bottom = tap(cx, cy + 1, c) * (1.0 - wx) + tap(cx + 1, cy + 1, c) * wx;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                out.push((top * (1.0 - wy) + bottom * wy).round() as u8);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_zoom_filter_is_sharp_bilinear() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = CAMERA_TARGET;
+    // The picture the camera resamples: the plain tank at scale 8.
+    let (mut plain, _) = camera_tank();
+    let source = render_sized(gpu, &mut plain, format, target);
+    // A fractional zoom and pan (about 20.3 pixels per cell).
+    let (mut tank, _) = camera_tank();
+    let view = tank.camera_cover(target, (33.3, 23.1), 2.537);
+    tank.set_camera(Some(view));
+    let img = render_sized(gpu, &mut tank, format, target);
+    let expected = sharp_bilinear(&source, target, 8.0, &view);
+    let off = img
+        .iter()
+        .zip(&expected)
+        .filter(|(a, b)| a.abs_diff(**b) > 2)
+        .count();
+    assert!(
+        off * 1000 < img.len(),
+        "{off} of {} channel values are more than 2 from the reference",
+        img.len()
+    );
+    // It isn't plain bilinear: that smears every source pixel edge over
+    // two output pixels, so far fewer pixels would match the flat blocks.
+    let mut flat = 0;
+    for y in 0..target.1 {
+        for x in 1..target.0 {
+            if px_at(&img, target.0, x, y) == px_at(&img, target.0, x - 1, y) {
+                flat += 1;
+            }
+        }
+    }
+    assert!(
+        flat * 10 > target.0 * target.1 * 7,
+        "{flat} flat pixel pairs"
+    );
+}
+
+#[test]
+fn the_inspect_card_stays_beside_its_creature_under_a_zoomed_camera() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = CAMERA_TARGET;
+    let (mut tank, id) = camera_tank();
+    tank.set_inspected(Some(desktank_render::Inspected::Creature(id)));
+    let plain_card = tank.inspect_layout(target).unwrap();
+
+    let centre = tank.world().creature(id).unwrap().centre();
+    let view = tank.camera_cover(target, centre, 2.5);
+    tank.set_camera(Some(view));
+    let card = tank.inspect_layout(target).unwrap();
+    // The same crisp scale as without a camera, but moved with the creature.
+    assert_eq!(card.scale, plain_card.scale);
+    assert_eq!(card.image, plain_card.image);
+    assert!(card.origin != plain_card.origin, "{card:?} {plain_card:?}");
+    let (cx, cy) = tank.grid_to_screen(target, (f64::from(centre.0), f64::from(centre.1)));
+    assert!(
+        (cx - 320.0).abs() < 1.0 && (cy - 180.0).abs() < 1.0,
+        "{cx} {cy}"
+    );
+    // To its right, past the creature's mapped edge, vertically centred on
+    // it, and inside the target.
+    let (size, (x0, y0)) = (card.size(), card.origin);
+    assert!(f64::from(x0) > cx, "{card:?} vs {cx}");
+    assert!(x0 + size.0 <= target.0 && y0 + size.1 <= target.1);
+    let card_mid = f64::from(y0) + f64::from(size.1) / 2.0;
+    assert!((card_mid - cy).abs() < 2.0, "{card_mid} vs {cy}");
+
+    // It draws there, in screen space on top of the zoomed tank.
+    let img = render_sized(gpu, &mut tank, format, target);
+    assert_eq!(px_at(&img, target.0, x0, y0), [0x2a, 0x36, 0x48], "frame");
+    assert_eq!(
+        px_at(&img, target.0, x0 + size.0 - 1, y0 + size.1 - 1),
+        [0x2a, 0x36, 0x48],
+        "frame"
+    );
+    // Hit tests follow it too.
+    assert!(card.contains(f64::from(x0) + 1.0, f64::from(y0) + 1.0));
+}
+
+#[test]
+fn the_overlay_draws_over_the_camera_in_screen_space() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = CAMERA_TARGET;
+    let (mut tank, _) = camera_tank();
+    tank.set_camera(Some(tank.camera_cover(target, (33.0, 23.0), 2.5)));
+    let bare = render_sized(gpu, &mut tank, format, target);
+    // A brush outline over the rock block's cells, 20 pixels each.
+    tank.set_cursor(Some(desktank_render::BrushPreview {
+        cell: (33, 23),
+        radius: 3,
+    }));
+    let brushed = render_sized(gpu, &mut tank, format, target);
+    // The disc's leftmost cell is 3 cells left of the centre: it is
+    // brightened where it sits on screen, and the far corner is untouched.
+    let (left, cy) = tank.grid_to_screen(target, (30.0, 23.5));
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (x, y) = ((left + 10.0) as u32, cy as u32);
+    let (a, b) = (
+        px_at(&bare, target.0, x, y),
+        px_at(&brushed, target.0, x, y),
+    );
+    assert!(b[0] > a[0] && b[1] > a[1] && b[2] > a[2], "{a:?} -> {b:?}");
+    assert_eq!(
+        px_at(&bare, target.0, 5, 5),
+        px_at(&brushed, target.0, 5, 5)
+    );
+    // The magnifier's lens draws over the camera's picture too.
+    tank.set_cursor(None);
+    tank.set_magnifier(Some(desktank_render::Magnifier {
+        cell: (33, 23),
+        zoom: 2,
+    }));
+    let lensed = render_sized(gpu, &mut tank, format, target);
+    let changed = lensed.iter().zip(&bare).filter(|(a, b)| a != b).count();
+    assert!(changed > 20_000, "{changed} bytes changed under the lens");
+    assert_eq!(px_at(&bare, target.0, 5, 5), px_at(&lensed, target.0, 5, 5));
+    // Clearing the camera restores the plain picture.
+    tank.set_magnifier(None);
+    tank.set_camera(None);
+    let (mut plain, _) = camera_tank();
+    assert!(
+        render_sized(gpu, &mut tank, format, target)
+            == render_sized(gpu, &mut plain, format, target)
+    );
+}
+
+/// Writes the camera screenshots to `target/shots/camera/` when
+/// `DESKTANK_SHOTS` is set: the full view, and 2.5× on a creature.
+#[test]
+fn camera_screenshots() {
+    let Some(gpu) = gpu() else { return };
+    if std::env::var_os("DESKTANK_SHOTS").is_none() {
+        return;
+    }
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = (1280, 720);
+    let materials = MaterialTable::builtin().unwrap();
+    let rock = materials.id("rock").unwrap();
+    let leaf = materials.id("leaf").unwrap();
+    let mut world = World::new(
+        WorldConfig {
+            width: 160,
+            height: 90,
+            seed: 11,
+            water_level: 1.0,
+        },
+        materials,
+    )
+    .unwrap();
+    world.paint(110, 80, 9, rock, Brush::Replace).unwrap();
+    for (x, h) in [(20, 14), (26, 9), (130, 12)] {
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: x,
+                    y0: 88 - h,
+                    x1: x + 3,
+                    y1: 88,
+                },
+                leaf,
+                Brush::Replace,
+            )
+            .unwrap();
+    }
+    let names: Vec<String> = world.species().iter().map(|s| s.name.clone()).collect();
+    let mut focus = None;
+    for (i, name) in (0..6_i64).zip(&names) {
+        let sp = world.species().id(name).unwrap();
+        let id = world
+            .add_creature(sp, 25 + 22 * i, 25 + 9 * (i % 3))
+            .unwrap();
+        focus = focus.or(Some(id));
+    }
+    for _ in 0..20 {
+        world.tick();
+    }
+    let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_saver_mode(true);
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/shots/camera");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, img: &[u8]| {
+        let file = std::fs::File::create(dir.join(name)).unwrap();
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), target.0, target.1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(img).unwrap();
+    };
+    tank.set_camera(Some(tank.camera_fit(target)));
+    write("full.png", &render_sized(gpu, &mut tank, format, target));
+
+    let id = focus.unwrap();
+    let centre = tank.world().creature(id).unwrap().centre();
+    tank.set_camera(Some(tank.camera_cover(target, centre, 2.5)));
+    tank.set_inspected(Some(desktank_render::Inspected::Creature(id)));
+    write(
+        "zoom_2_5.png",
+        &render_sized(gpu, &mut tank, format, target),
+    );
+}
