@@ -78,7 +78,9 @@
     palette is DOM below the canvas (the host tells the renderer which
     edge its palette is on, top by default). The card shows its name, Latin
     name, sprite (male and female side by side where they are drawn
-    differently; a sprout in a plant's colours), adult size (both sexes'
+    differently; for a plant, a small sprite of a mature example of it,
+    drawn on the CPU from its growth form, shapes and colours in
+    `desktank_render::plant_sprite`), adult size (both sexes'
     where they differ), diet, behaviour, needs (or a plant's form and
     needs) and description, all from the species data. It is drawn in
     the canvas on every host from a second region of the HUD texture, in
