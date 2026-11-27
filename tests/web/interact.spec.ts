@@ -981,6 +981,7 @@ test("settings persist across reloads", async ({ page }) => {
 });
 
 test("OLED mode draws a true black background and persists", async ({ page }) => {
+  test.slow(); // Canvas screenshots and a reload are slow on CI runners.
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   // The share of canvas pixels that are exactly 0,0,0.
@@ -996,18 +997,18 @@ test("OLED mode draws a true black background and persists", async ({ page }) =>
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("OLED mode (true black)").check();
   expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(true);
-  await expect.poll(blackShare).toBeGreaterThan(0.5);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeGreaterThan(0.5);
 
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   expect(await page.evaluate(() => window.desktank.tank.oled()), "applies to the new tank").toBe(true);
   expect(await page.evaluate(() => window.desktank.settings.oled)).toBe(true);
-  await expect.poll(blackShare).toBeGreaterThan(0.5);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeGreaterThan(0.5);
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("OLED mode (true black)").uncheck();
   expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(false);
-  await expect.poll(blackShare).toBeLessThan(0.05);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeLessThan(0.05);
   expect(errors).toEqual([]);
 });
 
