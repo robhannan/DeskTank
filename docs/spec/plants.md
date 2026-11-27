@@ -150,9 +150,9 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     at the surface and trailing along it. A rootless variant anchors
     loosely or floats (hornwort type). *T6c part 3:* `[stem] branching`
     (0..=1; rotala 0.2, ludwigia 0.15) sets the deterministic per-node
-    chance of a side shoot, which steps two cells out before rising so it
-    keeps a one-cell gap from the main stem (leaves stop short of a rising
-    shoot below them); any stem reaching the top water row trails sideways
+    chance of a side shoot, which leaves its node as a stub and leans out
+    (below) so it keeps a one-cell gap from the main stem (leaves stop short
+    of a rising shoot below them); any stem reaching the top water row trails sideways
     along it up to `height`. *Stem leaves in the tank look like the info
     pane's sprite:* leaf length tapers to the tip of the plant's own stem
     or side shoot (`StemForm::leaf_taper`): the top `internode` cells are
