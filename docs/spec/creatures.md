@@ -71,8 +71,12 @@
     from the simulation. Species weights and stable individual quirks scale
     the deficits used in the choice. The fish scores available food and
     schoolmates with a travel-distance discount and small seeded variation
-    near ties. It commits for roughly one second, with an early decision if
-    its opportunity disappears and an immediate interruption on danger.
+    near ties. Satiety reaches food-seeking through an appetite that counts
+    the first bite's worth three times as much as the rest, so a fish that
+    has just eaten hangs back with its school for part of the half-minute
+    that bite lasts (#434); with food in reach it still bites. It commits
+    for roughly one second, with an early decision if its opportunity
+    disappears and an immediate interruption on danger.
     Existing movement and feeding rules still apply.
   - shoaling for shoalers: each wanders on its own and often picks a
     target near a mate of its own stage (young with young, adults with
