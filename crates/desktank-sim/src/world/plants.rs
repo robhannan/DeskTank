@@ -1338,6 +1338,17 @@ impl World {
             p.pending = false;
             p.idle = 0;
         }
+        // If a rooted plant's roots were scooped away (leaving only shoots),
+        // let the remaining keeper piece drift and sink until it re-roots or
+        // rots rather than hanging frozen in mid-water. Established epiphytes
+        // and mats keep their D24 tear-off behaviour instead.
+        let rooted_form =
+            self.plants.species.get(species).is_some_and(|s| {
+                matches!(s.form, Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_))
+            });
+        if rooted_form && !self.piece_anchored(piece, species) {
+            self.plants.rafts.entry(id).or_insert_with(Raft::new);
+        }
         self.wake_raft(id);
     }
 

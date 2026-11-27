@@ -239,8 +239,10 @@ impl World {
         let mut target = if ball {
             (target.0 * BALL_DRIFT / 256, target.1 * BALL_DRIFT / 256)
         } else if kind == Kind::Piece && !self.raft_free(&members, id, 0, 1) {
-            // A piece lying on the bottom is only nudged along it.
-            (target.0 * BALL_DRIFT / 256, target.1)
+            // A piece lying on the bottom is only nudged along it; ignore
+            // sub-rest-speed stray currents so settled pieces can sleep.
+            let tx = target.0 * BALL_DRIFT / 256;
+            (if tx.abs() <= REST_SPEED { 0 } else { tx }, target.1)
         } else {
             target
         };

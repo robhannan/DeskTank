@@ -570,3 +570,30 @@ fn rosette_and_carpet_plantlets_root_their_crown_in_the_bed() {
         assert_eq!(by, 55, "{name} sits on top of the bed");
     }
 }
+
+#[test]
+fn uprooting_a_stem_plant_turns_the_remaining_shoot_into_a_drifting_piece() {
+    let mut w = bedded(64, 8, 21);
+    let plant = place(&mut w, 80, 50, "rotala", Propagule::Cuttings);
+    run(&mut w, 4 * MINUTE);
+    assert!(!w.plant_unrooted(plant), "should be rooted first");
+    let before_y1 = w.plant(plant).unwrap().bounds.y1;
+    // Scoop the substrate and roots beneath the stem, leaving the upper shoot
+    // unanchored in open water.
+    let water = id(&w, "water");
+    w.fill_rect(rect(70, 54, 90, 64), water, Brush::Replace)
+        .unwrap();
+    w.tick();
+    assert!(
+        w.plant_unrooted(plant),
+        "keeper piece without roots should become an unrooted raft"
+    );
+    let after_scoop_y1 = w.plant(plant).unwrap().bounds.y1;
+    run(&mut w, 30 * 20);
+    let sunk_y1 = w.plant(plant).unwrap().bounds.y1;
+    assert!(
+        sunk_y1 > after_scoop_y1 && sunk_y1 >= before_y1,
+        "uprooted keeper piece should sink rather than hang frozen (after_scoop={after_scoop_y1}, sunk={sunk_y1})"
+    );
+    check_table(&w);
+}
