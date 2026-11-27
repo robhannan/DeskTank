@@ -14,6 +14,7 @@ export interface Settings {
   sway: boolean;
   swayOnBattery: boolean;
   oled: boolean; // true black water, air and letterbox
+  ruler: boolean; // centimetre ruler along the bottom and left edges
   stats: boolean;
   seed: number;
   radius: number;

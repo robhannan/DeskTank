@@ -15,6 +15,7 @@ use desktank_sim::scene;
 
 /// What to capture, from the command line.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // independent render toggles
 pub struct Options {
     /// World seed.
     pub seed: u64,
@@ -34,6 +35,8 @@ pub struct Options {
     pub sway: bool,
     /// OLED mode: true black water, air and letterbox.
     pub oled: bool,
+    /// Draw the centimetre ruler overlay.
+    pub ruler: bool,
     /// Draw with the split grid ([`GpuOptions::split_grid`]).
     pub split_grid: bool,
     /// Output directory.
@@ -74,6 +77,7 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
     tank.set_field_overlay(opts.field);
     tank.set_sway(opts.sway);
     tank.set_oled(opts.oled);
+    tank.set_ruler(opts.ruler);
     if let Some(minute) = opts.time {
         tank.set_time_of_day(minute);
     }

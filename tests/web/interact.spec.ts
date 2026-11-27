@@ -995,6 +995,7 @@ test("settings persist across reloads", async ({ page }) => {
     sway: true,
     swayOnBattery: true,
     oled: false,
+    ruler: false,
     seed: 42,
     radius: 7,
   });
@@ -1054,6 +1055,44 @@ test("OLED mode draws a true black background and persists", async ({ page }) =>
   await page.getByLabel("OLED mode (true black)").uncheck();
   expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(false);
   await expect.poll(blackShare, { timeout: 30_000 }).toBeLessThan(0.05);
+  expect(errors).toEqual([]);
+});
+
+test("ruler overlay toggles from Settings and U, and persists", async ({ page }) => {
+  test.slow(); // A reload is slow on CI runners.
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  const ruler = () => page.evaluate(() => window.desktank.tank.ruler());
+  expect(await ruler(), "off by default").toBe(false);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  const box = page.getByLabel("Ruler overlay (cm)");
+  await expect(box).not.toBeChecked();
+  await box.check();
+  expect(await ruler()).toBe(true);
+  await box.uncheck();
+  expect(await ruler()).toBe(false);
+
+  // U toggles it, and the checkbox follows.
+  await box.blur(); // keys are ignored while a field has focus
+  await page.keyboard.press("u");
+  expect(await ruler()).toBe(true);
+  await expect(box).toBeChecked();
+  await page.keyboard.press("Shift+U");
+  expect(await ruler()).toBe(false);
+  await expect(box).not.toBeChecked();
+
+  // It applies to a new tank (reload) and Defaults turns it off.
+  await page.keyboard.press("u");
+  expect(await ruler()).toBe(true);
+  await page.reload();
+  await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
+  expect(await ruler(), "applies to the new tank").toBe(true);
+  expect(await page.evaluate(() => window.desktank.settings.ruler)).toBe(true);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Defaults" }).click();
+  await expect.poll(ruler).toBe(false);
+  await expect(page.getByLabel("Ruler overlay (cm)")).not.toBeChecked();
   expect(errors).toEqual([]);
 });
 
