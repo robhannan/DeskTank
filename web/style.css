@@ -379,6 +379,7 @@ button:focus-visible, .swatch:focus-visible, input:focus-visible, select:focus-v
 
 .settings[hidden] { display: none; }
 .settings .note { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 0.85rem; }
+.settings .build a { color: inherit; font-family: ui-monospace, monospace; }
 
 select {
   font: inherit;

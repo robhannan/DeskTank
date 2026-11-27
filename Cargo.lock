@@ -474,6 +474,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "desktank-build-info",
  "desktank-platform",
  "desktank-render",
  "desktank-sim",
@@ -493,6 +494,7 @@ name = "desktank-android"
 version = "0.1.0"
 dependencies = [
  "android_system_properties",
+ "desktank-build-info",
  "desktank-platform",
  "desktank-render",
  "desktank-sim",
@@ -504,6 +506,10 @@ dependencies = [
  "raw-window-handle",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "desktank-build-info"
+version = "0.1.0"
 
 [[package]]
 name = "desktank-platform"
@@ -540,6 +546,7 @@ dependencies = [
 name = "desktank-saver-mac"
 version = "0.1.0"
 dependencies = [
+ "desktank-build-info",
  "desktank-render",
 ]
 

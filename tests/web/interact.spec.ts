@@ -1132,7 +1132,23 @@ test("OLED mode draws a true black background and persists", async ({ page }) =>
   expect(errors).toEqual([]);
 });
 
-test("ruler overlay toggles from Settings and U, and persists", async ({ page }) => {
+test("Settings shows the build's commit, stamped at build time", async ({ page }) => {
+  await open(page, "?backend=webgl2");
+  await page.getByRole("button", { name: "Settings" }).click();
+  const line = page.locator("#build-info");
+  await expect(line).toBeVisible();
+  // Not the placeholder: a short hash (maybe -dirty), or `unknown` without git.
+  await expect(line).toHaveText(/^Build (?:[0-9a-f]{7,}(?:-dirty)?|unknown)$/);
+  const link = line.getByRole("link");
+  if (await link.count()) {
+    const base = (await link.textContent())!.replace(/-dirty$/, "");
+    const href = (await link.getAttribute("href"))!;
+    expect(href).toMatch(/^https:\/\/github\.com\/robhannan\/DeskTank\/commit\/[0-9a-f]{7,40}$/);
+    expect(href.split("/").pop()!.startsWith(base)).toBe(true);
+  }
+});
+
+test("ruler overlay toggles from Settings and U, and persists",async ({ page }) => {
   test.slow(); // A reload is slow on CI runners.
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");

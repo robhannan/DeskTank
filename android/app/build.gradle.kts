@@ -8,6 +8,23 @@ plugins {
 val abis = providers.gradleProperty("desktank.abis")
     .map { it.split(',').map(String::trim).filter(String::isNotEmpty) }
     .getOrElse(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
+
+// The build's commit, by the rules of scripts/build-web.ts and the
+// desktank-build-info crate: GITHUB_SHA (first 7 characters), else
+// `git rev-parse --short`, `-dirty` for uncommitted changes, `unknown` without
+// git. It lands in versionName, which Android's App info shows.
+fun git(vararg args: String): String = providers.exec {
+    workingDir = rootDir
+    commandLine("git", *args)
+    isIgnoreExitValue = true
+}.standardOutput.asText.get().trim()
+
+val commit: String = providers.environmentVariable("GITHUB_SHA").orNull
+    ?.trim()?.take(7)?.takeIf { it.isNotEmpty() }
+    ?: git("rev-parse", "--short=7", "HEAD").ifEmpty { null }
+    ?: "unknown"
+val dirty = commit != "unknown" && git("status", "--porcelain").isNotEmpty()
+val buildLabel = if (dirty) "$commit-dirty" else commit
 val pinnedNdk: String = libs.versions.ndk.get()
 // Android 8 (docs/spec/platforms.md §3.6; A0 findings in docs/notes/android.md). The Rust
 // library is linked against the same API level.
@@ -23,7 +40,7 @@ android {
         minSdk = minApi
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0-$buildLabel"
         ndk { abiFilters += abis }
     }
 

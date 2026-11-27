@@ -15,6 +15,7 @@ publish = false
 desktank-sim = { path = "crates/desktank-sim" }
 desktank-render = { path = "crates/desktank-render" }
 desktank-platform = { path = "crates/desktank-platform" }
+desktank-build-info = { path = "crates/desktank-build-info" }
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
 
 [workspace.lints.rust]
