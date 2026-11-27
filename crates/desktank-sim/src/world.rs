@@ -146,6 +146,9 @@ pub enum WorldError {
     /// The plant species doesn't grow from that propagule.
     #[error("plant species {} doesn't grow from {}", .0.0, .1.name())]
     PlantPropagule(PlantSpeciesId, Propagule),
+    /// Seeds are poured as powder (`paint_plant`), not placed as a piece.
+    #[error("{} are poured, not placed as a piece", .0.name())]
+    PouredPropagule(Propagule),
     /// The tank already holds the most creatures it may.
     #[error("the tank is full ({0} creatures)")]
     PopulationCap(usize),

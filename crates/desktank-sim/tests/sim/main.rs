@@ -29,6 +29,7 @@ mod plant_forms;
 mod plant_individuals;
 mod plants;
 mod presets;
+mod propagules;
 mod pursuit;
 mod quirks;
 mod save;

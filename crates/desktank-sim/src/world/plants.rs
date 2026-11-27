@@ -37,6 +37,18 @@
 //!   A ball (marimo) has a raft too, but sinks: it rests on what is below
 //!   it and the current only nudges it.
 //!
+//! - **Placed pieces** (#469). Cuttings, fragments, runners and buds are not
+//!   poured as powder: [`World::place_propagule`] writes one small piece of
+//!   the species' real part cells (a stem cutting of stems and leaf pairs, a
+//!   plantlet's crown and blades, a rhizome with leaves, a clump of moss, a
+//!   bud's floating leaf). Seeds stay powder. An unrooted piece of a plant
+//!   that roots or clings is a raft too ([`raft`]): it drifts with the
+//!   current and sinks gently, and its plant update roots it where it rests
+//!   on a substrate (stems, rosettes, carpets), or lets it cling where it
+//!   touches what it clings to (epiphytes, mats), or else it rots to dead
+//!   plant matter within [`UNROOTED_SECONDS`]. A piece cut off a plant by an
+//!   edit that has no roots (or nothing to cling to) starts the same way.
+//!
 //! The table is plain data (numbers, ids and a rectangle), so the save
 //! format (T8) can store it as it is; the samples and update bookkeeping
 //! can be reset on load.
@@ -94,6 +106,10 @@ const CUTTING_ROOTING: f32 = 0.5;
 /// take about 7.5 minutes, leaving margin within a 10-minute tank day.
 const CUTTING_ROT_STEP_TICKS: u16 = 36;
 const CUTTING_ROT_STEPS: u8 = 250;
+/// World seconds an unrooted piece (a placed or cut-off cutting, fragment
+/// or plantlet) lasts without rooting or clinging: its health runs out over
+/// this long, matching the rot of a poured cutting (SPEC §2.7).
+const UNROOTED_SECONDS: f32 = 450.0;
 /// Chance per second that a mat cell touching nothing it clings to falls
 /// off (T6's moss).
 const MAT_FALLING: f32 = 0.05;
@@ -268,8 +284,9 @@ pub fn tint_step(v: f32) -> u8 {
 pub(super) struct Plants {
     species: Arc<PlantSpeciesTable>,
     table: BTreeMap<u16, Plant>,
-    /// Each floater's raft, by plant id (T6c part 2): a floater plant has
-    /// one, no other plant does.
+    /// Each floater's raft, by plant id (T6c part 2): a floater or ball
+    /// plant always has one, and any other plant has one while it is an
+    /// unrooted piece (#469).
     rafts: BTreeMap<u16, Raft>,
     /// Per material id: 1 + the part index, or 0.
     part_of: Vec<u8>,
@@ -702,6 +719,179 @@ impl World {
         Ok(changed)
     }
 
+    /// Places one starter piece of `species` made from `propagule` (not
+    /// seeds: those are poured, [`World::paint_plant`]) with its anchor
+    /// cell at `(cx, cy)`, built of the species' real part cells: a stem
+    /// cutting is three stem cells with two pairs of leaves and a fragment
+    /// two with one pair; a plantlet is a crown with a few short blades; an
+    /// epiphyte's fragment a rhizome with leaves; a moss fragment a small
+    /// clump; a marimo fragment a plus-shaped ball; a bud one floating leaf
+    /// (a floater's fragment two with a root).
+    ///
+    /// Every cell must be open water. A piece of a plant that roots or
+    /// clings starts as a raft (a buoyant body, as a floater is) that sinks and drifts until
+    /// it roots (at once, if it is already resting on a substrate that
+    /// suits it), or rots. Returns the new plant, or `None` if the tank is
+    /// at its plant cap or the piece doesn't fit in the water there.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the species is unknown or doesn't grow from
+    /// `propagule`, or `propagule` is [`Propagule::Seeds`].
+    pub fn place_propagule(
+        &mut self,
+        cx: i64,
+        cy: i64,
+        species: PlantSpeciesId,
+        propagule: Propagule,
+    ) -> Result<Option<PlantId>, WorldError> {
+        let table = Arc::clone(&self.plants.species);
+        let s = table
+            .get(species)
+            .ok_or(WorldError::UnknownPlantSpecies(species))?;
+        if !s.grows_from(propagule) {
+            return Err(WorldError::PlantPropagule(species, propagule));
+        }
+        if propagule == Propagule::Seeds {
+            return Err(WorldError::PouredPropagule(propagule));
+        }
+        if self.plants.table.len() >= self.plants.cap.min(usize::from(u16::MAX)) {
+            return Ok(None);
+        }
+        let piece = starter_piece(&s.form, propagule);
+        let mut at = Vec::with_capacity(piece.len());
+        for c in &piece {
+            let spot = cx
+                .checked_add(c.dx)
+                .zip(cy.checked_add(c.dy))
+                .and_then(|(x, y)| Some((usize::try_from(x).ok()?, usize::try_from(y).ok()?)))
+                .filter(|&(x, y)| x < self.width && y < self.height)
+                .map(|(x, y)| y * self.width + x)
+                .filter(|&i| {
+                    Some(self.cells[i].material) == self.plants.water
+                        && self.plants.material(c.part).is_some()
+                });
+            let Some(i) = spot else {
+                return Ok(None);
+            };
+            at.push(i);
+        }
+        let id = self.new_plant(species, at[0], None);
+        if id == 0 {
+            return Ok(None);
+        }
+        for (c, &i) in piece.iter().zip(&at) {
+            self.put_part(i, c.part, id, c.position);
+        }
+        if !s.form.drifts() {
+            // Unrooted until it rests where it roots or clings.
+            self.plants.rafts.insert(id, Raft::new());
+            let (x, y) = (at[0] % self.width, at[0] / self.width);
+            if self.response_at(s, x, y).0 > 0.0 {
+                self.establish_piece(id, s);
+            }
+        }
+        Ok(Some(PlantId(id)))
+    }
+
+    /// Whether plant `id` is an unrooted piece: one of a species that
+    /// roots or clings, drifting and sinking as a raft until it roots, clings
+    /// or rots (see [`World::place_propagule`]).
+    #[must_use]
+    pub fn plant_unrooted(&self, id: PlantId) -> bool {
+        self.is_unrooted(id.0)
+    }
+
+    pub(super) fn is_unrooted(&self, id: u16) -> bool {
+        self.plants.rafts.contains_key(&id)
+            && self
+                .plants
+                .table
+                .get(&id)
+                .and_then(|p| self.plants.species.get(p.species))
+                .is_some_and(|s| !s.form.drifts())
+    }
+
+    /// Whether the unrooted piece `id` of `s` rests where it roots or
+    /// clings (see the module docs): a stem, rosette or carpet with a stem
+    /// cell directly over a substrate it roots in, which gets a root there
+    /// and its base; an epiphyte whose rhizome, or a mat whose stem, touches
+    /// what it clings to. If so it stops being a raft. Returns whether it
+    /// did.
+    fn establish_piece(&mut self, id: u16, s: &PlantSpecies) -> bool {
+        let Some(p) = self.plants.table.get(&id) else {
+            return false;
+        };
+        let members = self.plant_members(id, self.clip_to_grid(p.bounds));
+        let stem = self.plants.material(Part::Stem);
+        let rhizome = self.plants.material(Part::Rhizome);
+        let material_is =
+            |i: usize, m: Option<MaterialId>| m.is_some() && Some(self.cells[i].material) == m;
+        let rooted = match &s.form {
+            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) => {
+                let Some(subs) = s.form.substrates() else {
+                    return false;
+                };
+                if self.plants.material(Part::Root).is_none() {
+                    return false;
+                }
+                // Its lowest stem cell with a substrate right below it.
+                let site = members.iter().rev().find_map(|&i| {
+                    let below = self.at(i % self.width, i / self.width, 0, 1)?;
+                    (material_is(i, stem) && subs.contains(&self.cells[below].material))
+                        .then_some((i, below))
+                });
+                let Some((i, below)) = site else {
+                    return false;
+                };
+                self.put_part(below, Part::Root, id, 1);
+                if let Some(p) = self.plants.table.get_mut(&id) {
+                    p.base = i;
+                }
+                true
+            }
+            Form::Epiphyte(e) => members
+                .iter()
+                .any(|&i| material_is(i, rhizome) && self.touches_any(i, &e.on)),
+            Form::Mat(m) => members
+                .iter()
+                .any(|&i| material_is(i, stem) && self.touches_any(i, &m.on)),
+            Form::Floater(_) | Form::Ball(_) => false,
+        };
+        if rooted {
+            self.plants.rafts.remove(&id);
+            // Its base may have moved (stem leaf bands follow it, D21).
+            self.plants.version += 1;
+        }
+        rooted
+    }
+
+    /// One update of an unrooted piece: it roots or clings if it can,
+    /// else its health runs down over [`UNROOTED_SECONDS`] of world time.
+    fn update_unrooted(&mut self, id: u16, s: &PlantSpecies, response: f32, dt: f32) {
+        let tick = self.tick;
+        if let Some(p) = self.plants.table.get_mut(&id) {
+            p.last_update = tick;
+            p.sums = [0.0; 3];
+            p.counts = [0; 3];
+        }
+        if response > 0.0 && self.establish_piece(id, s) {
+            return;
+        }
+        let Some(p) = self.plants.table.get_mut(&id) else {
+            return;
+        };
+        let tint = p.tint_key();
+        p.health = (p.health - dt / UNROOTED_SECONDS).max(0.0);
+        let dead = p.health <= 0.0;
+        if p.tint_key() != tint {
+            self.plants.version += 1;
+        }
+        if dead {
+            self.kill_plant(id);
+        }
+    }
+
     fn plant_info(&self, id: u16, p: &Plant) -> PlantInfo {
         #[allow(clippy::cast_precision_loss)] // exact below 2^53 ticks
         let age = self.tick.saturating_sub(p.born) as f64 / f64::from(super::TICKS_PER_SECOND);
@@ -1030,6 +1220,7 @@ impl World {
         c.state == id && self.plants.part(c.material).is_some()
     }
 
+    #[allow(clippy::too_many_lines)] // pieces, keeper, fragments and loose pieces
     fn tidy_plant(&mut self, id: u16) {
         let Some(p) = self.plants.table.get(&id) else {
             return;
@@ -1110,6 +1301,16 @@ impl World {
             } else {
                 0
             };
+            if new != 0 && !self.piece_anchored(piece, species) {
+                // A piece cut loose from where it rooted or clung drifts
+                // and sinks until it roots again, or rots (#289).
+                let raft = self
+                    .plants
+                    .rafts
+                    .get(&id)
+                    .map_or_else(Raft::new, |r| r.child());
+                self.plants.rafts.insert(new, raft);
+            }
             if new == 0 {
                 self.make_dead(piece);
             } else {
@@ -1121,6 +1322,11 @@ impl World {
             }
         }
         let piece = &pieces[keeper];
+        let had_roots = self
+            .plants
+            .table
+            .get(&id)
+            .is_some_and(|p| p.parts[Part::Root.count_slot()] > 0);
         let new_base = if piece.binary_search(&base).is_ok() {
             base
         } else {
@@ -1137,7 +1343,48 @@ impl World {
             p.pending = false;
             p.idle = 0;
         }
+        // If a rooted plant's roots were scooped away (leaving only shoots),
+        // let the remaining keeper piece drift and sink until it re-roots or
+        // rots rather than hanging frozen in mid-water. Established epiphytes
+        // and mats keep their D24 tear-off behaviour instead.
+        let rooted_form =
+            self.plants.species.get(species).is_some_and(|s| {
+                matches!(s.form, Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_))
+            });
+        let stem = self.plants.material(Part::Stem);
+        let has_stem =
+            stem.is_some() && piece.iter().any(|&i| Some(self.cells[i].material) == stem);
+        if rooted_form && had_roots && has_stem && !self.piece_anchored(piece, species) {
+            self.plants.rafts.entry(id).or_insert_with(Raft::new);
+        }
         self.wake_raft(id);
+    }
+
+    /// Whether a cut-off `piece` of a `species` plant still has what holds
+    /// it: roots or a runner in the substrate (stems, rosettes, carpets), a
+    /// rhizome touching what it clings to (an epiphyte), or a stem cell
+    /// doing so (a mat). A floater or ball is always held (it floats or
+    /// rests as a raft anyway).
+    fn piece_anchored(&self, piece: &[usize], species: PlantSpeciesId) -> bool {
+        let Some(s) = self.plants.species.get(species) else {
+            return true;
+        };
+        let any = |part: Part, on: Option<&[MaterialId]>| {
+            let m = self.plants.material(part);
+            piece.iter().any(|&i| {
+                m.is_some()
+                    && Some(self.cells[i].material) == m
+                    && on.is_none_or(|on| self.touches_any(i, on))
+            })
+        };
+        match &s.form {
+            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) => {
+                any(Part::Root, None) || any(Part::Runner, None)
+            }
+            Form::Epiphyte(e) => any(Part::Rhizome, Some(&e.on)),
+            Form::Mat(m) => any(Part::Stem, Some(&m.on)),
+            Form::Floater(_) | Form::Ball(_) => true,
+        }
     }
 
     /// Sets plant `id`'s part counts and bounds from its cells.
@@ -1263,11 +1510,15 @@ impl World {
         let (x, y) = (i % self.width, i / self.width);
         let species = Arc::clone(&self.plants.species);
         let s = species.get(p.species);
+        // An unrooted piece drifts until it clings or rots: nothing holds
+        // it up to lose.
         let unanchored = match s.map(|s| &s.form) {
-            Some(Form::Mat(mat)) => {
+            Some(Form::Mat(mat)) if !self.is_unrooted(cell.state) => {
                 !self.mat_supported(i, cell.state, plant_position(cell.variant), &mat.on)
             }
-            Some(Form::Epiphyte(e)) if part == Part::Rhizome => !self.touches_any(i, &e.on),
+            Some(Form::Epiphyte(e)) if part == Part::Rhizome && !self.is_unrooted(cell.state) => {
+                !self.touches_any(i, &e.on)
+            }
             _ => false,
         };
         if unanchored {
@@ -1681,6 +1932,11 @@ impl World {
         let dt = elapsed as f32 / super::TICKS_PER_SECOND as f32 * self.time_ratio;
         #[allow(clippy::cast_precision_loss)] // exact below 2^53 ticks
         let age = tick.saturating_sub(p.born) as f32 / super::TICKS_PER_SECOND as f32;
+        // An unrooted piece doesn't grow: it roots, or rots.
+        if self.is_unrooted(id) {
+            self.update_unrooted(id, s, response, dt);
+            return;
+        }
         let h = s.hardiness;
         let Some(p) = self.plants.table.get_mut(&id) else {
             return;
@@ -2921,6 +3177,108 @@ fn point(x: usize, y: usize) -> Rect {
         x1: x + 1,
         y1: y + 1,
     }
+}
+
+/// One cell of a starter piece: where it is from the anchor cell, which
+/// part and at what part-local position (as growth would give it).
+#[derive(Clone, Copy, Debug)]
+struct Starter {
+    dx: i64,
+    dy: i64,
+    part: Part,
+    position: u8,
+}
+
+impl Starter {
+    fn new(dx: i64, dy: i64, part: Part, position: u8) -> Self {
+        Self {
+            dx,
+            dy,
+            part,
+            position,
+        }
+    }
+}
+
+/// The cells of the starter piece of a plant of `form` for `propagule`
+/// (see [`World::place_propagule`]), its base cell first. Rows count down
+/// from the anchor (`dy` < 0 is above it).
+fn starter_piece(form: &Form, propagule: Propagule) -> Vec<Starter> {
+    let mut cells = Vec::new();
+    match form {
+        Form::Stem(f) => {
+            // A cutting is longer and leafier than a fragment. The click
+            // is the middle stem cell; position 1 is the lowest.
+            let cutting = propagule == Propagule::Cuttings;
+            let stems = f.height.clamp(1, if cutting { 3 } else { 2 });
+            let low = i64::from(stems) / 2;
+            let row = |pos: u8| low - i64::from(pos - 1);
+            for pos in 1..=stems {
+                cells.push(Starter::new(0, row(pos), Part::Stem, pos));
+            }
+            let pairs: &[(u8, u8)] = if cutting && stems > 1 {
+                &[(1, 1), (stems, f.leaf_length.clamp(1, 2))]
+            } else {
+                &[(stems, 1)]
+            };
+            for &(pos, length) in pairs {
+                for side in [-1, 1] {
+                    for k in 1..=length {
+                        cells.push(Starter::new(side * i64::from(k), row(pos), Part::Leaf, k));
+                    }
+                }
+            }
+        }
+        Form::Rosette(f) | Form::Carpet(f) => {
+            // A crown on the substrate with a few short blades.
+            cells.push(Starter::new(0, 0, Part::Stem, 0));
+            let carpet = matches!(form, Form::Carpet(_));
+            if !carpet {
+                for k in 1..=f.blade_length.clamp(1, 3) {
+                    cells.push(Starter::new(0, -i64::from(k), Part::Leaf, k));
+                }
+            }
+            for side in [-1, 1] {
+                for k in 1..=f.blade_length.clamp(1, 2) {
+                    cells.push(Starter::new(side, 1 - i64::from(k), Part::Leaf, k));
+                }
+            }
+        }
+        Form::Epiphyte(f) => {
+            cells.push(Starter::new(0, 0, Part::Rhizome, 1));
+            cells.push(Starter::new(1, 0, Part::Rhizome, 2));
+            for k in 1..=f.leaf_length.clamp(1, 2) {
+                cells.push(Starter::new(0, -i64::from(k), Part::Leaf, k));
+            }
+            cells.push(Starter::new(1, -1, Part::Leaf, 1));
+        }
+        Form::Mat(f) => {
+            cells.push(Starter::new(0, 0, Part::Stem, 0));
+            cells.push(Starter::new(-1, 0, Part::Stem, 0));
+            cells.push(Starter::new(1, 0, Part::Stem, 0));
+            if f.layers >= 2 {
+                cells.push(Starter::new(0, -1, Part::Stem, 1));
+            } else {
+                cells.push(Starter::new(2, 0, Part::Stem, 0));
+            }
+        }
+        Form::Ball(f) => {
+            // A small plus: its centre and the four cells around it.
+            cells.push(Starter::new(0, 0, Part::Stem, 0));
+            let arm = f.radius.min(1);
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                cells.push(Starter::new(dx, dy, Part::Stem, arm));
+            }
+        }
+        Form::Floater(_) => {
+            cells.push(Starter::new(0, 0, Part::Float, 0));
+            if propagule == Propagule::Fragments {
+                cells.push(Starter::new(1, 0, Part::Float, 1));
+                cells.push(Starter::new(0, 1, Part::Root, 1));
+            }
+        }
+    }
+    cells
 }
 
 fn factor_v1(f: Factor) -> v1::Factor {

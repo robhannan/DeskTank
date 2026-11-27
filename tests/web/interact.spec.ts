@@ -722,7 +722,7 @@ test("inspecting a plant announces how well light, CO₂ and nutrients suit it",
   const errors = watchErrors(page);
   await openPaused(page);
   const [gw, gh] = await gridSize(page);
-  const [x, y] = [Math.round(gw / 2), Math.round(gh * 0.5)];
+  const x = Math.round(gw / 2);
   const plants = () => page.evaluate(() => window.desktank.tank.plantCount());
 
   // A strip of aquasoil along the floor for it to root in.
@@ -733,10 +733,10 @@ test("inspecting a plant announces how well light, CO₂ and nutrients suit it",
   p = await cellPoint(page, Math.round(gw * 0.7), gh - 3);
   await page.mouse.move(p.x, p.y, { steps: 20 });
   await page.mouse.up();
-  // Cuttings poured into the water sink to the bed and root: a plant. The
+  // A cutting dropped above the bed sinks to the aquasoil and roots. The
   // tank is paused, so single-step it.
   await choose(page, "Hygrophila");
-  p = await cellPoint(page, x, y);
+  p = await cellPoint(page, x, gh - 12);
   await page.mouse.click(p.x, p.y);
   await page.evaluate(() => {
     for (let i = 0; i < 1500; i++) window.desktank.tank.step();

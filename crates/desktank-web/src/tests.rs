@@ -204,7 +204,10 @@ fn the_propagule_chips_list_the_species_methods_and_seeds_pour() {
     assert_eq!(t.plant_propagule(), "runners");
     down(&mut t, PRIMARY, 90, 30);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.material_count("cutting"), 1);
+    // A plantlet is placed as a small piece of the species' own cells, one
+    // per click, not poured as powder (#469).
+    assert_eq!(t.material_count("cutting"), 0);
+    assert_eq!(t.plant_count(), 1);
     // Floaters spread by fragments and buds (T6c part 2).
     t.select(slot(&t, "plant duckweed"));
     assert_eq!(t.plant_propagules(), ["fragments", "buds"]);
@@ -330,7 +333,8 @@ fn a_plant_slot_pours_its_species_and_inspect_shows_the_plant() {
     t.set_radius(0);
     down(&mut t, PRIMARY, 60, 30);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.material_count("cutting"), 1);
+    assert_eq!(t.material_count("cutting"), 0);
+    assert_eq!(t.plant_count(), 1);
     let colour = &t.palette_colours()[moss as usize];
     let moss_colour = t
         .tank()
@@ -354,16 +358,17 @@ fn a_plant_slot_pours_its_species_and_inspect_shows_the_plant() {
             desktank_sim::Brush::Replace,
         )
         .unwrap();
-    assert_eq!(t.plant_count(), 1);
+    // The moss piece placed above is plant 1; this edit made plant 2.
+    assert_eq!(t.plant_count(), 2);
     t.select(slot(&t, "tool inspect"));
     down(&mut t, PRIMARY, 21, 40);
     t.pointer_up(PRIMARY);
     let line = t.take_inspection();
     let (head, needs) = line.rsplit_once(' ').unwrap();
-    assert_eq!(head, "plant hygrophila 1 0 100 3 none 21 40");
+    assert_eq!(head, "plant hygrophila 2 0 100 3 none 21 40");
     // The plant's care readings, as the card's meters show them: label,
     // percent and level, in the card's order.
-    let id = desktank_sim::PlantId(1);
+    let id = desktank_sim::PlantId(2);
     let readings = t.tank().world().plant_needs(id).unwrap();
     assert_eq!(needs, super::needs_token(&readings));
     let labels: Vec<_> = needs

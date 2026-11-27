@@ -288,7 +288,7 @@ matter, aren't offered):
 | Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
 | Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders), frozen brine shrimp (sinks and rots; material ID 34, `brine_shrimp`); live bloodworms and brine shrimp are offered from Food › Live (§2.4 *Live food*, D25) |
 | Care | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), waste and **detritus** (waste, dead plant matter and corpses sink and become detritus, which slowly disintegrates into nutrients) |
-| Plants | plant species (including moss), pouring their seeds, cuttings, fragments, runners or buds (§2.7). Algae grows naturally as a surface film (§2.3, D28) |
+| Plants | plant species (including moss): seeds pour as powder, while cuttings, fragments, runners and buds each place one discrete multi-cell plant per click (§2.7). Algae grows naturally as a surface film (§2.3, D28) |
 | Chaos *(hidden behind a setting, off by default)* | acid (dissolves substrate and plants), magma (boils water into steam bubbles and cools into rock), dye (tints the water), salt (harms freshwater life), blight (spreads through plants) |
 
 Plants are structures of cells: roots, stems, leaves. A plant grows by
@@ -346,7 +346,7 @@ target computes the same bits.
     light ≤ 0.05. *Measured N:* a fed (aquasoil bed) and lit cutting grows
     185–235 cells in 10 simulated minutes (seeds 0–5, 160×120 tank); the
     acceptance test requires N = 150. Under unsuitable rooting conditions,
-    propagules using the cutting material quietly accumulate rot progress
+    propagules using the (legacy) cutting material quietly accumulate rot progress
     in the high byte of their cell state. They become dead plant matter
     after about 7.5 minutes (within one in-tank day, 600 s), then decay to
     detritus and release nutrients as the detritus breaks down. Seeds

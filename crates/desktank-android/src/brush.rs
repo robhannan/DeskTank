@@ -90,10 +90,14 @@ impl Brush {
     }
 
     fn sync_cursor(&self, tank: &mut Tank) {
-        tank.set_cursor(self.tools.preview().map(|(x, y, radius)| BrushPreview {
-            cell: (x, y),
-            radius,
-        }));
+        tank.set_cursor(
+            self.tools
+                .preview(tank.world())
+                .map(|(x, y, radius)| BrushPreview {
+                    cell: (x, y),
+                    radius,
+                }),
+        );
         tank.set_device_ghost(self.tools.ghost(tank.world()));
         tank.set_magnifier(
             self.tools

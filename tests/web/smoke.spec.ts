@@ -148,12 +148,15 @@ test("each plant species has a palette item that pours it", async ({ page }) => 
   const cats = await tank("paletteCategories");
   for (const [i, e] of entries.entries()) if (e.startsWith("plant ")) expect(cats[i], e).toMatch(/^plants\//);
   await expect(slot).toHaveAttribute("title", /\S · Key \d/);
-  // A click pours its fragments (the cutting material).
+  // A click places a discrete moss clump (stem cells, one plant), not powder.
   const canvas = page.locator("#tank");
   await canvas.scrollIntoViewIfNeeded();
   const b = await boxOf(canvas);
+  const plantsBefore = await tank("plantCount");
   await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
-  expect(await tank("materialCount", "cutting")).toBeGreaterThan(0);
+  expect(await tank("plantCount")).toBe(plantsBefore + 1);
+  expect(await tank("materialCount", "stem")).toBeGreaterThan(0);
+  expect(await tank("materialCount", "cutting")).toBe(0);
   // The selection survives a reset.
   await page.getByRole("button", { name: "Reset" }).click();
   await expect(page.getByRole("radio", { name: "Java moss" })).toHaveAttribute("aria-checked", "true");

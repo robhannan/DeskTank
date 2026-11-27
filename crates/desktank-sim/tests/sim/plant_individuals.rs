@@ -434,16 +434,19 @@ fn each_plant_species_has_a_slot_that_pours_it() {
     tools.select(PaletteItem::Tool(Tool::Plant(moss)));
     assert_eq!(tools.selected_plant(), Some(moss));
     tools.resize(-3);
-    assert!(matches!(
-        tools.press(&mut w, Button::Primary, (80, 20)),
-        Outcome::Painted(1)
-    ));
+    // Moss grows from fragments, which are placed as one small clump of its
+    // own stem cells per click, not poured as powder (#469).
+    let Outcome::Painted(cells) = tools.press(&mut w, Button::Primary, (80, 20)) else {
+        panic!("no piece placed");
+    };
     tools.release(&mut w, Button::Primary);
+    assert!(cells >= 3, "{cells}");
+    assert_eq!(count(&w, "cutting"), 0);
+    assert_eq!(count(&w, "stem"), cells);
     let c = w.cell(80, 20).unwrap();
-    assert_eq!(
-        (c.material, c.state),
-        (id(&w, "cutting"), u16::from(moss.0))
-    );
+    assert_eq!(c.material, id(&w, "stem"));
+    let plant = w.plant(w.plant_at(80, 20).unwrap()).unwrap();
+    assert_eq!(plant.species, moss);
 }
 
 #[test]

@@ -77,12 +77,40 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     the same species (a fragment, parent id set) if the species
     propagates by fragments and the piece holds a stem or rhizome (or a
     floater's floating leaf, which floats on as a buoyant body, D22);
-    otherwise it becomes dead plant matter. A fragment drifts or sinks
-    like a cutting until it roots. Unestablished cuttings, including poured
-    fragments, runners and buds, age while the rooting site or conditions
-    are unsuitable. They become dead plant matter after about 7.5 minutes
+    otherwise it becomes dead plant matter. A cut or split fragment
+    drifts or sinks as a `Raft` (below) like a placed cutting until it
+    roots.
+  - **Discrete propagules (#469, #289).** Seeds pour as powder (the
+    `seed` material, stateful by species). Every other propagule
+    (cuttings, fragments, runners, buds) is a real, discrete multi-cell
+    plant placed one per click (`World::place_propagule`) with its anchor
+    cell at the pointer, built of the species' own part cells: a stem
+    cutting is three stem cells with two pairs of leaves (a fragment two
+    with one pair); a runner's plantlet a crown with a few short blades;
+    an epiphyte's fragment a rhizome with leaves; a moss fragment a small
+    clump of stem cells; a marimo fragment a plus-shaped ball; a bud one
+    floating leaf (a floater's fragment two with a root). Every cell must
+    land in open water, and the piece becomes a plant (table entry,
+    species, parent unset) at once, so it appears in Inspect and counts
+    toward the plant cap (a full tank, or no room there, places nothing).
+    There is no brush, radius or preview for a placed piece. A piece that
+    roots or clings starts as a `Raft` (the same buoyant body as a
+    floater, D22) that drifts with the current and sinks until it rests on
+    a substrate or host that suits it, then roots as a plant of the same
+    species (at once, if it is placed resting on one). An unrooted piece,
+    placed or cut, ages while its rooting site or conditions are
+    unsuitable and becomes dead plant matter after about 7.5 minutes
     (within one in-tank day, 10 minutes), scaling with the random-tick
-    interval. Seeds wait indefinitely for suitable conditions.
+    interval. Seeds wait indefinitely for suitable conditions. Scripts
+    (`script.rs`) check at parse time that the named species grows from
+    the propagule they use.
+  - **Legacy `cutting` powder.** Older saves and worlds may still hold
+    `cutting` material cells (a poured cutting, fragment, runner or bud
+    from before #469). They keep working as before: such a cell roots on
+    suitable substrate, accumulates rot progress in the high byte of its
+    state and rots after the same 7.5 minutes. Nothing pours the `cutting`
+    material any more, and the save format is unchanged (a raft may
+    belong to any plant).
   - **Health and death.** Health falls while the plant's conditions are
     outside its ranges and recovers inside them. Low health drops the
     oldest leaves first, then the whole plant becomes dead plant matter;
@@ -230,11 +258,11 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     zenkeri*, id 18) ships.
   - **Propagation:** runners and buds make child plants (parent id set);
     mature plants of seeding species drop seeds now and then; the palette
-    pours a species' seeds, cuttings or fragments (one it lists; a
-    poured fragment is the `cutting` material); fragments also come from
+    pours a species' seeds or places one of its cuttings, fragments,
+    runners or buds (one it lists; seeds are powder, the rest discrete
+    plants, see *Discrete propagules*); fragments also come from
     cuts. *T6c:* a species listing `runners` (rosettes and carpets) spreads
-    by them, and the palette's runners pour a plantlet (the `cutting`
-    material); healthy mature (or topped-out) plants of seeding species
+    by them, and the palette's runners place a plantlet; healthy mature (or topped-out) plants of seeding species
     drop seeds into adjacent water now and then while below the plant cap.
 - <a id="plant-appearance"></a>**Appearance.** Effects are computed at
   render time where possible, so a change in a plant's look costs no
@@ -331,8 +359,8 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     mode, while hidden, or when the tank has no plants. The host's power
     and visibility policies still govern the tank's pacing and pauses.
 - **Interaction.** Each plant species is a palette item under Plants
-  (§2.5), in `desktank window` and on the web. It pours the species as
-  its default propagule; `P` (and, on the web, a row of chips under the
+  (§2.5), in `desktank window` and on the web. A click pours seeds or
+  places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the
   items listing only that species' methods: seeds, cuttings, fragments,
   runners, buds) picks another, remembered per species. Inspect shows species,
   age, health, size and what is limiting growth (for example, "light too

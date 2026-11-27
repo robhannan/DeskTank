@@ -29,6 +29,13 @@
 //!   current carries do; with no current it slows to rest. A ball grips
 //!   the current more weakly ([`BALL_GRIP`]) and rolls at only a quarter
 //!   of its speed ([`BALL_DRIFT`]): it is nudged along the bottom.
+//! - **Unrooted pieces.** A cutting, fragment or plantlet of any other
+//!   species (stem, rosette, carpet, mat or epiphyte) that has not rooted
+//!   or clung yet is a raft too (#289, #469): it weighs its cells' density
+//!   less the fluid's like a ball, so it sinks gently, but the current
+//!   carries it along as it does a floater and it only creeps along the
+//!   bottom (as a ball rolls). It sleeps once at rest; the plant update
+//!   then roots it (and drops its raft) or lets it rot.
 //! - **Motion.** Speeds are damped in water and capped as a body's are; it
 //!   moves a cell at a time into fluid (water, air, bubbles) or floating
 //!   cells, which go to the cells it leaves, so every cell is conserved
@@ -67,6 +74,35 @@ const WATER_MILLI: i64 = 1000;
 /// A current in cells per second as a raft speed: 1/256 cell per tick.
 #[allow(clippy::cast_precision_loss)] // small exact constants
 const PER_SECOND: f32 = ONE as f32 / super::super::TICKS_PER_SECOND as f32;
+
+/// How a raft's plant is held in the water.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// Held up at the surface by its floating leaves.
+    Floater,
+    /// A marimo: sinks and rolls.
+    Ball,
+    /// An unrooted piece of a plant that roots or clings: sinks gently.
+    Piece,
+}
+
+impl Kind {
+    fn of(form: &crate::plants::Form) -> Self {
+        if form.ball().is_some() {
+            Self::Ball
+        } else if form.floater().is_some() {
+            Self::Floater
+        } else {
+            Self::Piece
+        }
+    }
+
+    /// Its cells weigh their density less the fluid's, not only their
+    /// lift.
+    fn sinks(self) -> bool {
+        self != Self::Floater
+    }
+}
 
 /// What acts on a raft this tick.
 struct Forces {
@@ -175,11 +211,12 @@ impl World {
         let Some(&raft) = self.plants.rafts.get(&id) else {
             return false;
         };
-        let ball = self
+        let kind = self
             .plants
             .species
             .get(p.species)
-            .is_some_and(|s| s.form.ball().is_some());
+            .map_or(Kind::Floater, |s| Kind::of(&s.form));
+        let ball = kind == Kind::Ball;
         let bounds = p.bounds;
         let diameter = bounds.x1 - bounds.x0;
         let mut members = self.plant_members(id, self.clip_to_grid(bounds));
@@ -192,7 +229,7 @@ impl World {
             mean,
             target,
             water,
-        } = self.raft_forces(&members, raft.off.1, ball);
+        } = self.raft_forces(&members, raft.off.1, kind);
         let mut raft = raft;
 
         // Forces: weight, buoyancy and the 2D current, each dropped while
@@ -201,6 +238,11 @@ impl World {
         // A ball on the bottom only rolls along at a share of it.
         let mut target = if ball {
             (target.0 * BALL_DRIFT / 256, target.1 * BALL_DRIFT / 256)
+        } else if kind == Kind::Piece && !self.raft_free(&members, id, 0, 1) {
+            // A piece lying on the bottom is only nudged along it; ignore
+            // sub-rest-speed stray currents so settled pieces can sleep.
+            let tx = target.0 * BALL_DRIFT / 256;
+            (if tx.abs() <= REST_SPEED { 0 } else { tx }, target.1)
         } else {
             target
         };
@@ -312,9 +354,10 @@ impl World {
     }
 
     /// What acts on a raft with cells `members` sitting `off_y` (1/256
-    /// cell) from where it is drawn (see the module docs); a `ball`'s cells
-    /// all sink.
-    fn raft_forces(&self, members: &[usize], off_y: i64, ball: bool) -> Forces {
+    /// cell) from where it is drawn (see the module docs); the cells of a
+    /// ball or an unrooted piece all sink.
+    fn raft_forces(&self, members: &[usize], off_y: i64, kind: Kind) -> Forces {
+        let ball = kind == Kind::Ball;
         let water = self
             .plants
             .water
@@ -374,7 +417,7 @@ impl World {
             // leans towards would push it back and forth.
             if let Some(rho) = rho {
                 weight += leaves - n_leaves * rho;
-                weight += if ball {
+                weight += if kind.sinks() {
                     rest - n_rest * rho
                 } else {
                     (rest - n_rest * rho).max(0) * (water - rho).clamp(0, water) / water
@@ -562,8 +605,9 @@ impl World {
     }
 
     /// Restores the rafts from a save, after the plant table: each must
-    /// belong to a floater or ball plant, and one the save has no raft for
-    /// gets one at rest.
+    /// belong to a plant in it (a floater, a ball, or an unrooted piece of
+    /// any other species: #469) and appear once, and a floater or ball the
+    /// save has no raft for gets one at rest.
     pub(in crate::world) fn load_rafts(&mut self, saved: Vec<v7::Raft>) -> Result<(), SaveError> {
         let species = std::sync::Arc::clone(&self.plants.species);
         let plants = &mut self.plants;
@@ -576,8 +620,8 @@ impl World {
         };
         for r in saved {
             let invalid = |what: &str| SaveError::Invalid(format!("raft {}: {what}", r.plant));
-            if !floater(&plants.table, r.plant) || plants.rafts.contains_key(&r.plant) {
-                return Err(invalid("not a floater or ball plant, or repeated"));
+            if !plants.table.contains_key(&r.plant) || plants.rafts.contains_key(&r.plant) {
+                return Err(invalid("not a plant, or repeated"));
             }
             let near = |(x, y): (i64, i64), limit: i64| x.abs() <= limit && y.abs() <= limit;
             if !(near(r.off, 4 * ONE) && near(r.vel, MAX_SPEED)) {
