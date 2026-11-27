@@ -1,19 +1,23 @@
 //! GPU resources for one grid and one target format: the cell and plant
 //! band textures, the palette, the uniforms, the sprite atlas and
 //! instances. The grid draws first, then depth-sorted sprites, then any
-//! film on the front glass.
+//! film on the front glass. With a camera (D29) all of that draws into an
+//! offscreen image first and a post pass shows a view of it, then the
+//! screen-space overlay draws over that.
 
 use std::collections::BTreeMap;
 
 use desktank_sim::{FieldKind, Part, World};
 
 use crate::algae;
+use crate::camera::ViewRect;
 use crate::card::{self, CardLayout};
 use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, Magnifier, MagnifierLayout, PaletteLayout};
 use crate::layout::Layout;
 use crate::palette;
 use crate::plants::{self, PlantTints};
+use crate::post::{Offscreen, Post};
 use crate::sprites::{self, Atlas};
 use crate::{Gpu, timer::GpuTimer};
 
@@ -70,6 +74,10 @@ pub struct Renderer {
     front_film: wgpu::RenderPipeline,
     /// Border and centre reticle drawn over the magnified lens.
     lens_frame: wgpu::RenderPipeline,
+    /// The tank shader and pipeline layout, kept to build the camera's
+    /// overlay pipeline when a camera is first set.
+    shader: wgpu::ShaderModule,
+    pipeline_layout: wgpu::PipelineLayout,
     /// The layout both bind groups use, kept to rebuild them when the grid
     /// textures change size.
     bind_layout: wgpu::BindGroupLayout,
@@ -128,6 +136,24 @@ pub struct Renderer {
     /// Uniform bytes last written for the magnifier pass.
     lens_view: Vec<u8>,
     scratch: Vec<u8>,
+    /// The camera's pipelines and buffers, built the first time one is set.
+    camera: Option<CameraGpu>,
+    /// The image the tank draws into while a camera is set; dropped when
+    /// it isn't.
+    offscreen: Option<Offscreen>,
+}
+
+/// What a camera needs beyond the tank's own resources (D29): the post
+/// pass, and the pipeline, uniform and bind group that draw the overlay
+/// (cards, palette, brush outline) over it in screen space.
+#[derive(Debug)]
+struct CameraGpu {
+    post: Post,
+    overlay_pipeline: wgpu::RenderPipeline,
+    overlay_view_buffer: wgpu::Buffer,
+    overlay_bind_group: wgpu::BindGroup,
+    /// Uniform bytes last written for the overlay pass.
+    overlay_view: Vec<u8>,
 }
 
 impl Renderer {
@@ -185,13 +211,16 @@ impl Renderer {
         ];
         let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
         let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
-        let (pipelines, [lens_frame, front_film]) = create_pipelines(gpu, &bind_layout, format);
+        let (pipelines, [lens_frame, front_film], shader, pipeline_layout) =
+            create_pipelines(gpu, &bind_layout, format);
         Self {
             format,
             grid,
             pipelines,
             front_film,
             lens_frame,
+            shader,
+            pipeline_layout,
             bind_layout,
             bind_group,
             lens_bind_group,
@@ -224,6 +253,8 @@ impl Renderer {
             view: Vec::new(),
             lens_view: Vec::new(),
             scratch: Vec::new(),
+            camera: None,
+            offscreen: None,
         }
     }
 
@@ -252,6 +283,9 @@ impl Renderer {
         self.instance_bytes.clear();
         self.view.clear();
         self.lens_view.clear();
+        if let Some(camera) = &mut self.camera {
+            camera.overlay_view.clear();
+        }
     }
 
     /// Resizes the grid-dependent textures and bind groups to `world`'s grid,
@@ -282,6 +316,10 @@ impl Renderer {
         self.bind_group = create_bind_group(d, &self.bind_layout, &self.view_buffer, textures);
         self.lens_bind_group =
             create_bind_group(d, &self.bind_layout, &self.lens_view_buffer, textures);
+        if let Some(camera) = &mut self.camera {
+            camera.overlay_bind_group =
+                create_bind_group(d, &self.bind_layout, &camera.overlay_view_buffer, textures);
+        }
         self.algae.set_looks(gpu, world);
         self.reset_world();
     }
@@ -522,8 +560,8 @@ impl Renderer {
     fn pack_view(
         &self,
         size: (u32, u32),
-        offset: (i64, i64),
-        scale: u32,
+        offset: (f32, f32),
+        scale: f32,
         surface_row: usize,
         daylight: [f32; 3],
         phase: f32,
@@ -603,9 +641,9 @@ impl Renderer {
         [
             self.grid.0 as f32,
             self.grid.1 as f32,
-            offset.0 as f32,
-            offset.1 as f32,
-            scale as f32,
+            offset.0,
+            offset.1,
+            scale,
             surface_row as f32,
             DEPTH_DIM,
             if self.format.is_srgb() { 1.0 } else { 0.0 },
@@ -635,7 +673,13 @@ impl Renderer {
     /// Records the draw into `target` (`size` pixels), with the palette at
     /// `palette`, the brush outline at `cursor`, the magnified lens at
     /// `magnifier` and the field overlay `field` if given.
-    #[allow(clippy::too_many_arguments)] // one frame's inputs
+    ///
+    /// With a `camera` the tank draws offscreen at `layout`, a post pass
+    /// shows that view of it over `target`, and the overlay (palette,
+    /// cards, brush outline, lens) draws over that in screen space; without
+    /// one the tank and overlay draw straight into `target`, with no
+    /// offscreen image.
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one frame's inputs
     pub fn encode(
         &mut self,
         gpu: &Gpu,
@@ -643,6 +687,7 @@ impl Renderer {
         target: &wgpu::TextureView,
         size: (u32, u32),
         layout: Layout,
+        camera: Option<ViewRect>,
         overlay_water_alpha: Option<f32>,
         surface_row: usize,
         daylight: [f32; 3],
@@ -654,17 +699,33 @@ impl Renderer {
         oled: bool,
         timer: Option<&GpuTimer>,
     ) {
+        let camera = camera.filter(|v| v.is_valid() && size.0 > 0 && size.1 > 0);
+        // With a camera the tank draws without the overlay, which draws in
+        // screen space afterwards (the field tint belongs to the tank).
+        let tank_overlay = if camera.is_some() {
+            Overlay {
+                palette: None,
+                card: None,
+                inspect: None,
+                cursor: None,
+                magnifier: None,
+                ..overlay
+            }
+        } else {
+            overlay
+        };
+        #[allow(clippy::cast_precision_loss)] // pixels
         let bytes = self.pack_view(
             size,
-            layout.offset,
-            layout.scale,
+            (layout.offset.0 as f32, layout.offset.1 as f32),
+            layout.scale as f32,
             surface_row,
             daylight,
             phase,
             sway_on,
             ripples,
             surface_ripple_threshold,
-            overlay,
+            tank_overlay,
             [0.0; 4],
             overlay_water_alpha,
             oled,
@@ -674,9 +735,10 @@ impl Renderer {
             self.view = bytes;
         }
 
-        let lens_layout = overlay
-            .magnifier
-            .and_then(|m| MagnifierLayout::fit(size, &layout, m));
+        let lens_layout = overlay.magnifier.and_then(|m| {
+            let grid = camera.map_or(layout, |v| v.magnifier_grid(size, &layout, m.cell));
+            MagnifierLayout::fit(size, &grid, m)
+        });
         if let Some(ml) = lens_layout {
             #[allow(clippy::cast_precision_loss)] // target pixels
             let lens_info = [
@@ -685,10 +747,11 @@ impl Renderer {
                 ml.radius as f32,
                 ml.step as f32,
             ];
+            #[allow(clippy::cast_precision_loss)] // pixels
             let lens_bytes = self.pack_view(
                 size,
-                ml.offset,
-                ml.scale,
+                (ml.offset.0 as f32, ml.offset.1 as f32),
+                ml.scale as f32,
                 surface_row,
                 daylight,
                 phase,
@@ -709,45 +772,183 @@ impl Renderer {
                 self.lens_view = lens_bytes;
             }
         }
-
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("tank"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    // Every pixel is written, so there is nothing to load.
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: timer.map(GpuTimer::pass_writes),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
         let front_pass = self.algae.front_film_visible
             && (!front_in_layers(self.format, gpu.split_grid) || overlay_water_alpha.is_some());
-        self.draw_view(&mut pass, &self.bind_group, front_pass);
-        if let Some(ml) = lens_layout {
-            pass.set_scissor_rect(
-                ml.lens_origin.0,
-                ml.lens_origin.1,
-                ml.lens_size.0,
-                ml.lens_size.1,
-            );
-            self.draw_view(&mut pass, &self.lens_bind_group, front_pass);
-            if ml.frame_size.0 > 0 && ml.frame_size.1 > 0 {
-                pass.set_scissor_rect(
-                    ml.frame_origin.0,
-                    ml.frame_origin.1,
-                    ml.frame_size.0,
-                    ml.frame_size.1,
-                );
-                pass.set_pipeline(&self.lens_frame);
-                pass.draw(0..3, 0..1);
+
+        let Some(view) = camera else {
+            self.offscreen = None;
+            let mut pass = begin_pass(encoder, "tank", target, timer.map(GpuTimer::pass_writes));
+            self.draw_view(&mut pass, &self.bind_group, front_pass);
+            if let Some(ml) = lens_layout {
+                self.draw_lens(&mut pass, &ml, front_pass);
             }
+            return;
+        };
+
+        self.build_camera(gpu, size);
+        let backdrop = camera_backdrop(self.format, overlay_water_alpha);
+        if let Some(camera) = self.camera.as_mut() {
+            camera.post.update(gpu, view, &layout, size, backdrop);
+        }
+        let Some(image) = self.offscreen.as_ref().map(|o| o.view().clone()) else {
+            return;
+        };
+        // The tank at its integer layout, into the image.
+        {
+            let mut pass = begin_pass(
+                encoder,
+                "tank image",
+                &image,
+                timer.map(GpuTimer::begin_writes),
+            );
+            self.draw_view(&mut pass, &self.bind_group, front_pass);
+        }
+        // Where the view puts the grid, for the overlay's brush outline.
+        let (sx, sy) = view.pixels_per_cell(size);
+        #[allow(clippy::cast_possible_truncation)] // pixels
+        let (scale, offset) = (
+            sx as f32,
+            (
+                (-f64::from(view.x) * sx) as f32,
+                (-f64::from(view.y) * sy) as f32,
+            ),
+        );
+        let overlay_bytes = self.pack_view(
+            size,
+            offset,
+            scale,
+            surface_row,
+            daylight,
+            phase,
+            sway_on,
+            ripples,
+            surface_ripple_threshold,
+            Overlay {
+                magnifier: None,
+                ..overlay
+            },
+            [0.0; 4],
+            overlay_water_alpha,
+        );
+        if let Some(camera) = self.camera.as_mut()
+            && overlay_bytes != camera.overlay_view
+        {
+            gpu.queue
+                .write_buffer(&camera.overlay_view_buffer, 0, &overlay_bytes);
+            camera.overlay_view = overlay_bytes;
+        }
+        let (Some(camera), Some(offscreen)) = (self.camera.as_ref(), self.offscreen.as_ref())
+        else {
+            return;
+        };
+        // The view over the target, then the lens, then the overlay.
+        let mut pass = begin_pass(encoder, "camera", target, timer.map(GpuTimer::end_writes));
+        pass.set_pipeline(camera.post.pipeline());
+        pass.set_bind_group(0, offscreen.bind_group(), &[]);
+        pass.draw(0..3, 0..1);
+        if let Some(ml) = lens_layout {
+            self.draw_lens(&mut pass, &ml, front_pass);
+            pass.set_scissor_rect(0, 0, size.0, size.1);
+        }
+        pass.set_pipeline(&camera.overlay_pipeline);
+        pass.set_bind_group(0, &camera.overlay_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// Builds the camera's pipelines and uniform on first use, and the
+    /// offscreen image for `size` if there isn't one that size.
+    fn build_camera(&mut self, gpu: &Gpu, size: (u32, u32)) {
+        if self.camera.is_none() {
+            let d = &gpu.device;
+            let overlay_view_buffer = create_view_buffer(d, "camera overlay view");
+            let overlay_bind_group = create_bind_group(
+                d,
+                &self.bind_layout,
+                &overlay_view_buffer,
+                self.bound_textures(),
+            );
+            let overlay_pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("camera overlay"),
+                layout: Some(&self.pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.shader,
+                    entry_point: Some("fs_hud"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+            self.camera = Some(CameraGpu {
+                post: Post::new(gpu, self.format),
+                overlay_pipeline,
+                overlay_view_buffer,
+                overlay_bind_group,
+                overlay_view: Vec::new(),
+            });
+        }
+        if self.offscreen.as_ref().is_none_or(|o| o.size() != size)
+            && let Some(camera) = &self.camera
+        {
+            self.offscreen = Some(Offscreen::new(gpu, &camera.post, self.format, size));
+        }
+    }
+
+    /// Frees the offscreen image (the camera was cleared). Its pipelines
+    /// stay for the next camera.
+    pub fn release_camera(&mut self) {
+        self.offscreen = None;
+    }
+
+    /// The textures every bind group binds, in binding order from 1.
+    fn bound_textures(&self) -> [&wgpu::Texture; 12] {
+        [
+            &self.cells,
+            &self.palette,
+            &self.hud,
+            &self.fields,
+            &self.atlas_texture,
+            &self.plants,
+            &self.species,
+            &self.bands,
+            &self.flow,
+            &self.algae.coat,
+            &self.algae.glass,
+            &self.algae.look_atlas,
+        ]
+    }
+
+    /// Draws the magnified lens and its frame, scissored to where they are.
+    fn draw_lens(&self, pass: &mut wgpu::RenderPass<'_>, ml: &MagnifierLayout, front_pass: bool) {
+        pass.set_scissor_rect(
+            ml.lens_origin.0,
+            ml.lens_origin.1,
+            ml.lens_size.0,
+            ml.lens_size.1,
+        );
+        self.draw_view(pass, &self.lens_bind_group, front_pass);
+        if ml.frame_size.0 > 0 && ml.frame_size.1 > 0 {
+            pass.set_scissor_rect(
+                ml.frame_origin.0,
+                ml.frame_origin.1,
+                ml.frame_size.0,
+                ml.frame_size.1,
+            );
+            pass.set_pipeline(&self.lens_frame);
+            pass.draw(0..3, 0..1);
         }
     }
 
@@ -897,6 +1098,57 @@ impl AlgaeTextures {
             write_rect(gpu, &self.glass, rect, scratch, 4);
         }
     }
+}
+
+/// A pass over `target`, cleared (every pixel is written, so there is
+/// nothing to load).
+fn begin_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    label: &str,
+    target: &wgpu::TextureView,
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) -> wgpu::RenderPass<'static> {
+    encoder
+        .begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
+        .forget_lifetime()
+}
+
+/// What the camera's post pass shows outside the tank's image, as the
+/// target holds it (linear for an sRGB target) and premultiplied: the
+/// letterbox colour, or nothing in overlay mode, where the letterbox is
+/// clear.
+fn camera_backdrop(format: wgpu::TextureFormat, overlay_water_alpha: Option<f32>) -> [f32; 4] {
+    if overlay_water_alpha.is_some() {
+        return [0.0; 4];
+    }
+    let [r, g, b] = BACKDROP.map(|c| {
+        let c = f32::from(c) / 255.0;
+        if format.is_srgb() {
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        } else {
+            c
+        }
+    });
+    [r, g, b, 1.0]
 }
 
 fn create_view_buffer(d: &wgpu::Device, label: &str) -> wgpu::Buffer {
@@ -1271,12 +1523,18 @@ const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
 const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
 /// The grid and sprite pipelines, plus the lens frame and front film
-/// pipelines, drawing into `format`, one pass each or split ([`Gpu::split_grid`]).
+/// pipelines, drawing into `format`, one pass each or split ([`Gpu::split_grid`]),
+/// and the shader and layout they were built from.
 fn create_pipelines(
     gpu: &Gpu,
     bind_layout: &wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
-) -> (Pipelines, [wgpu::RenderPipeline; 2]) {
+) -> (
+    Pipelines,
+    [wgpu::RenderPipeline; 2],
+    wgpu::ShaderModule,
+    wgpu::PipelineLayout,
+) {
     let d = &gpu.device;
     let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tank"),
@@ -1381,7 +1639,7 @@ fn create_pipelines(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         &[],
     );
-    (pipelines, [lens_frame, front_film])
+    (pipelines, [lens_frame, front_film], shader, pipeline_layout)
 }
 
 /// Whether the grid and sprites apply the front film before encoding into

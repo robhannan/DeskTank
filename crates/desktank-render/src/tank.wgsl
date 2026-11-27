@@ -3267,6 +3267,29 @@ fn fs_front_film(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(out(grid_post(film.rgb, floor(grid_pos))).rgb, film.a);
 }
 
+// The camera's screen-space overlay (D29), drawn over its post pass with
+// `view.offset` and `view.scale` set to where the view puts the grid (the
+// scale is fractional): the palette and cards, and the brush outline (drawn
+// as `grid_post` does, as a translucent white over its cells).
+@fragment
+fn fs_hud(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let h = hud_at(pos.xy);
+    if h.a > 0.5 {
+        return out(h.rgb);
+    }
+    let cell = floor((pos.xy - view.offset) / view.scale);
+    if view.cursor.w > 0.5 && all(cell >= vec2<f32>(0.0)) && all(cell < view.grid) && in_brush(cell) {
+        let edge = !(in_brush(cell + vec2<f32>(1.0, 0.0)) && in_brush(cell - vec2<f32>(1.0, 0.0))
+            && in_brush(cell + vec2<f32>(0.0, 1.0)) && in_brush(cell - vec2<f32>(0.0, 1.0)));
+        if edge {
+            return vec4<f32>(out(vec3<f32>(1.0)).rgb, 0.6);
+        }
+    }
+    discard;
+    // HLSL FXC requires a return statement on all control paths even after discard.
+    return vec4<f32>(0.0);
+}
+
 // Pixel-art magnifying glass overlay: circular metallic bezel, subtle glass
 // glint, 4-tick centre reticle, and a 45-degree diagonal handle extending from
 // the bottom-right of the rim. Drawn after the circular magnified grid and
