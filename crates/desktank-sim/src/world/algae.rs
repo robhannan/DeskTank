@@ -755,8 +755,8 @@ mod tests {
             w.fill_rect(bed, sand, Brush::Replace).unwrap();
             let rotala = w.plant_species().id("rotala").unwrap();
             // Six stands: tapered rotala (bare tops, short upper leaves) covers
-            // less water than it used to, and five left the boost's effect
-            // marginal.
+            // less water than it used to, and five leave the boost's effect
+            // marginal (41 coated cells against 48, not under three quarters).
             for x in [4, 11, 18, 25, 32, 39] {
                 w.paint_plant(x, 41, 0, rotala, crate::Propagule::Cuttings)
                     .unwrap();

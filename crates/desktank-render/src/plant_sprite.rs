@@ -1312,7 +1312,8 @@ mod tests {
         // Tank pixels are shown at 4x (scale 2) or 2x (scale 4): the same size.
         let tank_shot = |name: &str,
                          scale: u32,
-                         stage: desktank_sim::PlantStage|
+                         stage: desktank_sim::PlantStage,
+                         tint: Option<bool>|
          -> (Vec<u8>, Option<(usize, usize)>) {
             let m = MaterialTable::builtin().unwrap();
             let mut world = desktank_sim::World::new(
@@ -1325,12 +1326,15 @@ mod tests {
                 m,
             )
             .unwrap();
+            // Shown in lean or fertilised water, the plant stands on a high bed so
+            // its whole height is in strong light.
+            let bed = if tint.is_some() { 30 } else { 58 };
             let soil = world.materials().id("aquasoil").unwrap();
             world
                 .fill_rect(
                     desktank_sim::Rect {
                         x0: 0,
-                        y0: 58,
+                        y0: bed,
                         x1: cw as usize,
                         y1: ch as usize,
                     },
@@ -1340,7 +1344,7 @@ mod tests {
                 .unwrap();
             let id = world.plant_species().id(name).unwrap();
             world
-                .place_plant(id, stage, cw / 2, 57, false)
+                .place_plant(id, stage, cw / 2, bed as i64 - 1, false)
                 .unwrap()
                 .unwrap();
             // The lowest stem cell off the main stem: where a side shoot starts.
@@ -1349,6 +1353,26 @@ mod tests {
                 .rev()
                 .flat_map(|y| (0..cw as usize).map(move |x| (x, y)))
                 .find(|&(x, y)| x != cw as usize / 2 && world.cell(x, y).unwrap().material == stem);
+            // `Some(true)`: a lean tank, so the plant colours up fully;
+            // `Some(false)`: a fertilised one, so it doesn't colour at all.
+            if let Some(lean) = tint {
+                // Hold the nutrient at 0.3 (colouration 1) or 1.5 (none).
+                let want = if lean { 0.3 } else { 1.5 };
+                for _ in 0..4800 {
+                    for y in (0..ch as usize).step_by(8) {
+                        for x in (0..cw as usize).step_by(8) {
+                            let now = world.field(desktank_sim::FieldKind::Nutrient).at_cell(x, y);
+                            world.add_to_field(desktank_sim::FieldKind::Nutrient, x, y, want - now);
+                        }
+                    }
+                    world.tick();
+                }
+                let c = world.plants().next().map_or(-1.0, |p| p.colour);
+                eprintln!(
+                    "rotala colouration {c:.2} ({})",
+                    if lean { "lean" } else { "fed" }
+                );
+            }
             let mut tank = crate::Tank::new(world, crate::TankConfig::default());
             tank.set_time_of_day(12 * 60);
             tank.step();
@@ -1412,10 +1436,10 @@ mod tests {
                 desktank_sim::PlantStage::Mature,
                 desktank_sim::PlantStage::Juvenile,
             );
-            let (two, _) = tank_shot(&sp.name, 2, mature);
-            let (four, stub) = tank_shot(&sp.name, 4, mature);
-            let (two_j, _) = tank_shot(&sp.name, 2, young);
-            let (four_j, _) = tank_shot(&sp.name, 4, young);
+            let (two, _) = tank_shot(&sp.name, 2, mature, None);
+            let (four, stub) = tank_shot(&sp.name, 4, mature, None);
+            let (two_j, _) = tank_shot(&sp.name, 2, young, None);
+            let (four_j, _) = tank_shot(&sp.name, 4, young, None);
             let (cwu, chu) = (cw as usize, ch as usize);
             // The whole plant: sprite and tank at the same pixel size (the
             // scale-2 tank shows a texel as a pixel, as the sprite does),
@@ -1485,5 +1509,44 @@ mod tests {
             blit(&mut img, tw, &b, (zw_px, zh_px), (zw_px + gap, 0));
             write(format!("{prefix}-{}-zoom.png", sp.name), &img, (tw, zh_px));
         }
+        // Rotala's crown at colouration 0 (fertilised) and 1 (lean water),
+        // side by side, upper half, quarter-cell art.
+        let (fed, _) = tank_shot("rotala", 4, desktank_sim::PlantStage::Mature, Some(false));
+        let (lean, _) = tank_shot("rotala", 4, desktank_sim::PlantStage::Mature, Some(true));
+        let (cwu, chu) = (cw as usize, ch as usize);
+        let (zx, zy, zw, zh, zk) = (cwu / 2 - 14, 0, 28, 30, 8);
+        let crop = |img: &[u8]| {
+            let mut out = vec![0u8; zw * 4 * zk * zh * 4 * zk * 4];
+            for y in 0..zh * 4 * zk {
+                for x in 0..zw * 4 * zk {
+                    let s = (((zy * 4 + y / zk) * cwu * 4) + zx * 4 + x / zk) * 4;
+                    let o = (y * zw * 4 * zk + x) * 4;
+                    out[o..o + 4].copy_from_slice(&img[s..s + 4]);
+                }
+            }
+            out
+        };
+        let (a, b) = (crop(&fed), crop(&lean));
+        let _ = chu;
+        let half = zw * 4 * zk;
+        let gap = 16;
+        let mut img = vec![0u8; (half * 2 + gap) * zh * 4 * zk * 4];
+        for y in 0..zh * 4 * zk {
+            let row = (y * (half * 2 + gap)) * 4;
+            img[row..row + half * 4].copy_from_slice(&a[y * half * 4..(y + 1) * half * 4]);
+            let at = row + (half + gap) * 4;
+            img[at..at + half * 4].copy_from_slice(&b[y * half * 4..(y + 1) * half * 4]);
+        }
+        std::fs::write(
+            dir.join(format!("{prefix}-rotala-colour.png")),
+            crate::testing::png(
+                &img,
+                (
+                    u32::try_from(half * 2 + gap).unwrap(),
+                    u32::try_from(zh * 4 * zk).unwrap(),
+                ),
+            ),
+        )
+        .unwrap();
     }
 }

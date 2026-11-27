@@ -184,8 +184,10 @@ const MIN_OPACITY: f32 = 0.35;
 const COLOUR_DARK: f32 = 0.5;
 const COLOUR_STEM: f32 = 0.5;
 const COLOUR_GAIN: f32 = 1.6;
-// The colouration a stem plant's tips always show, of the full amount.
-const TIP_TINT: f32 = 0.55;
+// The colouration a stem plant's tips always show, of the full amount: a hint
+// of the species' tip colour (the sprite's) in fertilised water; the light
+// colours it fully.
+const TIP_TINT: f32 = 0.25;
 // Shapes (desktank_sim::plants::{LeafShape, StemShape, RootShape}).
 // A broad stem leaf's upper cell has its row cell's position plus this
 // (desktank_sim::plants::LEAF_UPPER).
@@ -2575,10 +2577,13 @@ fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
 
 // How many cells of its own stem lie above `start` (up a side shoot's slope
 // too, never up the main stem beside it): its depth below the stem's tip.
-fn depth_below_tip(start: vec2<i32>, me: vec4<f32>) -> i32 {
+fn depth_below_tip(start: vec2<i32>, half: i32, me: vec4<f32>) -> i32 {
     var at = start;
     var d = 0;
-    for (var k = 0; k < 24; k++) {
+    for (var k = 0; k < 32; k++) {
+        if d >= half {
+            break;
+        }
         var step_to = vec2<i32>(0, 0);
         if kin(at, vec2<i32>(0, -1), me).x == PART_STEM {
             step_to = vec2<i32>(0, -1);
@@ -2830,7 +2835,9 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         let p = select(pos, pos - LEAF_UPPER, upper);
         let from_left = select(
             left.x == PART_STEM || (left.x == PART_LEAF && left.y == pos - 1),
-            kin(at, vec2<i32>(-p, 0), me).x == PART_STEM,
+            // (an upper cell finds its stem through the row cell under it: a
+            // leaning shoot's stem is a cell off in its own row)
+            kin(at, vec2<i32>(-p, 1), me).x == PART_STEM,
             upper,
         );
         let dir = select(-1, 1, from_left);
@@ -2843,7 +2850,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         let has_up = above.x == PART_LEAF && above.y == pos + LEAF_UPPER;
         // Higher leaves are newer: lighter (or redder, by the ramp), and
         // each blade lightens towards its tip and its upper edge.
-        let node = kin(at, vec2<i32>(-dir * p, 0), me);
+        let node = kin(at, vec2<i32>(-dir * p, select(0, 1, upper)), me);
         let h = select(0.5, f32(node.y) / max(sizes.x, 1.0), node.x == PART_STEM);
         // The leaf's length as grown, counted along its row (an upper cell's
         // is the row cell's under it): leaves shorten towards the stem's tip,
@@ -2858,14 +2865,8 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         }
         // At the nodes whose pair is turned to the viewer (the narrow ones; the
         // front leaf is drawn over their stem) the side leaves are seen at an
-        // angle: a cell shorter.
-        let turned = shapes.w == 0 && node.x == PART_STEM
-            && ((node.y - select(0, 1, upper)) / max(i32(sizes.w), 1)) % 2 == 0;
-        var cut = false;
-        if turned && leaf_len >= 2 {
-            leaf_len -= 1;
-            cut = p > leaf_len;
-        }
+        // angle: a texel shorter.
+        let turned = shapes.w == 0 && node.x == PART_STEM && (node.y / max(i32(sizes.w), 1)) % 2 == 0;
         step += 1 + i32(round(h * 5.0)) + select(0, 1, top) + select(0, 1, tip && u == 1)
             + ((p - 1) * 2 + u) / 3 + select(0, 2, upper);
         let shape = shapes.x;
@@ -2895,11 +2896,11 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             // depth below the stem's tip, so the outline narrows smoothly
             // though the cells step: the outer cell is a texel short.
             var tipw = 2;
-            if p == leaf_len && !turned {
+            if p == leaf_len {
                 let node_at = at + vec2<i32>(-dir * p, select(0, 1, upper));
                 let half = max(i32(sizes.x) / 2, 1);
-                let reach = (4 * i32(sizes.z) * min(depth_below_tip(node_at, me), half) + half) / (2 * half);
-                tipw = clamp(reach - 2 * (leaf_len - 1), 1, 2);
+                let reach = (4 * i32(sizes.z) * min(depth_below_tip(node_at, half, me), half) + half) / (2 * half);
+                tipw = clamp(reach - 2 * (leaf_len - 1) - select(0, 1, turned), 1, 2);
             }
             let coarse = !fine;
             let cell_w = select(2, 4, fine);
@@ -2926,9 +2927,6 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             let t = (f32(a) + 0.5) / f32(span);
             step = i32(round(h * 4.0)) + i32(t * 3.0) + select(0, 1, !above) - select(0, 1, !below)
                 + select(0, 1, upper) + select(0, 1, shape == LEAF_FEATHER) + noise_step(me);
-        }
-        if cut {
-            covered = false;
         }
         // Night folding on stem leaves (T6d): leaves tuck inward toward the
         // stem and fold upward as darkness rises (view.daylight.w: 0 day, 1 night).

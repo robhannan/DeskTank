@@ -1651,11 +1651,11 @@ fn validate(
             let max = MAX_POSITION;
             if !(1..=max).contains(&s.height)
                 || !(2..=max).contains(&s.internode)
-                || !(1..=max).contains(&s.leaf_length)
+                || !(1..LEAF_UPPER).contains(&s.leaf_length)
                 || !(1..=max).contains(&s.root_depth)
             {
                 return Err(invalid(
-                    "stem height, leaf_length and root_depth must be 1..=63 and internode 2..=63",
+                    "stem height and root_depth must be 1..=63, leaf_length 1..=31 (the upper cells' positions start at 32) and internode 2..=63",
                 ));
             }
             if !(s.branching.is_finite() && (0.0..=1.0).contains(&s.branching)) {
@@ -2105,6 +2105,9 @@ mod tests {
         invalid(bad("optimum = 0.5", "optimum = 0.05"));
         invalid(bad("internode = 2", "internode = 1"));
         invalid(bad("height = 20", "height = 64"));
+        // Stem leaves must stay below the upper cells' positions.
+        invalid(bad("leaf_length = 3", "leaf_length = 32"));
+        invalid(bad("leaf_length = 3", "leaf_length = 0"));
         invalid(bad("rate = 10.0", "rate = 0.0"));
         invalid(bad("decline = 0.01", "decline = 0.0"));
         invalid(bad("[\"cuttings\"]", "[]"));

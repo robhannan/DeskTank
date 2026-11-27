@@ -127,22 +127,24 @@ fn cells_of(w: &World, plant: PlantId) -> Vec<(usize, usize)> {
     out
 }
 
-/// Whether `cells` are one piece: 4-connected, but for the diagonal steps of a
-/// side shoot's sloping stalk.
-fn connected(cells: &[(usize, usize)]) -> bool {
+/// Whether `cells` are one piece: 4-connected, but for the diagonal steps
+/// between the stem cells of a side shoot's sloping stalk.
+fn connected(w: &World, cells: &[(usize, usize)]) -> bool {
     let Some(&first) = cells.first() else {
         return true;
+    };
+    let stem = id(w, "stem");
+    let is_stem = |c: (usize, usize)| w.cell(c.0, c.1).unwrap().material == stem;
+    let joined = |a: (usize, usize), b: (usize, usize)| {
+        let (dx, dy) = (a.0.abs_diff(b.0), a.1.abs_diff(b.1));
+        dx + dy == 1 || (dx == 1 && dy == 1 && is_stem(a) && is_stem(b))
     };
     let mut seen = vec![first];
     let mut grew = true;
     while grew {
         grew = false;
         for &c in cells {
-            if !seen.contains(&c)
-                && seen
-                    .iter()
-                    .any(|s| s.0.abs_diff(c.0).max(s.1.abs_diff(c.1)) == 1)
-            {
+            if !seen.contains(&c) && seen.iter().any(|&s| joined(s, c)) {
                 seen.push(c);
                 grew = true;
             }
@@ -209,7 +211,7 @@ fn every_species_places_whole_plants_that_are_ordinary_plants() {
                     info.size()
                 );
                 assert!(
-                    connected(&cells_of(&w, plant)),
+                    connected(&w, &cells_of(&w, plant)),
                     "{name} {stage:?} in pieces"
                 );
                 if !flip {
@@ -811,10 +813,59 @@ fn side_shoots_lean_out_then_rise() {
                 );
             }
             assert!(diagonal > 0, "{name} {what}: no sloped shoot");
-            assert!(connected(&cells), "{name} {what} in pieces");
+            assert!(connected(w, &cells), "{name} {what} in pieces");
         };
         check(&w, "placed");
         run(&mut w, 5 * 60 * 20);
         check(&w, "grown");
+    }
+}
+
+/// How many stem cells stand in a plant's base column from its base up.
+fn main_stem_height(w: &World, plant: PlantId) -> usize {
+    let stem = id(w, "stem");
+    let (bx, by) = w.plant(plant).unwrap().base;
+    (0..=by)
+        .take_while(|k| w.cell(bx, by - k).unwrap().material == stem)
+        .count()
+}
+
+/// With side shoots on, no shoot ever stops its main stem growing: every main
+/// stem of the branching species grows to the species' height, from a placed
+/// Juvenile or a cutting, across seeds.
+#[test]
+fn a_side_shoot_never_stops_the_main_stem_growing() {
+    for name in ["rotala", "ludwigia"] {
+        for seed in 1..=8 {
+            for placed in [true, false] {
+                let mut w = tank(seed);
+                let (x, y) = spot(&w, name);
+                let s = species(&w, name);
+                let plant = if placed {
+                    place(&mut w, name, PlantStage::Juvenile, x, y, false)
+                } else {
+                    w.paint_plant(x, y + 1, 0, s, desktank_sim::Propagule::Cuttings)
+                        .unwrap();
+                    run(&mut w, 20);
+                    w.plants().next().map_or(PlantId(0), |p| p.id)
+                };
+                run(&mut w, 25 * 60 * 20);
+                let desktank_sim::plants::Form::Stem(f) = &w.plant_species().get(s).unwrap().form
+                else {
+                    panic!("{name} is a stem plant");
+                };
+                let plant = w.plants().next().map_or(plant, |p| p.id);
+                let got = main_stem_height(&w, plant);
+                let cap = w.plant_species().get(s).unwrap().growth.size;
+                let size = w.plant(plant).unwrap().size();
+                // Full height, or its cell budget used up (shoots and leaves
+                // take cells too): never a main stem held back under a shoot.
+                assert!(
+                    got == usize::from(f.height) || size + 10 >= cap,
+                    "{name} seed {seed} placed {placed}: main stem {got} of {} at size {size} of {cap}",
+                    f.height
+                );
+            }
+        }
     }
 }

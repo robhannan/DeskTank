@@ -2271,6 +2271,16 @@ impl World {
                     .is_none_or(|e| e == from || !is_own_stem(e) || e % self.width == main_x)
             })
         };
+        // Whether the main stem's next cell `j` touches no stem cell of its
+        // plant but `from` and side shoot cells (a shoot's first cells run
+        // beside the main stem, and must not stop it growing).
+        let lone_main = |j: usize, from: usize| {
+            let (jx, jy) = (j % self.width, j / self.width);
+            DIRS.iter().all(|&(dx, dy)| {
+                self.at(jx, jy, dx, dy)
+                    .is_none_or(|e| e == from || !is_own_stem(e) || e % self.width != main_x)
+            })
+        };
         let mut sites = Vec::new();
         for &i in members {
             let c = self.cells[i];
@@ -2301,7 +2311,7 @@ impl World {
                             self.at(x, y, dx, -1).filter(|&j| {
                                 is_water(j)
                                     && if off == 0 {
-                                        self.lone_part(j, i, id, Part::Stem)
+                                        lone_main(j, i)
                                     } else {
                                         lone_shoot(j, i)
                                     }
@@ -3171,6 +3181,29 @@ impl World {
             });
         }
         leaves.truncate(n);
+        // A broad leaf's upper cell goes with the row cell under it, or it
+        // would be left a stemless piece.
+        let stem_plant = self
+            .plants
+            .species
+            .get(p.species)
+            .is_some_and(|s| matches!(s.form, Form::Stem(_)));
+        if stem_plant {
+            let uppers: Vec<usize> = leaves
+                .iter()
+                .filter_map(|&i| {
+                    let up = i.checked_sub(self.width)?;
+                    let (below, above) = (self.cells[i], self.cells[up]);
+                    (Some(above.material) == leaf
+                        && above.state == below.state
+                        && plant_position(below.variant) < LEAF_UPPER
+                        && plant_position(above.variant)
+                            == plant_position(below.variant) + LEAF_UPPER)
+                        .then_some(up)
+                })
+                .collect();
+            leaves.extend(uppers);
+        }
         self.make_dead(&leaves);
         if let Some(p) = self.plants.table.get_mut(&id) {
             p.pending = true;

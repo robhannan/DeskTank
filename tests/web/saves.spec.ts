@@ -174,7 +174,7 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   await open(b, "?backend=webgl2");
   // Its first shader compile is done before Take over is timed. The WebGL2
   // backend's compile takes about five seconds in headless Chromium now
-  // (4.3 s when the plants were plain), so give it room.
+  // (4.3 s when the plants were plain; see #494), so give it room.
   await expect.poll(() => framesDrawn(b), { timeout: 20_000 }).toBeGreaterThan(0);
   expect(await owner(b)).toBe(false);
   await expect(b.getByText("open in another tab")).toBeVisible();

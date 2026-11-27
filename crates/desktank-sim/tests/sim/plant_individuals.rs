@@ -216,13 +216,12 @@ fn scooping_through_a_stem_makes_a_fragment_or_dead_plant_matter_by_species() {
     run_checked(&mut w, 10 * MINUTE);
     let (h, r) = (plant_of(&w, hyg)[0], plant_of(&w, rotala)[0]);
     let dead = count(&w, "dead_plant") + count(&w, "detritus");
-    // A two-row cut across each plant, 15 cells above its base and wide
-    // enough to take its side shoots (they rise up to eight cells out): the
-    // stems and the leaves at those rows go.
+    // A two-cell-wide cut across each stem, 15 cells above its base: the
+    // stem and the leaves at those rows go.
     let water = id(&w, "water");
     for p in [h, r] {
         let (x, y) = p.base;
-        w.fill_rect(rect(x - 9, y - 16, x + 10, y - 14), water, Brush::Replace)
+        w.fill_rect(rect(x - 3, y - 16, x + 4, y - 14), water, Brush::Replace)
             .unwrap();
     }
     w.tick();
@@ -708,4 +707,54 @@ fn aged_and_fresh_marimo_fragments_join_one_ball() {
     assert_eq!(ball.species, marimo);
     assert!(ball.size() >= 3);
     check_table(&w);
+}
+
+/// A broad stem leaf's upper cells always sit over the row cell they belong to,
+/// even as a failing plant drops its leaves (an upper cell left over would be
+/// a stemless piece the tidy kills, breaking the one-piece promise).
+#[test]
+fn dropped_leaves_take_their_upper_cells_with_them() {
+    let mut w = grown_and_asleep(4);
+    let leaf = id(&w, "leaf");
+    let orphans = |w: &World| -> usize {
+        let mut n = 0;
+        for y in 1..w.height() {
+            for x in 0..w.width() {
+                let c = w.cell(x, y - 1).unwrap();
+                if c.material != leaf || desktank_sim::plants::plant_position(c.variant) < 32 {
+                    continue;
+                }
+                let below = w.cell(x, y).unwrap();
+                if below.material != leaf
+                    || desktank_sim::plants::plant_position(below.variant)
+                        != desktank_sim::plants::plant_position(c.variant) - 32
+                {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    let upper = |w: &World| -> usize {
+        (0..w.height())
+            .flat_map(|y| (0..w.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let c = w.cell(x, y).unwrap();
+                c.material == leaf && desktank_sim::plants::plant_position(c.variant) >= 32
+            })
+            .count()
+    };
+    assert!(upper(&w) > 0, "the grown hygrophila has upper cells");
+    let before = upper(&w);
+    lid(&mut w, 0, 160, 16);
+    let mut dropped = false;
+    for _ in 0..8 * MINUTE {
+        w.tick();
+        assert_eq!(orphans(&w), 0, "tick {}", w.tick_count());
+        dropped |= upper(&w) < before;
+        if w.plant_count() == 0 {
+            break;
+        }
+    }
+    assert!(dropped, "no upper cell dropped with its leaf");
 }

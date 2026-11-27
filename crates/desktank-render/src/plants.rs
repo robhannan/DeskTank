@@ -410,5 +410,32 @@ mod tests {
         for s in RootShape::ALL {
             check("ROOT", format!("{s:?}"), s as u8);
         }
+        // The upper cells' position offset is the sim's.
+        let line = format!(
+            "const LEAF_UPPER: i32 = {};",
+            desktank_sim::plants::LEAF_UPPER
+        );
+        assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");
+    }
+
+    /// The shader reads a stem's leaves and depth with bounded loops
+    /// (`depth_below_tip` takes up to 32 steps and a leaf's length is counted
+    /// to four cells past the one it is in): every shipped stem species stays
+    /// within them, so what the sim grows and what the shader draws agree.
+    #[test]
+    fn shipped_stem_species_fit_the_shaders_loops() {
+        let m = desktank_sim::MaterialTable::builtin().unwrap();
+        let table = PlantSpeciesTable::builtin_for(&m).unwrap();
+        for sp in table.iter() {
+            let Form::Stem(f) = &sp.form else { continue };
+            assert!(
+                f.height / 2 <= 32,
+                "{}: half height {}",
+                sp.name,
+                f.height / 2
+            );
+            assert!(f.leaf_length <= 5, "{}: leaf {}", sp.name, f.leaf_length);
+            assert!(f.internode >= 2, "{}", sp.name);
+        }
     }
 }

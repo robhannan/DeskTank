@@ -150,9 +150,10 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     at the surface and trailing along it. A rootless variant anchors
     loosely or floats (hornwort type). *T6c part 3:* `[stem] branching`
     (0..=1; rotala 0.2, ludwigia 0.15) sets the deterministic per-node
-    chance of a side shoot, which leaves its node as a stub and leans out
-    (below) so it keeps a one-cell gap from the main stem (leaves stop short
-    of a rising shoot below them); any stem reaching the top water row trails sideways
+    chance of a side shoot, which leaves its node on the diagonal and leans
+    out (below), running beside the main stem for its first two cells
+    (which it must not stop growing: the main stem's growth ignores shoot
+    cells beside it; leaves stop short of a rising shoot below them); any stem reaching the top water row trails sideways
     along it up to `height`. *Stem leaves in the tank look like the info
     pane's sprite:* leaf length tapers to the tip of the plant's own stem
     or side shoot (`StemForm::leaf_taper`): the top `internode` cells are
@@ -175,13 +176,16 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     in placement, and in splitting a plant into pieces. The shader draws
     that stalk on a slope and each leaf's outer cell a texel short where the
     taper falls between two lengths. Stem plants' upper leaves and buds lean
-    towards the colouration colour (`TIP_TINT`) even before the light
-    colours the plant.
+    a little towards the colouration colour even before the light colours
+    the plant (`TIP_TINT`, a quarter of the full amount at the very tips:
+    a hint of pink on rotala's crown in fertilised water, where the plant
+    otherwise stays green; the light and lean water colour it fully).
     *Leaves round the stem* (render only, `tank.wgsl`): opposite-leaved
     species are decussate. At alternate nodes (the narrow ones; the broad
     ones carry the upper cells) the pair points at and away from the viewer:
     a front leaf is drawn over the stem at the node and the internode cell
-    above it, and the side pair is a cell shorter, seen at an angle. For
+    above it, and the side pair is a texel shorter at its tip, seen at an
+    angle (its cells still grow, so nothing invisible blocks a swimmer). For
     cabomba the front leaf is a fan seen face-on. `[look] arrangement`
     (`opposite`, the default, or `whorl`) is a data option; `whorl` draws
     every node's feather leaves as a lacy disc round the stem and no shipped
