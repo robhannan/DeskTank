@@ -173,18 +173,20 @@
       (`rigid_mask`); a brush stamps its disc at quarter-cell resolution, so
       rock and driftwood come out round. A rigid material with a `shape`
       (`assets/materials/*.toml`) is weathered per dab instead: the disc is
-      trimmed along its edge, no deeper than 40% of the radius (so the
-      stone stays about the size painted), and any quarter that doesn't
-      reach the dab's untrimmed core through drawn quarters is dropped, so
-      nothing floats free. A cell the trim empties isn't made rigid. Dabs
-      of radius 2 or less stay round. `angular` (Seiryu stone) draws each
+      trimmed along its edge, keeping an untrimmed core of at least a third
+      of the radius (so the stone stays about the size painted), and any
+      quarter that doesn't reach the core through drawn quarters is
+      dropped, so nothing floats free. A cell the trim empties isn't made
+      rigid. Dabs of radius 2 or less stay round. `angular` (Seiryu stone) draws each
       dab as a convex polygon of five or six flat faces, taller than wide,
       chipped along its edge; the faces are seeded by the world seed, the
       material and the 16-cell block of the dab, so a drag sweeps one
       polygon (flat faces, sharp corners) and the faces step where it
       crosses into the next block. `layered` (dragon stone) takes a
-      world-fixed field of ledges along one ridge direction (each stratum,
-      in ledges, sits in or out by its own amount) and hash-placed bites,
+      world-fixed field of ledges along one ridge direction (up and a
+      little to the right, as the texture's slots and strata run; each
+      stratum, in ledges, sits in or out by its own amount) and hash-placed
+      bites,
       so overlapping dabs agree on the edge and drawing over a spot again
       changes nothing. The same seed and strokes give the same stone, which
       saves keep as masks and bodies keep through every move.
@@ -281,7 +283,7 @@ matter, aren't offered):
 | Palette category | Materials |
 |---|---|
 | Build › Substrate | sand, gravel, aquasoil (holds nutrients), clown vomit gravel (neon pebbles, same physics as gravel) |
-| Build › Hardscape | rock (rigid), dragon stone (rigid, khaki clay rock pitted with dark holes, lighter than rock; material `dragon_stone`) and Seiryu stone (rigid, dense grey limestone with white calcite patches and tan veins; material `seiryu_stone`), each behaving exactly like rock and with its own texture, driftwood (rigid, starts lighter than water; waterlogs per cell, darkening and sinking over time, and dries in air) |
+| Build › Hardscape | rock (rigid), dragon stone (rigid, muted khaki clay rock with small ochre patches and dark gouges along one ridge direction, lighter than rock, stepped and notched outline; material `dragon_stone`) and Seiryu stone (rigid, dense grey limestone, roughly pitted and streaked, with softly pale worn faces and thin tan veins, angular faceted outline; material `seiryu_stone`), each behaving exactly like rock and with its own texture and outline (see *Outlines*), driftwood (rigid, starts lighter than water; waterlogs per cell, darkening and sinking over time, and dries in air) |
 | Water | water (the medium, the "empty" cell), air bubbles (from the bubbler, plants and creatures), CO₂ bubbles (dissolve into the CO₂ field and boost plant growth); air (above the surface) isn't offered |
 | Food › Fish food | flakes (float, then sink), sinking pellets, frozen bloodworms (sink fast; material id `bloodworm`), algae wafers (for bottom feeders), frozen brine shrimp (sinks and rots; material ID 34, `brine_shrimp`); live bloodworms and brine shrimp are offered from Food › Live (§2.4 *Live food*, D25) |
 | Care | root tabs (sit in the substrate and feed rooted plants), liquid fertiliser (diffuses into the nutrient field), waste and **detritus** (waste, dead plant matter and corpses sink and become detritus, which slowly disintegrates into nutrients) |

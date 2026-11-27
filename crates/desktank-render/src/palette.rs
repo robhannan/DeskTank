@@ -41,11 +41,11 @@ pub enum GroundStyle {
     /// Prefab device footprint cell (D27): drawn as air above the water line
     /// and as water at or below it; the device sprite renders on top.
     Device = 12,
-    /// Dragon stone: khaki layered ridges, ochre patches and dark pits (keeps
-    /// glue tint).
+    /// Dragon stone: muted khaki layered ridges, small ochre patches and dark
+    /// slots along the ridge (keeps glue tint).
     DragonStone = 13,
-    /// Seiryu: grey pitted limestone with calcite patches and tan veins (keeps
-    /// glue tint).
+    /// Seiryu: grey roughly pitted limestone with dark streaks, soft pale faces
+    /// and tan veins (keeps glue tint).
     Seiryu = 14,
 }
 

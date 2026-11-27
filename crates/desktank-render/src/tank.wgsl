@@ -1461,117 +1461,169 @@ fn vnoise(x: vec2<f32>) -> f32 {
     return mix(a, b, u.y);
 }
 
-// One lattice of elongated pits for dragon stone: squares of `size` cells (odd
-// rows shifted half a square), each holding a pit with probability `dens`.
-// Returns the pit's ellipse measure (<1 inside, big when none) and the texel's
-// height within it (-1 top to 1 bottom).
-fn dragon_pit(w: vec2<f32>, size: vec2<f32>, scale: f32, salt: i32, dens: f32) -> vec2<f32> {
-    let row = i32(floor(w.y / size.y));
-    let xo = w.x + select(0.0, size.x * 0.5, (row & 1) != 0);
-    let col_i = i32(floor(xo / size.x));
-    let h = hash(vec2<i32>(col_i, row) + vec2<i32>(salt, salt / 2 + 13));
+// Dragon stone's dominant ridge direction, in cells: strata, slots and
+// ledges all run along it, leaning a little (going up drifts right). The
+// sim's layered outline (`world/weathering.rs`) uses the same direction.
+const DRAGON_ALONG: vec2<f32> = vec2<f32>(0.287, -0.958);
+const DRAGON_ACROSS: vec2<f32> = vec2<f32>(0.958, 0.287);
+
+// One lattice of gouges for dragon stone, in ridge coordinates (`a` across,
+// `b` along): columns `wid` cells wide, each shifted along by its own
+// offset and cut into segments `seg` long, a segment holding a slot with
+// probability `dens`. A slot's size, position and length vary (some are
+// long), and its edge is wobbled. Returns the slot measure (<1 inside, big
+// when none) and the texel's place along it (1 at the screen-top end, -1 at
+// the bottom).
+fn dragon_slot(a: f32, b: f32, wid: f32, seg: f32, salt: i32, dens: f32) -> vec2<f32> {
+    let col = i32(floor(a / wid));
+    let hc = hash(vec2<i32>(col, salt));
+    let bo = b + f32(hc & 255u) / 255.0 * seg;
+    let row = i32(floor(bo / seg));
+    let h = hash(vec2<i32>(col, row) + vec2<i32>(salt * 7, salt + 3));
     if f32(h & 255u) / 255.0 >= dens {
         return vec2<f32>(9.0, 0.0);
     }
-    let local = vec2<f32>(xo - f32(col_i) * size.x, w.y - f32(row) * size.y);
-    let r = vec2<f32>(0.55 + f32((h >> 16u) & 7u) / 7.0 * 0.55, 1.1 + f32((h >> 19u) & 7u) / 7.0 * 1.3) * (scale / 0.5);
-    let c = r + (size - r * 2.0) * vec2<f32>(f32((h >> 8u) & 15u) / 15.0, f32((h >> 12u) & 15u) / 15.0);
-    let tilt = (f32((h >> 22u) & 7u) / 7.0 - 0.5) * 0.8;
-    var d = local - c;
-    d.x = d.x + d.y * tilt;
-    let q = d / r;
-    return vec2<f32>(dot(q, q), q.y);
+    let hw = (0.17 + f32((h >> 8u) & 7u) / 7.0 * 0.17) * wid;
+    var hl = (0.13 + f32((h >> 11u) & 7u) / 7.0 * 0.19) * seg;
+    if ((h >> 14u) & 7u) == 0u {
+        hl = hl * 1.6;
+    }
+    hl = min(hl, seg * 0.46);
+    let ca = hw + (wid - 2.0 * hw) * (f32((h >> 17u) & 15u) / 15.0);
+    let cb = hl + (seg - 2.0 * hl) * (f32((h >> 21u) & 15u) / 15.0);
+    var d = vec2<f32>((a - f32(col) * wid - ca) / hw, (bo - f32(row) * seg - cb) / hl);
+    // A ragged, tapering edge: slots pinch toward their ends.
+    d.x = d.x + (vnoise(vec2<f32>(a, b) * vec2<f32>(1.3, 0.6) + f32(salt)) - 0.5) * 0.8;
+    d.y = d.y + (vnoise(vec2<f32>(a, b) * vec2<f32>(0.7, 1.1) + f32(salt) + 31.0) - 0.5) * 0.4;
+    d.x = d.x / max(1.0 - 0.45 * d.y * d.y, 0.3);
+    return vec2<f32>(d.x * d.x + pow(abs(d.y), 2.4), d.y);
 }
 
-// Dragon stone at `w` (cells): khaki-to-tan layered ridges, ochre patches and
-// deep, dark, elongated pits clustered across the faces. `grain` is the
-// texel's hash and `base` the material colour.
+// Dragon stone at `w` (cells): muted khaki-grey strata, small patches of
+// desaturated ochre, and deep irregular slots clustered along the ridge
+// direction, dark inside with a lit lip above. `grain` is the texel's hash
+// and `base` the material colour.
 fn dragon_stone_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
     let g = f32(grain & 255u) / 255.0 - 0.5;
-    // Strata lean a little and run long: everything stretches along y.
-    let s = vec2<f32>(w.x + w.y * 0.30, w.y);
-    let warp = vnoise(vec2<f32>(s.x * 0.25, s.y * 0.12) + 71.0) * 7.0;
-    let tone = vnoise(vec2<f32>(s.x * 0.30, s.y * 0.10) + 3.1);
-    var k = 0.82 + tone * 0.36 + g * 0.06;
-    // Layered ridges: thin lit crests with a dark crevice line beneath each.
-    let ridge = fract((s.x + warp) * 0.19 + vnoise(s * vec2<f32>(0.05, 0.04)) * 0.6);
-    if vnoise(s * vec2<f32>(0.18, 0.09) + 5.0) > 0.42 {
-        if ridge < 0.06 {
-            k = k * 0.84;
-        } else if ridge < 0.18 {
-            k = k * 1.09;
+    let a = dot(w, DRAGON_ACROSS);
+    let b = dot(w, DRAGON_ALONG);
+    let warp = vnoise(vec2<f32>(a * 0.25, b * 0.12) + 71.0) * 5.0;
+    let tone = vnoise(vec2<f32>(a * 0.30, b * 0.10) + 3.1);
+    var k = 0.80 + tone * 0.34 + g * 0.06;
+    // Layered ridges: a lit crest and a dark crevice beneath, wandering.
+    let ridge = fract((a + warp) * 0.21 + vnoise(vec2<f32>(a * 0.05, b * 0.05)) * 0.6);
+    if vnoise(vec2<f32>(a * 0.16, b * 0.08) + 5.0) > 0.40 {
+        if ridge < 0.08 {
+            k = k * 0.80;
+        } else if ridge < 0.20 {
+            k = k * 1.10;
         }
     }
-    // Greyer, cooler tan in the hollows, warmer on the lit faces.
-    var col = base * k * mix(vec3<f32>(0.93, 0.96, 1.0), vec3<f32>(1.04, 1.0, 0.94), tone);
-    // Ochre-orange patches with broken edges.
-    let o = vnoise(s * vec2<f32>(0.30, 0.20) + 29.0) * 0.7 + vnoise(s * vec2<f32>(0.7, 0.5) + 3.0) * 0.3 + g * 0.05;
-    if o > 0.70 {
-        col = col * vec3<f32>(1.17, 0.92, 0.62);
-    } else if o > 0.62 {
-        col = col * vec3<f32>(1.10, 0.95, 0.76);
-    }
-    // Pits, in two sizes: small ones thick on a 4 x 7 lattice and the odd big
-    // one on a 9 x 13 lattice, more where the density noise is high.
-    let dens = clamp(vnoise(w * 0.10 + 5.0) * 2.2 - 0.05, 0.0, 1.0);
-    let big = dragon_pit(w, vec2<f32>(9.0, 13.0), 0.8, 211, dens * 0.9);
-    let small = dragon_pit(w, vec2<f32>(4.0, 7.0), 0.5, 57, dens * 0.55);
-    let pit = select(small, big, big.x < 1.7);
-    if pit.x < 1.0 {
-        // Darkest under the top lip, a little lighter at the bottom.
-        let shallow = select(0.22, 0.0, pit.x < big.x + 0.001 && big.x < 1.7);
-        col = base * vec3<f32>(0.9, 0.72, 0.55) * (0.28 + shallow + 0.12 * clamp(pit.y * 0.5 + 0.5, 0.0, 1.0)) * (1.0 + g * 0.3);
-    } else if pit.x < 1.7 {
-        // Lit lower lip, shadowed upper lip.
-        col = col * select(0.84, 1.14, pit.y > 0.0);
+    // Greyer, cooler khaki in the hollows, a little warmer on the lit faces,
+    // pulled toward grey overall.
+    var col = base * k * mix(vec3<f32>(0.90, 0.94, 1.0), vec3<f32>(1.03, 1.0, 0.94), tone);
+    col = mix(col, vec3<f32>(dot(col, vec3<f32>(0.30, 0.59, 0.11))), 0.20);
+    // Ochre: small, patchy and muted, streaked along the ridge, with soft
+    // broken edges.
+    let o = vnoise(vec2<f32>(a * 0.55, b * 0.14) + 29.0) * 0.65 + vnoise(vec2<f32>(a * 1.4, b * 0.40) + 3.0) * 0.35 + g * 0.06;
+    col = mix(col, col * vec3<f32>(1.10, 0.93, 0.72), smoothstep(0.64, 0.76, o) * 0.85);
+    // Slots, clustered where the density noise is high and in two sizes:
+    // the big gouges first, small pits in what is left.
+    let dens = smoothstep(0.30, 0.70, vnoise(vec2<f32>(a * 0.10, b * 0.07) + 5.0));
+    let big = dragon_slot(a, b, 3.3, 9.5, 211, dens * 0.65);
+    let small = dragon_slot(a, b, 1.7, 4.6, 57, dens * 0.40 + 0.03);
+    let slot = select(small, big, big.x < 1.8);
+    let in_big = big.x < 1.8;
+    if slot.x < 1.0 {
+        // Darkest under the top lip, lighter on the floor of the slot.
+        let floor_lit = clamp(0.5 - 0.5 * slot.y, 0.0, 1.0);
+        let depth = select(0.0, 0.10, !in_big);
+        col = base * vec3<f32>(0.80, 0.66, 0.50) * (0.34 + depth + 0.20 * floor_lit * floor_lit) * (1.0 + g * 0.3);
+    } else if slot.x < 1.7 {
+        // Lit lip above the slot, shadowed rim below it.
+        col = col * select(0.86, 1.16, slot.y > 0.0);
     }
     return col;
 }
 
-// Seiryu at `w` (cells): mid-to-dark grey limestone, finely pitted, with pale
-// calcite patches and thin tan veins.
+// A rough pit for Seiryu: a jittered lattice square of `size` cells holds one
+// with probability `rate`, its outline wobbled by a domain warp so none is a
+// neat oval, its two radii (in `rad`, scaled and varied) independent. Returns
+// the pit's ellipse measure (<1 inside, big when none) and the texel's height
+// within it (-1 top to 1 bottom).
+fn rough_pit(w: vec2<f32>, size: f32, salt: i32, rate: f32, rad: vec2<f32>) -> vec2<f32> {
+    let wp = w + (vec2<f32>(vnoise(w * 1.9 + f32(salt)), vnoise(w * 1.9 + f32(salt) + 40.0)) - 0.5) * 0.7;
+    let li = vec2<i32>(floor(wp / size));
+    let h = hash(li + vec2<i32>(salt, salt * 3 + 1));
+    if f32(h & 255u) / 255.0 >= rate {
+        return vec2<f32>(9.0, 0.0);
+    }
+    let rx = rad.x + f32((h >> 16u) & 7u) / 7.0 * (rad.y - rad.x);
+    let ry = rx * (0.7 + f32((h >> 19u) & 7u) / 7.0 * 1.4);
+    let c = vec2<f32>(rx, ry) + (vec2<f32>(size) - vec2<f32>(rx, ry) * 2.0) * vec2<f32>(f32((h >> 8u) & 15u) / 15.0, f32((h >> 12u) & 15u) / 15.0);
+    let d = (wp - vec2<f32>(li) * size - c) / vec2<f32>(rx, ry);
+    return vec2<f32>(dot(d, d), d.y);
+}
+
+// The noise whose mid-line Seiryu's veins follow.
+fn seiryu_vein(w: vec2<f32>) -> f32 {
+    return vnoise(w * 0.16 + 41.0) * 0.8 + vnoise(w * 0.45 + 8.0) * 0.2;
+}
+
+// Seiryu at `w` (cells): mid-to-dark grey limestone, roughly pitted in
+// clusters, streaked with dark crevices running down, with pale worn faces
+// that fade in softly and thin tan-rust veins.
 fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
     let g = f32(grain & 255u) / 255.0 - 0.5;
-    // Lit grey faces and darker pitted hollows, broadly streaked downwards.
+    // Broad faces of different brightness (a facet per few cells, sheared),
+    // cool and dark in the hollows, warmer where lit.
     let mott = vnoise(w * vec2<f32>(0.45, 0.30) + 7.0);
     let broad = vnoise(w * vec2<f32>(0.12, 0.07) + 19.0);
-    var col = base * (0.86 + mott * 0.22 + broad * 0.24 + g * 0.09);
-    // Pale, almost white calcite patches with ragged edges.
-    let c = vnoise(w * vec2<f32>(0.20, 0.14) + 13.0) * 0.8 + vnoise(w * 0.50 + 2.0) * 0.2 + g * 0.04;
-    let calcite = c > 0.70;
-    if calcite {
-        col = mix(col, vec3<f32>(0.84, 0.83, 0.79) * (0.94 + mott * 0.12), 0.75);
+    let face = hash(vec2<i32>(floor(vec2<f32>(w.x * 0.10 + w.y * 0.04, w.y * 0.075) + 3.0)));
+    let tone = clamp(broad * 0.65 + mott * 0.35 + (f32(face & 15u) / 15.0 - 0.5) * 0.30, 0.0, 1.0);
+    var col = base * mix(0.66, 1.34, smoothstep(0.15, 0.85, tone)) * (1.0 + g * 0.09);
+    col = col * mix(vec3<f32>(0.93, 0.97, 1.06), vec3<f32>(1.02, 1.01, 0.98), tone);
+    // Dark crevices and streaks running down, leaning a little: thin across,
+    // long along.
+    let sw = vec2<f32>(w.x - w.y * 0.10, w.y);
+    let streak = vnoise(vec2<f32>(sw.x * 1.1, sw.y * 0.10) + 17.0);
+    let reach = vnoise(vec2<f32>(sw.x * 0.40, sw.y * 0.06) + 61.0);
+    col = col * mix(1.0, 0.60, smoothstep(0.36, 0.24, streak) * smoothstep(0.38, 0.58, reach));
+    // Worn pale faces: a soft blend, broken up by the grain so the pitting
+    // still shows through, never a flat white patch.
+    let c = vnoise(w * vec2<f32>(0.20, 0.14) + 13.0) * 0.75 + vnoise(w * 0.55 + 2.0) * 0.25;
+    let pale = smoothstep(0.56, 0.84, c) * (0.80 + g * 0.5);
+    col = mix(col, vec3<f32>(0.80, 0.80, 0.77) * (0.94 + mott * 0.12), pale * 0.50);
+    // Pits in clusters, three sizes: the big first, then medium and small in
+    // what is left. Fewer on the pale faces.
+    let cluster = smoothstep(0.22, 0.72, vnoise(w * 0.13 + 9.0));
+    let calm = 1.0 - pale * 0.6;
+    let pb = rough_pit(w, 6.2, 131, 0.34 * cluster * calm, vec2<f32>(0.55, 1.2));
+    let pm = rough_pit(w, 3.1, 53, 0.50 * (0.25 + cluster) * calm, vec2<f32>(0.28, 0.62));
+    let ps = rough_pit(w, 1.9, 87, 0.50 * (0.20 + cluster) * calm, vec2<f32>(0.16, 0.32));
+    var pit = ps;
+    if pm.x < 1.8 {
+        pit = pm;
     }
-    // Pockets: shallow irregular hollows, clustered, on a 7-cell lattice.
-    let pi = vec2<i32>(floor(w / 7.0));
-    let ph = hash(pi + vec2<i32>(13, 5));
-    if ((ph & 255u) < 120u) && !calcite {
-        let pc = vec2<f32>(2.0 + f32((ph >> 8u) & 15u) / 15.0 * 3.0, 2.0 + f32((ph >> 12u) & 15u) / 15.0 * 3.0);
-        let pr = vec2<f32>(0.9 + f32((ph >> 16u) & 7u) / 7.0 * 0.9, 1.0 + f32((ph >> 19u) & 7u) / 7.0 * 1.2);
-        let d = w - vec2<f32>(pi) * 7.0 - pc;
-        if dot(d / pr, d / pr) < 1.0 {
-            col = col * 0.72;
-        }
+    if pb.x < 1.8 {
+        pit = pb;
     }
-    // Fine pits: one small pit per 2-cell lattice square at most.
-    let li = vec2<i32>(floor(w / 2.4));
-    let h = hash(li + vec2<i32>(37, 91));
-    let rate = select(0.55, 0.12, calcite);
-    if f32(h & 255u) / 255.0 < rate {
-        let ctr = vec2<f32>(0.6 + f32((h >> 8u) & 15u) / 15.0 * 1.2, 0.6 + f32((h >> 12u) & 15u) / 15.0 * 1.2);
-        let rad = 0.30 + f32((h >> 16u) & 7u) / 7.0 * 0.25;
-        let d = w - vec2<f32>(li) * 2.4 - ctr;
-        let e = dot(d, d) / (rad * rad);
-        if e < 1.0 {
-            col = col * 0.50;
-        } else if e < 1.8 {
-            col = col * select(0.94, 1.10, d.y > 0.0);
-        }
+    if pit.x < 1.0 {
+        col = col * (0.46 + 0.14 * clamp(pit.y * 0.5 + 0.5, 0.0, 1.0));
+    } else if pit.x < 1.7 {
+        col = col * select(0.92, 1.10, pit.y > 0.0);
     }
-    // Thin wandering tan veins, in some places only.
-    let vf = vnoise(w * 0.16 + 41.0) * 0.8 + vnoise(w * 0.45 + 8.0) * 0.2;
-    if abs(vf - 0.5) < 0.016 && vnoise(w * 0.09 + 23.0) > 0.40 {
-        col = mix(col, vec3<f32>(0.74, 0.61, 0.44), 0.8);
+    // Rough grain: single dark flecks, thickest in the clusters.
+    if f32((grain >> 8u) & 255u) / 255.0 < 0.05 + 0.10 * cluster {
+        col = col * 0.80;
+    }
+    // Thin wandering tan-rust veins, in some places only: the distance to the
+    // noise's mid-line from its gradient, so every vein is the same width
+    // (about two texels at 2x) wherever the noise is steep or flat.
+    let v0 = seiryu_vein(w);
+    let grad = length(vec2<f32>(seiryu_vein(w + vec2<f32>(0.2, 0.0)) - v0, seiryu_vein(w + vec2<f32>(0.0, 0.2)) - v0)) / 0.2 + 0.001;
+    if abs(v0 - 0.5) / grad < 0.30 && vnoise(w * 0.09 + 23.0) > 0.26 {
+        col = mix(col, vec3<f32>(0.66, 0.54, 0.40) * (0.9 + 0.2 * tone), 0.75);
     }
     return col;
 }

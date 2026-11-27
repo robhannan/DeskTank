@@ -41,10 +41,11 @@ const MAX_CUT_TEXELS: f32 = 22.0;
 /// Deepest chip out of a polygon's edge, in texels.
 const CHIP_TEXELS: f32 = 2.5;
 /// The ridge direction of layered stone, as a unit vector (along the
-/// strata, tilted a little downwards to the right) and its normal. The
-/// renderer's dragon stone texture follows the same direction.
-const RIDGE: (f32, f32) = (0.990_268, 0.139_173);
-const RIDGE_NORMAL: (f32, f32) = (-0.139_173, 0.990_268);
+/// strata: up and a little to the right) and its normal. The renderer's
+/// dragon stone texture (`DRAGON_ALONG` in `tank.wgsl`) follows the same
+/// direction.
+const RIDGE: (f32, f32) = (0.287, -0.958);
+const RIDGE_NORMAL: (f32, f32) = (0.958, 0.287);
 
 /// Unit vectors at 11.25° steps (a table, not `sin`/`cos`, so every
 /// platform draws the same stone).
