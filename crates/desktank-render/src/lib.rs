@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 mod algae;
+mod camera;
 mod card;
 mod font;
 mod gpu;
@@ -31,6 +32,7 @@ mod pacing;
 mod palette;
 mod plant_sprite;
 mod plants;
+mod post;
 mod renderer;
 mod sprites;
 mod surface;
@@ -43,6 +45,7 @@ mod timer;
 /// instance and surfaces.
 pub use wgpu;
 
+pub use camera::{MAX_ZOOM, ViewRect};
 pub use card::{CARD_MAX, Card, CardAnchor, CardLayout, card_scale};
 pub use gpu::{Gpu, GpuError, GpuOptions};
 pub use hud::{

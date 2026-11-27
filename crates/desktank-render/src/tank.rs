@@ -5,6 +5,7 @@ use core::time::Duration;
 use desktank_sim::{DEFAULT_TIME_RATIO, TICKS_PER_SECOND, World, daylight};
 use thiserror::Error;
 
+use crate::camera::ViewRect;
 use crate::card::{self, Card, CardAnchor, CardImage, CardLayout};
 use crate::grid::DirtyRects;
 use crate::hud::{self, BrushPreview, Magnifier, Palette, PaletteLayout};
@@ -158,6 +159,9 @@ pub struct Tank {
     ghost: Option<(desktank_sim::Device, bool)>,
     /// The magnified lens around the pointer, if shown.
     magnifier: Option<Magnifier>,
+    /// The part of the grid the target shows, if not the whole tank at its
+    /// integer layout (see [`Tank::set_camera`]).
+    camera: Option<ViewRect>,
     /// The field tinted over the tank (debug overlay), if any.
     field_overlay: Option<crate::FieldOverlay>,
     /// Field version last drawn with the overlay.
@@ -208,6 +212,7 @@ impl Tank {
             cursor: None,
             ghost: None,
             magnifier: None,
+            camera: None,
             field_overlay: None,
             fields_drawn: 0,
             overlay_water_alpha: None,
@@ -559,6 +564,7 @@ impl Tank {
             &self.world,
             target,
             &self.layout(target),
+            self.camera.as_ref(),
             self.palette_layout(target).as_ref(),
             self.card_min_scale,
         )
@@ -717,6 +723,87 @@ impl Tank {
         } else {
             Layout::fit(grid, target)
         }
+    }
+
+    /// Points the camera at `view` (cells; see [`ViewRect`]), or with
+    /// `None` takes it away. With a camera the tank draws offscreen at the
+    /// integer [`Tank::layout`] it would have without one and a post pass
+    /// resamples `view` of it over the whole target with a sharp-bilinear
+    /// filter (square texels, no shimmer at a fractional zoom). Cards, the
+    /// palette and the brush outline draw over that in screen space at
+    /// their usual scale, and the inspect card stays pinned beside its
+    /// creature through the camera. With `None` nothing changes from the
+    /// plain tank: no offscreen pass, the same pixels.
+    ///
+    /// The view's aspect should be the target's (see
+    /// [`Tank::camera_fit`] and [`Tank::camera_cover`]). A view that isn't
+    /// finite with a positive size counts as `None`. A change asks for a
+    /// frame; setting the same view again costs nothing. The offscreen image
+    /// is made at the first frame with a camera, remade on resize and freed
+    /// when the camera goes. While a camera is set, every frame redraws the
+    /// whole target.
+    pub fn set_camera(&mut self, view: Option<ViewRect>) {
+        let view = view.filter(|v| v.is_valid());
+        if self.camera != view {
+            self.camera = view;
+            if view.is_none()
+                && let Some(r) = self.renderer.as_mut()
+            {
+                r.release_camera();
+            }
+            self.needs_frame = true;
+        }
+    }
+
+    /// The camera's view, if one is set.
+    #[must_use]
+    pub fn camera(&self) -> Option<ViewRect> {
+        self.camera
+    }
+
+    /// The view of the whole tank in a `target`-pixel surface, letterboxed
+    /// as [`Tank::layout`] places it: a camera set to it draws what no
+    /// camera does.
+    #[must_use]
+    pub fn camera_fit(&self, target: (u32, u32)) -> ViewRect {
+        ViewRect::fit(&self.layout(target), target)
+    }
+
+    /// The view of `centre` (grid cells) at `zoom` times
+    /// [`Tank::camera_fit`], clamped inside the tank: zoom 1 is the fit
+    /// view and a larger zoom covers the target, so no letterbox shows (see
+    /// [`ViewRect::cover`]).
+    #[must_use]
+    pub fn camera_cover(&self, target: (u32, u32), centre: (f32, f32), zoom: f32) -> ViewRect {
+        ViewRect::cover(&self.layout(target), target, centre, zoom)
+    }
+
+    /// The smallest zoom at which [`Tank::camera_cover`] shows no letterbox
+    /// in `target` (1 where the tank fills it).
+    #[must_use]
+    pub fn camera_min_cover_zoom(&self, target: (u32, u32)) -> f32 {
+        ViewRect::min_cover_zoom(&self.layout(target), target)
+    }
+
+    /// The view `target` shows: the camera's, or the whole tank at its
+    /// layout.
+    #[must_use]
+    pub fn view(&self, target: (u32, u32)) -> ViewRect {
+        self.camera.unwrap_or_else(|| self.camera_fit(target))
+    }
+
+    /// Where grid point `cell` (cells, fractional) is in a `target`-pixel
+    /// surface, under the camera if one is set.
+    #[must_use]
+    pub fn grid_to_screen(&self, target: (u32, u32), cell: (f64, f64)) -> (f64, f64) {
+        self.view(target).grid_to_screen(target, cell)
+    }
+
+    /// The grid point under `target` pixel `px`, under the camera if one is
+    /// set (floor it for the cell, as [`Layout::cell_at`] does).
+    #[must_use]
+    pub fn screen_to_grid(&self, target: (u32, u32), px: (f64, f64)) -> (f64, f64) {
+        self.view(target).screen_to_grid(target, px)
     }
 
     /// The world.
@@ -990,6 +1077,7 @@ impl Tank {
             target,
             size,
             layout,
+            self.camera,
             self.overlay_water_alpha,
             self.world.surface_row(),
             daylight::tint_with_schedule(self.time_of_day, self.daylight_schedule),
@@ -1445,6 +1533,103 @@ mod tests {
         assert_eq!(tank.inspect_layout(target), None);
         assert_eq!(tank.inspect_page(), InspectPage::Live);
         assert!(tank.frame_wanted());
+    }
+
+    #[test]
+    fn setting_a_camera_asks_for_a_frame_and_a_bad_one_counts_as_none() {
+        let mut tank = settled_planted_tank();
+        let target = (1280, 720);
+        assert_eq!(count_frames(&mut tank, Duration::ZERO, 2), 0);
+        assert_eq!(tank.camera(), None);
+
+        let view = tank.camera_cover(target, (32.0, 24.0), 2.5);
+        tank.set_camera(Some(view));
+        assert_eq!(tank.camera(), Some(view));
+        assert!(tank.frame_wanted());
+        tank.mark_drawn();
+        // The same view again costs nothing; a new one asks again.
+        tank.set_camera(Some(view));
+        assert!(!tank.frame_wanted());
+        tank.set_camera(Some(ViewRect {
+            x: view.x + 0.25,
+            ..view
+        }));
+        assert!(tank.frame_wanted());
+        tank.mark_drawn();
+        // A view that can't be drawn is no camera, and going back is a change.
+        tank.set_camera(Some(ViewRect {
+            w: f32::NAN,
+            ..view
+        }));
+        assert_eq!(tank.camera(), None);
+        assert!(tank.frame_wanted());
+        tank.mark_drawn();
+        tank.set_camera(None);
+        assert!(!tank.frame_wanted());
+    }
+
+    #[test]
+    fn grid_and_screen_map_through_the_camera_or_the_plain_layout() {
+        let mut tank = settled_planted_tank();
+        let target = (1280, 720);
+        let layout = tank.layout(target);
+        // Without a camera it is the integer layout's mapping.
+        let (px, py) = tank.grid_to_screen(target, (10.5, 4.25));
+        let s = f64::from(layout.scale);
+        let at = |v: i64| f64::from(i32::try_from(v).unwrap());
+        let offset = (at(layout.offset.0), at(layout.offset.1));
+        assert!((px - (offset.0 + 10.5 * s)).abs() < 1e-3);
+        assert!((py - (offset.1 + 4.25 * s)).abs() < 1e-3);
+        let (gx, gy) = tank.screen_to_grid(target, (px, py));
+        assert!((gx - 10.5).abs() < 1e-3 && (gy - 4.25).abs() < 1e-3);
+        let cell = layout.cell_at(px, py);
+        assert_eq!(
+            (gx.floor(), gy.floor()),
+            (at(cell.0), at(cell.1)),
+            "screen_to_grid agrees with Layout::cell_at"
+        );
+
+        // Under a camera it follows the view.
+        let view = tank.camera_cover(target, (32.0, 24.0), 2.0);
+        tank.set_camera(Some(view));
+        let (px, py) = tank.grid_to_screen(target, (32.0, 24.0));
+        assert!((px - 640.0).abs() < 1e-3 && (py - 360.0).abs() < 1e-3);
+        let (gx, gy) = tank.screen_to_grid(target, (640.0, 360.0));
+        assert!((gx - 32.0).abs() < 1e-3 && (gy - 24.0).abs() < 1e-3);
+        assert_eq!(tank.view(target), view);
+        tank.set_camera(None);
+        assert_eq!(tank.view(target), tank.camera_fit(target));
+    }
+
+    #[test]
+    fn the_inspect_card_follows_its_creature_through_the_camera_at_its_usual_scale() {
+        let mut tank = settled_planted_tank();
+        let guppy = tank.world().species().id("guppy").unwrap();
+        let id = tank.world_mut().add_creature(guppy, 32, 24).unwrap();
+        tank.set_inspect_naming(true);
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        let target = (1280, 720);
+        let plain = tank.inspect_layout(target).unwrap();
+
+        let centre = tank.world().creature(id).unwrap().centre();
+        tank.set_camera(Some(tank.camera_cover(target, centre, 2.5)));
+        let zoomed = tank.inspect_layout(target).unwrap();
+        // Same size and scale; beside the creature, which is mid-screen.
+        assert_eq!((zoomed.scale, zoomed.image), (plain.scale, plain.image));
+        let (cx, cy) = tank.grid_to_screen(target, (f64::from(centre.0), f64::from(centre.1)));
+        assert!((cx - 640.0).abs() < 1.0 && (cy - 360.0).abs() < 1.0);
+        assert!(f64::from(zoomed.origin.0) > cx);
+        let mid = f64::from(zoomed.origin.1) + f64::from(zoomed.size().1) / 2.0;
+        assert!((mid - cy).abs() < 2.0, "{mid} vs {cy}");
+        // The name row's hit rectangle moves with it.
+        let row = tank.inspect_name_rect(target).unwrap();
+        assert!(row.contains(
+            f64::from(zoomed.origin.0) + f64::from(row.origin.0 - zoomed.origin.0),
+            f64::from(row.origin.1)
+        ));
+        // Dropping the camera puts the card back.
+        tank.set_camera(None);
+        assert_eq!(tank.inspect_layout(target), Some(plain));
     }
 
     #[test]

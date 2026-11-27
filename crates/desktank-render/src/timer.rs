@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Gpu;
 
-/// Two timestamps around the render pass, resolved and read back. Reading
+/// Two timestamps around the render pass (or the first and last of a
+/// frame's passes), resolved and read back. Reading
 /// blocks on the GPU, so only benchmarks use it.
 #[derive(Debug)]
 pub struct GpuTimer {
@@ -54,6 +55,26 @@ impl GpuTimer {
         wgpu::RenderPassTimestampWrites {
             query_set: &self.queries,
             beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
+    }
+
+    /// Timestamp writes for the first of several passes: the start.
+    #[must_use]
+    pub fn begin_writes(&self) -> wgpu::RenderPassTimestampWrites<'_> {
+        wgpu::RenderPassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: None,
+        }
+    }
+
+    /// Timestamp writes for the last of several passes: the end.
+    #[must_use]
+    pub fn end_writes(&self) -> wgpu::RenderPassTimestampWrites<'_> {
+        wgpu::RenderPassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: None,
             end_of_pass_write_index: Some(1),
         }
     }

@@ -38,6 +38,7 @@ use desktank_sim::{
     World,
 };
 
+use crate::camera::ViewRect;
 use crate::card::{
     self, CARD_MAX, CARD_W, Card, CardImage, CardLayout, Page, card_scale, display_name,
 };
@@ -331,24 +332,25 @@ impl InspectCard {
         self.held.extend_from_slice(now);
     }
 
-    /// Where it is drawn in a `target`-pixel surface laid out as `grid`.
+    /// Where it is drawn in a `target`-pixel surface laid out as `grid`,
+    /// or seen through `camera`'s view of it.
     pub(crate) fn layout(
         &self,
         world: &World,
         target: (u32, u32),
         grid: &Layout,
+        camera: Option<&ViewRect>,
         palette: Option<&PaletteLayout>,
         min_scale: u32,
     ) -> Option<CardLayout> {
         let image = self.image.as_ref()?;
-        CardLayout::beside(
-            target,
-            grid,
-            palette,
-            min_scale,
-            anchor(world, self.what?)?,
-            image.size,
-        )
+        let anchor = anchor(world, self.what?)?;
+        match camera {
+            None => CardLayout::beside(target, grid, palette, min_scale, anchor, image.size),
+            Some(view) => {
+                CardLayout::beside_view(target, grid, view, palette, min_scale, anchor, image.size)
+            }
+        }
     }
 }
 
@@ -715,23 +717,71 @@ impl CardLayout {
         anchor: [f32; 4],
         image: (u32, u32),
     ) -> Option<Self> {
-        if image.0 == 0 || image.1 == 0 || target.0 == 0 || target.1 == 0 {
-            return None;
-        }
         let cell = i64::from(grid.scale);
-        let (target_w, target_h) = (i64::from(target.0), i64::from(target.1));
-        // The tank's area in the target: left, top, right, bottom.
         let tank = [
-            grid.offset.0.max(0),
-            grid.offset.1.max(0),
-            (grid.offset.0 + i64::from(grid.grid.0) * cell).min(target_w),
-            (grid.offset.1 + i64::from(grid.grid.1) * cell).min(target_h),
+            grid.offset.0,
+            grid.offset.1,
+            grid.offset.0 + i64::from(grid.grid.0) * cell,
+            grid.offset.1 + i64::from(grid.grid.1) * cell,
         ];
         #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // pixels
         let px = |cells: f32, offset: i64| offset + (cells * grid.scale as f32).round() as i64;
-        let (left_edge, top_edge) = (px(anchor[0], grid.offset.0), px(anchor[1], grid.offset.1));
-        let (right_edge, bottom_edge) =
-            (px(anchor[2], grid.offset.0), px(anchor[3], grid.offset.1));
+        let edges = [
+            px(anchor[0], grid.offset.0),
+            px(anchor[1], grid.offset.1),
+            px(anchor[2], grid.offset.0),
+            px(anchor[3], grid.offset.1),
+        ];
+        Self::place(target, grid, palette, min_scale, tank, edges, image)
+    }
+
+    /// [`CardLayout::beside`] for a camera: `anchor` and the tank are the
+    /// cells and grid seen through `view` of `target`, while the card's
+    /// scale still comes from `grid`, the integer layout the tank has
+    /// without a camera, so it is as crisp and as big as ever.
+    #[must_use]
+    pub fn beside_view(
+        target: (u32, u32),
+        grid: &Layout,
+        view: &ViewRect,
+        palette: Option<&PaletteLayout>,
+        min_scale: u32,
+        anchor: [f32; 4],
+        image: (u32, u32),
+    ) -> Option<Self> {
+        #[allow(clippy::cast_possible_truncation)] // pixels
+        let round = |px: [f64; 4]| px.map(|v| v.round().clamp(-1e9, 1e9) as i64);
+        #[allow(clippy::cast_precision_loss)] // grid cells
+        let grid_cells = [0.0, 0.0, grid.grid.0 as f32, grid.grid.1 as f32];
+        let tank = round(view.rect_to_screen(target, grid_cells));
+        let edges = round(view.rect_to_screen(target, anchor));
+        Self::place(target, grid, palette, min_scale, tank, edges, image)
+    }
+
+    /// Places the card beside the anchor whose `[left, top, right, bottom]`
+    /// target pixels are `edges`, inside the part of the `tank` rectangle
+    /// (same form) that is on the target.
+    fn place(
+        target: (u32, u32),
+        grid: &Layout,
+        palette: Option<&PaletteLayout>,
+        min_scale: u32,
+        tank: [i64; 4],
+        edges: [i64; 4],
+        image: (u32, u32),
+    ) -> Option<Self> {
+        if image.0 == 0 || image.1 == 0 || target.0 == 0 || target.1 == 0 {
+            return None;
+        }
+        let (target_w, target_h) = (i64::from(target.0), i64::from(target.1));
+        // The tank's area in the target: left, top, right, bottom.
+        let tank = [
+            tank[0].max(0),
+            tank[1].max(0),
+            tank[2].min(target_w),
+            tank[3].min(target_h),
+        ];
+        let [left_edge, top_edge, right_edge, bottom_edge] = edges;
         let want = card_scale(target, grid, palette, min_scale);
         (1..=want).rev().find_map(|scale| {
             let width = i64::from(image.0) * i64::from(scale);
@@ -933,15 +983,15 @@ mod tests {
         let target = (1280, 720);
         // Not allowed: nothing to click. Allowed: a rect inside the card.
         assert_eq!(
-            card.layout(&w, target, &g, None, 0)
+            card.layout(&w, target, &g, None, None, 0)
                 .and_then(|at| card.name_rect(&at)),
             None
         );
         assert!(card.set_can_name(&w, true));
         assert!(!card.set_can_name(&w, true));
-        let at = card.layout(&w, target, &g, None, 0).unwrap();
+        let at = card.layout(&w, target, &g, None, None, 0).unwrap();
         let rect = card
-            .layout(&w, target, &g, None, 0)
+            .layout(&w, target, &g, None, None, 0)
             .and_then(|at| card.name_rect(&at))
             .unwrap();
         let [x, y, rw, rh] = card.name_row.unwrap();
@@ -953,7 +1003,7 @@ mod tests {
         // The page-two card has no row.
         assert!(card.set_page(&w, InspectPage::Species));
         assert_eq!(
-            card.layout(&w, target, &g, None, 0)
+            card.layout(&w, target, &g, None, None, 0)
                 .and_then(|at| card.name_rect(&at)),
             None
         );
@@ -963,7 +1013,7 @@ mod tests {
         assert_eq!(card.name_edit(), Some("Ab"));
         assert!(!card.set_name_edit(&w, Some("Ab")));
         assert!(
-            card.layout(&w, target, &g, None, 0)
+            card.layout(&w, target, &g, None, None, 0)
                 .and_then(|at| card.name_rect(&at))
                 .is_some()
         );
@@ -974,7 +1024,7 @@ mod tests {
         assert!(card.set(&w, Some(Inspected::Cell { x: 5, y: 60 })));
         assert!(!card.set_name_edit(&w, Some("x")));
         assert_eq!(
-            card.layout(&w, target, &g, None, 0)
+            card.layout(&w, target, &g, None, None, 0)
                 .and_then(|at| card.name_rect(&at)),
             None
         );
@@ -1154,6 +1204,60 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.origin, (0, 0));
+    }
+
+    #[test]
+    fn the_card_sits_beside_the_anchor_through_a_camera_at_the_plain_scale() {
+        let g = grid(); // 320×180 at scale 4 in 1280×720
+        let image = (144, 80);
+        let target = (1280, 720);
+        let plain =
+            CardLayout::beside(target, &g, None, 0, [100.0, 80.0, 104.0, 84.0], image).unwrap();
+        // The full-tank view is the plain layout, to the pixel.
+        let fit = ViewRect::fit(&g, target);
+        let same =
+            CardLayout::beside_view(target, &g, &fit, None, 0, [100.0, 80.0, 104.0, 84.0], image);
+        assert_eq!(same, Some(plain));
+
+        // Zoomed 2.5× on the anchor: it sits mid-screen at 20 pixels a cell.
+        let view = ViewRect::cover(&g, target, (102.0, 82.0), 2.5);
+        let zoomed = CardLayout::beside_view(
+            target,
+            &g,
+            &view,
+            None,
+            0,
+            [100.0, 80.0, 104.0, 84.0],
+            image,
+        )
+        .unwrap();
+        assert_eq!(zoomed.scale, plain.scale);
+        let (right, _) = view.grid_to_screen(target, (104.0, 82.0));
+        let gap = f64::from(GAP * zoomed.scale);
+        assert!(
+            (f64::from(zoomed.origin.0) - (right + gap)).abs() < 1.0,
+            "{zoomed:?}"
+        );
+        let (_, mid) = view.grid_to_screen(target, (104.0, 82.0));
+        let card_mid = f64::from(zoomed.origin.1) + f64::from(zoomed.size().1) / 2.0;
+        assert!((card_mid - mid).abs() < 1.0);
+
+        // An anchor out of view clamps the card inside the target.
+        let far = CardLayout::beside_view(
+            target,
+            &g,
+            &view,
+            None,
+            0,
+            [300.0, 170.0, 304.0, 174.0],
+            image,
+        )
+        .unwrap();
+        let (w, h) = far.size();
+        assert!(
+            far.origin.0 + w <= 1280 && far.origin.1 + h <= 720,
+            "{far:?}"
+        );
     }
 
     #[test]
@@ -1502,7 +1606,7 @@ mod tests {
         let mut card = InspectCard::default();
         card.set(&w, Some(Inspected::Creature(a)));
         assert!(card.set_can_name(&w, true));
-        let at = card.layout(&w, target, &g, None, 0).unwrap();
+        let at = card.layout(&w, target, &g, None, None, 0).unwrap();
         let rect = card.name_rect(&at).expect("the Name row can be clicked");
         // The row is above the Needs section and inside the card.
         let [_, top, _, height] = card.name_row.unwrap();
@@ -1516,7 +1620,7 @@ mod tests {
         assert_eq!(card.page.tag(), "2/2");
         assert_ne!(card.image, live_page);
         assert!(
-            card.layout(&w, target, &g, None, 0)
+            card.layout(&w, target, &g, None, None, 0)
                 .and_then(|at| card.name_rect(&at))
                 .is_none()
         );
@@ -1544,7 +1648,7 @@ mod tests {
             for (target, scale_at_least) in [((360, 640), 1), ((1280, 720), 2)] {
                 let g = Layout::fit((320, 180), target);
                 let at = card
-                    .layout(&w, target, &g, None, 0)
+                    .layout(&w, target, &g, None, None, 0)
                     .unwrap_or_else(|| panic!("{narrow} {target:?}"));
                 assert!(at.scale >= scale_at_least, "{target:?}: {at:?}");
                 let (cw, ch) = at.size();
@@ -1554,7 +1658,7 @@ mod tests {
         // Even a 320×180 canvas (a TV safe area, an embed) fits it once.
         let g = Layout::fit((160, 90), (320, 180));
         card.set_narrow(&w, false);
-        assert!(card.layout(&w, (320, 180), &g, None, 0).is_some());
+        assert!(card.layout(&w, (320, 180), &g, None, None, 0).is_some());
     }
 
     // ---- Plants: light, CO₂ and nutrient meters. ----
@@ -1945,7 +2049,7 @@ mod tests {
         for narrow in [false, true] {
             card.set_narrow(&w, narrow);
             let g = Layout::fit((320, 180), (360, 640));
-            assert!(card.layout(&w, (360, 640), &g, None, 0).is_some());
+            assert!(card.layout(&w, (360, 640), &g, None, None, 0).is_some());
         }
         // A plant that is gone closes the card.
         let mut w = w;
