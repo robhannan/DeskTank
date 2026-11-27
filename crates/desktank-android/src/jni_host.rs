@@ -96,6 +96,7 @@ fn post(command: Command) {
             log::error!("host callback before initialization");
             return;
         };
+        log::info!("DeskTank {}", desktank_build_info::VERSION);
         let (tx, rx) = mpsc::channel();
         match std::thread::Builder::new()
             .name("desktank-render".to_owned())

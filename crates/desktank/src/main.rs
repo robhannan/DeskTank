@@ -16,7 +16,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// A lightweight pixel-art aquarium for your desktop.
 #[derive(Debug, Parser)]
-#[command(name = "desktank", version, about)]
+#[command(name = "desktank", version = desktank_build_info::VERSION, about)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

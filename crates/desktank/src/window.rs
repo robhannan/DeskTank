@@ -146,6 +146,7 @@ pub fn run(
     saves: Saves,
     cli: CliOverrides,
 ) -> anyhow::Result<()> {
+    eprintln!("desktank window: DeskTank {}", desktank_build_info::VERSION);
     let saves = if demo_pour.is_some() {
         Saves::Off
     } else {

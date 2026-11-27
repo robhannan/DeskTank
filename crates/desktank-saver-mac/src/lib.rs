@@ -12,3 +12,24 @@ mod saver;
 
 // Dependency edge from SPEC §4.1, kept ahead of first use.
 use desktank_render as _;
+
+/// The line the saver logs once when it starts.
+#[must_use]
+pub fn startup_line() -> String {
+    format!("DeskTank saver {}", desktank_build_info::VERSION)
+}
+
+/// Logs [`startup_line`] to stderr, which `legacyScreenSaver` sends to the
+/// system log. The `ScreenSaverView` subclass calls this once from its
+/// initialiser (the saver has no other logging yet).
+pub fn log_startup() {
+    eprintln!("{}", startup_line());
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn startup_line_carries_the_commit() {
+        assert!(super::startup_line().ends_with(&format!("({})", desktank_build_info::COMMIT)));
+    }
+}

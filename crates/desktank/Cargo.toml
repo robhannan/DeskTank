@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 clap.workspace = true
+desktank-build-info.workspace = true
 desktank-platform.workspace = true
 desktank-render.workspace = true
 desktank-sim.workspace = true
