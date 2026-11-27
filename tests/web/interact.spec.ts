@@ -264,7 +264,7 @@ test.describe("mouse", () => {
     p = await cellPoint(page, x, y);
     await page.mouse.click(p.x, p.y);
     await expect(page.locator("#inspect-sr")).toHaveText(
-      /^Neon tetra #1 · adult male · 180 days old · health 100% · energy 100% · over Water · cell \d+, \d+$/,
+      /^Neon tetra #1 · adult male · 180 days old · health 100% · energy 100% · Hunger \d+%, \w+ · Socialisation \d+%, \w+ · over Water · cell \d+, \d+$/,
     );
     expect(await stateHash(page)).toBe(hash);
 
