@@ -167,16 +167,25 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     position `LEAF_UPPER` (32) plus its row cell's), so the blade is two
     cells thick where widest. A plant's pieces don't join through an upper
     cell and the leaf above it, so cutting the stem still frees the top.
-    Feather leaves (cabomba) grow upper cells too, so their fan of swept
-    teeth stands taller; needle leaves stay a row thick. Side shoots lean:
-    a one-cell stub, then a stalk that steps out a column every two rows
-    (up to `SHOOT_LEAN`, two columns, the sprite's four pixels) and rises
-    straight on; their cells join diagonally, in growth (`stem_sites`) and
+    Feather leaves (cabomba) grow upper cells too, so each fan of filaments,
+    on its short petiole, stands taller; needle leaves stay a row thick. Side shoots lean:
+    the shoot leaves its node on the diagonal (no flat stub) and steps out
+    a column every two rows, up to `SHOOT_LEAN` columns from the main stem,
+    then rises straight on; their cells join diagonally, in growth (`stem_sites`) and
     in placement, and in splitting a plant into pieces. The shader draws
     that stalk on a slope and each leaf's outer cell a texel short where the
     taper falls between two lengths. Stem plants' upper leaves and buds lean
     towards the colouration colour (`TIP_TINT`) even before the light
     colours the plant.
+    *Leaves round the stem* (render only, `tank.wgsl`): opposite-leaved
+    species are decussate. At alternate nodes (the narrow ones; the broad
+    ones carry the upper cells) the pair points at and away from the viewer:
+    a front leaf is drawn over the stem at the node and the internode cell
+    above it, and the side pair is a cell shorter, seen at an angle. For
+    cabomba the front leaf is a fan seen face-on. `[look] arrangement`
+    (`opposite`, the default, or `whorl`) is a data option; `whorl` draws
+    every node's feather leaves as a lacy disc round the stem and no shipped
+    species uses it yet.
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
     *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from

@@ -26,8 +26,8 @@
 )]
 
 use desktank_sim::plants::{
-    EpiphyteForm, FloaterForm, Form, LeafShape, Look, MatForm, PlantSpecies, RootShape,
-    RosetteForm, StemForm, StemShape,
+    Arrangement, EpiphyteForm, FloaterForm, Form, LeafShape, Look, MatForm, PlantSpecies,
+    RootShape, RosetteForm, StemForm, StemShape,
 };
 
 /// A cropped sprite: its size in pixels and its RGBA rows, sRGB, alpha 0 or
@@ -309,7 +309,9 @@ fn run(pic: &mut Pic, c: &Ctx, f: &StemForm, r: &Run, offset: &dyn Fn(i32) -> i3
         }
     }
     let mut k = first;
+    let mut node = 0;
     while k < r.len - 1 {
+        node += 1;
         let ht = (r.base + k) as f32 / r.height as f32;
         let x = r.x0 + offset(k);
         let y = -(r.base + k);
@@ -318,9 +320,22 @@ fn run(pic: &mut Pic, c: &Ctx, f: &StemForm, r: &Run, offset: &dyn Fn(i32) -> i3
         // Leaves at the upper nodes carry the colouration, if the species
         // has one.
         let ramp: &[Rgb] = if ht > 0.5 { &c.tip } else { &c.leaf };
-        for dir in [-1, 1] {
-            let sx = if dir > 0 && r.thick { x + 1 } else { x };
-            stem_leaf(pic, ramp, c.look.leaf, (sx, y), dir, len, ht);
+        if c.look.arrangement == Arrangement::Whorl {
+            // A whorl: a disc of fine segments round the node.
+            whorl(pic, ramp, (x, y), len, ht);
+        } else {
+            // Opposite pairs, turned a quarter at alternate nodes: there the
+            // side leaves are seen at an angle (shorter) and a front leaf is
+            // drawn over the stem.
+            let turned = node % 2 == 0;
+            let side = if turned { (len - 2).max(2) } else { len };
+            for dir in [-1, 1] {
+                let sx = if dir > 0 && r.thick { x + 1 } else { x };
+                stem_leaf(pic, ramp, c.look.leaf, (sx, y), dir, side, ht);
+            }
+            if turned {
+                front_leaf(pic, ramp, c.look.leaf, (x + i32::from(r.thick), y), ht);
+            }
         }
         k += step;
     }
@@ -332,6 +347,61 @@ fn run(pic: &mut Pic, c: &Ctx, f: &StemForm, r: &Run, offset: &dyn Fn(i32) -> i3
     if c.look.leaf != LeafShape::Needle {
         pic.put(x - 1, y, pick(ramp, 0.75));
         pic.put(x + 1, y, pick(ramp, 0.75));
+    }
+}
+
+/// A leaf turned to the viewer, drawn over the stem at its node `at`: an oval
+/// (a needle's a small tuft) lit above and darker beneath, a pale rib down it.
+fn front_leaf(pic: &mut Pic, ramp: &[Rgb], shape: LeafShape, at: (i32, i32), ht: f32) {
+    let (x, y) = at;
+    let base = 0.35 + 0.4 * ht;
+    if shape == LeafShape::Feather {
+        // A fan seen face-on: filaments radiating up from the stem.
+        for i in 0..5 {
+            let th = 0.5 + i as f32 * 0.55;
+            for r in 1..=3 {
+                let (dx, dy) = (
+                    (r as f32 * th.cos()).round() as i32,
+                    (r as f32 * th.sin()).round() as i32,
+                );
+                pic.put(x + dx, y - 1 - dy, pick(ramp, base + 0.1 + 0.05 * r as f32));
+            }
+        }
+        return;
+    }
+    let rows: &[(i32, i32)] = if shape == LeafShape::Needle {
+        &[(-1, 0), (0, 1), (1, 0)]
+    } else {
+        &[(-2, 0), (-1, 1), (0, 1), (1, 1), (2, 0)]
+    };
+    for &(dy, w) in rows {
+        for dx in -w..=w {
+            let lit = 0.15 * (1 - dy).clamp(-1, 2) as f32 / 2.0 + if dx == 0 { 0.1 } else { 0.0 };
+            pic.put(x + dx, y + dy - 1, pick(ramp, base + lit));
+        }
+    }
+}
+
+/// A whorl (cabomba): a disc of fine, lacy leaf segments round the node `at`,
+/// `len` pixels across each way and about a third as tall, with a solid rib through
+/// it, lighter towards its upper rim.
+fn whorl(pic: &mut Pic, ramp: &[Rgb], at: (i32, i32), len: i32, ht: f32) {
+    let (x, y) = at;
+    let rx = len as f32;
+    let ry = (len as f32 * 0.38).max(2.0);
+    let base = 0.25 + 0.4 * ht;
+    for dy in -(ry as i32)..=(ry as i32) {
+        for dx in -len..=len {
+            if dx == 0 {
+                continue;
+            }
+            let inside = (dx as f32 / rx).powi(2) + (dy as f32 / ry).powi(2) <= 1.0;
+            let lace = (dx + dy).rem_euclid(2) == 0;
+            if inside && (dy == 0 || lace) {
+                let lit = 0.3 * (-dy as f32 / ry + 1.0) / 2.0;
+                pic.put(x + dx, y + dy - 1, pick(ramp, base + lit));
+            }
+        }
     }
 }
 
@@ -386,25 +456,27 @@ fn stem_leaf(
             }
         }
         LeafShape::Feather => {
-            // A midrib with a fringe of fine teeth, a little wider than long.
-            for k in 1..=len {
-                let rib = sy - k / 4;
-                let t = k as f32 / len as f32;
-                pic.put(sx + dir * k, rib, pick(ramp, base + 0.25 * t));
-                if k % 2 == 1 {
-                    let up = [2, 3, 3, 3, 2][((k / 2) as usize).min(4)];
-                    for j in 1..=up {
-                        pic.put(
-                            sx + dir * k,
-                            rib - j,
-                            pick(ramp, base + 0.2 + 0.1 * j as f32),
-                        );
-                    }
-                } else if k > 1 {
-                    let down = 1 + i32::from(k % 4 == 0);
-                    for j in 1..=down {
-                        pic.put(sx + dir * k, rib + j, pick(ramp, base - 0.05));
-                    }
+            // A short petiole rising out from the stem to a fan: thin filaments
+            // radiating up and out from its end, lighter towards their tips,
+            // water between them.
+            let apex = (sx + dir * 2, sy - 2);
+            for k in 1..=2 {
+                pic.put(sx + dir * k, sy - k, pick(ramp, base));
+            }
+            let reach = (len - 4).clamp(3, 4);
+            for i in 0..6 {
+                let th = -0.2 + i as f32 * 0.5;
+                for r in 1..=reach {
+                    let (dx, dy) = (
+                        (r as f32 * th.cos()).round() as i32,
+                        (r as f32 * th.sin()).round() as i32,
+                    );
+                    let tip = r as f32 / reach as f32;
+                    pic.put(
+                        apex.0 + dir * dx,
+                        apex.1 - dy,
+                        pick(ramp, base + 0.1 + 0.3 * tip),
+                    );
                 }
             }
         }
@@ -1030,6 +1102,20 @@ mod tests {
         for sp in t.iter() {
             assert_eq!(build(sp), build(sp), "{}", sp.name);
         }
+    }
+
+    /// A whorled species (the data option no shipped species uses) draws as
+    /// stacked discs, an image of its own that still fits the pane.
+    #[test]
+    fn a_whorled_species_draws_discs_within_bounds() {
+        let t = table();
+        let cabomba = t.iter().find(|sp| sp.name == "cabomba").unwrap();
+        let mut whorled = cabomba.clone();
+        whorled.look.arrangement = Arrangement::Whorl;
+        let ((w, h), px) = build(&whorled);
+        assert!(w <= MAX_WIDTH && h <= MAX_HEIGHT, "{w}x{h}");
+        assert!(px.iter().any(|p| p[3] == 255));
+        assert_ne!(px, build(cabomba).1, "a whorl isn't a pair of fans");
     }
 
     #[test]

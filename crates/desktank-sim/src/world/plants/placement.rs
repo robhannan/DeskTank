@@ -215,6 +215,18 @@ impl<'w> Builder<'w> {
             .all(|(dx, dy)| (x + dx, y + dy) == from || !self.own(x + dx, y + dy, part))
     }
 
+    /// Whether a stem cell at `(x, y)` would touch no other stem cell of the
+    /// plant than the one at `from` and those of the main stem (column
+    /// `main_x`).
+    fn lone_shoot(&self, x: i64, y: i64, from: (i64, i64), main_x: i64) -> bool {
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .into_iter()
+            .all(|(dx, dy)| {
+                let at = (x + dx, y + dy);
+                at == from || at.0 == main_x || !self.own(at.0, at.1, Part::Stem)
+            })
+    }
+
     /// A number in `0..1` from the plant's salt and `key`.
     fn unit(&self, key: u64) -> f64 {
         (splitmix64(self.w.seed ^ splitmix64(self.salt ^ key)) >> 40) as f64 / (1u64 << 24) as f64
@@ -555,10 +567,10 @@ fn crown_shift(f: &RosetteForm, flip: bool) -> i64 {
 }
 
 /// How many columns out from its main stem a side shoot's cell `rows` rows
-/// above its node is: one for its stub, then one more every two rows, up to
-/// `SHOOT_LEAN` past the stub (`plant_sprite.rs`: `dir * ((k + 1) / 2).min(4)`).
+/// above its node is: one, then one more every two rows, up to `SHOOT_LEAN`
+/// (`plant_sprite.rs`: `dir * ((k + 1) / 2).min(4)`, in texels).
 const fn shoot_column(rows: i64) -> i64 {
-    1 + if (rows + 1) / 2 > SHOOT_LEAN {
+    if (rows + 1) / 2 > SHOOT_LEAN {
         SHOOT_LEAN
     } else {
         (rows + 1) / 2
@@ -601,9 +613,9 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
         }
     }
     let node = |pos: i64| pos >= i64::from(f.internode) && pos % i64::from(f.internode) == 0;
-    // Side shoots at some nodes: a one-cell stub, then a stalk that leans out
-    // a column every two rows (the sprite's: up to four columns past the
-    // stub) and rises straight on from there.
+    // Side shoots at some nodes: a stalk that leaves its node on the diagonal,
+    // steps out a column every two rows (the sprite's), up to `SHOOT_LEAN`
+    // columns from the main stem, and rises straight on from there.
     if f.branching > 0.0 {
         let column = nodes.clone();
         for &(x, y, pos) in &column {
@@ -614,21 +626,20 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
                 let dx = rel * b.mir;
                 let key = ((pos as u64) << 2) | (rel + 1) as u64;
                 if b.unit(key) >= f64::from(f.branching)
-                    || !b.fit(x + dx, y, Part::Stem)
-                    || !b.lone(x + dx, y, Part::Stem, (x, y))
-                    || !b.fit(x + 2 * dx, y - 1, Part::Stem)
-                    || b.own(x + 2 * dx, y + 1, Part::Stem)
-                    || b.own(x + 3 * dx, y, Part::Stem)
+                    || !b.fit(x + dx, y - 1, Part::Stem)
+                    || !b.lone_shoot(x + dx, y - 1, (x, y), bx)
+                    || !b.fit(x + dx, y - 2, Part::Stem)
+                    || !b.fit(x + 2 * dx, y - 3, Part::Stem)
+                    || b.own(x + 2 * dx, y, Part::Stem)
                 {
                     continue;
                 }
-                b.put(x + dx, y, Part::Stem, pos + 1);
-                let top = pos + 2 + (h - pos - 2) * 3 / 5;
-                let (mut from, mut bp, mut rows) = ((x + dx, y), pos + 1, 0);
+                let top = pos + 1 + (h - pos - 2) * 3 / 5;
+                let (mut from, mut bp, mut rows) = ((x, y), pos, 0);
                 while bp < top {
                     rows += 1;
                     let at = (x + dx * shoot_column(rows), y - rows);
-                    if !b.fit(at.0, at.1, Part::Stem) || !b.lone(at.0, at.1, Part::Stem, from) {
+                    if !b.fit(at.0, at.1, Part::Stem) || !b.lone_shoot(at.0, at.1, from, bx) {
                         break;
                     }
                     bp += 1;
@@ -648,10 +659,13 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
         // Cells of its own stem above it, up a side shoot's slope too.
         let (mut below_tip, mut at) = (0u8, (x, y));
         while below_tip < u8::MAX {
-            let Some(next) = [0, -1, 1]
-                .into_iter()
-                .map(|d| (at.0 + d, at.1 - 1))
-                .find(|&(nx, ny)| b.own(nx, ny, Part::Stem))
+            let Some(next) =
+                [0, -1, 1]
+                    .into_iter()
+                    .map(|d| (at.0 + d, at.1 - 1))
+                    .find(|&(nx, ny)| {
+                        b.own(nx, ny, Part::Stem) && (nx == at.0 || !b.own(nx, at.1, Part::Stem))
+                    })
             else {
                 break;
             };

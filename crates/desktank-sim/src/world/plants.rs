@@ -2243,9 +2243,15 @@ impl World {
         let below_tip = |x: usize, y: usize| {
             let (mut d, mut at) = (0u8, (x, y));
             while d < u8::MAX {
+                // Straight up, else up the slope: a diagonal cell that
+                // isn't the main stem (that has stem beside the cell it
+                // steps from).
                 let Some(next) = [0, -1, 1].into_iter().find_map(|dx| {
                     self.at(at.0, at.1, dx, -1)
-                        .filter(|&j| is_own_stem(j))
+                        .filter(|&j| {
+                            is_own_stem(j)
+                                && (dx == 0 || !self.at(at.0, at.1, dx, 0).is_some_and(is_own_stem))
+                        })
                         .map(|j| (j % self.width, j / self.width))
                 }) else {
                     break;
@@ -2254,6 +2260,16 @@ impl World {
                 d += 1;
             }
             d
+        };
+        let main_x = base % self.width;
+        // Whether stem cell `j` touches no stem cell of its plant but `from`
+        // and the main stem (a side shoot's first cells run beside it).
+        let lone_shoot = |j: usize, from: usize| {
+            let (jx, jy) = (j % self.width, j / self.width);
+            DIRS.iter().all(|&(dx, dy)| {
+                self.at(jx, jy, dx, dy)
+                    .is_none_or(|e| e == from || !is_own_stem(e) || e % self.width == main_x)
+            })
         };
         let mut sites = Vec::new();
         for &i in members {
@@ -2269,22 +2285,27 @@ impl World {
                     if pos < f.height {
                         // Grow up from a stem tip if water is above and no
                         // other stem cell of this plant touches it. A side
-                        // shoot leans out a column every two rows (its
-                        // stub, or a cell that rose straight, steps up and
-                        // out; the cell that stepped out rises straight),
-                        // for up to four columns past the stub, then rises.
-                        let off = x.cast_signed() - (base % self.width).cast_signed();
+                        // shoot leaves its node on the diagonal and leans out
+                        // a column every two rows (a cell that rose straight
+                        // steps up and out; the cell that stepped out rises
+                        // straight), for up to `SHOOT_LEAN` columns from the
+                        // main stem, then rises. It may touch the main stem
+                        // beside it.
+                        let off = x.cast_signed() - main_x.cast_signed();
                         let lean = off.signum();
-                        let stub = off.abs() == 1
-                            && !stem_above
-                            && !stem_below
-                            && self.at(x, y, -lean, 0).is_some_and(is_own_stem);
-                        let slopes =
-                            off != 0 && (off.abs() as i64) <= SHOOT_LEAN && (stem_below || stub);
+                        let slopes = off != 0
+                            && off.abs() < isize::try_from(SHOOT_LEAN).unwrap_or(0)
+                            && stem_below;
                         let steps: &[isize] = if slopes { &[lean, 0] } else { &[0] };
                         let target = steps.iter().find_map(|&dx| {
-                            self.at(x, y, dx, -1)
-                                .filter(|&j| is_water(j) && self.lone_part(j, i, id, Part::Stem))
+                            self.at(x, y, dx, -1).filter(|&j| {
+                                is_water(j)
+                                    && if off == 0 {
+                                        self.lone_part(j, i, id, Part::Stem)
+                                    } else {
+                                        lone_shoot(j, i)
+                                    }
+                            })
                         });
                         if let Some(j) = target {
                             sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
@@ -2312,22 +2333,22 @@ impl World {
                     let upright = stem_below || stem_above || diag_stem || i == base;
                     if upright && pos >= f.internode && pos.is_multiple_of(f.internode) {
                         for dx in [-1, 1] {
-                            let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j)) else {
-                                continue;
-                            };
+                            // A side shoot leaves on the diagonal, in place of
+                            // this side's leaves.
+                            let shoot = self.at(x, y, dx, -1).filter(|&j| is_water(j));
                             let branch = f.branching > 0.0
                                 && stem_above
-                                && x == base % self.width
+                                && x == main_x
                                 && pos.saturating_add(3) < f.height
-                                && self.lone_part(j, i, id, Part::Stem)
-                                && self.at(x, y, dx * 2, 0).is_some_and(is_water)
-                                && self.at(x, y, dx * 2, -1).is_some_and(is_water)
-                                && !self.at(x, y, dx * 2, 1).is_some_and(is_own_stem)
-                                && !self.at(x, y, dx * 3, 0).is_some_and(is_own_stem)
+                                && shoot.is_some_and(|j| lone_shoot(j, i))
+                                && self.at(x, y, dx, -2).is_some_and(is_water)
+                                && self.at(x, y, dx * 2, -3).is_some_and(is_water)
+                                && !self.at(x, y, dx * 2, 0).is_some_and(is_own_stem)
                                 && self.branch_node(id, i, dx > 0, f.branching);
-                            if branch {
+                            if branch && let Some(j) = shoot {
                                 sites.push(Site::new(j, Part::Stem, pos + 1, LEAF_WEIGHT));
-                            } else if f.leaf_taper(below_tip(x, y)) > 0
+                            } else if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
+                                && f.leaf_taper(below_tip(x, y)) > 0
                                 && !self
                                     .at(j % self.width, j / self.width, 0, 1)
                                     .is_some_and(is_own_stem)

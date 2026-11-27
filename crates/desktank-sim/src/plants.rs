@@ -550,11 +550,12 @@ pub struct StemForm {
 /// cell stacked on the leaf's row, at `position - LEAF_UPPER`.
 pub const LEAF_UPPER: u8 = 32;
 
-/// Columns a side shoot leans out past its one-cell stub, a column every two
-/// rows, before it rises straight on: the sprite's four pixels (a texel each,
-/// half a cell) are two cells. Wider leans wove neighbouring stands into
-/// walls that stalled swimmers.
-pub const SHOOT_LEAN: i64 = 2;
+/// Columns out from the main stem a side shoot leans before it rises
+/// straight: it leaves its node on the diagonal and steps out a column every
+/// two rows. The sprite's four pixels (a texel each, half a cell) are two
+/// cells, and its shoot starts a column out. Wider leans wove neighbouring
+/// stands into walls that stalled swimmers.
+pub const SHOOT_LEAN: i64 = 3;
 
 impl StemForm {
     /// How many cells long the leaves at a node `below_tip` cells under the
@@ -838,6 +839,20 @@ impl RootShape {
     pub const ALL: [Self; 2] = [Self::Strand, Self::Thick];
 }
 
+/// How a stem plant's leaves are arranged round its stem (`[look] arrangement`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum Arrangement {
+    /// Opposite pairs, each turned a quarter from the pair below (decussate):
+    /// side pairs at alternate nodes, front and back pairs between.
+    #[default]
+    Opposite = 0,
+    /// A whorl: every node's leaves fan out in a full disc round the stem
+    /// (cabomba).
+    Whorl = 1,
+}
+
 /// A species' drawn shapes per part (SPEC §2.7 *Appearance*, T6d). Every
 /// key is optional in the TOML: leaves default to lanceolate, roots to
 /// strands, and stems to stalks (fuzz for a mat).
@@ -849,6 +864,8 @@ pub struct Look {
     pub stem: StemShape,
     /// Root shape.
     pub root: RootShape,
+    /// How leaves are arranged round a stem plant's stem.
+    pub arrangement: Arrangement,
 }
 /// Fastest growth rate, in cells per minute at full response (the plant
 /// update grows at most 8 cells per plant every 5 s).
@@ -1245,6 +1262,7 @@ struct LookDef {
     leaf: Option<LeafShape>,
     stem: Option<StemShape>,
     root: Option<RootShape>,
+    arrangement: Option<Arrangement>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -1747,6 +1765,7 @@ fn validate(
         leaf: d.look.leaf.unwrap_or(default_leaf),
         stem: d.look.stem.unwrap_or(default_stem),
         root: d.look.root.unwrap_or_default(),
+        arrangement: d.look.arrangement.unwrap_or_default(),
     };
     let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
     if mat_shape != matches!(form, Form::Mat(_))
@@ -2204,6 +2223,22 @@ mod tests {
             (look.leaf, look.stem, look.root),
             (LeafShape::Feather, StemShape::Thick, RootShape::Thick)
         );
+        // Leaves are arranged in opposite pairs unless a species asks for a
+        // whorl (a data option no shipped species uses yet).
+        for sp in t.iter() {
+            assert_eq!(sp.look.arrangement, Arrangement::Opposite, "{}", sp.name);
+        }
+        let whorled = format!("{OK}\n[look]\narrangement = \"whorl\"\n");
+        let s = PlantSpeciesTable::from_toml_sources(&[&whorled], &m).unwrap();
+        assert_eq!(
+            s.get(PlantSpeciesId(9)).unwrap().look.arrangement,
+            Arrangement::Whorl
+        );
+        let odd = format!("{OK}\n[look]\narrangement = \"spiral\"\n");
+        assert!(matches!(
+            PlantSpeciesTable::from_toml_sources(&[&odd], &m),
+            Err(PlantSpeciesError::Parse { .. })
+        ));
         // A mat shape on a stem plant is invalid.
         let mat_on_stem = format!("{OK}\n[look]\nstem = \"fuzz\"\n");
         assert!(matches!(

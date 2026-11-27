@@ -771,7 +771,7 @@ fn a_growing_stem_tapers_and_its_lower_leaves_lengthen() {
     assert!(info.size() > 0);
 }
 
-/// Side shoots lean out: a shoot leaves its node as a stub, steps out a column
+/// Side shoots lean out: a shoot leaves its node on the diagonal, steps out a column
 /// every two rows (diagonal links between stem cells) up to `SHOOT_LEAN`
 /// columns past the stub, then rises straight; placed whole or grown, and
 /// the plant stays one piece.
@@ -806,7 +806,7 @@ fn side_shoots_lean_out_then_rise() {
                 let reach = cx.abs_diff(base_x);
                 let reach = i64::try_from(reach).unwrap();
                 assert!(
-                    reach <= 1 + desktank_sim::plants::SHOOT_LEAN,
+                    reach <= desktank_sim::plants::SHOOT_LEAN,
                     "{name} {what}: stem {reach} columns from the main stem"
                 );
             }

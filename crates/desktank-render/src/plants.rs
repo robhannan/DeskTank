@@ -181,11 +181,17 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     }
     let look = s.look;
     let at = SHAPES_COLUMN * 4;
-    row[at..at + 4].copy_from_slice(&[look.leaf as u8, look.stem as u8, look.root as u8, 0]);
+    row[at..at + 4].copy_from_slice(&[
+        look.leaf as u8,
+        look.stem as u8,
+        look.root as u8,
+        look.arrangement as u8,
+    ]);
     // A rosette's, carpet's or epiphyte's blades shade by length, as stems
     // by height.
     let sizes = match &s.form {
-        Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
+        // A stem plant's node spacing, for the arrangement of its leaves.
+        Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, f.internode],
         // A tiger lotus type's leaf pads: leaf cells past the blade length,
         // up to `pad` further.
         Form::Rosette(f) | Form::Carpet(f) => [f.blade_length, f.root_depth, f.blade_length, f.pad],
