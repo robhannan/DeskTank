@@ -200,8 +200,8 @@ test("Export current tank downloads the real tank, not the preview", async ({ pa
   const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Export current tank" }).click()]);
   expect(file.suggestedFilename()).toMatch(/^desktank-\d{8}-\d{4}\.dtank$/);
   const got = await readFile(await file.path());
-  // The real tank's save (the preview's starter gravel and devices make a bigger one).
-  expect(got.length).toBe(bytes.length);
+  // The real tank's save, byte for byte, not the preview's.
+  expect(Array.from(got)).toEqual(bytes);
   expect(errors).toEqual([]);
 });
 
@@ -259,5 +259,43 @@ test("Create tank restores the ruler to off when the user had it off", async ({ 
   await expect(panel(page)).toBeHidden();
   expect(await ruler(page)).toBe(false);
   expect(await settings(page)).toMatchObject({ ruler: false, timeRatio: 1 });
+  expect(errors).toEqual([]);
+});
+
+test("settings that don't shape the tank apply to the preview without rebuilding it", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  await open(page);
+  type Marked = Window & { preview?: unknown };
+  await page.evaluate(() => ((window as Marked).preview = window.desktank.tank));
+  const same = () => page.evaluate(() => window.desktank.tank === (window as Marked).preview);
+  await page.locator("#nt-oled").check();
+  await page.locator("#nt-easy-mode").check();
+  await page.locator("#nt-time-ratio").fill("3");
+  await page.locator("#nt-creature-cap").fill("9");
+  await expect
+    .poll(() => page.evaluate(() => {
+      const t = window.desktank.tank;
+      return { oled: t.oled(), easy: t.easyMode(), ratio: t.timeRatio(), cap: t.creatureCap() };
+    }))
+    .toEqual({ oled: true, easy: true, ratio: 3, cap: 9 });
+  expect(await same(), "the same preview tank").toBe(true);
+  // A layout field does rebuild it.
+  await page.locator("#nt-seed").fill("4242");
+  await expect.poll(same).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("the setup fits a phone-width viewport", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openPaused(page);
+  await open(page);
+  for (const name of ["Create tank", "Cancel", "Export current tank", "Reroll"]) {
+    const box = (await page.getByRole("button", { name }).boundingBox())!;
+    expect(box.x, `${name} starts on screen`).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, `${name} ends on screen`).toBeLessThanOrEqual(390);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), "no sideways scroll").toBe(true);
   expect(errors).toEqual([]);
 });

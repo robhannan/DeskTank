@@ -18,7 +18,7 @@ export interface Settings {
   stats: boolean;
   seed: number;
   radius: number;
-  timeRatio: number; // life-time multiplier for new tanks and the shown one (1 is real time)
+  timeRatio: number; // life-time multiplier for new tanks; a loaded or imported tank keeps its own (1 is real time)
 }
 
 // Test and benchmark hooks (window.desktank).

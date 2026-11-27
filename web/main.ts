@@ -346,7 +346,6 @@ function showSettings() {
     tank.setFieldOverlay(settings.field);
     tank.setCursorAvoidance(settings.avoidCursor);
     tank.setEasyMode(settings.easyMode);
-    tank.setTimeRatio(settings.timeRatio);
     tank.setSway(settings.sway);
     tank.setAllowSwayOnBattery(settings.swayOnBattery);
     tank.setOled(settings.oled);
@@ -482,7 +481,11 @@ async function attachGraphics(): Promise<boolean> {
 function newTank(): WebTank {
   const [w, h] = sizeCanvas();
   const [, cols, rows] = gridFor(w, h, settings.scale);
-  return new WebTank(cols, rows, settings.seed, w, h);
+  const t = new WebTank(cols, rows, settings.seed, w, h);
+  // The time ratio is saved with each tank: a loaded or imported one keeps
+  // its own, and only new tanks take the page's.
+  t.setTimeRatio(settings.timeRatio);
+  return t;
 }
 
 function sizeCanvas(): Point {
@@ -495,7 +498,7 @@ function sizeCanvas(): Point {
 // Swaps in `next` as the shown tank and reopens the graphics for it.
 async function showTank(next: WebTank, preview = false) {
   // Anything but a preview replaces the real tank, so the setup is over.
-  if (!preview && stashedTank) void cancelNewTank();
+  if (!preview && stashedTank) cancelNewTank().catch((err) => showError(String(err)));
   endGestures();
   // The new tank takes the old one's graphics; reopen them only if it
   // couldn't (none yet, or a lost context).
@@ -613,19 +616,42 @@ async function showPreview(d: NewTankDraft) {
   // Paused before it is shown, so it never ticks: it draws one frame per change.
   next.setRunning(false);
   draft = d;
-  previewKey = JSON.stringify(d);
+  previewKey = layoutKey(d);
   await showTank(next, true);
 }
 
-// A control changed: rebuild the preview from the controls.
+// The draft fields that shape the generated tank; the rest are settings the
+// preview takes without being rebuilt.
+function layoutKey(d: NewTankDraft) {
+  return JSON.stringify([d.scale, d.preset, d.seed, d.waterLevel, d.devices]);
+}
+
+// A control changed: rebuild the preview from the controls, or only apply
+// the settings when the layout is the same.
 function previewNewTank() {
   if (!stashedTank) return Promise.resolve();
   const d = readDraft();
   $<HTMLOutputElement>("nt-water-level-out").value = `${d.waterLevel}%`;
   ntInput("devices").disabled = d.preset === "empty";
   describePreset();
-  if (JSON.stringify(d) === previewKey) return Promise.resolve();
+  if (draft && layoutKey(d) === previewKey) {
+    draft = d;
+    showDraftOnPreview();
+    tank.setCreatureCap(d.cap);
+    kick();
+    return Promise.resolve();
+  }
   return showPreview(d).catch((err) => showError(String(err)));
+}
+
+// Input events (a dragged slider fires one per step) rebuild at most once a frame.
+let previewFrame = 0;
+function schedulePreview() {
+  if (previewFrame) return;
+  previewFrame = requestAnimationFrame(() => {
+    previewFrame = 0;
+    void previewNewTank();
+  });
 }
 
 function describePreset() {
@@ -646,6 +672,7 @@ async function openNewTank() {
   newTankBtn.setAttribute("aria-expanded", "true");
   const toggle = $("settings-toggle");
   settingsWasOpen = toggle.getAttribute("aria-expanded") === "true";
+  toggle.setAttribute("aria-expanded", "false");
   $("settings").hidden = true;
   $("tools").hidden = true;
   newTankPanel.hidden = false;
@@ -719,6 +746,7 @@ function closePanel() {
   newTankPanel.hidden = true;
   $("tools").hidden = false;
   $("settings").hidden = !settingsWasOpen;
+  $("settings-toggle").setAttribute("aria-expanded", String(settingsWasOpen));
   newTankBtn.setAttribute("aria-expanded", "false");
   for (const b of menuButtons()) b.inert = false;
 }
@@ -742,7 +770,7 @@ function wireNewTank() {
   });
   for (const id of ["scale", "preset", "seed", "water-level", "devices", "easy-mode", "time-ratio", "catch-up", "creature-cap", "oled"]) {
     const el = $(`nt-${id}`);
-    el.addEventListener("input", () => void previewNewTank());
+    el.addEventListener("input", schedulePreview);
     // Leaving a number field tidies what was typed.
     el.addEventListener("change", () => {
       void previewNewTank().then(() => draft && showDraft(draft));
@@ -911,7 +939,7 @@ async function resumeOwnership() {
 
 // Another tab owns the tank: this one shows it paused and never writes.
 function becomeViewer() {
-  void cancelNewTank();
+  cancelNewTank().catch((err) => showError(String(err)));
   owner = false;
   hiddenAt = null;
   epoch = null;
@@ -2294,7 +2322,7 @@ function wireInput() {
     if (stashedTank) {
       if (e.key === "Escape") {
         e.preventDefault();
-        void cancelNewTank();
+        cancelNewTank().catch((err) => showError(String(err)));
       }
       return;
     }
