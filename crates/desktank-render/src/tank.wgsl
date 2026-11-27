@@ -3173,8 +3173,9 @@ struct SpriteOut {
     // Texel coordinate interpolated across the quad. For pitched sprites
     // this is in destination texels relative to the centre.
     @location(0) local: vec2<f32>,
-    // 0 alive, 1 elder, 2 dead, 3 a device's placement ghost; how far a
-    // corpse has rotted (0..1), or 1 for a ghost that doesn't fit.
+    // 0 alive, 1 elder, 2 dead, 3 a device's placement ghost, 4 one flat cell
+    // of a whole plant's; how far a corpse has rotted (0..1), or 1 for a
+    // ghost that doesn't fit.
     @location(1) @interpolate(flat) look: vec2<f32>,
     // Depth in bands from the front glass (D21).
     @location(2) @interpolate(flat) depth: f32,
@@ -3457,7 +3458,8 @@ fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
         discard;
     }
     // The split grid draws the front film in its own pass.
-    let c = sprite_colour(v, p, hidden_by_leaf(v.pos.xy, v.depth));
+    // A plant ghost's cells show over the plants they stand among.
+    let c = sprite_colour(v, p, v.look.x < 3.5 && hidden_by_leaf(v.pos.xy, v.depth));
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
@@ -3486,7 +3488,8 @@ fn sprite_skipped(v: SpriteOut, p: vec2<f32>) -> bool {
     if hud_at(v.pos.xy).a > 0.5 {
         return true;
     }
-    return frame_texel(v.frame, p).a < 0.5 && v.glow.w <= 0.0;
+    // A plant ghost's cell is a flat colour, not a texel of the atlas.
+    return v.look.x < 3.5 && frame_texel(v.frame, p).a < 0.5 && v.glow.w <= 0.0;
 }
 
 // A sprite fragment's colour that sprite_skipped kept, `hidden` if a nearer
@@ -3495,6 +3498,12 @@ fn sprite_colour(v: SpriteOut, p: vec2<f32>, hidden: bool) -> vec4<f32> {
     let texel = vec2<i32>(v.frame.xy + p);
     let t = frame_texel(v.frame, p);
     let k = v.glow.w;
+    if v.look.x > 3.5 {
+        // One cell of a whole plant's placement ghost: its colour is in the
+        // glow's rgb. See-through over everything, red where it doesn't fit.
+        let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
+        return vec4<f32>(min(v.glow.rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint, 0.55);
+    }
     let covered = hidden || (v.look.x < 2.5 && hidden_by_rigid(v.pos.xy, v.depth));
     if t.a < 0.5 {
         // Only a glowing creature at night draws past its texels: the halo.

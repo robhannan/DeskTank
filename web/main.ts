@@ -1148,8 +1148,8 @@ function showSelection(focus = false) {
   showFlip();
 }
 
-// The selected plant's propagule chips (only its species' own methods),
-// under the items while its sub-category is open.
+// The selected plant's start chips (its species' own propagules, then a whole
+// juvenile or mature plant), under the items while its sub-category is open.
 function showPropagules(focus = false) {
   const ways = tank.plantPropagules();
   const picked = tank.plantPropagule();
@@ -1182,11 +1182,16 @@ function showPropagules(focus = false) {
 function pickPropagule(name: string, focus = false) {
   tank.setPlantPropagule(name);
   showPropagules(focus);
+  // A whole plant can be flipped; a propagule can't.
+  showFlip();
 }
 
-// P: the selected plant's next propagule.
+// P: the selected plant's next start.
 function nextPropagule(focus = false) {
-  if (tank.nextPlantPropagule()) showPropagules(focus);
+  if (tank.nextPlantPropagule()) {
+    showPropagules(focus);
+    showFlip();
+  }
   else flash("Select a plant, then P picks how it starts");
 }
 
@@ -1613,14 +1618,22 @@ function chooseMagnifySlot() {
   }
 }
 
-// D27: mirrors the next flippable device placed onto the other side glass;
-// the placement ghost shows where it goes. Shown only while a flippable
-// device tool is selected.
+// D27: mirrors the next flippable device placed onto the other side glass, or
+// the next whole (juvenile or mature) plant left to right; the placement
+// ghost shows where it goes. Shown only while a flippable device tool or a
+// whole-plant start is selected.
 function showFlip() {
   if (!tank) return;
   const hide = !tank.canFlipDevice();
   const hadFocus = hide && document.activeElement === flipBtn;
   flipBtn.hidden = hide;
+  if (!hide) {
+    const plant = tank.plantPropagules().length > 0;
+    flipBtn.textContent = plant ? "Flip plant" : "Flip device";
+    flipBtn.title = plant
+      ? "Mirror the next whole plant left to right (X)"
+      : "Mount the next device on the other side glass (X)";
+  }
   flipBtn.setAttribute("aria-pressed", String(tank.deviceFlipped()));
   if (hadFocus) {
     const selected = swatch(tank.selected());

@@ -181,7 +181,10 @@ fn the_propagule_chips_list_the_species_methods_and_seeds_pour() {
     assert!(!t.set_plant_propagule("seeds"));
     assert_eq!(t.next_plant_propagule(), "");
     t.select(slot(&t, "plant hygrophila"));
-    assert_eq!(t.plant_propagules(), ["seeds", "cuttings", "fragments"]);
+    assert_eq!(
+        t.plant_propagules(),
+        ["seeds", "cuttings", "fragments", "juvenile", "mature"]
+    );
     assert_eq!(t.plant_propagule(), "cuttings");
     assert!(!t.set_plant_propagule("spores"));
     assert!(t.set_plant_propagule("seeds"));
@@ -190,16 +193,22 @@ fn the_propagule_chips_list_the_species_methods_and_seeds_pour() {
     down(&mut t, PRIMARY, 60, 30);
     t.pointer_up(PRIMARY);
     assert_eq!(t.material_count("seed"), 1);
-    // Rotala only grows from cuttings: seeds can't be picked.
+    // Rotala only grows from cuttings: seeds can't be picked. Whole plants
+    // follow its one propagule, and the picks wrap.
     t.select(slot(&t, "plant rotala"));
-    assert_eq!(t.plant_propagules(), ["cuttings"]);
+    assert_eq!(t.plant_propagules(), ["cuttings", "juvenile", "mature"]);
     assert_eq!(t.plant_propagule(), "cuttings");
     assert!(!t.set_plant_propagule("seeds"));
-    assert_eq!(t.next_plant_propagule(), "cuttings", "one method wraps");
+    assert_eq!(t.next_plant_propagule(), "juvenile");
+    assert_eq!(t.next_plant_propagule(), "mature");
+    assert_eq!(t.next_plant_propagule(), "cuttings", "the picks wrap");
     // Carpets spread by fragments and runners (fragments listed first);
     // picked, runners pour a plantlet (the cutting material).
     t.select(slot(&t, "plant dwarf_hairgrass"));
-    assert_eq!(t.plant_propagules(), ["fragments", "runners"]);
+    assert_eq!(
+        t.plant_propagules(),
+        ["fragments", "runners", "juvenile", "mature"]
+    );
     assert_eq!(t.next_plant_propagule(), "runners");
     assert_eq!(t.plant_propagule(), "runners");
     down(&mut t, PRIMARY, 90, 30);
@@ -210,7 +219,10 @@ fn the_propagule_chips_list_the_species_methods_and_seeds_pour() {
     assert_eq!(t.plant_count(), 1);
     // Floaters spread by fragments and buds (T6c part 2).
     t.select(slot(&t, "plant duckweed"));
-    assert_eq!(t.plant_propagules(), ["fragments", "buds"]);
+    assert_eq!(
+        t.plant_propagules(),
+        ["fragments", "buds", "juvenile", "mature"]
+    );
     assert!(t.set_plant_propagule("buds"));
     assert_eq!(t.plant_propagule(), "buds");
     // Each species keeps its own pick, and a new tank keeps them all.
@@ -1410,6 +1422,55 @@ fn magnify_tool_controls_lens_without_dirtying_world() {
     // Leaving hides the lens.
     t.pointer_leave();
     assert_eq!(t.tank().magnifier(), None);
+}
+
+#[test]
+fn a_whole_plant_start_shows_a_flippable_ghost_and_places_one_plant() {
+    let mut t = paused();
+    t.select(slot(&t, "plant hygrophila"));
+    // A propagule has no ghost and nothing to flip.
+    assert_eq!(t.plant_propagule(), "cuttings");
+    assert!(!t.can_flip_device());
+    drag(&mut t, 60, 58);
+    assert!(t.tools.plant_ghost(t.tank.world()).is_none());
+    assert!(!t.flip_device(), "a cutting doesn't flip");
+    // A mature plant does, and its ghost follows the pointer.
+    assert!(t.set_plant_propagule("mature"));
+    assert!(t.can_flip_device());
+    let ghost = t.tools.plant_ghost(t.tank.world()).unwrap();
+    assert!(!ghost.fits, "no substrate to root in yet");
+    let sand = t.tank.world().materials().id("sand").unwrap();
+    let bed = desktank_sim::Rect {
+        x0: 0,
+        y0: 62,
+        x1: 128,
+        y1: 72,
+    };
+    t.tank
+        .world_mut()
+        .fill_rect(bed, sand, desktank_sim::Brush::Replace)
+        .unwrap();
+    t.tank.cells_edited();
+    drag(&mut t, 60, 58);
+    let ghost = t.tools.plant_ghost(t.tank.world()).unwrap();
+    assert!(ghost.fits && ghost.cells.len() > 3);
+    assert!(t.flip_device());
+    let mirrored = t.tools.plant_ghost(t.tank.world()).unwrap();
+    assert_ne!(mirrored.cells, ghost.cells, "flipped is the mirror image");
+    assert!(!t.flip_device());
+    // The click puts it down whole, in one step.
+    assert_eq!(t.plant_count(), 0);
+    down(&mut t, PRIMARY, 60, 58);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.plant_count(), 1);
+    // A juvenile is smaller than a mature plant of the same species.
+    assert_eq!(t.next_plant_propagule(), "seeds", "the picks wrap");
+    assert!(t.set_plant_propagule("juvenile"));
+    let young = t.tools.plant_ghost(t.tank.world()).unwrap();
+    assert!(young.cells.len() < ghost.cells.len());
+    // Leaving the tank clears it.
+    t.pointer_leave();
+    assert!(t.tools.plant_ghost(t.tank.world()).is_none());
 }
 
 #[test]

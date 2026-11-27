@@ -760,6 +760,78 @@ fn a_device_and_its_ghost_are_drawn() {
     assert_eq!(render(gpu, &mut with, format), b);
 }
 
+/// A whole-plant placement ghost is a see-through silhouette in the
+/// species' own leaf colours over the water, red where it doesn't fit,
+/// and costs nothing (no frame) while there is none.
+#[test]
+fn a_whole_plant_ghost_is_drawn_green_when_it_fits_and_red_when_not() {
+    for split in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid: Some(split),
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        plant_ghost_on(gpu);
+    }
+}
+
+fn plant_ghost_on(gpu: &Gpu) {
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let config = WorldConfig {
+        width: W as usize,
+        height: H as usize,
+        seed: 4,
+        water_level: 1.0,
+    };
+    let world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+    let species = world.plant_species().id("hygrophila").unwrap();
+    let mut tank = Tank::new(world, TankConfig::default());
+    let plain = render(gpu, &mut tank, format);
+    assert_eq!(render(gpu, &mut tank, format), plain, "stable");
+    assert!(!tank.frame_wanted());
+    tank.set_plant_ghost(None);
+    assert!(!tank.frame_wanted(), "no ghost still means no frame");
+    let ghost = |fits| desktank_sim::PlantGhost {
+        species,
+        stage: desktank_sim::PlantStage::Mature,
+        base: (10, 14),
+        cells: (10..15)
+            .map(|y| desktank_sim::PlantGhostCell {
+                x: 10,
+                y,
+                part: desktank_sim::Part::Leaf,
+                variant: 3,
+            })
+            .collect(),
+        fits,
+    };
+    // At scale 1 the cell at (10, 12) is the pixel at (10, 12).
+    let (x, y) = (10, 12);
+    let water = px(&plain, x, y);
+    tank.set_plant_ghost(Some(ghost(true)));
+    assert!(tank.frame_wanted());
+    let valid = render(gpu, &mut tank, format);
+    let green = px(&valid, x, y);
+    assert_ne!(green, water);
+    assert!(
+        green[1] > green[0] + 20,
+        "leaf green {green:?} over {water:?}"
+    );
+    // Beside the plant is untouched.
+    assert_eq!(px(&valid, 12, y), px(&plain, 12, y));
+    tank.set_plant_ghost(Some(ghost(true)));
+    assert!(!tank.frame_wanted(), "the same ghost asks for no frame");
+    tank.set_plant_ghost(Some(ghost(false)));
+    assert!(tank.frame_wanted());
+    let invalid = render(gpu, &mut tank, format);
+    let red = px(&invalid, x, y);
+    assert!(red[0] > red[1] + 20, "red tint {red:?} (valid {green:?})");
+    tank.set_plant_ghost(None);
+    assert!(tank.frame_wanted());
+    assert_eq!(render(gpu, &mut tank, format), plain);
+}
+
 #[test]
 fn under_gravel_filter_draws_the_telescoping_tube_and_connected_floor_plates() {
     let Some(gpu) = gpu() else { return };

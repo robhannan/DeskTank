@@ -361,7 +361,20 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. A click pours seeds or
   places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the
-  items listing only that species' methods: seeds, cuttings, fragments,
-  runners, buds) picks another, remembered per species. Inspect shows species,
+  items listing that species' methods: seeds, cuttings, fragments,
+  runners, buds, then **juvenile** and **mature**) picks another,
+  remembered per species. Juvenile and mature place a whole plant of the
+  species in one click, grown to about 38% or 95% of its mature size with
+  its roots, stems, leaves, runners or crown the way growth would shape
+  them. Like a device, a whole plant shows a see-through **placement
+  ghost** at the pointer: its cells in the species' own part colours,
+  snapped to where the species can stand (a rooted plant's base to open
+  water above a substrate it roots in; an epiphyte or moss mat to open
+  water touching what it clings to; a floater to the surface; a marimo to
+  rest on what is below it) and tinted red where it can't be placed (no
+  suitable spot, or the tank is at its plant cap). `X` (on the web, a
+  **Flip plant** button) mirrors it left to right, as it does a device
+  for the other glass. The ghost is drawn only while one is shown, so it
+  costs no frame when nobody is placing a plant. Inspect shows species,
   age, health, size and what is limiting growth (for example, "light too
   low"). The water-quality score counts plant cells from the table.

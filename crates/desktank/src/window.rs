@@ -31,9 +31,10 @@
 //! when the brush outline changes. Escape closes.
 //!
 //! Plants (T6b): each plant species has a slot under Plants; selected, it
-//! pours its species as the propagule named in the title bar (seeds,
-//! cuttings, fragments, runners or buds), and `P` picks the next one that
-//! species grows from (remembered per species). Inspect pins the drawn
+//! pours its species as the start named in the title bar (a propagule:
+//! seeds, cuttings, fragments, runners or buds; or a whole juvenile or
+//! mature plant, which `X` mirrors and a ghost previews), and `P` picks the
+//! next one that species offers (remembered per species). Inspect pins the drawn
 //! inspect card to what it finds (a creature, plant, device or cell); the
 //! title bar keeps only the keys that act on it.
 //!
@@ -606,16 +607,22 @@ impl Running {
         else {
             return;
         };
-        let way = self
+        let start = self.tools.plant_start(world);
+        let way = start.map_or("", desktank_sim::PlantStart::name);
+        let ways: Vec<_> = self
             .tools
-            .plant_propagule(world)
-            .map_or("", desktank_sim::Propagule::name);
-        let ways: Vec<_> = s.propagules().map(desktank_sim::Propagule::name).collect();
-        let more = if ways.len() > 1 {
+            .plant_starts(world)
+            .into_iter()
+            .map(desktank_sim::PlantStart::name)
+            .collect();
+        let mut more = if ways.len() > 1 {
             format!(", P for {}", ways.join("/"))
         } else {
             String::new()
         };
+        if self.tools.can_flip(world) {
+            more.push_str(", X flips");
+        }
         let title = format!(
             "DeskTank — {} as {way} ({}{more})",
             s.name.replace('_', " "),
@@ -1033,10 +1040,11 @@ impl Running {
         }
     }
 
-    /// Picks the next propagule the selected plant's species grows from
-    /// (seeds, cuttings, fragments, runners, buds) and names it.
-    fn next_plant_propagule(&mut self) {
-        if self.tools.next_plant_propagule(self.tank.world()).is_some() {
+    /// Picks the next way the selected plant's species starts (its own
+    /// seeds, cuttings, fragments, runners or buds, then a whole juvenile
+    /// or mature plant) and names it.
+    fn next_plant_start(&mut self) {
+        if self.tools.next_plant_start(self.tank.world()).is_some() {
             self.show_plant();
         } else {
             self.window
@@ -1140,6 +1148,8 @@ impl Running {
         self.tank.set_cursor(cursor);
         let ghost = self.tools.ghost(self.tank.world());
         self.tank.set_device_ghost(ghost);
+        let plant_ghost = self.tools.plant_ghost(self.tank.world());
+        self.tank.set_plant_ghost(plant_ghost);
         let magnifier = self
             .tools
             .magnifier()
@@ -1485,7 +1495,8 @@ impl ApplicationHandler<Wake> for App {
                         });
                     }
                     // X mirrors the next flippable device placed onto the other
-                    // glass (D27); the ghost shows where it goes.
+                    // glass (D27), or a whole plant left to right; the ghost
+                    // shows where it goes.
                     Key::Character(c)
                         if c.eq_ignore_ascii_case("x")
                             && !event.repeat
@@ -1493,9 +1504,15 @@ impl ApplicationHandler<Wake> for App {
                             && !s.modifiers.alt_key()
                             && s.tools.can_flip(s.tank.world()) =>
                     {
-                        let side = if s.tools.flip() { "other" } else { "nearer" };
-                        s.window
-                            .set_title(&format!("DeskTank — devices go on the {side} glass"));
+                        let flipped = s.tools.flip();
+                        let title = if s.tools.selected_plant().is_some() {
+                            let side = if flipped { "mirrored" } else { "as drawn" };
+                            format!("DeskTank — whole plants go {side}")
+                        } else {
+                            let side = if flipped { "other" } else { "nearer" };
+                            format!("DeskTank — devices go on the {side} glass")
+                        };
+                        s.window.set_title(&title);
                     }
                     Key::Character(c) if c.eq_ignore_ascii_case("w") => {
                         let siphoned = s.tank.world_mut().water_change();
@@ -1565,11 +1582,12 @@ impl ApplicationHandler<Wake> for App {
                     Key::Character(c) => {
                         // 1–9 are the open sub-category's first nine slots,
                         // 0 the tenth; P picks the selected plant's next way
-                        // to start (seeds, cuttings, fragments, runners, buds).
+                        // to start (its propagules, then a whole juvenile or
+                        // mature plant).
                         if let Ok(n) = c.parse::<usize>() {
                             s.select_slot((n + 9) % 10);
                         } else if c.eq_ignore_ascii_case("p") {
-                            s.next_plant_propagule();
+                            s.next_plant_start();
                         } else {
                             match size_key(s.tools.tool(), c.as_str(), s.modifiers) {
                                 Some(SizeKey::Brush(steps)) => {

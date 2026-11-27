@@ -172,10 +172,11 @@ test("the propagule chips offer the species' own methods and pour seeds", async 
   const chips = row.getByRole("radio");
   // No chips until a plant is selected.
   await expect(row).toBeHidden();
-  // Hygrophila grows from all three; cuttings come first.
+  // Hygrophila grows from all three; cuttings come first. Every species
+  // can also start as a whole juvenile or mature plant.
   await choose(page, "Hygrophila");
   await expect(row).toBeVisible();
-  await expect(chips).toHaveText(["Seeds", "Cuttings", "Fragments"]);
+  await expect(chips).toHaveText(["Seeds", "Cuttings", "Fragments", "Juvenile", "Mature"]);
   await expect(row.getByRole("radio", { name: "Cuttings" })).toHaveAttribute("aria-checked", "true");
   // Picking seeds keeps the plant selected, and a click pours seeds.
   await row.getByRole("radio", { name: "Seeds" }).click();
@@ -189,21 +190,21 @@ test("the propagule chips offer the species' own methods and pour seeds", async 
   expect(await tank("materialCount", "seed")).toBeGreaterThan(0);
   // Rotala only grows from cuttings; java moss only from fragments.
   await choose(page, "Rotala");
-  await expect(chips).toHaveText(["Cuttings"]);
+  await expect(chips).toHaveText(["Cuttings", "Juvenile", "Mature"]);
   await choose(page, "Java moss");
-  await expect(chips).toHaveText(["Fragments"]);
+  await expect(chips).toHaveText(["Fragments", "Juvenile", "Mature"]);
   // Carpets and rosettes spread by runners (T6c), floaters by buds.
   await choose(page, "Dwarf hairgrass");
-  await expect(chips).toHaveText(["Fragments", "Runners"]);
+  await expect(chips).toHaveText(["Fragments", "Runners", "Juvenile", "Mature"]);
   await choose(page, "Vallisneria");
-  await expect(chips).toHaveText(["Runners"]);
+  await expect(chips).toHaveText(["Runners", "Juvenile", "Mature"]);
   await choose(page, "Duckweed");
-  await expect(chips).toHaveText(["Fragments", "Buds"]);
+  await expect(chips).toHaveText(["Fragments", "Buds", "Juvenile", "Mature"]);
   // Arrow keys move the pick and wrap.
   await row.getByRole("radio", { name: "Fragments" }).focus();
   await page.keyboard.press("ArrowLeft");
-  await expect(row.getByRole("radio", { name: "Buds" })).toBeFocused();
-  expect(await tank("plantPropagule")).toBe("buds");
+  await expect(row.getByRole("radio", { name: "Mature" })).toBeFocused();
+  expect(await tank("plantPropagule")).toBe("mature");
   // Another tab hides the chips; a non-plant item too.
   await page.getByRole("tab", { name: "Fish", exact: true }).click();
   await expect(row).toBeHidden();
@@ -215,6 +216,6 @@ test("the propagule chips offer the species' own methods and pour seeds", async 
   await page.getByRole("button", { name: "Reset" }).click();
   await expect(row.getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
   await choose(page, "Duckweed");
-  await expect.poll(() => tank("plantPropagule")).toBe("buds");
+  await expect.poll(() => tank("plantPropagule")).toBe("mature");
   expect(errors).toEqual([]);
 });

@@ -5,6 +5,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
   boxOf,
+  callTank,
   cellCount,
   cellPoint,
   choose,
@@ -16,8 +17,10 @@ import {
   openPaused,
   stateHash,
   type Point,
+  type TankMethod,
   touchscreen,
   watchErrors,
+  type WebTank,
 } from "./support.ts";
 
 const glued = (page: Page) => page.evaluate(() => window.desktank.tank.gluedBodies());
@@ -763,6 +766,74 @@ test("inspecting a plant announces how well light, CO₂ and nutrients suit it",
   expect(errors).toEqual([]);
 });
 
+test("a whole plant shows a flippable ghost and goes down in one click", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const [gw, gh] = await gridSize(page);
+  const x = Math.round(gw / 2);
+  const tank = <K extends TankMethod>(f: K, ...a: Parameters<WebTank[K]>) => callTank(page, f, ...a);
+  const flipBtn = page.locator("#flip");
+  const chips = page.locator("#propagules");
+  const canvas = page.locator("#tank");
+
+  // A strip of aquasoil along the floor to root in.
+  await choose(page, "Aquasoil");
+  let p = await cellPoint(page, Math.round(gw * 0.3), gh - 3);
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  p = await cellPoint(page, Math.round(gw * 0.7), gh - 3);
+  await page.mouse.move(p.x, p.y, { steps: 20 });
+  await page.mouse.up();
+  // The tank is paused, so single-step the aquasoil down onto the floor.
+  await page.evaluate(() => {
+    for (let i = 0; i < 1500; i++) window.desktank.tank.step();
+  });
+
+  // A propagule has nothing to flip; a whole plant does.
+  await choose(page, "Hygrophila");
+  await expect(flipBtn).toBeHidden();
+  await chips.getByRole("radio", { name: "Juvenile" }).click();
+  await expect(flipBtn).toBeVisible();
+  await expect(flipBtn).toHaveText("Flip plant");
+  expect(await tank("plantPropagule")).toBe("juvenile");
+  await chips.getByRole("radio", { name: "Cuttings" }).click();
+  await expect(flipBtn).toBeHidden();
+  await chips.getByRole("radio", { name: "Mature" }).click();
+  await expect(flipBtn).toBeVisible();
+
+  // Hovering over the bed shows the plant's ghost (the canvas differs from
+  // a hover with a cutting, which has none), and flipping mirrors it.
+  // (Clicking a chip scrolls the page, so find the point afresh each time.)
+  const shot = async () => {
+    const hover = await cellPoint(page, x, gh - 8);
+    await page.mouse.move(hover.x + 1, hover.y);
+    await page.mouse.move(hover.x, hover.y);
+    // Let the frame the pointer asked for draw.
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    return (await canvas.screenshot()).toString("base64");
+  };
+  const mature = await shot();
+  await flipBtn.click();
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "true");
+  const mirrored = await shot();
+  expect(mirrored).not.toBe(mature);
+  await page.keyboard.press("x");
+  await expect(flipBtn).toHaveAttribute("aria-pressed", "false");
+  expect(await shot()).toBe(mature);
+  await chips.getByRole("radio", { name: "Cuttings" }).click();
+  expect(await shot()).not.toBe(mature);
+  await chips.getByRole("radio", { name: "Mature" }).click();
+
+  // One click puts down a whole plant of many cells.
+  const plants = await tank("plantCount");
+  const stems = await tank("materialCount", "stem");
+  const hover = await cellPoint(page, x, gh - 8);
+  await page.mouse.click(hover.x, hover.y);
+  expect(await tank("plantCount")).toBe(plants + 1);
+  expect(await tank("materialCount", "stem")).toBeGreaterThan(stems + 5);
+  expect(errors).toEqual([]);
+});
+
 test("the palette follows the sim's category tree and navigates with the keyboard", async ({ page }) => {
   await open(page, "?backend=webgl2");
   const entries = await page.evaluate(() => window.desktank.tank.palette());
@@ -944,15 +1015,16 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await page.getByRole("button", { name: "Reset" }).click();
   await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
 
-  // P picks the selected plant's next propagule; without a plant it says
-  // what it needs.
+  // P picks the selected plant's next start (its propagules, then a whole
+  // juvenile and mature plant); without a plant it says what it needs.
   await page.keyboard.press("p");
   await expect(page.locator("#inspect")).toHaveText(/Select a plant/);
   await choose(page, "Hygrophila");
-  await page.keyboard.press("p");
-  await expect(page.locator("#propagules").getByRole("radio", { name: "Fragments" })).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("p");
-  await expect(page.locator("#propagules").getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
+  const picked = (name: string) => expect(page.locator("#propagules").getByRole("radio", { name })).toHaveAttribute("aria-checked", "true");
+  for (const name of ["Fragments", "Juvenile", "Mature", "Seeds"]) {
+    await page.keyboard.press("p");
+    await picked(name);
+  }
 });
 
 test("settings persist across reloads", async ({ page }) => {

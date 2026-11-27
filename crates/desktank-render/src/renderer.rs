@@ -94,7 +94,7 @@ pub struct Renderer {
     /// Where each species' frames are in the atlas texture.
     atlas: Atlas,
     atlas_texture: wgpu::Texture,
-    /// Per-instance sprite data, [`sprites::MAX_SPRITES`] slots.
+    /// Per-instance sprite data, [`sprites::BUFFER_SPRITES`] slots.
     instances: wgpu::Buffer,
     /// Sprites to draw, and the instance bytes last written.
     sprite_count: u32,
@@ -198,7 +198,7 @@ impl Renderer {
         let atlas_texture = create_atlas(gpu, &atlas);
         let instances = d.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprites"),
-            size: INSTANCE_BYTES * sprites::MAX_SPRITES as u64,
+            size: INSTANCE_BYTES * sprites::BUFFER_SPRITES as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -422,16 +422,19 @@ impl Renderer {
     }
 
     /// Writes one sprite instance per creature, corpse and device, and the
-    /// placement `ghost`, if they changed since the last upload.
+    /// placement `ghost` and whole-plant `plant_ghost`, if they changed since
+    /// the last upload.
     pub fn upload_sprites(
         &mut self,
         gpu: &Gpu,
         world: &World,
         ghost: Option<(desktank_sim::Device, bool)>,
+        plant_ghost: Option<&desktank_sim::PlantGhost>,
     ) {
         self.sprite_count = self.atlas.instances_with(
             world,
             ghost,
+            plant_ghost,
             &mut self.sprite_scratch,
             &mut self.instance_scratch,
         );

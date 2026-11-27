@@ -16,11 +16,14 @@
 //! out. Inspect reports the creature under the pointer, if any, or the
 //! plant, and the cell's material. A creature slot in the palette adds one
 //! of its species per click. A plant slot (one per species, like the
-//! creatures) uses its species as the propagule picked for it with
-//! [`Tools::set_plant_propagule`] (seeds, cuttings, fragments, runners or
-//! buds; the species' default until one is picked): seeds pour as powder
-//! with the brush, anything else places one small piece of the species'
-//! real plant cells per click ([`World::place_propagule`]).
+//! creatures) uses its species as the start picked for it with
+//! [`Tools::set_plant_start`] (seeds, cuttings, fragments, runners or
+//! buds, or a whole juvenile or mature plant; the species' default
+//! propagule until one is picked): seeds pour as powder with the brush, any
+//! other propagule places one small piece of the species' real plant cells
+//! per click ([`World::place_propagule`]), and a juvenile or mature start
+//! places a whole plant, snapped to where it can stand and flippable
+//! ([`World::place_plant`], [`Tools::plant_ghost`]).
 //!
 //! The palette is a two-level tree ([`PaletteTab`], [`Tools::palette_tree`];
 //! the categories are [`crate::palette`]'s): hosts show the top tabs, the
@@ -33,8 +36,8 @@ use std::collections::BTreeMap;
 pub use crate::CreatureId;
 pub use crate::palette::{Holds, PalettePath};
 use crate::{
-    BodyId, Brush, MaterialId, Placeable, PlantId, PlantSpeciesId, Propagule, SpeciesId, World,
-    WorldError,
+    BodyId, Brush, MaterialId, Placeable, PlantGhost, PlantId, PlantSpeciesId, PlantStage,
+    PlantStart, Propagule, SpeciesId, World, WorldError,
 };
 
 /// Smallest brush radius in cells (a single cell).
@@ -249,10 +252,10 @@ enum Action {
 pub struct Tools {
     tool: Tool,
     material: MaterialId,
-    /// The propagule picked for each plant species (none: the species'
-    /// default). One a species doesn't grow from (a different world's
-    /// species table) falls back to its default ([`Tools::plant_propagule`]).
-    propagules: BTreeMap<PlantSpeciesId, Propagule>,
+    /// The start picked for each plant species (none: the species'
+    /// default propagule). One a species doesn't offer (a different world's
+    /// species table) falls back to its default ([`Tools::plant_start`]).
+    plant_picks: BTreeMap<PlantSpeciesId, PlantStart>,
     /// The explicit morph picked for each creature species.
     morphs: BTreeMap<SpeciesId, u8>,
     radius: u32,
@@ -271,7 +274,7 @@ impl Tools {
         Self {
             tool: Tool::Pour,
             material,
-            propagules: BTreeMap::new(),
+            plant_picks: BTreeMap::new(),
             morphs: BTreeMap::new(),
             radius: DEFAULT_RADIUS,
             zoom: 0,
@@ -293,15 +296,30 @@ impl Tools {
         self.flip
     }
 
-    /// Whether the selected tool places a device that supports flipping onto
-    /// the other side glass.
+    /// Whether the selected tool places something that supports flipping: a
+    /// device that mounts on either side glass, or a whole plant (juvenile
+    /// or mature), which it mirrors left to right.
     #[must_use]
     pub fn can_flip(&self, world: &World) -> bool {
-        let Tool::Place(p) = self.tool else {
-            return false;
-        };
-        p.device()
-            .is_some_and(|kind| world.device_kinds().get(kind).mount.flippable())
+        match self.tool {
+            Tool::Place(p) => p
+                .device()
+                .is_some_and(|kind| world.device_kinds().get(kind).mount.flippable()),
+            Tool::Plant(_) => self.plant_start(world).is_some_and(|p| p.stage().is_some()),
+            _ => false,
+        }
+    }
+
+    /// The whole plant a click would put down at the pointer, snapped to
+    /// where it can stand ([`World::plant_placement`]), if a plant slot
+    /// is selected with a juvenile or mature start. Its cells show where
+    /// the plant would go, and `fits` whether it can.
+    #[must_use]
+    pub fn plant_ghost(&self, world: &World) -> Option<PlantGhost> {
+        let species = self.selected_plant()?;
+        let stage = self.plant_start(world)?.stage()?;
+        let (x, y) = self.pointer?;
+        world.plant_placement(species, stage, x, y, self.flip)
     }
 
     /// The ghost of the device the place tool would put down at the
@@ -489,65 +507,133 @@ impl Tools {
         }
     }
 
-    /// The propagule `species` pours, as `world` resolves it: the one
-    /// picked for it if it grows from it, else its
+    /// The start `species` places, as `world` resolves it: the one picked
+    /// for it if it offers it ([`Tools::plant_starts`]), else its
     /// [`crate::PlantSpecies::default_propagule`]. `None` for a species
     /// `world` lacks.
     #[must_use]
-    pub fn propagule_for(&self, world: &World, species: PlantSpeciesId) -> Option<Propagule> {
+    pub fn start_for(&self, world: &World, species: PlantSpeciesId) -> Option<PlantStart> {
         let s = world.plant_species().get(species)?;
         Some(
-            self.propagules
+            self.plant_picks
                 .get(&species)
                 .copied()
-                .filter(|&p| s.grows_from(p))
-                .unwrap_or_else(|| s.default_propagule()),
+                .filter(|&p| match p {
+                    PlantStart::Propagule(p) => s.grows_from(p),
+                    PlantStart::Juvenile | PlantStart::Mature => true,
+                })
+                .unwrap_or_else(|| PlantStart::Propagule(s.default_propagule())),
         )
     }
 
-    /// The propagule the selected plant slot pours ([`Tools::propagule_for`]),
-    /// or `None` if no plant slot is selected.
+    /// The starts the selected plant slot offers, in the order [`Tools::next_plant_start`]
+    /// cycles them: the species' own propagules, then a juvenile and a mature
+    /// plant. Empty if no plant slot is selected.
     #[must_use]
-    pub fn plant_propagule(&self, world: &World) -> Option<Propagule> {
-        self.propagule_for(world, self.selected_plant()?)
+    pub fn plant_starts(&self, world: &World) -> Vec<PlantStart> {
+        let Some(s) = self
+            .selected_plant()
+            .and_then(|species| world.plant_species().get(species))
+        else {
+            return Vec::new();
+        };
+        s.propagules()
+            .map(PlantStart::Propagule)
+            .chain([PlantStart::Juvenile, PlantStart::Mature])
+            .collect()
     }
 
-    /// Picks the propagule the selected plant slot pours, if its species
-    /// grows from it. Returns whether it was taken; the pick is kept for
-    /// that species.
-    pub fn set_plant_propagule(&mut self, world: &World, propagule: Propagule) -> bool {
+    /// The start the selected plant slot places ([`Tools::start_for`]), or
+    /// `None` if no plant slot is selected.
+    #[must_use]
+    pub fn plant_start(&self, world: &World) -> Option<PlantStart> {
+        self.start_for(world, self.selected_plant()?)
+    }
+
+    /// Picks the start the selected plant slot places, if its species offers
+    /// it. Returns whether it was taken; the pick is kept for that species.
+    pub fn set_plant_start(&mut self, world: &World, start: PlantStart) -> bool {
         let Some(species) = self.selected_plant() else {
             return false;
         };
-        let ok = world
-            .plant_species()
-            .get(species)
-            .is_some_and(|s| s.grows_from(propagule));
+        let ok = self.plant_starts(world).contains(&start);
         if ok {
-            self.propagules.insert(species, propagule);
+            self.plant_picks.insert(species, start);
         }
         ok
     }
 
+    /// Picks the next start the selected plant's species offers (wrapping).
+    /// Returns it, or `None` if no plant slot is selected.
+    pub fn next_plant_start(&mut self, world: &World) -> Option<PlantStart> {
+        let species = self.selected_plant()?;
+        let starts = self.plant_starts(world);
+        let current = self.start_for(world, species)?;
+        let next = starts
+            .iter()
+            .position(|&p| p == current)
+            .and_then(|k| starts.get(k + 1))
+            .or_else(|| starts.first())
+            .copied()?;
+        self.plant_picks.insert(species, next);
+        Some(next)
+    }
+
+    /// The propagule `species` pours: the one picked for it, or its default
+    /// when it places a whole plant. `None` for a species `world` lacks.
+    #[must_use]
+    pub fn propagule_for(&self, world: &World, species: PlantSpeciesId) -> Option<Propagule> {
+        match self.start_for(world, species)? {
+            PlantStart::Propagule(p) => Some(p),
+            PlantStart::Juvenile | PlantStart::Mature => world
+                .plant_species()
+                .get(species)
+                .map(crate::PlantSpecies::default_propagule),
+        }
+    }
+
+    /// The propagule the selected plant slot places ([`Tools::plant_start`]),
+    /// or `None` if no plant slot is selected or it places a whole plant.
+    #[must_use]
+    pub fn plant_propagule(&self, world: &World) -> Option<Propagule> {
+        match self.plant_start(world)? {
+            PlantStart::Propagule(p) => Some(p),
+            PlantStart::Juvenile | PlantStart::Mature => None,
+        }
+    }
+
+    /// Picks the propagule the selected plant slot places, if its species
+    /// grows from it. Returns whether it was taken; the pick is kept for
+    /// that species.
+    pub fn set_plant_propagule(&mut self, world: &World, propagule: Propagule) -> bool {
+        self.set_plant_start(world, PlantStart::Propagule(propagule))
+    }
+
     /// Picks the next propagule the selected plant's species grows from
-    /// (wrapping). Returns it, or `None` if no plant slot is selected.
+    /// (wrapping, skipping whole plants). Returns it, or `None` if no plant
+    /// slot is selected.
     pub fn next_plant_propagule(&mut self, world: &World) -> Option<Propagule> {
         let species = self.selected_plant()?;
         let s = world.plant_species().get(species)?;
         let current = self.propagule_for(world, species)?;
-        let next = s
-            .propagules()
-            .find(|&p| p > current)
-            .or_else(|| s.propagules().next())?;
-        self.propagules.insert(species, next);
+        let next = match self.start_for(world, species)? {
+            PlantStart::Propagule(_) => s
+                .propagules()
+                .find(|&p| p > current)
+                .or_else(|| s.propagules().next())?,
+            // From a whole plant, the first propagule.
+            PlantStart::Juvenile | PlantStart::Mature => s.propagules().next()?,
+        };
+        self.plant_picks
+            .insert(species, PlantStart::Propagule(next));
         Some(next)
     }
 
-    /// Takes `other`'s propagule picks as they are (even ones their
-    /// species doesn't grow from), for a host replacing its tank. Plant
-    /// species ids are stable across worlds.
+    /// Takes `other`'s plant picks as they are (even ones their species
+    /// doesn't offer), for a host replacing its tank. Plant species ids are
+    /// stable across worlds.
     pub fn keep_plant_picks(&mut self, other: &Self) {
-        self.propagules.clone_from(&other.propagules);
+        self.plant_picks.clone_from(&other.plant_picks);
     }
 
     /// Brush radius in cells.
@@ -632,7 +718,8 @@ impl Tools {
             ),
             None => match self.tool {
                 Tool::Pour | Tool::Scoop | Tool::Glue => true,
-                // Only seeds pour with the brush; a placed piece has none.
+                // Only seeds pour with the brush; a placed piece or whole
+                // plant has none.
                 Tool::Plant(_) => self.plant_propagule(world) == Some(Propagule::Seeds),
                 _ => false,
             },
@@ -674,10 +761,11 @@ impl Tools {
         let action = match (button, self.tool) {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
-            (Button::Primary, Tool::Plant(_)) => match self.plant_propagule(world) {
+            (Button::Primary, Tool::Plant(_)) => match self.plant_start(world) {
                 // Seeds pour as powder with the brush; any other
-                // propagule is one placed piece per click.
-                Some(Propagule::Seeds) | None => Action::Plant,
+                // propagule is one placed piece per click, and a whole
+                // plant one plant.
+                Some(PlantStart::Propagule(Propagule::Seeds)) | None => Action::Plant,
                 Some(_) => Action::Place,
             },
             (Button::Primary, Tool::Glue) => Action::Glue(None),
@@ -714,12 +802,18 @@ impl Tools {
                 // One piece per click; a full tank or no open water there
                 // places nothing.
                 Tool::Plant(species) => self
-                    .plant_propagule(world)
-                    .and_then(|p| {
-                        world
+                    .plant_start(world)
+                    .and_then(|start| match start {
+                        PlantStart::Propagule(p) => world
                             .place_propagule(cell.0, cell.1, species, p)
                             .ok()
-                            .flatten()
+                            .flatten(),
+                        PlantStart::Juvenile => {
+                            self.place_whole(world, species, PlantStage::Juvenile, cell)
+                        }
+                        PlantStart::Mature => {
+                            self.place_whole(world, species, PlantStage::Mature, cell)
+                        }
                     })
                     .map_or(Outcome::None, |id| {
                         Outcome::Painted(world.plant(id).map_or(1, |p| p.size() as usize))
@@ -864,6 +958,21 @@ impl Tools {
             }
             _ => 0,
         }
+    }
+
+    /// Places a whole plant at `cell` ([`World::place_plant`]), mirrored if
+    /// flipped; `None` where it doesn't fit or the tank is full.
+    fn place_whole(
+        &self,
+        world: &mut World,
+        species: PlantSpeciesId,
+        stage: PlantStage,
+        cell: (i64, i64),
+    ) -> Option<PlantId> {
+        world
+            .place_plant(species, stage, cell.0, cell.1, self.flip)
+            .ok()
+            .flatten()
     }
 
     /// One brush disc at `c` for the stroke in progress; returns how many

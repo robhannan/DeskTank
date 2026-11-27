@@ -184,6 +184,8 @@ pub struct Tank {
     cursor: Option<BrushPreview>,
     /// The device placement ghost and whether it fits (D27).
     ghost: Option<(desktank_sim::Device, bool)>,
+    /// The whole-plant placement ghost, if shown.
+    plant_ghost: Option<desktank_sim::PlantGhost>,
     /// The magnified lens around the pointer, if shown.
     magnifier: Option<Magnifier>,
     /// The part of the grid the target shows, if not the whole tank at its
@@ -246,6 +248,7 @@ impl Tank {
             inspect: InspectCard::default(),
             cursor: None,
             ghost: None,
+            plant_ghost: None,
             magnifier: None,
             camera: None,
             tour: None,
@@ -697,6 +700,18 @@ impl Tank {
     pub fn set_device_ghost(&mut self, ghost: Option<(desktank_sim::Device, bool)>) {
         if self.ghost != ghost {
             self.ghost = ghost;
+            self.needs_frame = true;
+        }
+    }
+
+    /// Shows (or hides) the ghost of the whole plant the place tool would
+    /// put down: its cells, see-through, in the species' own colours and
+    /// tinted red when it doesn't fit
+    /// ([`desktank_sim::tools::Tools::plant_ghost`]). `None` costs nothing;
+    /// setting the same ghost again asks for no extra frame.
+    pub fn set_plant_ghost(&mut self, ghost: Option<desktank_sim::PlantGhost>) {
+        if self.plant_ghost != ghost {
+            self.plant_ghost = ghost;
             self.needs_frame = true;
         }
     }
@@ -1242,7 +1257,7 @@ impl Tank {
             return;
         };
         renderer.upload(gpu, &self.world, &mut self.dirty);
-        renderer.upload_sprites(gpu, &self.world, self.ghost);
+        renderer.upload_sprites(gpu, &self.world, self.ghost, self.plant_ghost.as_ref());
         self.creatures_drawn = Some(self.world.creatures_version());
         renderer.upload_plants(gpu, &self.world);
         self.plants_drawn = Some(self.world.plants_version());
