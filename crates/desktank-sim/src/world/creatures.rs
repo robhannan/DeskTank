@@ -3222,6 +3222,12 @@ mod tests {
         .unwrap();
         let gourami = include_str!("../../../../assets/species/honey_gourami.toml");
         let gourami = gourami.replace("shy = true", &format!("shy = {shy}"));
+        // The bold control has neither the habit nor the need of cover.
+        let gourami = if shy {
+            gourami
+        } else {
+            gourami.replace("shelter = 120", "shelter = 0")
+        };
         let goldfish = include_str!("../../../../assets/species/common_goldfish.toml");
         let species =
             SpeciesTable::from_toml_sources(&[&gourami, goldfish], &world.materials).unwrap();
