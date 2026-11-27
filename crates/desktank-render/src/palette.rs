@@ -41,12 +41,18 @@ pub enum GroundStyle {
     /// Prefab device footprint cell (D27): drawn as air above the water line
     /// and as water at or below it; the device sprite renders on top.
     Device = 12,
+    /// Dragon stone: khaki layered ridges, ochre patches and dark pits (keeps
+    /// glue tint).
+    DragonStone = 13,
+    /// Seiryu: grey pitted limestone with calcite patches and tan veins (keeps
+    /// glue tint).
+    Seiryu = 14,
 }
 
 impl GroundStyle {
     /// Every style with its WGSL constant name (checked by `renderer.rs`).
     #[cfg(test)]
-    pub const ALL: [(&'static str, Self); 12] = [
+    pub const ALL: [(&'static str, Self); 14] = [
         ("STYLE_DEFAULT", Self::Default),
         ("STYLE_WATER", Self::Water),
         ("STYLE_AIR", Self::Air),
@@ -59,6 +65,8 @@ impl GroundStyle {
         ("STYLE_BUBBLE", Self::Bubble),
         ("STYLE_DETRITUS", Self::Detritus),
         ("STYLE_DEVICE", Self::Device),
+        ("STYLE_DRAGON_STONE", Self::DragonStone),
+        ("STYLE_SEIRYU", Self::Seiryu),
     ];
 
     /// Picks the sub-cell style for `m`.
@@ -75,6 +83,8 @@ impl GroundStyle {
             "gravel" | "clown_vomit_gravel" => Self::Gravel,
             "aquasoil" => Self::Aquasoil,
             "rock" => Self::Rock,
+            "dragon_stone" => Self::DragonStone,
+            "seiryu_stone" => Self::Seiryu,
             "driftwood" => Self::Driftwood,
             "air_bubble" | "co2_bubble" => Self::Bubble,
             "detritus" | "dead_plant" | "waste" => Self::Detritus,
@@ -308,6 +318,8 @@ mod tests {
             ("clown_vomit_gravel", GroundStyle::Gravel),
             ("aquasoil", GroundStyle::Aquasoil),
             ("rock", GroundStyle::Rock),
+            ("dragon_stone", GroundStyle::DragonStone),
+            ("seiryu_stone", GroundStyle::Seiryu),
             ("driftwood", GroundStyle::Driftwood),
             ("air_bubble", GroundStyle::Bubble),
             ("co2_bubble", GroundStyle::Bubble),

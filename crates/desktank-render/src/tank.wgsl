@@ -135,6 +135,8 @@ const STYLE_DRIFTWOOD: i32 = 8;
 const STYLE_BUBBLE: i32 = 9;
 const STYLE_DETRITUS: i32 = 11;
 const STYLE_DEVICE: i32 = 12;
+const STYLE_DRAGON_STONE: i32 = 13;
+const STYLE_SEIRYU: i32 = 14;
 
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
@@ -928,7 +930,7 @@ fn ground_film(
             } else if style == STYLE_GRAVEL || style == STYLE_AQUASOIL {
                 let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
                 shows = row >= loose_top_at(at, mat, open_up, quarter, fine);
-            } else if style == STYLE_ROCK || style == STYLE_DRIFTWOOD {
+            } else if is_stone(style) || style == STYLE_DRIFTWOOD {
                 let own = outline_of(t);
                 shows = own == 0xffffu || rigid_drawn(at, mat, own, quarter, fine);
             } else if style == STYLE_DETRITUS {
@@ -1433,6 +1435,147 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
     return vec4<i32>(up, down, left, right);
 }
 
+// The stone styles: plain rock and the varieties drawn like it (own texture,
+// shared outline and bevels).
+fn is_stone(style: i32) -> bool {
+    return style == STYLE_ROCK || style == STYLE_DRAGON_STONE || style == STYLE_SEIRYU;
+}
+
+// A stone texel's centre in cells, so a texture keeps its size at 2x and 4x.
+fn stone_cell(p: vec2<i32>, fine: bool) -> vec2<f32> {
+    return (vec2<f32>(p) + 0.5) / select(2.0, 4.0, fine);
+}
+
+// A hashed value in [0, 1) at a lattice point.
+fn lattice(i: vec2<i32>) -> f32 {
+    return f32(hash(i) & 1023u) / 1024.0;
+}
+
+// Smooth value noise in [0, 1): one lattice step per unit of `x`.
+fn vnoise(x: vec2<f32>) -> f32 {
+    let i = vec2<i32>(floor(x));
+    let f = fract(x);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(lattice(i), lattice(i + vec2<i32>(1, 0)), u.x);
+    let b = mix(lattice(i + vec2<i32>(0, 1)), lattice(i + vec2<i32>(1, 1)), u.x);
+    return mix(a, b, u.y);
+}
+
+// One lattice of elongated pits for dragon stone: squares of `size` cells (odd
+// rows shifted half a square), each holding a pit with probability `dens`.
+// Returns the pit's ellipse measure (<1 inside, big when none) and the texel's
+// height within it (-1 top to 1 bottom).
+fn dragon_pit(w: vec2<f32>, size: vec2<f32>, scale: f32, salt: i32, dens: f32) -> vec2<f32> {
+    let row = i32(floor(w.y / size.y));
+    let xo = w.x + select(0.0, size.x * 0.5, (row & 1) != 0);
+    let col_i = i32(floor(xo / size.x));
+    let h = hash(vec2<i32>(col_i, row) + vec2<i32>(salt, salt / 2 + 13));
+    if f32(h & 255u) / 255.0 >= dens {
+        return vec2<f32>(9.0, 0.0);
+    }
+    let local = vec2<f32>(xo - f32(col_i) * size.x, w.y - f32(row) * size.y);
+    let r = vec2<f32>(0.55 + f32((h >> 16u) & 7u) / 7.0 * 0.55, 1.1 + f32((h >> 19u) & 7u) / 7.0 * 1.3) * (scale / 0.5);
+    let c = r + (size - r * 2.0) * vec2<f32>(f32((h >> 8u) & 15u) / 15.0, f32((h >> 12u) & 15u) / 15.0);
+    let tilt = (f32((h >> 22u) & 7u) / 7.0 - 0.5) * 0.8;
+    var d = local - c;
+    d.x = d.x + d.y * tilt;
+    let q = d / r;
+    return vec2<f32>(dot(q, q), q.y);
+}
+
+// Dragon stone at `w` (cells): khaki-to-tan layered ridges, ochre patches and
+// deep, dark, elongated pits clustered across the faces. `grain` is the
+// texel's hash and `base` the material colour.
+fn dragon_stone_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
+    let g = f32(grain & 255u) / 255.0 - 0.5;
+    // Strata lean a little and run long: everything stretches along y.
+    let s = vec2<f32>(w.x + w.y * 0.30, w.y);
+    let warp = vnoise(vec2<f32>(s.x * 0.25, s.y * 0.12) + 71.0) * 7.0;
+    let tone = vnoise(vec2<f32>(s.x * 0.30, s.y * 0.10) + 3.1);
+    var k = 0.82 + tone * 0.36 + g * 0.06;
+    // Layered ridges: thin lit crests with a dark crevice line beneath each.
+    let ridge = fract((s.x + warp) * 0.19 + vnoise(s * vec2<f32>(0.05, 0.04)) * 0.6);
+    if vnoise(s * vec2<f32>(0.18, 0.09) + 5.0) > 0.42 {
+        if ridge < 0.06 {
+            k = k * 0.84;
+        } else if ridge < 0.18 {
+            k = k * 1.09;
+        }
+    }
+    // Greyer, cooler tan in the hollows, warmer on the lit faces.
+    var col = base * k * mix(vec3<f32>(0.93, 0.96, 1.0), vec3<f32>(1.04, 1.0, 0.94), tone);
+    // Ochre-orange patches with broken edges.
+    let o = vnoise(s * vec2<f32>(0.30, 0.20) + 29.0) * 0.7 + vnoise(s * vec2<f32>(0.7, 0.5) + 3.0) * 0.3 + g * 0.05;
+    if o > 0.70 {
+        col = col * vec3<f32>(1.17, 0.92, 0.62);
+    } else if o > 0.62 {
+        col = col * vec3<f32>(1.10, 0.95, 0.76);
+    }
+    // Pits, in two sizes: small ones thick on a 4 x 7 lattice and the odd big
+    // one on a 9 x 13 lattice, more where the density noise is high.
+    let dens = clamp(vnoise(w * 0.10 + 5.0) * 2.2 - 0.05, 0.0, 1.0);
+    let big = dragon_pit(w, vec2<f32>(9.0, 13.0), 0.8, 211, dens * 0.9);
+    let small = dragon_pit(w, vec2<f32>(4.0, 7.0), 0.5, 57, dens * 0.55);
+    let pit = select(small, big, big.x < 1.7);
+    if pit.x < 1.0 {
+        // Darkest under the top lip, a little lighter at the bottom.
+        let shallow = select(0.22, 0.0, pit.x < big.x + 0.001 && big.x < 1.7);
+        col = base * vec3<f32>(0.9, 0.72, 0.55) * (0.28 + shallow + 0.12 * clamp(pit.y * 0.5 + 0.5, 0.0, 1.0)) * (1.0 + g * 0.3);
+    } else if pit.x < 1.7 {
+        // Lit lower lip, shadowed upper lip.
+        col = col * select(0.84, 1.14, pit.y > 0.0);
+    }
+    return col;
+}
+
+// Seiryu at `w` (cells): mid-to-dark grey limestone, finely pitted, with pale
+// calcite patches and thin tan veins.
+fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
+    let g = f32(grain & 255u) / 255.0 - 0.5;
+    // Lit grey faces and darker pitted hollows, broadly streaked downwards.
+    let mott = vnoise(w * vec2<f32>(0.45, 0.30) + 7.0);
+    let broad = vnoise(w * vec2<f32>(0.12, 0.07) + 19.0);
+    var col = base * (0.86 + mott * 0.22 + broad * 0.24 + g * 0.09);
+    // Pale, almost white calcite patches with ragged edges.
+    let c = vnoise(w * vec2<f32>(0.20, 0.14) + 13.0) * 0.8 + vnoise(w * 0.50 + 2.0) * 0.2 + g * 0.04;
+    let calcite = c > 0.70;
+    if calcite {
+        col = mix(col, vec3<f32>(0.84, 0.83, 0.79) * (0.94 + mott * 0.12), 0.75);
+    }
+    // Pockets: shallow irregular hollows, clustered, on a 7-cell lattice.
+    let pi = vec2<i32>(floor(w / 7.0));
+    let ph = hash(pi + vec2<i32>(13, 5));
+    if ((ph & 255u) < 120u) && !calcite {
+        let pc = vec2<f32>(2.0 + f32((ph >> 8u) & 15u) / 15.0 * 3.0, 2.0 + f32((ph >> 12u) & 15u) / 15.0 * 3.0);
+        let pr = vec2<f32>(0.9 + f32((ph >> 16u) & 7u) / 7.0 * 0.9, 1.0 + f32((ph >> 19u) & 7u) / 7.0 * 1.2);
+        let d = w - vec2<f32>(pi) * 7.0 - pc;
+        if dot(d / pr, d / pr) < 1.0 {
+            col = col * 0.72;
+        }
+    }
+    // Fine pits: one small pit per 2-cell lattice square at most.
+    let li = vec2<i32>(floor(w / 2.4));
+    let h = hash(li + vec2<i32>(37, 91));
+    let rate = select(0.55, 0.12, calcite);
+    if f32(h & 255u) / 255.0 < rate {
+        let ctr = vec2<f32>(0.6 + f32((h >> 8u) & 15u) / 15.0 * 1.2, 0.6 + f32((h >> 12u) & 15u) / 15.0 * 1.2);
+        let rad = 0.30 + f32((h >> 16u) & 7u) / 7.0 * 0.25;
+        let d = w - vec2<f32>(li) * 2.4 - ctr;
+        let e = dot(d, d) / (rad * rad);
+        if e < 1.0 {
+            col = col * 0.50;
+        } else if e < 1.8 {
+            col = col * select(0.94, 1.10, d.y > 0.0);
+        }
+    }
+    // Thin wandering tan veins, in some places only.
+    let vf = vnoise(w * 0.16 + 41.0) * 0.8 + vnoise(w * 0.45 + 8.0) * 0.2;
+    if abs(vf - 0.5) < 0.016 && vnoise(w * 0.09 + 23.0) > 0.40 {
+        col = mix(col, vec3<f32>(0.74, 0.61, 0.44), 0.8);
+    }
+    return col;
+}
+
 // The colour of a non-plant cell: at scale 1 a flat palette lookup with
 // whole-cell depth darkening; at scale >= 2 (2x2) and fine scales (4x4),
 // sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
@@ -1747,13 +1890,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         return vec4<f32>(rgb, 1.0);
     }
 
-    if style == STYLE_ROCK {
+    if is_stone(style) {
         // Sub-cell outline: round brushes draw round stones.
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
             return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
         }
-        // World-space faceted stone strata + fine mineral grain.
+        // World-space texture: faceted strata and grain for plain rock, a
+        // stone-specific look for the varieties. Bevels shade it below.
         let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
         let grain = hash(p);
         let cell_n = (f32((v >> 2u) & 3u) - 1.5) * 0.018;
@@ -1761,6 +1905,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         // Occasional dark micro-crack along a facet seam.
         if ((facet >> 4u) & 15u) == 0u && ((grain >> 3u) & 3u) == 0u {
             k = k * 0.86;
+        }
+        var stone = base;
+        if style == STYLE_DRAGON_STONE {
+            stone = dragon_stone_colour(stone_cell(p, fine), grain, base);
+            k = 1.0 + (f32(facet & 7u) - 3.5) * 0.012 + cell_n;
+        } else if style == STYLE_SEIRYU {
+            stone = seiryu_colour(stone_cell(p, fine), grain, base);
+            k = 1.0 + (f32(facet & 7u) - 3.5) * 0.018 + cell_n;
         }
         // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
         if fine {
@@ -1792,7 +1944,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
                 k = k * 0.90;
             }
         }
-        let rgb = clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        let rgb = clamp(stone * k, vec3<f32>(0.0), vec3<f32>(1.0));
         return vec4<f32>(rgb, 1.0);
     }
 
@@ -3035,7 +3187,7 @@ fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
     }
     let style = flags & 127;
     let own = outline_of(t);
-    if view.scale < 2.0 || own == 0xffffu || (style != STYLE_ROCK && style != STYLE_DRIFTWOOD) {
+    if view.scale < 2.0 || own == 0xffffu || (!is_stone(style) && style != STYLE_DRIFTWOOD) {
         return true;
     }
     let mat = i32(round(t.r * 255.0));
