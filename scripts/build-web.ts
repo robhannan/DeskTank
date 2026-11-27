@@ -117,6 +117,31 @@ if (legacy) {
   await fs.writeFile(index, html.replace('<html lang="en">', '<html lang="en" data-build="webos">'));
 }
 
+// Stamp the commit into the Settings panel's build line (web/index.html's
+// @@BUILD_…@@ placeholders): static text, so no runtime cost or fetch.
+{
+  const git = $({ nothrow: true, quiet: true });
+  const out = async (cmd: Promise<{ exitCode: number | null; stdout: string }>) => {
+    const r = await cmd;
+    return r.exitCode === 0 ? r.stdout.trim() : "";
+  };
+  const env = process.env.GITHUB_SHA?.trim();
+  const full = env || await out(git`git rev-parse HEAD`);
+  const short = env ? env.slice(0, 7) : await out(git`git rev-parse --short HEAD`);
+  const dirty = short !== "" && await out(git`git status --porcelain`) !== "";
+  const label = short === "" ? "unknown" : dirty ? `${short}-dirty` : short;
+  const index = path.join(site, "index.html");
+  const html = await fs.readFile(index, "utf8");
+  const link = /<a id="build-commit"[^>]*>@@BUILD_LABEL@@<\/a>/;
+  if (!link.test(html)) throw new Error("index.html: no build line to stamp");
+  // `unknown` has nothing to link to; the others link the base commit.
+  const stamped = short === ""
+    ? html.replace(link, label)
+    : html.replace("@@BUILD_SHA@@", full || short).replace("@@BUILD_LABEL@@", label);
+  if (stamped.includes("@@BUILD_")) throw new Error("index.html: unstamped build placeholder");
+  await fs.writeFile(index, stamped);
+}
+
 // Stamp the service worker with the deployable files and their contents.
 // Including the worker logic gives each changed build its own cache.
 const workerPath = path.join(site, "sw.js");
