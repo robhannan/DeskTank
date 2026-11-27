@@ -28,6 +28,7 @@ mod plant_appearance;
 mod plant_forms;
 mod plant_individuals;
 mod plants;
+mod presets;
 mod pursuit;
 mod quirks;
 mod save;
