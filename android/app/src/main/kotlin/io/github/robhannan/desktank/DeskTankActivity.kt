@@ -1,6 +1,7 @@
 package io.github.robhannan.desktank
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.MotionEvent
@@ -17,12 +18,20 @@ class DeskTankActivity : Activity(), SurfaceHolder.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Native.initialize(this)
+        Native.applyOled(this, token, intent)
         val view = SurfaceView(this)
         view.holder.addCallback(this)
         // Give the callback coordinates relative to the surface view.
         view.setOnTouchListener { _, event -> handleTouch(event) }
         setContentView(view)
         enterImmersiveMode()
+    }
+
+    /** `singleTask`: a later `am start --ez oled ...` arrives here, not in onCreate. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        Native.applyOled(this, token, intent)
     }
 
     override fun onResume() {
