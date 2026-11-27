@@ -66,7 +66,7 @@
     inside the zone and the side walls;
   - Neon tetras choose among wandering, foraging and schooling (#433).
     Hunger satisfaction comes from feeding satiety. Social satisfaction
-    reflects up to two nearby schoolmates in the steering snapshot, measured
+    reflects the last decision-time observation of up to two schoolmates, measured
     within two and a half adult body lengths. Inspect reads both as 0–100%
     from the simulation. Species weights and stable individual quirks scale
     the deficits used in the choice. The fish scores available food and

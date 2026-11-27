@@ -1134,6 +1134,7 @@ impl World {
     pub fn release_creature(&mut self, id: CreatureId) {
         if let Some(c) = self.creature_mut(id) {
             c.held_until = 0;
+            c.needs.interrupt();
             c.retarget = 0;
             c.food = None;
         }
