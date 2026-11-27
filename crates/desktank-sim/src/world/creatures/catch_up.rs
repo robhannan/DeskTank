@@ -41,6 +41,8 @@ impl World {
                 let Some(k) = self.kind(c.species).copied() else {
                     return true;
                 };
+                // There is no steering or new social observation while away.
+                c.needs.interrupt();
                 let lifespan = self.creature_lifespan(c);
                 self.age_and_grow(c, &k, lifespan, ticks, &mut changed);
                 if c.age < lifespan {

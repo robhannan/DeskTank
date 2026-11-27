@@ -440,6 +440,7 @@ impl World {
         rng: &mut Pcg32,
     ) -> (i32, i32, i32) {
         if let Some(target) = super::pursuit::flee_target(k, c) {
+            c.needs.interrupt();
             return target;
         }
         if c.retarget == 0 || dist(c.tx - c.x, c.ty - c.y) <= REACHED {
@@ -456,6 +457,7 @@ impl World {
                 if dx == 0 && (dy == 0 || k.zone == Zone::Bottom) {
                     dx = if c.facing_left { -ONE } else { ONE };
                 }
+                c.needs.interrupt();
                 return (c.x + dx * 8, c.y + dy * 8, k.top);
             }
         }
@@ -476,15 +478,26 @@ impl World {
         if let Some(x) = self.climb_spot(k, c) {
             return (x, c.y, k.top);
         }
-        if let Some(i) = c.food {
-            let (x, mut y) = self.food_centre(i);
-            if k.zone != Zone::Bottom && self.is_floating_leaf(i) {
-                // Bite from below. A leaf can sit above the waterline or
-                // beside a solid leaf in the same band.
-                let reach = i32::try_from(k.reach).unwrap_or(0);
-                y += extent(k, c.turn).1 * ONE / 2 + reach * ONE;
-            }
-            return (x, y, k.top);
+        let food = c.food.map(|i| self.food_steering_target(k, c, i));
+        if k.needs.is_some() {
+            let food = food.or_else(|| self.chase_target(k, c));
+            let action = self.choose_need_action(k, c, food, rng);
+            let straying = c.stray > 0;
+            c.stray = c.stray.saturating_sub(1);
+            let target = match action {
+                super::needs::Action::Forage => {
+                    if c.food.is_none() {
+                        self.steer_to_quarry_band(k, c);
+                    }
+                    food
+                }
+                super::needs::Action::School if !straying => self.school_target(k, c),
+                _ => None,
+            };
+            return target.unwrap_or((c.tx, c.ty, k.cruise));
+        }
+        if let Some(target) = food {
+            return target;
         }
         // A chase (a betta driving off a rival) comes before the cursor.
         if let Some(target) = self.chase_target(k, c) {
@@ -508,6 +521,16 @@ impl World {
             k.cruise
         };
         (c.tx, if k.zone == Zone::Bottom { c.y } else { c.ty }, speed)
+    }
+
+    fn food_steering_target(&self, k: &Kind, c: &Creature, index: u32) -> (i32, i32, i32) {
+        let (x, mut y) = self.food_centre(index);
+        if k.zone != Zone::Bottom && self.is_floating_leaf(index) {
+            // Bite from below, where a body can reach a surface leaf.
+            let reach = i32::try_from(k.reach).unwrap_or(0);
+            y += extent(k, c.turn).1 * ONE / 2 + reach * ONE;
+        }
+        (x, y, k.top)
     }
 
     /// Aim along the line from the cursor to the fish, one and a half

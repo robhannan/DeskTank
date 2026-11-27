@@ -24,7 +24,7 @@
 //! `save::v12::Save` for 12, `save::v13::Save` for 13, `save::v14::Save`
 //! for 14, `save::v15::Save` for 15, `save::v16::Save` for 16,
 //! `save::v17::Save` for 17, `save::v18::Save` for 18,
-//! `save::v19::Save` for 19).
+//! `save::v19::Save` for 19, `save::v20::Save` for 20).
 //! The grid inside it is stored
 //! as planes: material and state run-length encoded, colour noise as its
 //! difference from the noise a fresh tank has there (mostly zero runs for
@@ -56,7 +56,8 @@
 //! material cells become water and surfaces start bare. Version 18 adds
 //! each creature's swim pitch. Older saves start with level swim poses.
 //! Version 19 adds the time ratio and its fractional life-tick remainder;
-//! older saves run at ratio 1.
+//! older saves run at ratio 1. Version 20 adds social satisfaction and
+//! action commitment. Older saves start without either.
 //! Random streams are derived from `(seed, tick, stream)` (SPEC
 //! §2.1), so no generator state is stored. Lookups built from the material,
 //! species and reaction tables are rebuilt on load; the tables come from
@@ -118,6 +119,7 @@ pub(crate) mod v17;
 pub(crate) mod v18;
 pub(crate) mod v19;
 pub(crate) mod v2;
+pub(crate) mod v20;
 pub(crate) mod v3;
 pub(crate) mod v4;
 pub(crate) mod v5;
@@ -129,7 +131,7 @@ pub(crate) mod v9;
 /// The first eight bytes of every save.
 pub const MAGIC: [u8; 8] = *b"DeskTank";
 /// The format version [`encode`] writes.
-pub const FORMAT_VERSION: u16 = 19;
+pub const FORMAT_VERSION: u16 = 20;
 /// Envelope header size in bytes.
 pub const HEADER_LEN: usize = 20;
 /// Largest uncompressed payload a save may declare (256 MiB): bounds the
@@ -176,7 +178,7 @@ pub enum SaveError {
 /// Encodes `world` as a save file of the current [`FORMAT_VERSION`].
 #[must_use]
 pub fn encode(world: &World) -> Vec<u8> {
-    let snapshot = world.to_v19();
+    let snapshot = world.to_v20();
     // Serialising plain data to a Vec can't fail.
     let raw = postcard::to_allocvec(&snapshot).unwrap_or_default();
     wrap(FORMAT_VERSION, &raw)
@@ -207,6 +209,7 @@ fn wrap(version: u16, raw: &[u8]) -> Vec<u8> {
 pub fn decode(bytes: &[u8], materials: MaterialTable) -> Result<World, SaveError> {
     let (version, payload) = open(bytes)?;
     let mut world = match version {
+        20 => World::from_v20(decode_snapshot(payload)?, materials)?,
         19 => World::from_v19(decode_snapshot(payload)?, materials)?,
         18 => World::from_v18(decode_snapshot(payload)?, materials)?,
         17 => World::from_v17(decode_snapshot(payload)?, materials)?,
@@ -417,7 +420,7 @@ mod tests {
         let migrated = decode(&old, materials.clone()).unwrap();
         assert!((migrated.time_ratio() - 1.0).abs() < f32::EPSILON);
         assert_eq!(migrated.state_hash(), world.state_hash());
-        assert_eq!(check(&encode(&migrated)), Ok(19));
+        assert_eq!(check(&encode(&migrated)), Ok(FORMAT_VERSION));
 
         // Ratio and fraction round-trip, and the tank carries on the same.
         world.set_time_ratio(2.5);

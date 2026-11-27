@@ -239,7 +239,13 @@ impl World {
         if c.quarry.is_none() && c.pursuit == 0 && c.fear == 0 {
             c.quarry = self.find_prey(k, c).or_else(|| self.find_intruder(k, c));
         }
-        // Head for the quarry's band, unless shifting past a plant.
+        if k.needs.is_none() {
+            self.steer_to_quarry_band(k, c);
+        }
+    }
+
+    /// Head for the quarry's band, unless shifting past a plant.
+    pub(super) fn steer_to_quarry_band(&self, k: &Kind, c: &mut Creature) {
         if let Some(n) = c.quarry.and_then(|q| self.near(q))
             && c.dodging == 0
         {

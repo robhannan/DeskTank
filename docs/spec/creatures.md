@@ -64,6 +64,16 @@
     with the lead's pace, splitting now and then into groups that travel
     apart (a sub-lead each) and rejoining, with followers always aiming
     inside the zone and the side walls;
+  - Neon tetras choose among wandering, foraging and schooling (#433).
+    Hunger satisfaction comes from feeding satiety. Social satisfaction
+    reflects up to two nearby schoolmates in the steering snapshot, measured
+    within two and a half adult body lengths. Inspect reads both as 0–100%
+    from the simulation. Species weights and stable individual quirks scale
+    the deficits used in the choice. The fish scores available food and
+    schoolmates with a travel-distance discount and small seeded variation
+    near ties. It commits for roughly one second, with an early decision if
+    its opportunity disappears and an immediate interruption on danger.
+    Existing movement and feeding rules still apply.
   - shoaling for shoalers: each wanders on its own and often picks a
     target near a mate of its own stage (young with young, adults with
     adults). A straggler aims near its closest such mate. Surface

@@ -24,6 +24,10 @@ speed = 5.0
 max_speed = 10.0
 diet = ["flake_food", "bloodworm", "brine_shrimp"]
 
+[needs]
+hunger = 180
+social = 100
+
 # Egg scatterer: eggs hatch in about a day (real clutches of 60–130).
 # Broods are scaled down for a desktop tank; days are on the life clock.
 [breeding]

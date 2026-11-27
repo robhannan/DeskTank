@@ -46,6 +46,8 @@ pub(super) mod salt {
     pub const PATIENCE: u64 = 0x5502;
     pub const BEDTIME: u64 = 0x5600;
     pub const WAKE: u64 = 0x5601;
+    pub const HUNGER_WEIGHT: u64 = 0x5700;
+    pub const SOCIAL_WEIGHT: u64 = 0x5701;
 }
 
 /// Period of a creature's mood (how brisk it feels), in ticks.

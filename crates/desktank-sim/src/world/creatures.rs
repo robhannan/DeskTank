@@ -77,6 +77,8 @@ mod habits;
 mod lifecycle;
 mod live;
 mod naming;
+mod needs;
+pub use needs::{Need, NeedReading};
 pub mod night;
 mod panes;
 pub mod pursuit;
@@ -306,6 +308,7 @@ pub struct Creature {
     woken: u16,
     /// The pane it crawls, if any (see [`panes`]).
     pane: Pane,
+    needs: needs::State,
 }
 
 /// What a creature added by a host, a script or a test is like (see
@@ -513,6 +516,7 @@ struct Kind {
     /// Front and back depth bands it keeps to (D21), inclusive.
     bands: (u8, u8),
     schooling: bool,
+    needs: Option<crate::species::NeedWeights>,
     shoaling: bool,
     shy: bool,
     curious: bool,
@@ -706,6 +710,7 @@ impl Creatures {
                 depth: s.depth,
                 bands: (s.bands[0], s.bands[1]),
                 schooling: s.temperament == Temperament::Schooling,
+                needs: s.needs,
                 shoaling: s.temperament == Temperament::Shoaling,
                 shy: s.shy,
                 curious: s.curious,
@@ -1070,6 +1075,7 @@ impl World {
             asleep: false,
             woken: 0,
             pane: Pane::Off,
+            needs: needs::State::default(),
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -1430,6 +1436,7 @@ impl World {
                 asleep: false,
                 woken: 0,
                 pane: Pane::Off,
+                needs: needs::State::default(),
             });
         }
         let corpses = self.load_corpses(saved.corpses)?;
@@ -1530,6 +1537,10 @@ impl World {
                 c.sire[0],
                 c.sire[1],
             ]);
+            if c.needs != needs::State::default() {
+                h.write(b"n");
+                h.write(&c.needs.encode());
+            }
             // Only pane crawlers hash their pane, so other tanks hash as
             // before.
             if c.pane != Pane::Off {
@@ -1868,16 +1879,7 @@ impl World {
         } else if moved != Move::Moved {
             (c.vx, c.vy) = (0, 0);
             if moved == Move::Blocked && !flipping {
-                if let Some(f) = c.food.take() {
-                    c.ignore = Some(f);
-                }
-                self.pursuit_blocked(&k, c);
-                self.pick_target(&k, c, &mut rng);
-                // A schooler that can't reach its school strays for a while
-                // on its new target, out of whatever pocket holds it.
-                if k.schooling {
-                    c.stray = u16::try_from(c.retarget).unwrap_or(0);
-                }
+                self.blocked_steering(&k, c, &mut rng);
             }
         }
         if swimming && moved == Move::Moved {
@@ -1886,6 +1888,21 @@ impl World {
             update_facing(c, sponge);
         }
         (c.x, c.y, c.facing_left, c.turn) != before
+    }
+
+    fn blocked_steering(&self, k: &Kind, c: &mut Creature, rng: &mut Pcg32) {
+        if k.needs.is_none() || c.needs.action == needs::Action::Forage {
+            if let Some(food) = c.food.take() {
+                c.ignore = Some(food);
+            }
+            self.pursuit_blocked(k, c);
+        }
+        self.pick_target(k, c, rng);
+        // A schooler that can't reach its school strays on its new target
+        // for a while, out of whatever pocket holds it.
+        if k.schooling && (k.needs.is_none() || c.needs.action == needs::Action::School) {
+            c.stray = u16::try_from(c.retarget).unwrap_or(0);
+        }
     }
 
     /// Steer, apply the current and step, giving up a blocked depth dodge
