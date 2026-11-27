@@ -78,7 +78,7 @@ mod lifecycle;
 mod live;
 mod naming;
 mod needs;
-pub use needs::{Need, NeedReading};
+pub use needs::{Need, NeedLevel, NeedReading};
 pub mod night;
 mod panes;
 pub mod pursuit;

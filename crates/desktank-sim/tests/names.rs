@@ -153,7 +153,17 @@ fn the_card_shows_the_life_cycle_and_young_are_born_unnamed() {
     );
     // Neon tetras have one morph, so the card leaves it out.
     let tetra = w.creature_card(ids[0]).unwrap();
-    assert_eq!((tetra.name, tetra.morph), (None, None));
+    assert_eq!((tetra.name.clone(), tetra.morph.clone()), (None, None));
+    // Its needs are in the summary as text, so they do not depend on colour.
+    let [fed, social] = tetra.needs[..] else {
+        panic!("a tetra shows two needs");
+    };
+    assert!(
+        tetra
+            .summary()
+            .contains(&format!(" · {} · {}", fed.describe(), social.describe()))
+    );
+    assert!(!card.summary().contains("Fed"), "a guppy shows none");
     assert!(!w.creature_card(male).unwrap().female);
     assert!(w.creature_card(CreatureId(999)).is_none());
 
