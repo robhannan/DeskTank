@@ -1,0 +1,39 @@
+//! All `desktank-sim` integration tests, built as one binary (one link and one
+//! `.dSYM` instead of one per file).
+
+mod algae;
+mod blinker;
+mod bodies;
+mod breathing;
+mod breeding;
+mod bubbler;
+mod catch_up;
+mod crabs;
+mod creatures;
+mod depth;
+mod driftwood;
+mod ecology;
+mod epiphytes;
+mod filtration;
+mod floaters;
+mod hardscape;
+mod hob_filter;
+mod lifecycle;
+mod live_food;
+mod marimo_lotus;
+mod movement;
+mod names;
+mod night;
+mod plant_appearance;
+mod plant_forms;
+mod plant_individuals;
+mod plants;
+mod pursuit;
+mod quirks;
+mod save;
+mod schooling;
+mod sponge_filter;
+mod surface_ripples;
+mod tetra_feeding;
+mod time_ratio;
+mod under_gravel_filter;
