@@ -828,7 +828,7 @@ impl Renderer {
                 &image,
                 timer.map(GpuTimer::begin_writes),
             );
-            self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
+            self.draw_view(&mut pass, &self.bind_group, source_layout.scale, front_pass);
         }
         // Where the view puts the grid, for the overlay's brush outline.
         let (sx, sy) = view.pixels_per_cell(size);
