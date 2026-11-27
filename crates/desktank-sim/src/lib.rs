@@ -16,6 +16,7 @@ pub mod material;
 pub mod palette;
 mod placeable;
 pub mod plants;
+pub mod presets;
 mod rng;
 pub mod save;
 pub mod scene;
@@ -43,6 +44,7 @@ pub use plants::{
     Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,
     Propagule,
 };
+pub use presets::{NewTankConfig, TankPreset, dimensions_cm};
 pub use script::{Player, Script, ScriptError};
 pub use species::{
     Breeding, BreedingMode, Glow, Look, NeedWeights, RestSpot, Species, SpeciesError, SpeciesId,
