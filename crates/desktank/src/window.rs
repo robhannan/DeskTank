@@ -10,8 +10,9 @@
 //!
 //! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
 //! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
-//! drag scoops, the scroll wheel or a two-finger trackpad scroll sets the
-//! brush size. The palette in the top-left corner is a two-level tree
+//! drag scoops. Scroll or press `[` / `]` to resize the brush or step
+//! magnification with Magnify selected. The palette in the top-left corner
+//! is a two-level tree
 //! (`desktank_sim::tools::Tools::palette_tree`): its top row picks a
 //! category (click a tab, or `G` / `Shift+G` for the next or previous one),
 //! the row below it picks a sub-category when the category has several
@@ -1540,17 +1541,16 @@ impl ApplicationHandler<Wake> for App {
                             s.select_slot((n + 9) % 10);
                         } else if c.eq_ignore_ascii_case("p") {
                             s.next_plant_propagule();
-                        } else if s.tools.tool() == Tool::Magnify
-                            && matches!(c.as_str(), "+" | "=" | "]")
-                        {
-                            if s.tools.step_zoom(1) {
-                                s.show_magnify();
+                        } else if !s.command() && !s.modifiers.alt_key() {
+                            match size_key(s.tools.tool(), c.as_str()) {
+                                Some(SizeKey::Brush(steps)) => {
+                                    s.tools.resize(steps);
+                                }
+                                Some(SizeKey::Zoom(steps)) if s.tools.step_zoom(steps) => {
+                                    s.show_magnify();
+                                }
+                                _ => {}
                             }
-                        } else if s.tools.tool() == Tool::Magnify
-                            && matches!(c.as_str(), "-" | "[")
-                            && s.tools.step_zoom(-1)
-                        {
-                            s.show_magnify();
                         }
                     }
                     _ => {}
@@ -1663,6 +1663,21 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
+enum SizeKey {
+    Brush(i32),
+    Zoom(i32),
+}
+
+fn size_key(tool: Tool, key: &str) -> Option<SizeKey> {
+    match (tool, key) {
+        (Tool::Magnify, "[" | "-") => Some(SizeKey::Zoom(-1)),
+        (Tool::Magnify, "]" | "+" | "=") => Some(SizeKey::Zoom(1)),
+        (_, "[") => Some(SizeKey::Brush(-1)),
+        (_, "]") => Some(SizeKey::Brush(1)),
+        _ => None,
+    }
+}
+
 /// The Konami detector's view of a key; `None` for a modifier on its own
 /// (Shift for a capital B doesn't break the code).
 fn konami_key(key: &Key) -> Option<CheatKey> {
@@ -1711,7 +1726,52 @@ fn device_hint(world: &World, id: DeviceId) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use desktank_sim::{DeviceKind, MaterialTable, WorldConfig};
+    use desktank_sim::tools::{MAX_RADIUS, MIN_RADIUS, ZOOM_LEVELS};
+    use desktank_sim::{DeviceKind, MaterialId, MaterialTable, WorldConfig};
+
+    #[test]
+    fn bracket_keys_resize_and_clamp_the_brush() {
+        for tool in [Tool::Pour, Tool::Scoop, Tool::Glue, Tool::Inspect] {
+            let mut tools = Tools::new(MaterialId(1));
+            tools.select(PaletteItem::Tool(tool));
+            tools.resize(i32::MIN);
+            for (key, radius) in [("[", MIN_RADIUS), ("]", MIN_RADIUS + 1), ("[", MIN_RADIUS)] {
+                let Some(SizeKey::Brush(steps)) = size_key(tools.tool(), key) else {
+                    panic!("{key} should resize the brush for {tool:?}");
+                };
+                tools.resize(steps);
+                assert_eq!(tools.radius(), radius);
+            }
+            tools.resize(i32::MAX);
+            let Some(SizeKey::Brush(steps)) = size_key(tools.tool(), "]") else {
+                panic!("] should resize the brush for {tool:?}");
+            };
+            assert!(!tools.resize(steps));
+            assert_eq!(tools.radius(), MAX_RADIUS);
+        }
+    }
+
+    #[test]
+    fn magnify_size_keys_step_zoom() {
+        let mut tools = Tools::new(MaterialId(1));
+        tools.select(PaletteItem::Tool(Tool::Magnify));
+        for (key, level) in [("]", 1), ("+", 2), ("=", 3), ("-", 2), ("[", 1)] {
+            let Some(SizeKey::Zoom(steps)) = size_key(tools.tool(), key) else {
+                panic!("{key} should step magnification");
+            };
+            assert!(tools.step_zoom(steps));
+            assert_eq!(tools.zoom(), ZOOM_LEVELS[level]);
+        }
+    }
+
+    #[test]
+    fn zoom_only_keys_do_nothing_for_other_tools() {
+        for tool in [Tool::Pour, Tool::Scoop, Tool::Glue, Tool::Inspect] {
+            for key in ["+", "=", "-"] {
+                assert!(size_key(tool, key).is_none());
+            }
+        }
+    }
 
     #[test]
     fn apply_daylight_lights_the_tank_for_the_sun_only_when_synced_with_a_place() {
