@@ -1224,7 +1224,10 @@ mod tests {
         let (cw, ch) = (48_i64, 64_i64);
         let bg = crate::hud::BACKGROUND;
         // Tank pixels are shown at 4x (scale 2) or 2x (scale 4): the same size.
-        let tank_shot = |name: &str, scale: u32, stage: desktank_sim::PlantStage| -> Vec<u8> {
+        let tank_shot = |name: &str,
+                         scale: u32,
+                         stage: desktank_sim::PlantStage|
+         -> (Vec<u8>, Option<(usize, usize)>) {
             let m = MaterialTable::builtin().unwrap();
             let mut world = desktank_sim::World::new(
                 desktank_sim::WorldConfig {
@@ -1254,11 +1257,20 @@ mod tests {
                 .place_plant(id, stage, cw / 2, 57, false)
                 .unwrap()
                 .unwrap();
+            // The lowest stem cell off the main stem: where a side shoot starts.
+            let stem = world.materials().id("stem").unwrap();
+            let stub = (0..ch as usize)
+                .rev()
+                .flat_map(|y| (0..cw as usize).map(move |x| (x, y)))
+                .find(|&(x, y)| x != cw as usize / 2 && world.cell(x, y).unwrap().material == stem);
             let mut tank = crate::Tank::new(world, crate::TankConfig::default());
             tank.set_time_of_day(12 * 60);
             tank.step();
-            tank.capture(&gpu, (cw as u32 * scale, ch as u32 * scale))
-                .unwrap()
+            (
+                tank.capture(&gpu, (cw as u32 * scale, ch as u32 * scale))
+                    .unwrap(),
+                stub,
+            )
         };
         let stems: Vec<&PlantSpecies> = t
             .iter()
@@ -1314,11 +1326,10 @@ mod tests {
                 desktank_sim::PlantStage::Mature,
                 desktank_sim::PlantStage::Juvenile,
             );
-            let (two, four) = (
-                tank_shot(&sp.name, 2, mature),
-                tank_shot(&sp.name, 4, mature),
-            );
-            let (two_j, four_j) = (tank_shot(&sp.name, 2, young), tank_shot(&sp.name, 4, young));
+            let (two, _) = tank_shot(&sp.name, 2, mature);
+            let (four, stub) = tank_shot(&sp.name, 4, mature);
+            let (two_j, _) = tank_shot(&sp.name, 2, young);
+            let (four_j, _) = tank_shot(&sp.name, 4, young);
             let (cwu, chu) = (cw as usize, ch as usize);
             // The whole plant: sprite and tank at the same pixel size (the
             // scale-2 tank shows a texel as a pixel, as the sprite does),
@@ -1361,6 +1372,18 @@ mod tests {
                 &img,
                 (total_w, panel_h),
             );
+            // A close look at a side shoot's lean, where the plant has one.
+            if let Some((sx, sy)) = stub {
+                let (bw, bh, bk) = (20, 16, 10);
+                let bx = sx.saturating_sub(10).min(cwu - bw);
+                let by = sy.saturating_sub(13).min(chu - bh);
+                let b = up(&four, cwu * 4, (bx * 4, by * 4, bw * 4, bh * 4), bk);
+                write(
+                    format!("{prefix}-{}-branch.png", sp.name),
+                    &b,
+                    (bw * 4 * bk, bh * 4 * bk),
+                );
+            }
             // A close look at the plant's upper half.
             let (zx, zy, zw, zh) = (cwu / 2 - 14, 14, 28, 20);
             let zk = 8;
