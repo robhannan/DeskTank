@@ -175,6 +175,9 @@ fn plant(page: &mut Page, sp: &PlantSpecies, materials: &MaterialTable) {
     page.plant_sprite(size, &pixels);
     page.field("Form:", sp.describe_form());
     page.field("Needs:", &sp.describe_requirements(materials));
+    if let Some(substrates) = sp.describe_rooting_substrates(materials) {
+        page.field("Roots in:", &substrates);
+    }
     page.paragraph(&sp.description, BODY);
 }
 
@@ -573,6 +576,8 @@ mod tests {
                 sp.describe_form().to_owned(),
                 sp.describe_requirements(m),
             ]
+            .into_iter()
+            .chain(sp.describe_rooting_substrates(m))
         });
         creatures
             .chain(plants)
@@ -583,6 +588,7 @@ mod tests {
                     "Behaviour:",
                     "Needs:",
                     "Form:",
+                    "Roots in:",
                     "male",
                     "female",
                 ]
