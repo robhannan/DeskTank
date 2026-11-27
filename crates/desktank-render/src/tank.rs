@@ -992,9 +992,12 @@ impl Tank {
         let world_wanted = self.frame_wanted();
         let sway_on = self.sway_active();
         let sway_wanted = sway_on && self.sway.frame_due(now);
-        // Hiding gates only sway (via `sway_active`): the host pauses the
+        // Hiding gates sway (via `sway_active`) and a touring tank's frames
+        // (the tour's view is only worth drawing to be seen, and it keeps
+        // the frame waiting for the return); otherwise the host pauses the
         // tank itself when hidden, and a world change still needs its frame.
-        let wanted = world_wanted || sway_wanted;
+        let hidden_tour = self.tour.is_some() && self.sway.hidden();
+        let wanted = (world_wanted || sway_wanted) && !hidden_tour;
         let redraw = wanted && self.pacer.frame_allowed(now);
         if redraw {
             self.pacer.frame_drawn(now);
@@ -2033,22 +2036,23 @@ mod tests {
 
     #[test]
     fn a_hidden_tank_neither_asks_for_frames_nor_advances_the_tour() {
-        let mut tank = touring_tank(0, TourSettings::default());
-        count_frames_every(&mut tank, Duration::ZERO, 5, 10);
-        tank.set_hidden(true);
-        let view = tank.camera();
-        let start = Duration::from_secs(5);
-        // Drain a frame the tour had already asked for, then nothing more.
-        count_frames_every(&mut tank, start, 1, 10);
-        let frames = count_frames_every(&mut tank, start + Duration::from_secs(1), 30, 10);
-        assert_eq!(frames, 0, "no frames while hidden");
-        assert_eq!(tank.camera(), view, "the tour stood still");
-        // Back in view, it redraws and goes on.
-        tank.set_hidden(false);
-        assert!(tank.frame_wanted());
-        let frames = count_frames_every(&mut tank, start + Duration::from_secs(31), 5, 10);
-        assert!(frames > 50, "{frames}");
-        assert_ne!(tank.camera(), view);
+        // With nothing swimming, and with fish whose moves would want frames.
+        for fish in [0, 3] {
+            let mut tank = touring_tank(fish, TourSettings::default());
+            count_frames_every(&mut tank, Duration::ZERO, 5, 10);
+            tank.set_hidden(true);
+            let view = tank.camera();
+            let start = Duration::from_secs(5);
+            let frames = count_frames_every(&mut tank, start, 30, 10);
+            assert_eq!(frames, 0, "{fish} fish: no frames while hidden");
+            assert_eq!(tank.camera(), view, "the tour stood still");
+            // Back in view, it redraws and goes on.
+            tank.set_hidden(false);
+            assert!(tank.frame_wanted());
+            let frames = count_frames_every(&mut tank, start + Duration::from_secs(30), 5, 10);
+            assert!(frames > 50, "{fish} fish: {frames}");
+            assert_ne!(tank.camera(), view);
+        }
     }
 
     #[test]
