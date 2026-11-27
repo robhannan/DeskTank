@@ -131,6 +131,10 @@ pub struct Renderer {
     /// the runner and floating leaf parts, for the shader's plant shapes
     /// (-1 if missing).
     plant_parts: [f32; 8],
+    /// Material ids drawn as stone varieties (`palette::variety_stones`).
+    variety_stones: [bool; palette::SIDE],
+    /// Whether any cell holds one, as of the last upload that changed cells.
+    stone_varieties_visible: bool,
     /// Uniform bytes last written.
     view: Vec<u8>,
     /// Uniform bytes last written for the magnifier pass.
@@ -250,6 +254,8 @@ impl Renderer {
             plants,
             plant_tints,
             plant_parts,
+            variety_stones: palette::variety_stones(world.materials()),
+            stone_varieties_visible: false,
             view: Vec::new(),
             lens_view: Vec::new(),
             scratch: Vec::new(),
@@ -340,6 +346,11 @@ impl Renderer {
             y1: world.height(),
         };
         let cells = world.cells();
+        if !dirty.is_empty() {
+            // Cells changed: look for variety stones again (stops at the first).
+            let stones = &self.variety_stones;
+            self.stone_varieties_visible = cells.iter().any(|c| stones[usize::from(c.material.0)]);
+        }
         let (scratch, band_scratch) = (&mut self.scratch, &mut self.band_scratch);
         let (texture, bands) = (&self.cells, &self.bands);
         dirty.take(|r| {
@@ -792,7 +803,7 @@ impl Renderer {
         let Some(view) = camera else {
             self.offscreen = None;
             let mut pass = begin_pass(encoder, "tank", target, timer.map(GpuTimer::pass_writes));
-            self.draw_view(&mut pass, &self.bind_group, front_pass);
+            self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
             if let Some(ml) = lens_layout {
                 self.draw_lens(&mut pass, &ml, front_pass);
             }
@@ -817,7 +828,7 @@ impl Renderer {
                 &image,
                 timer.map(GpuTimer::begin_writes),
             );
-            self.draw_view(&mut pass, &self.bind_group, front_pass);
+            self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
         }
         // Where the view puts the grid, for the overlay's brush outline.
         let (sx, sy) = view.pixels_per_cell(size);
@@ -956,7 +967,7 @@ impl Renderer {
             ml.lens_size.0,
             ml.lens_size.1,
         );
-        self.draw_view(pass, &self.lens_bind_group, front_pass);
+        self.draw_view(pass, &self.lens_bind_group, ml.scale, front_pass);
         if ml.frame_size.0 > 0 && ml.frame_size.1 > 0 {
             pass.set_scissor_rect(
                 ml.frame_origin.0,
@@ -974,6 +985,7 @@ impl Renderer {
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         bind_group: &wgpu::BindGroup,
+        scale: u32,
         front_pass: bool,
     ) {
         let pipelines = &self.pipelines;
@@ -981,12 +993,20 @@ impl Renderer {
         for (i, p) in pipelines.grid.iter().enumerate() {
             pass.set_pipeline(p);
             pass.draw(0..3, 0..1);
-            if let Some(film) = &pipelines.ground_film
-                && i == 0
-                && (self.algae.coat_visible || self.algae.rear_film_visible)
-            {
-                pass.set_pipeline(film);
-                pass.draw(0..3, 0..1);
+            if i == 0 {
+                if let Some(stone) = &pipelines.stone_varieties
+                    && self.stone_varieties_visible
+                    && scale >= 2
+                {
+                    pass.set_pipeline(stone);
+                    pass.draw(0..3, 0..1);
+                }
+                if let Some(film) = &pipelines.ground_film
+                    && (self.algae.coat_visible || self.algae.rear_film_visible)
+                {
+                    pass.set_pipeline(film);
+                    pass.draw(0..3, 0..1);
+                }
             }
         }
         if self.sprite_count > 0 {
@@ -1519,6 +1539,10 @@ fn create_hud(d: &wgpu::Device) -> wgpu::Texture {
 #[derive(Debug)]
 struct Pipelines {
     grid: Vec<wgpu::RenderPipeline>,
+    /// The split grid's dragon stone and Seiryu (`fs_stone_varieties`), drawn over what
+    /// `fs_ground` leaves of them (it discards those texels) and before the algae and
+    /// plants, only at scale 2 and up and while a cell holds one.
+    stone_varieties: Option<wgpu::RenderPipeline>,
     /// The split grid's algae over the ground (`fs_ground_film`), drawn after `fs_ground`
     /// only while a coat or a rear or side film shows.
     ground_film: Option<wgpu::RenderPipeline>,
@@ -1536,7 +1560,8 @@ const FILM_BLEND: wgpu::BlendState = wgpu::BlendState {
 };
 
 /// The grid's fragment entry points: `fs_main`, or with the split grid
-/// `fs_ground` and then the plant passes, which blend over it.
+/// `fs_ground` and then the plant passes, which blend over it (`fs_stone_varieties`
+/// and `fs_ground_film` draw between them while they have something to draw).
 const GRID_ENTRIES: &[&str] = &["fs_main"];
 const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
 /// The sprites' fragment entry points likewise; the split ones each draw
@@ -1546,6 +1571,7 @@ const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
 /// The grid and sprite pipelines, plus the lens frame and front film
 /// pipelines, drawing into `format`, one pass each or split ([`Gpu::split_grid`]),
 /// and the shader and layout they were built from.
+#[allow(clippy::too_many_lines)] // one pipeline per pass, built from one shader module
 fn create_pipelines(
     gpu: &Gpu,
     bind_layout: &wgpu::BindGroupLayout,
@@ -1630,6 +1656,9 @@ fn create_pipelines(
                 pipeline(&format!("tank {entry}"), entry, blend, &constants)
             })
             .collect(),
+        stone_varieties: gpu
+            .split_grid
+            .then(|| pipeline("tank fs_stone_varieties", "fs_stone_varieties", None, &[])),
         ground_film: gpu.split_grid.then(|| {
             pipeline(
                 "tank fs_ground_film",

@@ -35,7 +35,7 @@ pub use field::{Field, FieldKind};
 pub use grid::{Cell, Rect};
 pub use material::{
     DRIFTWOOD_WET_DENSITY, GLUED_VARIANT_BIT, MAX_DRIFTWOOD_WETNESS, Material, MaterialError,
-    MaterialId, MaterialTable, MovementClass, driftwood_variant, driftwood_wetness,
+    MaterialId, MaterialTable, MovementClass, OutlineShape, driftwood_variant, driftwood_wetness,
 };
 pub use palette::{Holds, PalettePath, PalettePathError};
 pub use placeable::Placeable;

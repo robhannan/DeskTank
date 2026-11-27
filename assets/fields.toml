@@ -84,7 +84,7 @@ waste_boost = 2.0
 # inherits; `co2_boost` is the plant competition's CO₂ term.
 [algae]
 substrate = ["sand", "gravel", "clown_vomit_gravel", "aquasoil"]
-hardscape = ["rock", "driftwood"]
+hardscape = ["rock", "dragon_stone", "seiryu_stone", "driftwood"]
 nutrient = 0.6
 light = 0.15
 seed_rate = 0.012

@@ -10,7 +10,7 @@ form = "mat"
 propagation = ["fragments"]
 
 [mat]
-on = ["rock", "driftwood"]
+on = ["rock", "dragon_stone", "seiryu_stone", "driftwood"]
 
 [prefer]
 light = { min = 0.01, optimum = 0.3, max = 1.5 }

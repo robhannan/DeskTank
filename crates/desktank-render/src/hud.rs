@@ -596,12 +596,9 @@ fn morph_pixel(m: &PaletteMorphs, slot: usize, species: &SpeciesTable, x: u32, y
     }
 }
 
-/// Side of the sprout art in pixels.
-pub(crate) const SPROUT_SIDE: u32 = 8;
-
 /// Pixel `(x, y)` of the sprout art, in `colours` (leaf, stem); `None`
 /// where it is bare.
-pub(crate) fn sprout_ink(colours: Option<([u8; 3], [u8; 3])>, x: u32, y: u32) -> Option<[u8; 3]> {
+fn sprout_ink(colours: Option<([u8; 3], [u8; 3])>, x: u32, y: u32) -> Option<[u8; 3]> {
     let (leaf, stem) = colours.unwrap_or((ICON_FG, ICON_FG));
     match SPROUT.get(y as usize)?.as_bytes().get(x as usize) {
         Some(b'#') => Some(leaf),

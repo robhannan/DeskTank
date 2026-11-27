@@ -30,6 +30,7 @@ mod needs;
 mod offscreen;
 mod pacing;
 mod palette;
+mod plant_sprite;
 mod plants;
 mod post;
 mod renderer;
