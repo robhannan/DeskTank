@@ -1471,7 +1471,7 @@ function creatureText({ parts, name }: Inspected) {
   if (needs && needs !== "-") {
     for (const need of needs.split(",")) {
       const [name, percent, level] = need.split(":");
-      card.push(`${name.replaceAll("_", " ")} ${percent}%, ${level}`);
+      card.push(`${name.replace(/_/g, " ")} ${percent}%, ${level}`);
     }
   }
   card.push(`over ${label(over)}`, `cell ${x}, ${y}`);
