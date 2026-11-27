@@ -10,10 +10,9 @@
 //!
 //! Interaction (SPEC §2.5) uses the platform-free `desktank_sim::tools`:
 //! left drag uses the selected tool (pour, scoop, net, inspect, glue), right
-//! drag scoops. Scroll or press `[` / `]` to resize the brush or step
-//! magnification with Magnify selected. The palette in the top-left corner
-//! is a two-level tree
-//! (`desktank_sim::tools::Tools::palette_tree`): its top row picks a
+//! drag scoops, and scrolling or pressing `[` / `]` resizes the brush (or
+//! steps magnification with Magnify selected). The palette in the top-left
+//! corner is a two-level tree (`desktank_sim::tools::Tools::palette_tree`): its top row picks a
 //! category (click a tab, or `G` / `Shift+G` for the next or previous one),
 //! the row below it picks a sub-category when the category has several
 //! (click one, or `H` / `Shift+H`), and the last row lists that
@@ -1541,8 +1540,8 @@ impl ApplicationHandler<Wake> for App {
                             s.select_slot((n + 9) % 10);
                         } else if c.eq_ignore_ascii_case("p") {
                             s.next_plant_propagule();
-                        } else if !s.command() && !s.modifiers.alt_key() {
-                            match size_key(s.tools.tool(), c.as_str()) {
+                        } else {
+                            match size_key(s.tools.tool(), c.as_str(), s.modifiers) {
                                 Some(SizeKey::Brush(steps)) => {
                                     s.tools.resize(steps);
                                 }
@@ -1663,12 +1662,20 @@ impl ApplicationHandler<Wake> for App {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 enum SizeKey {
     Brush(i32),
     Zoom(i32),
 }
 
-fn size_key(tool: Tool, key: &str) -> Option<SizeKey> {
+/// Maps `[`/`]` (and `+`/`=`/`-` for Magnify) to a brush or zoom step.
+/// Ignores `Super` and bare `Ctrl` shortcuts while allowing `Alt` (macOS
+/// Option) and `Ctrl+Alt` (Windows/Linux `AltGr`), which non-US layouts need to
+/// type `[` and `]`.
+fn size_key(tool: Tool, key: &str, modifiers: ModifiersState) -> Option<SizeKey> {
+    if modifiers.super_key() || (modifiers.control_key() && !modifiers.alt_key()) {
+        return None;
+    }
     match (tool, key) {
         (Tool::Magnify, "[" | "-") => Some(SizeKey::Zoom(-1)),
         (Tool::Magnify, "]" | "+" | "=") => Some(SizeKey::Zoom(1)),
@@ -1731,19 +1738,20 @@ mod tests {
 
     #[test]
     fn bracket_keys_resize_and_clamp_the_brush() {
+        let plain = ModifiersState::empty();
         for tool in [Tool::Pour, Tool::Scoop, Tool::Glue, Tool::Inspect] {
             let mut tools = Tools::new(MaterialId(1));
             tools.select(PaletteItem::Tool(tool));
             tools.resize(i32::MIN);
             for (key, radius) in [("[", MIN_RADIUS), ("]", MIN_RADIUS + 1), ("[", MIN_RADIUS)] {
-                let Some(SizeKey::Brush(steps)) = size_key(tools.tool(), key) else {
+                let Some(SizeKey::Brush(steps)) = size_key(tools.tool(), key, plain) else {
                     panic!("{key} should resize the brush for {tool:?}");
                 };
                 tools.resize(steps);
                 assert_eq!(tools.radius(), radius);
             }
             tools.resize(i32::MAX);
-            let Some(SizeKey::Brush(steps)) = size_key(tools.tool(), "]") else {
+            let Some(SizeKey::Brush(steps)) = size_key(tools.tool(), "]", plain) else {
                 panic!("] should resize the brush for {tool:?}");
             };
             assert!(!tools.resize(steps));
@@ -1753,10 +1761,11 @@ mod tests {
 
     #[test]
     fn magnify_size_keys_step_zoom() {
+        let plain = ModifiersState::empty();
         let mut tools = Tools::new(MaterialId(1));
         tools.select(PaletteItem::Tool(Tool::Magnify));
         for (key, level) in [("]", 1), ("+", 2), ("=", 3), ("-", 2), ("[", 1)] {
-            let Some(SizeKey::Zoom(steps)) = size_key(tools.tool(), key) else {
+            let Some(SizeKey::Zoom(steps)) = size_key(tools.tool(), key, plain) else {
                 panic!("{key} should step magnification");
             };
             assert!(tools.step_zoom(steps));
@@ -1766,11 +1775,28 @@ mod tests {
 
     #[test]
     fn zoom_only_keys_do_nothing_for_other_tools() {
+        let plain = ModifiersState::empty();
         for tool in [Tool::Pour, Tool::Scoop, Tool::Glue, Tool::Inspect] {
             for key in ["+", "=", "-"] {
-                assert!(size_key(tool, key).is_none());
+                assert_eq!(size_key(tool, key, plain), None);
             }
         }
+    }
+
+    #[test]
+    fn size_keys_allow_alt_and_altgr_but_ignore_command_shortcuts() {
+        let alt = ModifiersState::ALT;
+        let altgr = ModifiersState::CONTROL | ModifiersState::ALT;
+        let ctrl = ModifiersState::CONTROL;
+        let super_key = ModifiersState::SUPER;
+
+        assert_eq!(size_key(Tool::Pour, "[", alt), Some(SizeKey::Brush(-1)));
+        assert_eq!(size_key(Tool::Pour, "]", altgr), Some(SizeKey::Brush(1)));
+        assert_eq!(size_key(Tool::Magnify, "[", altgr), Some(SizeKey::Zoom(-1)));
+        assert_eq!(size_key(Tool::Pour, "[", ctrl), None);
+        assert_eq!(size_key(Tool::Pour, "]", super_key), None);
+        assert_eq!(size_key(Tool::Magnify, "=", ctrl), None);
+        assert_eq!(size_key(Tool::Magnify, "]", super_key), None);
     }
 
     #[test]
