@@ -48,6 +48,7 @@ pub(super) mod salt {
     pub const WAKE: u64 = 0x5601;
     pub const HUNGER_WEIGHT: u64 = 0x5700;
     pub const SOCIAL_WEIGHT: u64 = 0x5701;
+    pub const SHELTER_WEIGHT: u64 = 0x5702;
 }
 
 /// Period of a creature's mood (how brisk it feels), in ticks.
@@ -206,6 +207,11 @@ mod tests {
             salt::BOLD,
             salt::PERSIST,
             salt::PATIENCE,
+            salt::BEDTIME,
+            salt::WAKE,
+            salt::HUNGER_WEIGHT,
+            salt::SOCIAL_WEIGHT,
+            salt::SHELTER_WEIGHT,
         ];
         let mut keys = std::collections::BTreeSet::new();
         for id in 1..300 {

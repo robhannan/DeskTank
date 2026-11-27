@@ -34,6 +34,12 @@ speed = 2.5
 max_speed = 6.0
 diet = ["flake_food", "bloodworm", "brine_shrimp", "sinking_pellet"]
 
+# Competing needs (#436): a shy, solitary fish weighs a meal against the
+# plant cover it hides in. It has no social need: it doesn't school.
+[needs]
+hunger = 150
+shelter = 120
+
 # A bubble nester; eggs hatch in about a day.
 # Broods are scaled down for a desktop tank; days are on the life clock.
 [breeding]

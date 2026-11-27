@@ -628,8 +628,27 @@ pub enum SpeciesError {
 pub struct NeedWeights {
     /// Influence of missing satiety.
     pub hunger: u8,
-    /// Influence of missing nearby company.
+    /// Influence of missing nearby company. Zero leaves the need out of the
+    /// species (a solitary fish has none).
+    #[serde(default)]
     pub social: u8,
+    /// Influence of exposure away from plant cover. Zero leaves the need out
+    /// of the species (a schooling fish takes its cover from the school).
+    #[serde(default)]
+    pub shelter: u8,
+}
+
+impl NeedWeights {
+    /// Whether `need` applies to the species, in display order: hunger
+    /// always, the others when weighted.
+    #[must_use]
+    pub const fn supports(&self, need: crate::Need) -> bool {
+        match need {
+            crate::Need::Hunger => true,
+            crate::Need::Social => self.social > 0,
+            crate::Need::Shelter => self.shelter > 0,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1031,6 +1050,18 @@ fn validate(
         _ => {
             return Err(invalid(
                 "an air-breather needs air_tolerance_seconds (30..=7200), and only an air-breather",
+            ));
+        }
+    }
+    if let Some(w) = d.needs {
+        // Social contact is kept with a school, and the one slow reading a
+        // creature saves (see the needs module) belongs to one need.
+        if w.hunger == 0
+            || (w.social > 0 && d.temperament != Temperament::Schooling)
+            || (w.social > 0 && w.shelter > 0)
+        {
+            return Err(invalid(
+                "needs need a hunger weight; social only for a schooler, and not with shelter",
             ));
         }
     }
