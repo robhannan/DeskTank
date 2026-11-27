@@ -184,6 +184,8 @@ const MIN_OPACITY: f32 = 0.35;
 const COLOUR_DARK: f32 = 0.5;
 const COLOUR_STEM: f32 = 0.5;
 const COLOUR_GAIN: f32 = 1.6;
+// The colouration a stem plant's tips always show, of the full amount.
+const TIP_TINT: f32 = 0.55;
 // Shapes (desktank_sim::plants::{LeafShape, StemShape, RootShape}).
 // A broad stem leaf's upper cell has its row cell's position plus this
 // (desktank_sim::plants::LEAF_UPPER).
@@ -2474,61 +2476,87 @@ fn is_leafy(part: i32) -> bool {
     return part == PART_LEAF || part == PART_FLOAT;
 }
 
-// Whether a stem leaf's blade covers row `r` at `t` (0 at its stem end, 1 at
-// its tip) along it. Rows count from the leaf's own cell row: 0 to 3 are the
-// four quarter rows of its row cells, -2 and -1 the lower two rows of an
-// upper cell (the upper cell's top two rows stay empty, a gap before the next
-// node's leaf), so a leaf with an upper cell is six rows thick at most.
-fn blade_covers(shape: i32, t: f32, r: i32) -> bool {
-    let rf = f32(r);
+// Whether a stem leaf's blade covers fine row `r` at place `a` along it (`t`:
+// 0 at its stem end to 1 at its tip). Rows count from the leaf's own cell row:
+// 0 to 3 are the four quarter rows of its row cells, -2 and -1 the lower two
+// rows of an upper cell (the upper cell's top two rows stay empty, a gap
+// before the next node's leaf), so a leaf with an upper cell is six rows
+// thick at most.
+fn blade_shape(shape: i32, a: i32, t: f32, rf: f32, hh: f32) -> bool {
+    // A texel at scale 2 is two fine rows tall (`hh` 1, `rf` its centre), a
+    // quarter at scale 4 one (`hh` 0.5).
+    let fat = (hh - 0.5) * 0.5;
+    let r = i32(floor(rf));
+    if shape == LEAF_FEATHER {
+        // A rachis rising to the tip with a fan of teeth swept up towards it
+        // (a column every two rows), longest mid-leaf, and short ones
+        // hanging below.
+        let rr = select(2 - i32(t * 2.0), 2, hh > 0.75);
+        let tl = 1 + i32(round(3.0 * sin(3.14159 * t)));
+        if abs(rf - f32(rr)) < hh {
+            return true;
+        }
+        if rf < f32(rr) - 0.4 && rf > f32(rr - tl) - 0.6 {
+            // (at scale 2 the teeth stand straight: a texel is too coarse to lean)
+            return ((a - select((rr - r + 1) / 2, 0, hh > 0.75)) & 1) == 1;
+        }
+        return abs(rf - f32(rr + 1)) < hh && (a & 1) == 0 && a > 1;
+    }
     if shape == LEAF_ROUND {
         // A short petiole into a full, blunt oval.
         let t0 = 0.14;
         if t < t0 {
-            return r == 2;
+            return abs(rf - 2.0) < hh;
         }
         let tb = (t - t0) / (1.0 - t0);
         let hw = 3.0 * sqrt(max(4.0 * tb * (1.0 - tb), 0.0));
-        return abs(rf - 0.5) <= hw + 0.2 || (r == 2 && tb < 0.2);
+        return abs(rf - 0.5) <= hw + 0.2 + fat || (abs(rf - 2.0) < hh && tb < 0.2);
     }
-    // Lanceolate: a petiole, a blade widest at 42% of its length and a tip
-    // that rises.
-    let c = 2.2 - 3.4 * t;
+    // Lanceolate: a petiole, a blade widest at 42% of its length, swept up
+    // to a pointed tip.
+    let c = 2.2 - 2.7 * pow(t, 1.25);
     let hw = 3.0 * select(
         pow(max((1.0 - t) / 0.58, 0.0), 0.9),
         pow(t / 0.42, 0.7),
         t < 0.42,
     );
-    return abs(rf - c) <= hw + 0.3;
+    return abs(rf - c) <= hw + 0.3 + fat;
 }
 
-// A stem leaf's fine texel (x: covered 1 or 0, y: its ramp shade before
-// clamping), from its blade's profile. `p` is the cell's place along the
-// leaf, `leaf_length` its length in cells, `upper` whether it is an upper
-// cell, `has_up` whether one sits over it and `h` how far up the plant its
-// node is (0 at the base, 1 at the top, where leaves are newer and lighter).
-fn blade_fine(
-    shape: i32,
-    p: i32,
-    upper: bool,
-    has_up: bool,
-    from_left: bool,
-    quarter: vec2<i32>,
-    leaf_length: f32,
-    h: f32,
-) -> vec2<i32> {
-    let x = select(3 - quarter.x, quarter.x, from_left);
-    let span = 4 * max(i32(leaf_length), 1);
-    let t = (f32((max(p, 1) - 1) * 4 + x) + 0.5) / f32(span);
-    // The upper cell holds rows -2 (its third row) and -1 (its last).
-    let r = select(quarter.y, quarter.y - 4, upper);
-    let on = quarter.y >= select(0, 2, upper);
-    let covered = on && blade_covers(shape, t, r);
-    let above = blade_covers(shape, t, r - 1) && (r >= 1 || ((has_up || upper) && r - 1 >= -2));
-    let below = blade_covers(shape, t, r + 1) && (r + 1 <= 3);
-    let shade = i32(round(h * 4.0)) + i32(t * 3.0) + select(0, 1, !above) - select(0, 1, !below)
-        + select(0, 1, upper);
-    return vec2<i32>(select(0, 1, covered), shade);
+// Whether the blade covers the texel `a` along a leaf of `span` texels (or
+// quarters), at row `r`: a quarter row at scale 4, a texel row (two fine rows)
+// at scale 2.
+fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
+    if a < 0 || a >= span {
+        return false;
+    }
+    let t = (f32(a) + 0.5) / f32(span);
+    if coarse {
+        return blade_shape(shape, a, t, f32(2 * r) + 0.5, 1.0);
+    }
+    return blade_shape(shape, a, t, f32(r), 0.5);
+}
+
+// How many cells of its own stem lie above `start` (up a side shoot's slope
+// too): its depth below the stem's tip.
+fn depth_below_tip(start: vec2<i32>, me: vec4<f32>) -> i32 {
+    var at = start;
+    var d = 0;
+    for (var k = 0; k < 24; k++) {
+        var step_to = vec2<i32>(0, 0);
+        if kin(at, vec2<i32>(0, -1), me).x == PART_STEM {
+            step_to = vec2<i32>(0, -1);
+        } else if kin(at, vec2<i32>(-1, -1), me).x == PART_STEM {
+            step_to = vec2<i32>(-1, -1);
+        } else if kin(at, vec2<i32>(1, -1), me).x == PART_STEM {
+            step_to = vec2<i32>(1, -1);
+        } else {
+            break;
+        }
+        at += step_to;
+        d += 1;
+    }
+    return d;
 }
 
 // Whether a leafy part's texel is covered (x: 1 or 0) and its ramp shade
@@ -2815,44 +2843,38 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 covered = quarter.y == line || under;
                 step += select(0, 1, quarter.y == line) - select(0, 2, under);
             }
-        } else if shape == LEAF_ROUND {
-            // Broad to a blunt tip, with a darker rim at the tip's foot; an
-            // upper cell is its bottom texel row.
-            covered = select(!(base && u == 0 && top && !has_up), !top, upper);
-            step -= select(0, 2, tip && u == 1 && !top && !upper);
-            if fine {
-                // A short petiole into a full, blunt oval blade: lit above,
-                // darker beneath, lighter towards its tip.
-                let b = blade_fine(LEAF_ROUND, p, upper, has_up, from_left, quarter, f32(leaf_len), h);
-                covered = b.x != 0;
-                step = b.y + noise_step(me);
-            }
-        } else if shape == LEAF_FEATHER {
-            // A midrib along the bottom, fine teeth above every other texel.
-            covered = !top || u == 1;
-            step += select(0, 1, top);
-            if fine {
-                // Fishbone: a thin rachis with filaments rising from every
-                // other quarter, short ones hanging between them, and a
-                // forked tip; the filament ends are lightest.
-                let along = (pos - 1) * 4 + select(3 - quarter.x, quarter.x, from_left);
-                let rachis = quarter.y == 2;
-                let rising = quarter.y < 2 && along % 2 == 1;
-                let hanging = quarter.y == 3 && along % 2 == 0 && along > 1;
-                covered = rachis || rising || hanging;
-                step += select(0, 1, quarter.y == 0) - select(0, 1, hanging) - select(1, 0, rachis);
-            }
         } else {
-            // Lanceolate: a petiole, a broad blade and a tip that rises; an
-            // upper cell is its bottom texel row.
-            covered = select(!(base && u == 0 && top && !has_up) && !(tip && u == 1 && !top), !top, upper);
-            if fine {
-                // A petiole, a broad blade that rises to a point, lit along
-                // its upper edge, darker beneath, lighter towards its tip.
-                let b = blade_fine(LEAF_LANCEOLATE, p, upper, has_up, from_left, quarter, f32(leaf_len), h);
-                covered = b.x != 0;
-                step = b.y + noise_step(me);
+            // A round, feathered or lanceolate blade, drawn from its
+            // profile. Its reach is in texel (half-cell) steps from its
+            // depth below the stem's tip, so the outline narrows smoothly
+            // though the cells step: the outer cell is a texel short.
+            var tipw = 2;
+            if p == leaf_len {
+                let node_at = at + vec2<i32>(-dir * p, select(0, 1, upper));
+                let half = max(i32(sizes.x) / 2, 1);
+                let reach = (4 * i32(sizes.z) * min(depth_below_tip(node_at, me), half) + half) / (2 * half);
+                tipw = clamp(reach - 2 * (leaf_len - 1), 1, 2);
             }
+            let coarse = !fine;
+            let cell_w = select(2, 4, fine);
+            let a_in = select(u, select(3 - quarter.x, quarter.x, from_left), fine);
+            let a = (max(p, 1) - 1) * cell_w + a_in;
+            let span = (leaf_len - 1) * cell_w + tipw * select(1, 2, fine);
+            let row = select(sub.y, quarter.y, fine);
+            let r = select(row, row - select(2, 4, fine), upper);
+            let first_row = select(-1, -2, fine);
+            let last_row = select(1, 3, fine);
+            covered = blade_px(shape, a, span, r, coarse);
+            if node.x != PART_STEM {
+                // A leaf with no stem under it (its plant was cut, or a bare
+                // leaf block) is a plain blade.
+                covered = true;
+            }
+            let above = (r >= 1 || ((has_up || upper) && r - 1 >= first_row)) && blade_px(shape, a, span, r - 1, coarse);
+            let below = r + 1 <= last_row && blade_px(shape, a, span, r + 1, coarse);
+            let t = (f32(a) + 0.5) / f32(span);
+            step = i32(round(h * 4.0)) + i32(t * 3.0) + select(0, 1, !above) - select(0, 1, !below)
+                + select(0, 1, upper) + select(0, 1, shape == LEAF_FEATHER) + noise_step(me);
         }
         // Night folding on stem leaves (T6d): leaves tuck inward toward the
         // stem and fold upward as darkness rises (view.daylight.w: 0 day, 1 night).
@@ -3058,10 +3080,36 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             let up_stem = kin(at, vec2<i32>(0, -1), me).x == PART_STEM;
             let down_stem = kin(at, vec2<i32>(0, 1), me).x == PART_STEM;
             let horiz = (left.x == PART_STEM || right.x == PART_STEM) && !up_stem && !down_stem;
-            let node = left.x == PART_LEAF || right.x == PART_LEAF;
-            let tip = !up_stem && (!horiz || (left.x == PART_STEM && right.x != PART_STEM) || (right.x == PART_STEM && left.x != PART_STEM));
+            // A node: a leaf's first cell beside it that grows from this cell
+            // (not the end of another stem's leaf).
+            let node = (left.x == PART_LEAF && left.y == 1 && kin(at, vec2<i32>(-2, 0), me).x != PART_STEM)
+                || (right.x == PART_LEAF && right.y == 1 && kin(at, vec2<i32>(2, 0), me).x != PART_STEM);
+            // A side shoot's stalk leans a column every two rows: cells that
+            // stepped out diagonally (d) alternate with cells that rose
+            // straight to the next step (v), and the stalk is drawn on a
+            // slope through them.
+            let ul = kin(at, vec2<i32>(-1, -1), me).x == PART_STEM;
+            let ur = kin(at, vec2<i32>(1, -1), me).x == PART_STEM;
+            let dl = kin(at, vec2<i32>(-1, 1), me).x == PART_STEM;
+            let dr = kin(at, vec2<i32>(1, 1), me).x == PART_STEM;
+            let slope_v = down_stem && !up_stem && (ul || ur);
+            let slope_d = !down_stem && !horiz && (dl || dr);
+            let flip = select(dr, ul, slope_v);
+            let tip = !up_stem && !ul && !ur && (!horiz || (left.x == PART_STEM && right.x != PART_STEM) || (right.x == PART_STEM && left.x != PART_STEM));
             step += 1 + i32(round(f32(pos) / max(sizes.x, 1.0) * 5.0)) - select(0, 1, node) + select(0, 2, tip);
-            if shape == STEM_THICK {
+            if slope_v || slope_d {
+                // A d cell's stalk hugs its inner side, a v cell's its outer
+                // (one texel across the cell, or a quarter every other row);
+                // the ends meet diagonally at the cell edges.
+                if fine {
+                    let qx = select(quarter.x, 3 - quarter.x, flip);
+                    let low = (3 - quarter.y) / 2 + select(0, 2, slope_v);
+                    covered = qx >= low && qx <= low + 1;
+                    step += select(0, 1, quarter.y < 2);
+                } else {
+                    covered = select(sub.x, 1 - sub.x, flip) == select(0, 1, slope_v);
+                }
+            } else if shape == STEM_THICK {
                 if horiz {
                     if fine {
                         let shoulder = tip && (quarter.y == 0 || quarter.y == 3)
@@ -3091,19 +3139,24 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                     step += select(-1, 2, quarter.y == 1);
                 }
             } else {
-                // Stalk: one texel wide, full at nodes and the growing tip.
-                covered = node || tip || sub.x == 0;
+                // Stalk: one texel wide, full at nodes and the growing tip,
+                // reaching out to a side shoot's stub.
+                let stub_r = right.x == PART_STEM && !horiz;
+                let stub_l = left.x == PART_STEM && !horiz;
+                covered = node || tip || sub.x == 0 || (stub_r && top);
                 if fine {
                     // A lit stalk with a flared collar joining each leaf pair.
                     let collar = node && quarter.y == 2;
-                    covered = quarter.x == 1 || quarter.x == 2 || collar
+                    let reach = ((stub_r && quarter.x == 3) || (stub_l && quarter.x == 0))
+                        && (quarter.y == 1 || quarter.y == 2);
+                    covered = quarter.x == 1 || quarter.x == 2 || collar || reach
                         || (tip && quarter.y >= 2 && quarter.x == 0);
                     step += select(-1, 2, quarter.x == 1) + select(0, 1, collar);
                 }
             }
             // The top of a stem plant's stalk is a small bud of the leaf
             // ramp's brightest shade (the sprite's), over a bare stalk.
-            if shapes.x < LEAF_RIBBON && !horiz && !up_stem {
+            if shapes.x < LEAF_RIBBON && !horiz && !up_stem && !ul && !ur {
                 let in_bud = select(top, quarter.y == 1 || (quarter.y == 0 && (quarter.x == 1 || quarter.x == 2)), fine);
                 if in_bud {
                     covered = true;
@@ -3181,7 +3234,15 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
     if covered || view.scale < 2.0 {
         let shade = clamp(step, 0, RAMP - 1);
         let base = textureLoad(plant_species, vec2<i32>(ramp * RAMP + shade, species), 0).rgb;
-        var rgb = depth_cue(health_tint(coloured(base, shade, ramp, plant.g, species), health), band);
+        // A stem plant's upper and newest leaves, and its bud, lean towards
+        // the species' colouration colour (the sprite's tip ramp) even
+        // before the light colours the plant.
+        var amount = plant.g;
+        if ramp == PART_LEAF && part != PART_FLOAT
+            && textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0 < f32(LEAF_RIBBON) - 0.5 {
+            amount = max(amount, TIP_TINT * clamp((f32(shade) - 3.0) / 4.0, 0.0, 1.0));
+        }
+        var rgb = depth_cue(health_tint(coloured(base, shade, ramp, amount, species), health), band);
         if part == PART_ROOT {
             // Subdued: roots sit back from the plant above them.
             rgb = rgb * 0.82;

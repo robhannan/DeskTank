@@ -167,8 +167,16 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     position `LEAF_UPPER` (32) plus its row cell's), so the blade is two
     cells thick where widest. A plant's pieces don't join through an upper
     cell and the leaf above it, so cutting the stem still frees the top.
-    Needle and
-    feather leaves stay a row thick.
+    Feather leaves (cabomba) grow upper cells too, so their fan of swept
+    teeth stands taller; needle leaves stay a row thick. Side shoots lean:
+    a one-cell stub, then a stalk that steps out a column every two rows
+    (up to `SHOOT_LEAN`, two columns, the sprite's four pixels) and rises
+    straight on; their cells join diagonally, in growth (`stem_sites`) and
+    in placement, and in splitting a plant into pieces. The shader draws
+    that stalk on a slope and each leaf's outer cell a texel short where the
+    taper falls between two lengths. Stem plants' upper leaves and buds lean
+    towards the colouration colour (`TIP_TINT`) even before the light
+    colours the plant.
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
     *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from

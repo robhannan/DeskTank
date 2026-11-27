@@ -127,7 +127,8 @@ fn cells_of(w: &World, plant: PlantId) -> Vec<(usize, usize)> {
     out
 }
 
-/// Whether `cells` are one 4-connected piece.
+/// Whether `cells` are one piece: 4-connected, but for the diagonal steps of a
+/// side shoot's sloping stalk.
 fn connected(cells: &[(usize, usize)]) -> bool {
     let Some(&first) = cells.first() else {
         return true;
@@ -140,7 +141,7 @@ fn connected(cells: &[(usize, usize)]) -> bool {
             if !seen.contains(&c)
                 && seen
                     .iter()
-                    .any(|s| s.0.abs_diff(c.0) + s.1.abs_diff(c.1) == 1)
+                    .any(|s| s.0.abs_diff(c.0).max(s.1.abs_diff(c.1)) == 1)
             {
                 seen.push(c);
                 grew = true;
@@ -768,4 +769,52 @@ fn a_growing_stem_tapers_and_its_lower_leaves_lengthen() {
     let longest_after = rows.iter().map(|r| r.1).max().unwrap();
     assert!(longest_after >= longest_before, "{before:?} -> {rows:?}");
     assert!(info.size() > 0);
+}
+
+/// Side shoots lean out: a shoot leaves its node as a stub, steps out a column
+/// every two rows (diagonal links between stem cells) up to `SHOOT_LEAN`
+/// columns past the stub, then rises straight; placed whole or grown, and
+/// the plant stays one piece.
+#[test]
+fn side_shoots_lean_out_then_rise() {
+    for name in ["rotala", "ludwigia"] {
+        let mut w = tank(5);
+        let (x, y) = spot(&w, name);
+        let plant = place(&mut w, name, PlantStage::Mature, x, y, false);
+        let stem = id(&w, "stem");
+        let base_x = w.plant(plant).unwrap().base.0;
+        let is_stem = |w: &World, x: usize, y: usize| w.cell(x, y).unwrap().material == stem;
+        let check = |w: &World, what: &str| {
+            let cells = cells_of(w, plant);
+            let mut diagonal = 0;
+            for &(cx, cy) in &cells {
+                if !is_stem(w, cx, cy) {
+                    continue;
+                }
+                // A diagonal stem link between two cells of a side shoot.
+                for dx in [-1isize, 1] {
+                    let (nx, ny) = (cx.wrapping_add_signed(dx), cy + 1);
+                    if nx < w.width()
+                        && ny < w.height()
+                        && is_stem(w, nx, ny)
+                        && cx != base_x
+                        && nx != base_x
+                    {
+                        diagonal += 1;
+                    }
+                }
+                let reach = cx.abs_diff(base_x);
+                let reach = i64::try_from(reach).unwrap();
+                assert!(
+                    reach <= 1 + desktank_sim::plants::SHOOT_LEAN,
+                    "{name} {what}: stem {reach} columns from the main stem"
+                );
+            }
+            assert!(diagonal > 0, "{name} {what}: no sloped shoot");
+            assert!(connected(&cells), "{name} {what} in pieces");
+        };
+        check(&w, "placed");
+        run(&mut w, 5 * 60 * 20);
+        check(&w, "grown");
+    }
 }

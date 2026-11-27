@@ -33,7 +33,7 @@ use super::PlantId;
 use crate::material::MaterialId;
 use crate::plants::{
     BallForm, EpiphyteForm, FloaterForm, Form, LEAF_UPPER, LeafShape, MAX_POSITION, MatForm, Part,
-    PlantSpecies, PlantSpeciesId, PlantStage, RosetteForm, StemForm, plant_variant,
+    PlantSpecies, PlantSpeciesId, PlantStage, RosetteForm, SHOOT_LEAN, StemForm, plant_variant,
 };
 use crate::rng::splitmix64;
 use crate::world::{World, WorldError};
@@ -554,6 +554,17 @@ fn crown_shift(f: &RosetteForm, flip: bool) -> i64 {
     if flip { crown / 2 } else { (crown - 1) / 2 }
 }
 
+/// How many columns out from its main stem a side shoot's cell `rows` rows
+/// above its node is: one for its stub, then one more every two rows, up to
+/// `SHOOT_LEAN` past the stub (`plant_sprite.rs`: `dir * ((k + 1) / 2).min(4)`).
+const fn shoot_column(rows: i64) -> i64 {
+    1 + if (rows + 1) / 2 > SHOOT_LEAN {
+        SHOOT_LEAN
+    } else {
+        (rows + 1) / 2
+    }
+}
+
 fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx, by): (i64, i64)) {
     let h = scaled(i64::from(f.height), frac);
     if !b.put(bx, by, Part::Stem, 1) {
@@ -590,8 +601,9 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
         }
     }
     let node = |pos: i64| pos >= i64::from(f.internode) && pos % i64::from(f.internode) == 0;
-    // Side shoots at some nodes: a stub that steps out two cells, then
-    // rises.
+    // Side shoots at some nodes: a one-cell stub, then a stalk that leans out
+    // a column every two rows (the sprite's: up to four columns past the
+    // stub) and rises straight on from there.
     if f.branching > 0.0 {
         let column = nodes.clone();
         for &(x, y, pos) in &column {
@@ -604,7 +616,6 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
                 if b.unit(key) >= f64::from(f.branching)
                     || !b.fit(x + dx, y, Part::Stem)
                     || !b.lone(x + dx, y, Part::Stem, (x, y))
-                    || !b.fit(x + 2 * dx, y, Part::Stem)
                     || !b.fit(x + 2 * dx, y - 1, Part::Stem)
                     || b.own(x + 2 * dx, y + 1, Part::Stem)
                     || b.own(x + 3 * dx, y, Part::Stem)
@@ -612,14 +623,18 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
                     continue;
                 }
                 b.put(x + dx, y, Part::Stem, pos + 1);
-                b.put(x + 2 * dx, y, Part::Stem, pos + 2);
                 let top = pos + 2 + (h - pos - 2) * 3 / 5;
-                let (bxp, mut byp, mut bp) = (x + 2 * dx, y, pos + 2);
-                while bp < top && b.fit(bxp, byp - 1, Part::Stem) {
-                    byp -= 1;
+                let (mut from, mut bp, mut rows) = ((x + dx, y), pos + 1, 0);
+                while bp < top {
+                    rows += 1;
+                    let at = (x + dx * shoot_column(rows), y - rows);
+                    if !b.fit(at.0, at.1, Part::Stem) || !b.lone(at.0, at.1, Part::Stem, from) {
+                        break;
+                    }
                     bp += 1;
-                    b.put(bxp, byp, Part::Stem, bp);
-                    nodes.push((bxp, byp, bp));
+                    b.put(at.0, at.1, Part::Stem, bp);
+                    nodes.push((at.0, at.1, bp));
+                    from = at;
                 }
             }
         }
@@ -630,14 +645,23 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
     // a second cell over the row's, so the blade fills the internode row
     // above its node.
     let leaves = |b: &Builder<'_>, x: i64, y: i64, pos: i64| {
-        let mut below_tip = 0u8;
-        while below_tip < u8::MAX && b.own(x, y - i64::from(below_tip) - 1, Part::Stem) {
+        // Cells of its own stem above it, up a side shoot's slope too.
+        let (mut below_tip, mut at) = (0u8, (x, y));
+        while below_tip < u8::MAX {
+            let Some(next) = [0, -1, 1]
+                .into_iter()
+                .map(|d| (at.0 + d, at.1 - 1))
+                .find(|&(nx, ny)| b.own(nx, ny, Part::Stem))
+            else {
+                break;
+            };
+            at = next;
             below_tip += 1;
         }
         let len = f.leaf_taper(below_tip);
         (
             len,
-            StemForm::leaf_upper(shape, len)
+            StemForm::leaf_upper(shape, len, len == f.leaf_length)
                 .filter(|_| f.broad_node(u8::try_from(pos).unwrap_or(u8::MAX))),
         )
     };

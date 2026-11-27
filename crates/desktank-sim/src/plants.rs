@@ -550,6 +550,12 @@ pub struct StemForm {
 /// cell stacked on the leaf's row, at `position - LEAF_UPPER`.
 pub const LEAF_UPPER: u8 = 32;
 
+/// Columns a side shoot leans out past its one-cell stub, a column every two
+/// rows, before it rises straight on: the sprite's four pixels (a texel each,
+/// half a cell) are two cells. Wider leans wove neighbouring stands into
+/// walls that stalled swimmers.
+pub const SHOOT_LEAN: i64 = 2;
+
 impl StemForm {
     /// How many cells long the leaves at a node `below_tip` cells under the
     /// tip of its stem (or side shoot) may be, as the species sprite's are:
@@ -581,17 +587,23 @@ impl StemForm {
 
     /// The positions along a leaf of `length` cells, as `first..=last`, that
     /// carry a second cell above them (at [`LEAF_UPPER`] + their position)
-    /// when the leaves are `shape`: only the broad shapes (lanceolate and
-    /// round) fill the internode row above a node's leaf, as a blade two
-    /// cells thick at its middle; a leaf of one or two cells has it all
-    /// along. Needle and feather leaves stay a row thick.
+    /// when the leaves are `shape`: the broad and feathered shapes (lanceolate,
+    /// round, feather) fill the internode row above a node's leaf, as a blade
+    /// two cells thick at its middle. A leaf of one or two cells has it on
+    /// its outer cell, and on its inner one too (a fuller round leaf) when
+    /// it is `full` length, as the lowest leaves of a stem are. Needle leaves
+    /// stay a row thick.
     #[must_use]
-    pub fn leaf_upper(shape: LeafShape, length: u8) -> Option<(u8, u8)> {
-        if !matches!(shape, LeafShape::Lanceolate | LeafShape::Round) || length >= LEAF_UPPER {
+    pub fn leaf_upper(shape: LeafShape, length: u8, full: bool) -> Option<(u8, u8)> {
+        if !matches!(
+            shape,
+            LeafShape::Lanceolate | LeafShape::Round | LeafShape::Feather
+        ) || length >= LEAF_UPPER
+        {
             return None;
         }
         Some(if length <= 2 {
-            (length.max(1), length.max(1))
+            (if full { 1 } else { length.max(1) }, length.max(1))
         } else {
             (2, length - 1)
         })

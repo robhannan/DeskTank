@@ -131,21 +131,29 @@ fn lodged_food_eaten(seed: u64, plant: &str, limit: u32) -> Result<f64, String> 
 
 #[test]
 fn food_lodged_in_a_dense_plant_is_eaten() {
-    for (seed, plant) in [
-        (1, "hygrophila"),
-        (2, "rotala"),
-        (3, "hygrophila"),
-        // Across seeds 1-10 about one stand in five keeps a lodged worm
-        // from the tetras for over 20 s, whatever the stand's exact shape
-        // (the same before and after stem leaves tapered); seeds picked
-        // that clear it.
-        (6, "rotala"),
-    ] {
+    // Most stands give the tetras their food within 20 s. A worm deep in a
+    // thicket sometimes stays out of their reach (about one stand in five,
+    // before and after the stems took their present shape), so this asks
+    // for most of ten stands, not each.
+    let mut eaten = 0;
+    for seed in 1..=10 {
+        let plant = if seed % 2 == 1 {
+            "hygrophila"
+        } else {
+            "rotala"
+        };
         match lodged_food_eaten(seed, plant, 20 * TICKS_PER_SECOND) {
-            Ok(s) => eprintln!("seed {seed}: food lodged in {plant} eaten after {s:.1} s"),
-            Err(e) => panic!("seed {seed}: {e}"),
+            Ok(s) => {
+                eprintln!("seed {seed}: food lodged in {plant} eaten after {s:.1} s");
+                eaten += 1;
+            }
+            Err(e) => eprintln!("seed {seed}: {e}"),
         }
     }
+    assert!(
+        eaten >= 7,
+        "only {eaten} of 10 stands gave up their food in 20 s"
+    );
 }
 
 /// The longest each swimmer sat still (its centre unmoved), in ticks, over
