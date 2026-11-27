@@ -40,11 +40,18 @@ internal object Native {
      * `am start -n io.github.robhannan.desktank/.DeskTankActivity --ez oled true`
      * stores the extra in SharedPreferences, so the Dream reads it too.
      * Pass the Activity's `intent` to take an `oled` extra; a Dream passes none.
+     * Only a boolean extra (`--ez`) counts: any other type reads back as both
+     * defaults, so it is ignored rather than quietly turning OLED off. The
+     * launcher Activity is exported, so another app could set this too; it is
+     * cosmetic, and the settings screen (#404) replaces the extra.
      */
     fun applyOled(context: Context, id: Long, intent: Intent? = null) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (intent != null && intent.hasExtra(OLED)) {
-            prefs.edit().putBoolean(OLED, intent.getBooleanExtra(OLED, false)).apply()
+            val value = intent.getBooleanExtra(OLED, false)
+            if (value == intent.getBooleanExtra(OLED, true)) {
+                prefs.edit().putBoolean(OLED, value).apply()
+            }
         }
         setOled(id, prefs.getBoolean(OLED, false))
     }
