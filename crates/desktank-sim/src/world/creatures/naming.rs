@@ -80,9 +80,8 @@ pub struct CreatureCard {
 
 impl CreatureCard {
     /// The card as one line: `Bubbles · neon tetra #3 · adult female ·
-    /// 12 days old · health 80% · energy 60% · Hunger 49%, low ·
-    /// Social 100%, comfortable · red · carrying, 5 days to go` (the
-    /// parts that apply).
+    /// 12 days old · health 80% · energy 60% · red · carrying, 5 days to go ·
+    /// Hunger 49%, low · Social 100%, comfortable` (the parts that apply).
     #[must_use]
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
@@ -99,7 +98,6 @@ impl CreatureCard {
         });
         parts.push(format!("health {:.0}%", self.health * 100.0));
         parts.push(format!("energy {:.0}%", self.energy * 100.0));
-        parts.extend(self.needs.iter().map(|need| need.describe()));
         if let Some(morph) = &self.morph {
             parts.push(morph.replace('_', " "));
         }
@@ -110,6 +108,7 @@ impl CreatureCard {
                 format!("carrying, {days} days to go")
             });
         }
+        parts.extend(self.needs.iter().map(|need| need.describe()));
         parts.join(" · ")
     }
 }

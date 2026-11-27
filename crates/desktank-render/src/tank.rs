@@ -896,9 +896,11 @@ impl Tank {
             self.card_dirty = true;
             self.inspect.dirty = true;
         }
+        // Fit the narrow/wide breakpoint before refreshing so a resize never
+        // rebuilds the inspect card twice in one frame.
+        self.fit_inspect(size);
         // Edits made through `world_mut` while paused may have removed it.
         self.refresh_inspect();
-        self.fit_inspect(size);
         let layout = self.layout(size);
         let palette = self.palette_layout(size);
         let card = self.card_layout(size);

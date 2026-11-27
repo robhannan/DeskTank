@@ -483,7 +483,12 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
             name: card.name,
             ..NameRow::default()
         }),
-        needs: card.needs.iter().map(|&r| NeedBar::of(r)).collect(),
+        needs: card
+            .needs
+            .iter()
+            .take(crate::needs::MAX_NEEDS)
+            .map(|&r| NeedBar::of(r))
+            .collect(),
         narrow: false,
     })
 }
