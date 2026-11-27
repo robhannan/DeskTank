@@ -177,6 +177,12 @@ fn algae_varieties_scene_matches_reference() {
     check_named("algae_varieties", "algae_varieties_x4", None, SIZE_X4);
 }
 
+/// #457: plain rock, dragon stone and Seiryu side by side on sand in water.
+#[test]
+fn rock_varieties_scene_matches_reference() {
+    check_named("rock_varieties", "rock_varieties_x4", None, SIZE_X4);
+}
+
 /// Day and night (T6): the planted tank at night, dawn, midday and dusk.
 #[test]
 fn planted_scene_matches_reference_at_four_times_of_day() {

@@ -876,7 +876,8 @@ impl PlantSpecies {
     }
 
     /// What it needs, as comma-separated phrases for the species cards:
-    /// its light band, any CO₂ need, root feeding and where it lives.
+    /// its light band, any CO₂ need, root feeding and placement for forms
+    /// that do not root in substrate.
     /// Derived from its preferences, growth and form; material names come
     /// from `materials`.
     #[must_use]
@@ -902,18 +903,10 @@ impl PlantSpecies {
         if self.growth.root_feeder {
             parts.push("root feeder".to_owned());
         }
-        let names = |ids: &[MaterialId]| -> String {
-            ids.iter()
-                .filter_map(|&id| materials.get(id))
-                .map(|m| m.name.replace('_', " "))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let placement = match &self.form {
-            Form::Stem(f) => Some(("roots in", names(&f.substrates))),
-            Form::Rosette(f) | Form::Carpet(f) => Some(("roots in", names(&f.substrates))),
-            Form::Mat(f) => Some(("clings to", names(&f.on))),
-            Form::Epiphyte(f) => Some(("clings to", names(&f.on))),
+        let surfaces = match &self.form {
+            Form::Stem(_) | Form::Rosette(_) | Form::Carpet(_) => None,
+            Form::Mat(f) => Some(f.on.as_slice()),
+            Form::Epiphyte(f) => Some(f.on.as_slice()),
             Form::Floater(_) => {
                 parts.push("floats at surface".to_owned());
                 None
@@ -923,12 +916,20 @@ impl PlantSpecies {
                 None
             }
         };
-        if let Some((verb, list)) = placement
-            && !list.is_empty()
+        if let Some(ids) = surfaces
+            && let names = material_names(ids, materials)
+            && !names.is_empty()
         {
-            parts.push(format!("{verb} {list}"));
+            parts.push(format!("clings to {names}"));
         }
         parts.join(", ")
+    }
+
+    /// The compatible rooting substrates, comma-separated, for the species card.
+    #[must_use]
+    pub fn describe_rooting_substrates(&self, materials: &MaterialTable) -> Option<String> {
+        let names = material_names(self.form.substrates()?, materials);
+        (!names.is_empty()).then_some(names)
     }
 
     /// The ways it grows, comma-separated, for the species cards (the
@@ -951,6 +952,15 @@ impl PlantSpecies {
             self.propagules().next().unwrap_or(Propagule::Cuttings)
         }
     }
+}
+
+/// Display names of materials, in species data order.
+fn material_names(ids: &[MaterialId], materials: &MaterialTable) -> String {
+    ids.iter()
+        .filter_map(|&id| materials.get(id))
+        .map(|m| m.name.replace('_', " "))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A way to start a plant from the palette: what a plant slot pours
@@ -1774,38 +1784,35 @@ mod tests {
         let m = materials();
         let t = PlantSpeciesTable::builtin_for(&m).unwrap();
         let get = |n: &str| t.get(t.id(n).unwrap()).unwrap();
-        let soil = "roots in sand, gravel, aquasoil, clown vomit gravel";
+        let soil = Some("sand, gravel, aquasoil, clown vomit gravel");
 
         let hygro = get("hygrophila");
         assert_eq!(hygro.scientific_name, "Hygrophila polysperma");
         assert_eq!(hygro.describe_form(), "stem");
-        assert_eq!(
-            hygro.describe_requirements(&m),
-            format!("low light, {soil}")
-        );
+        assert_eq!(hygro.describe_requirements(&m), "low light");
+        assert_eq!(hygro.describe_rooting_substrates(&m).as_deref(), soil);
         assert_eq!(hygro.describe_propagation(), "seeds, cuttings, fragments");
 
         let sword = get("amazon_sword");
         assert_eq!(sword.describe_form(), "rosette");
-        assert_eq!(
-            sword.describe_requirements(&m),
-            format!("low light, root feeder, {soil}")
-        );
+        assert_eq!(sword.describe_requirements(&m), "low light, root feeder");
+        assert_eq!(sword.describe_rooting_substrates(&m).as_deref(), soil);
         assert_eq!(sword.describe_propagation(), "runners");
 
         let carpet = get("monte_carlo");
         assert_eq!(carpet.describe_form(), "carpet");
         assert_eq!(
             carpet.describe_requirements(&m),
-            format!("strong light, benefits from CO₂, {soil}")
+            "strong light, benefits from CO₂"
         );
+        assert_eq!(carpet.describe_rooting_substrates(&m).as_deref(), soil);
         assert_eq!(carpet.describe_propagation(), "fragments, runners");
 
         let anubias = get("anubias");
         assert_eq!(anubias.describe_form(), "epiphyte");
         assert_eq!(
             anubias.describe_requirements(&m),
-            "low light, clings to rock, driftwood"
+            "low light, clings to rock, dragon stone, seiryu stone, driftwood"
         );
         assert_eq!(anubias.describe_propagation(), "fragments");
 
@@ -1813,7 +1820,7 @@ mod tests {
         assert_eq!(moss.describe_form(), "mat");
         assert_eq!(
             moss.describe_requirements(&m),
-            "low light, clings to rock, driftwood"
+            "low light, clings to rock, dragon stone, seiryu stone, driftwood"
         );
 
         let duckweed = get("duckweed");
@@ -1830,6 +1837,14 @@ mod tests {
             marimo.describe_requirements(&m),
             "low light, rests on bottom"
         );
+        for plant in [anubias, moss, duckweed, marimo] {
+            assert_eq!(
+                plant.describe_rooting_substrates(&m),
+                None,
+                "{}",
+                plant.name
+            );
+        }
     }
 
     #[test]
@@ -1863,7 +1878,7 @@ mod tests {
         assert_eq!(first.name, "hygrophila", "T6's plant is the default");
         assert!(matches!(first.form, Form::Stem(_)));
         let moss = t.get(t.id("java_moss").unwrap()).unwrap();
-        assert!(matches!(&moss.form, Form::Mat(m) if m.on.len() == 2));
+        assert!(matches!(&moss.form, Form::Mat(m) if m.on.len() == 4));
         assert_eq!(t.for_state(0).unwrap().id, first.id);
         assert_eq!(t.for_state(u16::from(moss.id.0)).unwrap().id, moss.id);
         assert_eq!(
@@ -2119,7 +2134,7 @@ mod tests {
             assert!(bacopa.hardiness.tolerance > other.hardiness.tolerance);
         }
         // Christmas moss: a frond mat, brighter than java moss and slower.
-        assert!(matches!(&xmas.form, Form::Mat(f) if f.on.len() == 2));
+        assert!(matches!(&xmas.form, Form::Mat(f) if f.on.len() == 4));
         assert_eq!(
             (java.look.stem, xmas.look.stem),
             (StemShape::Fuzz, StemShape::Frond)

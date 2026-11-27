@@ -1,0 +1,161 @@
+# #457: the rock varieties side by side on sand in water: plain rock (left),
+# dragon stone (middle) and Seiryu (right), each a few glued brush strokes as
+# a user would drag them, so the weathered outlines and textures read across
+# a whole face.
+ticks = 150
+
+[world]
+water_level = 0.55
+
+[[pour]]
+x = 0
+y = 84
+dx = 4
+repeat = 41
+radius = 13
+material = "sand"
+brush = "replace"
+
+[[pour]]
+tick = 41
+x = 12
+y = 70
+dx = 1
+dy = 0
+repeat = 22
+radius = 7
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 17
+y = 62
+dx = 1
+dy = 0
+repeat = 10
+radius = 6
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 21
+y = 55
+dx = 0
+dy = -1
+repeat = 9
+radius = 5
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 32
+y = 66
+dx = 0
+dy = -1
+repeat = 8
+radius = 4
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 66
+y = 70
+dx = 1
+dy = 0
+repeat = 22
+radius = 7
+material = "dragon_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 71
+y = 62
+dx = 1
+dy = 0
+repeat = 10
+radius = 6
+material = "dragon_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 75
+y = 55
+dx = 0
+dy = -1
+repeat = 9
+radius = 5
+material = "dragon_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 86
+y = 66
+dx = 0
+dy = -1
+repeat = 8
+radius = 4
+material = "dragon_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 120
+y = 70
+dx = 1
+dy = 0
+repeat = 22
+radius = 7
+material = "seiryu_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 125
+y = 62
+dx = 1
+dy = 0
+repeat = 10
+radius = 6
+material = "seiryu_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 129
+y = 55
+dx = 0
+dy = -1
+repeat = 9
+radius = 5
+material = "seiryu_stone"
+brush = "replace"
+glued = true
+
+[[pour]]
+tick = 41
+x = 140
+y = 66
+dx = 0
+dy = -1
+repeat = 8
+radius = 4
+material = "seiryu_stone"
+brush = "replace"
+glued = true

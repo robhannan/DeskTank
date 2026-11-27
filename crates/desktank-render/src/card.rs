@@ -9,7 +9,8 @@
 //!
 //! Everything shown comes from the species data: its name, its Latin name,
 //! its sprite (male and female side by side if they are drawn differently;
-//! a sprout in the plant's colours for a plant) and its `describe_*` lines
+//! a small sprite of a mature example of the plant, from
+//! [`crate::plant_sprite`], for a plant) and its `describe_*` lines
 //! and description, set in the [`crate::font`] pixel font.
 
 use desktank_sim::tools::{PaletteItem, Tool};
@@ -20,9 +21,8 @@ use desktank_sim::{
 
 use crate::Layout;
 use crate::font;
-use crate::hud::{
-    self, BACKGROUND, FRAME, ICON_FG, OPEN, PaletteLayout, SELECTED, SPROUT_SIDE, sprout_ink,
-};
+use crate::hud::{self, BACKGROUND, FRAME, ICON_FG, OPEN, PaletteLayout, SELECTED};
+use crate::plant_sprite;
 
 /// A species to show on the card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,8 +76,6 @@ const SPRITE_GAP: u32 = 8;
 /// Tallest a sprite may be drawn, in card pixels: it is doubled only if
 /// that stays within this.
 const SPRITE_MAX_H: u32 = 48;
-/// Integer scale of the plant's sprout.
-const SPROUT_SCALE: u32 = 3;
 
 /// Text colours (the frame and background are the palette's).
 pub(crate) const TITLE: [u8; 3] = SELECTED;
@@ -170,14 +168,16 @@ fn creature(page: &mut Page, sp: &Species, morph: Option<u8>, materials: &Materi
     page.paragraph(&sp.description, BODY);
 }
 
-/// A plant: its sprout in its colours, what kind it is and what it needs.
+/// A plant: a sprite of a mature example, what kind it is and what it needs.
 fn plant(page: &mut Page, sp: &PlantSpecies, materials: &MaterialTable) {
     page.heading(&display_name(&sp.name), &sp.scientific_name);
-    let stem = sp.colours.stem.get(sp.colours.stem.len() / 2).copied();
-    let colours = Some((sp.colour(), stem.unwrap_or_else(|| sp.colour())));
-    page.sprout(colours);
+    let (size, pixels) = plant_sprite::build(sp);
+    page.plant_sprite(size, &pixels);
     page.field("Form:", sp.describe_form());
     page.field("Needs:", &sp.describe_requirements(materials));
+    if let Some(substrates) = sp.describe_rooting_substrates(materials) {
+        page.field("Roots in:", &substrates);
+    }
     page.paragraph(&sp.description, BODY);
 }
 
@@ -326,21 +326,7 @@ impl Page {
         for &(size, frame, label) in sprites {
             let (w, h) = dims(size);
             let top = self.y + (tallest - h) * scale / 2;
-            for (i, px) in frame.iter().enumerate() {
-                if px[3] > 0 {
-                    let (tx, ty) = (
-                        u32::try_from(i % size.0.max(1)).unwrap_or(0),
-                        u32::try_from(i / size.0.max(1)).unwrap_or(0),
-                    );
-                    for (dx, dy) in (0..scale).flat_map(|dx| (0..scale).map(move |dy| (dx, dy))) {
-                        self.put(
-                            x + tx * scale + dx,
-                            top + ty * scale + dy,
-                            [px[0], px[1], px[2]],
-                        );
-                    }
-                }
-            }
+            self.blit(x, top, size, frame, scale);
             if labelled {
                 let at = self.y + tallest * scale + 2;
                 let label_x = x + (w * scale).saturating_sub(font::width(label)) / 2;
@@ -351,24 +337,39 @@ impl Page {
         self.y += tallest * scale + 2 + if labelled { font::LINE } else { 0 } + PARA_GAP;
     }
 
-    /// The palette's sprout, enlarged, centred.
-    fn sprout(&mut self, colours: Option<([u8; 3], [u8; 3])>) {
-        let side = SPROUT_SIDE * SPROUT_SCALE;
-        let x0 = PAD + Self::inner().saturating_sub(side) / 2;
-        for (x, y) in (0..SPROUT_SIDE).flat_map(|x| (0..SPROUT_SIDE).map(move |y| (x, y))) {
-            if let Some(c) = sprout_ink(colours, x, y) {
-                for (dx, dy) in
-                    (0..SPROUT_SCALE).flat_map(|a| (0..SPROUT_SCALE).map(move |b| (a, b)))
-                {
+    /// Draws `frame` (`size` texels, sRGB RGBA, alpha 0 or 255) with its
+    /// top-left at `(x, top)`, each texel `scale` card pixels square.
+    fn blit(&mut self, x: u32, top: u32, size: (usize, usize), frame: &[[u8; 4]], scale: u32) {
+        for (i, px) in frame.iter().enumerate() {
+            if px[3] > 0 {
+                let (tx, ty) = (
+                    u32::try_from(i % size.0.max(1)).unwrap_or(0),
+                    u32::try_from(i / size.0.max(1)).unwrap_or(0),
+                );
+                for (dx, dy) in (0..scale).flat_map(|dx| (0..scale).map(move |dy| (dx, dy))) {
                     self.put(
-                        x0 + x * SPROUT_SCALE + dx,
-                        self.y + y * SPROUT_SCALE + dy,
-                        c,
+                        x + tx * scale + dx,
+                        top + ty * scale + dy,
+                        [px[0], px[1], px[2]],
                     );
                 }
             }
         }
-        self.y += side + PARA_GAP;
+    }
+
+    /// A plant's sprite (from [`plant_sprite::build`], within
+    /// [`plant_sprite::MAX_WIDTH`] by [`plant_sprite::MAX_HEIGHT`]), centred
+    /// at one card pixel per texel.
+    fn plant_sprite(&mut self, size: (usize, usize), frame: &[[u8; 4]]) {
+        debug_assert!(
+            size.0 <= plant_sprite::MAX_WIDTH && size.1 <= plant_sprite::MAX_HEIGHT,
+            "a {size:?} plant sprite"
+        );
+        let w = u32::try_from(size.0).unwrap_or(u32::MAX);
+        let h = u32::try_from(size.1).unwrap_or(u32::MAX);
+        let x = PAD + Self::inner().saturating_sub(w) / 2;
+        self.blit(x, self.y, size, frame, 1);
+        self.y += h + PARA_GAP;
     }
 
     /// Crops to the content and draws the frame.
@@ -575,6 +576,8 @@ mod tests {
                 sp.describe_form().to_owned(),
                 sp.describe_requirements(m),
             ]
+            .into_iter()
+            .chain(sp.describe_rooting_substrates(m))
         });
         creatures
             .chain(plants)
@@ -585,6 +588,7 @@ mod tests {
                     "Behaviour:",
                     "Needs:",
                     "Form:",
+                    "Roots in:",
                     "male",
                     "female",
                 ]
@@ -730,13 +734,74 @@ mod tests {
         }
     }
 
+    /// The pixels of `card` below the heading that are in `sprite`, drawn
+    /// at 1×, and how many non-UI-colour opaque texels `sprite` has.
+    fn sprite_pixels_in(card: &CardImage, sprite: &plant_sprite::Sprite) -> (usize, usize) {
+        let text = [TITLE, LABEL, BODY, LATIN, BACKGROUND, FRAME];
+        let colours: Vec<[u8; 3]> = sprite
+            .1
+            .iter()
+            .filter(|p| p[3] == 255)
+            .map(|p| [p[0], p[1], p[2]])
+            .filter(|c| !text.contains(c))
+            .collect();
+        let in_card = card
+            .pixels
+            .chunks(4)
+            .filter(|p| colours.contains(&[p[0], p[1], p[2]]))
+            .count();
+        (in_card, colours.len())
+    }
+
     #[test]
-    fn a_plant_card_shows_the_sprout_in_its_colours() {
+    fn a_plant_card_shows_a_sprite_of_the_mature_plant() {
         let (m, s, p) = tables();
-        let moss = p.get(p.id("java_moss").unwrap()).unwrap();
-        let card = build(Card::Plant(moss.id), &m, &s, &p).unwrap();
-        // The leaf colour fills 3×3 blocks of the sprout.
-        assert!(count(&card, moss.colour()) >= 9 * 6);
+        assert_eq!(p.len(), 18);
+        let mut cards = Vec::new();
+        for sp in p.iter() {
+            let card = build(Card::Plant(sp.id), &m, &s, &p).unwrap();
+            let sprite = plant_sprite::build(sp);
+            let (in_card, expected) = sprite_pixels_in(&card, &sprite);
+            // Every non-UI-colour texel of the sprite is on the card, at 1×
+            // (text may add pixels of the same colour, never take them away).
+            assert!(
+                in_card >= expected,
+                "{}: the sprite is not on its card ({in_card} < {expected})",
+                sp.name
+            );
+            // It sits within the card's width, centred under the heading.
+            let (w, _) = sprite.0;
+            assert!(w <= Page::inner() as usize, "{}", sp.name);
+            cards.push((sp.name.clone(), card.pixels));
+        }
+        // No two plants share a card.
+        for (i, (a, pa)) in cards.iter().enumerate() {
+            for (b, pb) in &cards[i + 1..] {
+                assert_ne!(pa, pb, "{a} and {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_plant_card_fits_with_its_sprite_tagged_or_not() {
+        let (m, s, p) = tables();
+        for sp in p.iter() {
+            let (size, _) = plant_sprite::build(sp);
+            assert!(
+                size.0 <= plant_sprite::MAX_WIDTH && size.1 <= plant_sprite::MAX_HEIGHT,
+                "{}: {size:?}",
+                sp.name
+            );
+            for tag in [None, Some("2/2")] {
+                let image = build_tagged(Card::Plant(sp.id), &m, &s, &p, tag).unwrap();
+                assert!(!image.clipped, "{} {tag:?} is cut off", sp.name);
+                assert!(image.size.1 <= CARD_MAX.1, "{} {tag:?}", sp.name);
+                assert_eq!(
+                    image.pixels.len(),
+                    (image.size.0 * image.size.1 * 4) as usize
+                );
+            }
+        }
     }
 
     #[test]

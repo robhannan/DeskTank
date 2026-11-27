@@ -11,7 +11,9 @@
 //!
 //! Masks are set where rigid cells are made: a brush or pour
 //! ([`World::paint_into`]) rasterises its disc at quarter-cell resolution
-//! and ORs the coverage into rigid cells of its material that it covers. A
+//! (weathered into a natural outline first for materials with a `shape`,
+//! see [`super::weathering`]) and ORs the coverage into rigid cells of its
+//! material that it covers. A
 //! rectangle fill, `set_cell` or any other write gives a full cell. A mask
 //! moves with its cell (swaps and body moves); a body that turns is redrawn
 //! from its reference shape, which keeps every cell's mask, by sampling
@@ -57,7 +59,7 @@ pub fn disc_mask(dx: i64, dy: i64, r: i64) -> u16 {
 /// quarter it covers inside those cells (the outline stays within a texel
 /// of a true circle at 4×) while trimming straight stroke sides by little
 /// more than a texel.
-fn disc_limit(r: i64) -> i64 {
+pub(super) fn disc_limit(r: i64) -> i64 {
     if r == 0 { 16 } else { 64 * r * r + 16 * r }
 }
 
