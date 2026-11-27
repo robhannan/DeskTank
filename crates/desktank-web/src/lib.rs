@@ -1466,15 +1466,17 @@ impl WebTank {
                                 .plant_species()
                                 .get(p.species)
                                 .map_or("?", |s| s.name.as_str());
-                            let needs = world.plant_needs(id).map_or_else(Vec::new, Vec::from);
+                            let needs = world.plant_needs(id);
+                            let token = needs
+                                .as_ref()
+                                .map_or_else(|| "-".to_owned(), |n| needs_token(n));
                             format!(
-                                "plant {name} {} {} {:.0} {} {} {x} {y} {}",
+                                "plant {name} {} {} {:.0} {} {} {x} {y} {token}",
                                 id.0,
                                 p.age_days(),
                                 p.health * 100.0,
                                 p.size(),
                                 p.limit.key(),
-                                needs_token(&needs)
                             )
                         })
                     }

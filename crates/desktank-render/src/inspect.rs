@@ -255,7 +255,7 @@ impl InspectCard {
             self.live = None;
             return self.image.take().is_some() || force;
         };
-        let Some(mut live) = live(world, what) else {
+        let Some((mut live, readings)) = live_with_readings(world, what) else {
             *self = Self {
                 can_name: self.can_name,
                 narrow: self.narrow,
@@ -268,7 +268,7 @@ impl InspectCard {
             row.editing.clone_from(&self.edit);
         }
         live.narrow = self.narrow;
-        self.read_trends(world, what, &mut live);
+        self.read_trends(world, what, readings, &mut live);
         let changed = self.live.as_ref() != Some(&live);
         let rebuild = force || (changed && self.page == InspectPage::Live);
         if rebuild {
@@ -284,10 +284,17 @@ impl InspectCard {
 
     /// Fills in the trend of each of `live`'s need meters from the history
     /// (a creature's or plant's own; nothing else has needs).
-    fn read_trends(&mut self, world: &World, what: Inspected, live: &mut Live) {
-        let readings = match what {
-            Inspected::Creature(id) => world.creature(id).map(|c| world.creature_needs(c)),
-            Inspected::Plant(id) => world.plant_needs(id).map(|mut r| {
+    fn read_trends(
+        &mut self,
+        world: &World,
+        what: Inspected,
+        readings: LiveReadings,
+        live: &mut Live,
+    ) {
+        let observed: Vec<NeedReading> = match readings {
+            LiveReadings::None => return,
+            LiveReadings::Creature(r) => r,
+            LiveReadings::Plant(mut r) => {
                 self.hold(&mut r);
                 live.needs = r
                     .iter()
@@ -295,11 +302,9 @@ impl InspectCard {
                     .map(|&r| NeedBar::of(r))
                     .collect();
                 Vec::from(r)
-            }),
-            Inspected::Device(_) | Inspected::Cell { .. } => None,
+            }
         };
-        let Some(readings) = readings else { return };
-        let trends = self.trends.observe(what, world.tick_count(), &readings);
+        let trends = self.trends.observe(what, world.tick_count(), &observed);
         for (bar, trend) in live.needs.iter_mut().zip(trends) {
             bar.trend = trend;
         }
@@ -397,15 +402,34 @@ const NAME_PROMPT: &str = "N or tap to name";
 /// What it says under the text being typed.
 const NAME_HINT: &str = "Enter saves, Esc cancels";
 
-/// The live page of `what`, or `None` if it is gone (died, netted out,
-/// eaten away) or its species is unknown.
-pub(crate) fn live(world: &World, what: Inspected) -> Option<Live> {
+enum LiveReadings {
+    None,
+    Creature(Vec<NeedReading>),
+    Plant([NeedReading; 3]),
+}
+
+fn live_with_readings(world: &World, what: Inspected) -> Option<(Live, LiveReadings)> {
     match what {
         Inspected::Creature(id) => creature_live(world, id),
         Inspected::Plant(id) => plant_live(world, id),
-        Inspected::Device(id) => device_live(world, id),
-        Inspected::Cell { x, y } => cell_live(world, x, y),
+        Inspected::Device(id) => Some((device_live(world, id)?, LiveReadings::None)),
+        Inspected::Cell { x, y } => Some((cell_live(world, x, y)?, LiveReadings::None)),
     }
+}
+
+/// The live page of `what`, or `None` if it is gone (died, netted out,
+/// eaten away) or its species is unknown.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn live(world: &World, what: Inspected) -> Option<Live> {
+    let (mut page, readings) = live_with_readings(world, what)?;
+    if let LiveReadings::Plant(r) = readings {
+        page.needs = r
+            .iter()
+            .take(needs::MAX_NEEDS)
+            .map(|&r| NeedBar::of(r))
+            .collect();
+    }
+    Some(page)
 }
 
 /// What a material does, in a few words.
@@ -493,7 +517,7 @@ fn age_text(days: u32) -> String {
     }
 }
 
-fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
+fn creature_live(world: &World, id: CreatureId) -> Option<(Live, LiveReadings)> {
     let card = world.creature_card(id)?;
     let species = world.creature(id)?.species();
     let kind = format!("{} #{}", display_name(&card.species), id.0);
@@ -518,52 +542,55 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
         Some(UnmetNeed::Air) => fields.push(("Lacks:", "air at the surface".to_owned())),
         None => {}
     }
-    Some(Live {
-        title: kind,
-        subtitle: String::new(),
-        fields,
-        name: Some(NameRow {
-            name: card.name,
-            ..NameRow::default()
-        }),
-        needs: card
-            .needs
-            .iter()
-            .take(crate::needs::MAX_NEEDS)
-            .map(|&r| NeedBar::of(r))
-            .collect(),
-        narrow: false,
-    })
+    let needs = card
+        .needs
+        .iter()
+        .take(crate::needs::MAX_NEEDS)
+        .map(|&r| NeedBar::of(r))
+        .collect();
+    Some((
+        Live {
+            title: kind,
+            subtitle: String::new(),
+            fields,
+            name: Some(NameRow {
+                name: card.name,
+                ..NameRow::default()
+            }),
+            needs,
+            narrow: false,
+        },
+        LiveReadings::Creature(card.needs),
+    ))
 }
 
-fn plant_live(world: &World, id: PlantId) -> Option<Live> {
+fn plant_live(world: &World, id: PlantId) -> Option<(Live, LiveReadings)> {
     let p = world.plant(id)?;
     let sp = world.plant_species().get(p.species)?;
     let [roots, stem, leaves] = p.parts;
-    let needs = world.plant_needs(id)?;
-    Some(Live {
-        title: format!("{} #{}", display_name(&sp.name), id.0),
-        subtitle: String::new(),
-        fields: vec![
-            ("Age:", age_text(p.age_days())),
-            ("Health:", percent(p.health)),
-            (
-                "Size:",
-                format!(
-                    "{} cells (roots {roots}, stem {stem}, leaves {leaves})",
-                    p.size()
+    let readings = world.plant_needs(id)?;
+    Some((
+        Live {
+            title: format!("{} #{}", display_name(&sp.name), id.0),
+            subtitle: String::new(),
+            fields: vec![
+                ("Age:", age_text(p.age_days())),
+                ("Health:", percent(p.health)),
+                (
+                    "Size:",
+                    format!(
+                        "{} cells (roots {roots}, stem {stem}, leaves {leaves})",
+                        p.size()
+                    ),
                 ),
-            ),
-            ("Growth:", p.limit.describe()),
-        ],
-        name: None,
-        needs: needs
-            .iter()
-            .take(crate::needs::MAX_NEEDS)
-            .map(|&r| NeedBar::of(r))
-            .collect(),
-        narrow: false,
-    })
+                ("Growth:", p.limit.describe()),
+            ],
+            name: None,
+            needs: Vec::new(),
+            narrow: false,
+        },
+        LiveReadings::Plant(readings),
+    ))
 }
 
 /// Draws the live page, numbered if there is a second, and where its Name
