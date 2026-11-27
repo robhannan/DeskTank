@@ -126,6 +126,18 @@ const splitGrid: boolean | undefined = params.has("grid")
 // where wgpu's sRGB present shader draws nothing on Chrome 68's SwiftShader.
 const srgbCanvas = params.has("srgb") ? params.get("srgb") === "1" : build !== "webos";
 
+// The screensaver camera tour (D29), opt-in only: ?tour or ?tour=1 tours, and
+// ?tour=card also pins the read-only inspect card to the creature in focus
+// (?tour=0 stays off). While it runs the page acts as a screensaver: the first
+// pointer press, wheel turn or key ends it for the session and is swallowed
+// (endTour). The tour card is drawn in the canvas and never announced: a
+// screen-reader user would hear a new creature every 30 s, and the page has
+// no focus to move.
+const tourParam = params.get("tour");
+let touring = tourParam !== null && !["0", "false", "off"].includes(tourParam);
+const tourCard = tourParam === "card";
+const tourSeed = (Math.random() * 0x1_0000_0000) >>> 0;
+
 // The page's elements are all in index.html, so a lookup never misses.
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("tank");
@@ -420,6 +432,7 @@ function replaceTank(next: WebTank) {
   // Cards are drawn in device pixels: at least one canvas pixel per CSS pixel
   // per card pixel, so a phone's text is readable.
   tank.setCardMinScale(Math.ceil(pixelRatio()));
+  tank.setTour(touring, tourCard, tourSeed);
   showSettings();
   showCreatureCap(true);
   showZoom();
@@ -1380,7 +1393,8 @@ function runDeviceGuardToggle() {
 
 // Whether the inspected creature can be named from here.
 function canName() {
-  return owner && !handingOver && inspected !== null && tank.inspectPage() !== 0;
+  // Never while touring: the tour card is read-only and the page takes no text.
+  return !touring && owner && !handingOver && inspected !== null && tank.inspectPage() !== 0;
 }
 
 // The shortest the name input is, in CSS pixels (a comfortable tap target).
@@ -1750,7 +1764,46 @@ function endGestures() {
   tank?.pointerLeave();
 }
 
+// Ends the tour on the first input and swallows it, so a screensaver wake-up
+// press doesn't also paint or press a button; its release (pointerup, click,
+// keyup) is swallowed too. Normal interaction resumes after that.
+function wireTourEnd() {
+  let swallowRelease = false;
+  const swallowedKeys = new Set<string>();
+  const stop = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const endTour = (e: Event) => {
+    if (!touring) return;
+    touring = false;
+    tank.setTour(false, false, 0);
+    closeName();
+    if (e.type === "pointerdown") swallowRelease = true;
+    if (e instanceof KeyboardEvent) swallowedKeys.add(e.key);
+    stop(e);
+    kick();
+  };
+  const opts = { capture: true, passive: false };
+  for (const type of ["pointerdown", "wheel", "keydown"]) window.addEventListener(type, endTour, opts);
+  for (const type of ["pointerup", "pointercancel", "click"]) {
+    window.addEventListener(
+      type,
+      (e) => {
+        if (!swallowRelease) return;
+        stop(e);
+        // The click follows the pointerup; drop the flag once it has passed.
+        if (type !== "pointerup") swallowRelease = false;
+        else setTimeout(() => (swallowRelease = false), 100);
+      },
+      opts,
+    );
+  }
+  window.addEventListener("keyup", (e) => (swallowedKeys.delete(e.key) ? stop(e) : undefined), opts);
+}
+
 function wireInput() {
+  wireTourEnd();
   canvas.addEventListener("pointerdown", (e) => {
     // Cancelling the press keeps the browser from moving focus, so a press
     // elsewhere ends naming by hand.
