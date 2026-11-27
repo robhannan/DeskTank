@@ -949,6 +949,7 @@ test("settings persist across reloads", async ({ page }) => {
     catchUp: false,
     sway: true,
     swayOnBattery: true,
+    oled: false,
     seed: 42,
     radius: 7,
   });
@@ -976,6 +977,38 @@ test("settings persist across reloads", async ({ page }) => {
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   expect(await page.evaluate(() => window.desktank.settings.scale)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("OLED mode draws a true black background and persists", async ({ page }) => {
+  test.slow(); // Canvas screenshots and a reload are slow on CI runners.
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  // The share of canvas pixels that are exactly 0,0,0.
+  const blackShare = async () => {
+    const { rgba } = await decodePng(page, await page.locator("#tank").screenshot());
+    let black = 0;
+    for (let i = 0; i < rgba.length; i += 4) if (rgba[i] === 0 && rgba[i + 1] === 0 && rgba[i + 2] === 0) black++;
+    return black / (rgba.length / 4);
+  };
+  expect(await page.evaluate(() => window.desktank.tank.oled()), "off by default").toBe(false);
+  expect(await blackShare()).toBeLessThan(0.05);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("OLED mode (true black)").check();
+  expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(true);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeGreaterThan(0.5);
+
+  await page.reload();
+  await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
+  expect(await page.evaluate(() => window.desktank.tank.oled()), "applies to the new tank").toBe(true);
+  expect(await page.evaluate(() => window.desktank.settings.oled)).toBe(true);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeGreaterThan(0.5);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("OLED mode (true black)").uncheck();
+  expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(false);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeLessThan(0.05);
   expect(errors).toEqual([]);
 });
 

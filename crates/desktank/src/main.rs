@@ -155,6 +155,10 @@ struct WindowArgs {
     /// Degrees east (-180 to 180) for the sun's schedule; needs --latitude.
     #[arg(long, value_name = "DEG", requires = "latitude", allow_negative_numbers = true, value_parser = parse_longitude)]
     longitude: Option<f64>,
+    /// OLED mode: true black water, air and letterbox (`--oled=false` turns
+    /// it off when the config file enables it).
+    #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
+    oled: Option<bool>,
     #[command(flatten)]
     plant_sway: SwayArgs,
 }
@@ -223,6 +227,9 @@ struct CaptureArgs {
     /// Enable optional render-only plant sway.
     #[arg(long)]
     sway: bool,
+    /// OLED mode: true black water, air and letterbox.
+    #[arg(long)]
+    oled: bool,
     /// Draw with the split grid (smaller shaders in more passes), as the
     /// webOS web build does.
     #[arg(long)]
@@ -291,6 +298,7 @@ fn main() -> ExitCode {
                 daylight_schedule: args.daylight_schedule,
                 latitude: args.latitude,
                 longitude: args.longitude,
+                oled: args.oled,
                 plants: config::Plants {
                     sway: args.plant_sway.sway,
                     sway_on_battery: args.plant_sway.sway_on_battery,
@@ -329,6 +337,7 @@ fn main() -> ExitCode {
             script: args.script.clone(),
             field: args.field,
             sway: args.sway,
+            oled: args.oled,
             split_grid: args.split_grid,
             out: args.out.clone(),
         }),
@@ -474,6 +483,21 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn parses_the_oled_flag() {
+        let oled = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("not a window command");
+            };
+            w.oled
+        };
+        assert_eq!(oled(&[]), None);
+        assert_eq!(oled(&["--oled"]), Some(true));
+        assert_eq!(oled(&["--oled=false"]), Some(false));
+        assert!(Cli::try_parse_from(["desktank", "capture", "--out", "x", "--oled"]).is_ok());
     }
 
     #[test]

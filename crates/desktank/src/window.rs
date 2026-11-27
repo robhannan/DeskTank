@@ -1279,6 +1279,7 @@ impl ApplicationHandler<Wake> for App {
                     s.tank.set_time_of_day(minute);
                 }
                 apply_daylight(&mut s.tank, self.settings.daylight);
+                s.tank.set_oled(self.settings.display.oled);
                 s.tank.set_sway(self.settings.plants.sway);
                 s.tank
                     .set_allow_sway_on_battery(self.settings.plants.sway_on_battery);
@@ -1338,6 +1339,9 @@ impl ApplicationHandler<Wake> for App {
                     s.tank.set_allow_sway_on_battery(new.sway_on_battery);
                 }
                 apply_life(s.tank.world_mut(), settings.life, self.settings.life);
+                if settings.display.oled != self.settings.display.oled {
+                    s.tank.set_oled(settings.display.oled);
+                }
                 if settings.daylight != self.settings.daylight {
                     apply_daylight(&mut s.tank, settings.daylight);
                 }

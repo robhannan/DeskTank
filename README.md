@@ -104,6 +104,15 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -W -n io.github.robhannan.desktank/.DeskTankActivity
 ```
 
+**OLED mode** (true black water and air; off by default) has no settings
+screen yet (#404), so set it over adb. The flag is saved on the device and
+both the app and the screensaver use it:
+
+```sh
+adb shell am start -n io.github.robhannan.desktank/.DeskTankActivity --ez oled true
+adb shell am start -n io.github.robhannan.desktank/.DeskTankActivity --ez oled false
+```
+
 Run `pnpm test:android` on a test device or emulator after building the APK
 and installing the Node dependencies. Tapsmith clears DeskTank's app data at
 suite startup, then exercises the Activity and the Dream. Set `ANDROID_SERIAL`

@@ -18,6 +18,7 @@ class DeskTankDream : DreamService(), SurfaceHolder.Callback {
     override fun onCreate() {
         super.onCreate()
         Native.initialize(this)
+        Native.applyOled(this, token)
     }
 
     override fun onAttachedToWindow() {
