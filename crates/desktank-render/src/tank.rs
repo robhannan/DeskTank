@@ -18,6 +18,11 @@ use crate::{Gpu, TankSurface};
 /// Frame-rate cap for optional plant sway (SPEC §2.7, T6d).
 pub const SWAY_MAX_FPS: u32 = 10;
 
+/// Targets narrower than this many pixels (three card widths: a phone held
+/// upright, a small window) lay the inspect card's need meters out in one
+/// column.
+pub const NARROW_TARGET_W: u32 = 3 * crate::card::CARD_W;
+
 /// Minimum interval between sway-only redraws (100 ms = 10 fps).
 const SWAY_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -591,6 +596,15 @@ impl Tank {
         }
     }
 
+    /// Lays the inspect card out for a `size`-pixel target: a narrow target
+    /// (see [`NARROW_TARGET_W`]) gets one column of need meters, the
+    /// rest two. A change rebuilds the card for the frame being drawn.
+    fn fit_inspect(&mut self, size: (u32, u32)) {
+        self.needs_frame |= self
+            .inspect
+            .set_narrow(&self.world, size.0 < NARROW_TARGET_W);
+    }
+
     /// Shows (or hides) the brush outline. A change asks for a frame.
     pub fn set_cursor(&mut self, cursor: Option<BrushPreview>) {
         if self.cursor != cursor {
@@ -884,6 +898,7 @@ impl Tank {
         }
         // Edits made through `world_mut` while paused may have removed it.
         self.refresh_inspect();
+        self.fit_inspect(size);
         let layout = self.layout(size);
         let palette = self.palette_layout(size);
         let card = self.card_layout(size);

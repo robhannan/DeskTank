@@ -25,6 +25,7 @@ mod grid;
 mod hud;
 mod inspect;
 mod layout;
+mod needs;
 mod offscreen;
 mod pacing;
 mod palette;
@@ -33,6 +34,8 @@ mod renderer;
 mod sprites;
 mod surface;
 mod tank;
+#[cfg(test)]
+mod testing;
 mod timer;
 
 /// The wgpu version this crate is built against, for hosts that create the
