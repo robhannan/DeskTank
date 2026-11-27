@@ -2610,15 +2610,12 @@ fn the_ruler_ticks_every_cm_from_the_bottom_left_in_both_pipelines() {
                     "{scale}x split {split}: bottom row x {x}"
                 );
             }
-            // Left column: ticks every cm above the bottom strip, and the
-            // 0 cm tick (5 art pixels tall) at the corner.
+            // Left column: the 0 cm tick (5 art pixels tall) at the corner,
+            // plus a tick at every cm across the full height (including inside
+            // the bottom strip above the 0 cm tick).
             for rel in 0..h - 1 {
                 let y = h - 1 - rel;
-                let want = if rel < strip_h {
-                    rel < 5 * art
-                } else {
-                    rel % cm_px < art
-                };
+                let want = rel < 5 * art || rel % cm_px < art;
                 assert_eq!(
                     is_ink(at(&on, 0, y)),
                     want,

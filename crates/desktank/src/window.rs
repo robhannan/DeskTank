@@ -1474,6 +1474,7 @@ impl ApplicationHandler<Wake> for App {
                     {
                         let next = !s.tank.ruler();
                         s.tank.set_ruler(next);
+                        s.window.request_redraw();
                         s.window.set_title(if next {
                             "DeskTank — ruler overlay (cm)"
                         } else {

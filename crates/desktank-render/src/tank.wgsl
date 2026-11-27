@@ -3759,10 +3759,10 @@ fn ruler_mod(a: f32, b: f32) -> f32 {
     return a - b * floor(a / b);
 }
 
-// Whether the whole number `n` (under 1000) has ink at column `col`, row
+// Whether the whole number `n` (under 10000) has ink at column `col`, row
 // `row` (0 at the top) of its label: 3x5 digits one column apart.
 fn ruler_number_ink(n: i32, col: i32, row: i32) -> bool {
-    let digits = 1 + i32(n >= 10) + i32(n >= 100);
+    let digits = 1 + i32(n >= 10) + i32(n >= 100) + i32(n >= 1000);
     if col < 0 || col >= digits * 4 - 1 || (col % 4) == 3 {
         return false;
     }
@@ -3772,12 +3772,14 @@ fn ruler_number_ink(n: i32, col: i32, row: i32) -> bool {
         divisor = 10;
     } else if place == 2 {
         divisor = 100;
+    } else if place == 3 {
+        divisor = 1000;
     }
     return ruler_bit(u32((n / divisor) % 10), col % 4, row);
 }
 
 fn ruler_number_width(n: f32) -> f32 {
-    return 4.0 * (1.0 + f32(n >= 10.0) + f32(n >= 100.0)) - 1.0;
+    return 4.0 * (1.0 + f32(n >= 10.0) + f32(n >= 100.0) + f32(n >= 1000.0)) - 1.0;
 }
 
 // The art column or row holding the tick of `n` cm.
@@ -3824,7 +3826,7 @@ fn ruler_bottom_ink(art: vec2<f32>, tank_art_w: f32) -> bool {
     if art.y >= 6.0 && art.y < 11.0 && c >= 0.0 {
         let n = ruler_label_before(c + 1.0);
         let start = ruler_at(n);
-        if n >= 0.0 && n < 1000.0 && start + 2.0 + ruler_number_width(n) <= tank_art_w {
+        if n >= 0.0 && n < 10000.0 && start + 2.0 + ruler_number_width(n) <= tank_art_w {
             return ruler_number_ink(i32(n), i32(c - start), i32(10.0 - art.y));
         }
     }
@@ -3848,7 +3850,7 @@ fn ruler_left_ink(art: vec2<f32>, tank_art_h: f32) -> bool {
     }
     let n = ruler_label_before(art.y);
     let at = ruler_at(n);
-    if n >= 1.0 && n < 1000.0 && at >= RULER_LABEL_ROW && at + 6.0 <= tank_art_h {
+    if n >= 1.0 && n < 10000.0 && at >= RULER_LABEL_ROW && at + 6.0 <= tank_art_h {
         let row = art.y - (at + 1.0);
         if row >= 0.0 && row < 5.0 {
             return ruler_number_ink(i32(n), col, i32(4.0 - row));
@@ -3875,6 +3877,15 @@ fn fs_ruler(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var ink = false;
     if in_bottom {
         ink = ruler_bottom_ink(art, floor(tank.x / px));
+        if !ink && art.x < RULER_LEFT {
+            let v_tick = ruler_tick_cm(art.y);
+            if v_tick >= 1.0 {
+                let len = ruler_tick_len(v_tick);
+                // Keep a 1-art-px gutter beside the corner "0" label (art.y 6..11, art.x 2..4).
+                let max_x = select(len, min(len, 1.0), art.y >= 6.0 && art.y < 11.0);
+                ink = art.x < max_x;
+            }
+        }
     } else {
         ink = ruler_left_ink(art, floor(tank.y / px));
     }

@@ -605,6 +605,8 @@ impl Renderer {
             ..
         } = overlay;
         let ruler = ruler.map_or([0.0; 4], |min_px| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let scale = scale.max(1.0).round() as u32;
             ruler::Plan::new(scale, min_px, self.grid).uniform()
         });
         let field_mode = field_mode(field);
@@ -829,7 +831,7 @@ impl Renderer {
                     size,
                 );
                 pass.set_pipeline(&self.ruler);
-                for (x, y, w, h) in strips {
+                for (x, y, w, h) in strips.into_iter().flatten() {
                     pass.set_scissor_rect(x, y, w, h);
                     pass.draw(0..3, 0..1);
                 }
@@ -1726,7 +1728,12 @@ fn create_pipelines(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         &[],
     );
-    (pipelines, [lens_frame, front_film, ruler], shader, pipeline_layout)
+    (
+        pipelines,
+        [lens_frame, front_film, ruler],
+        shader,
+        pipeline_layout,
+    )
 }
 
 /// Whether the grid and sprites apply the front film before encoding into

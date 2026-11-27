@@ -81,14 +81,14 @@ impl Plan {
     /// grid at `offset` (top-left, target pixels) of `grid` cells at `scale`,
     /// clamped to a `target`-pixel surface: the bottom strip across the
     /// tank, then the left strip above it (disjoint, so nothing is blended
-    /// twice). Empty rectangles are left out.
+    /// twice). Empty rectangles are `None`.
     pub fn strips(
         &self,
         offset: (i64, i64),
         grid: (u32, u32),
         scale: u32,
         target: (u32, u32),
-    ) -> Vec<(u32, u32, u32, u32)> {
+    ) -> [Option<(u32, u32, u32, u32)>; 2] {
         let px = i64::from(self.px);
         let right = offset.0 + i64::from(grid.0) * i64::from(scale);
         let bottom = offset.1 + i64::from(grid.1) * i64::from(scale);
@@ -108,9 +108,6 @@ impl Plan {
             clamp(offset.0, strip_top, right, bottom),
             clamp(offset.0, offset.1, left.min(right), strip_top),
         ]
-        .into_iter()
-        .flatten()
-        .collect()
     }
 }
 
@@ -146,16 +143,24 @@ mod tests {
     fn strips_are_disjoint_clamped_and_skip_empty() {
         let p = Plan::new(4, 0, (16, 8));
         // 16×8 cells at 4 px in 80×32: letterbox 8 px left and right.
-        let strips = p.strips((8, 0), (16, 8), 4, (80, 32));
+        let strips: Vec<_> = p
+            .strips((8, 0), (16, 8), 4, (80, 32))
+            .into_iter()
+            .flatten()
+            .collect();
         assert_eq!(
             strips,
             vec![(8, 20, 64, 12), (8, 0, 19, 20)],
             "bottom strip, then the left strip above it"
         );
         // A tank hanging off the target at scale 1 is clamped, never negative.
-        let strips = p.strips((-4, -2), (16, 8), 1, (8, 4));
+        let strips: Vec<_> = p
+            .strips((-4, -2), (16, 8), 1, (8, 4))
+            .into_iter()
+            .flatten()
+            .collect();
         assert_eq!(strips, vec![(0, 0, 8, 4)]);
-        assert_eq!(p.strips((100, 100), (16, 8), 1, (8, 4)), []);
+        assert_eq!(p.strips((100, 100), (16, 8), 1, (8, 4)), [None, None]);
     }
 
     /// `tank.wgsl` carries its own copy of the strip sizes and the glyph
