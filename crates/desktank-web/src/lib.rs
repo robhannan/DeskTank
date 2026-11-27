@@ -908,9 +908,11 @@ impl WebTank {
     /// <cells> <limit> <column> <row>"` (limit as
     /// [`desktank_sim::Limit::key`]), `"creature <species> <id> <material>
     /// <column> <row> <stage> <age days> <health %> <energy %> <female|male>
-    /// <morph|-> <carrying days|-> <name…>"` (the name, last, may hold
-    /// spaces or be empty; see [`desktank_sim::CreatureCard`]), or `""` if
-    /// nothing new.
+    /// <morph|-> <carrying days|-> <needs|-> <name…>"` (needs as
+    /// `Hunger:49:low,Socialisation:100:comfortable`: label, percent and
+    /// level, which the page announces so the card's meters have a text
+    /// equivalent; the name, last, may hold spaces or be empty; see
+    /// [`desktank_sim::CreatureCard`]), or `""` if nothing new.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = takeInspection))]
     pub fn take_inspection(&mut self) -> String {
         core::mem::take(&mut self.inspection)
@@ -1648,11 +1650,33 @@ impl WebTank {
     }
 }
 
+/// A creature's need readings as one word for its inspect line, so a screen
+/// reader hears what the card's meters show: `Hunger:49:low,Socialisation:100:comfortable`
+/// (label with `_` for spaces, satisfaction percent, level), or `-` for a
+/// species with none.
+fn needs_token(card: &CreatureCard) -> String {
+    if card.needs.is_empty() {
+        return "-".to_owned();
+    }
+    card.needs
+        .iter()
+        .map(|r| {
+            format!(
+                "{}:{}:{}",
+                r.need.label().replace(' ', "_"),
+                r.satisfaction,
+                r.level().name()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// A creature's inspect line (see [`WebTank::take_inspection`]).
 fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String {
     let dash = |v: Option<String>| v.unwrap_or_else(|| "-".to_owned());
     format!(
-        "creature {} {} {over} {x} {y} {} {} {:.0} {:.0} {} {} {} {}",
+        "creature {} {} {over} {x} {y} {} {} {:.0} {:.0} {} {} {} {} {}",
         card.species,
         card.id.0,
         card.stage.name(),
@@ -1662,6 +1686,7 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
         if card.female { "female" } else { "male" },
         dash(card.morph.clone()),
         dash(card.carrying_days.map(|d| d.to_string())),
+        needs_token(card),
         card.name.as_deref().unwrap_or(""),
     )
 }

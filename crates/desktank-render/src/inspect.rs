@@ -1145,7 +1145,7 @@ mod tests {
         let (w, [a, ..]) = school();
         let tetra = live(&w, Inspected::Creature(a)).unwrap();
         let labels: Vec<_> = tetra.needs.iter().map(|b| b.label).collect();
-        assert_eq!(labels, ["Fed", "Social contact"]);
+        assert_eq!(labels, ["Hunger", "Socialisation"]);
         // The bars are the simulation's own per-creature readings.
         let readings = w.creature_needs(w.creature(a).unwrap());
         assert_eq!(readings.len(), 2);
@@ -1163,12 +1163,10 @@ mod tests {
         let mut w = w;
         let guppy = w.species().id("guppy").unwrap();
         let g = w.add_creature(guppy, 80, 40).unwrap();
-        assert!(live(&w, Inspected::Creature(g)).unwrap().needs.is_empty());
-        assert!(
-            live(&w, Inspected::Cell { x: 10, y: 60 })
-                .unwrap()
-                .needs
-                .is_empty()
+        assert_eq!(live(&w, Inspected::Creature(g)).unwrap().needs, []);
+        assert_eq!(
+            live(&w, Inspected::Cell { x: 10, y: 60 }).unwrap().needs,
+            []
         );
         // The Needs heading is the section's only mark when it is empty:
         // no bars, no heading.
@@ -1178,7 +1176,7 @@ mod tests {
 
     #[test]
     fn eating_raises_the_feeding_bar_and_a_fish_back_with_its_school_restores_social() {
-        let (mut w, [a, b, _]) = school();
+        let (mut w, [a, ..]) = school();
         let mut card = InspectCard::default();
         card.set(&w, Some(Inspected::Creature(a)));
         // A hungry tetra among companions: empty feeding bar, full social
@@ -1220,15 +1218,15 @@ mod tests {
 
     #[test]
     fn switching_fish_shows_the_new_individuals_values_at_once() {
-        let (mut w, [a, b, c]) = school();
+        let (mut w, [a, b, third]) = school();
         let mut card = InspectCard::default();
         card.set(&w, Some(Inspected::Creature(a)));
         run(&mut w, &mut card, 200);
         // Feed only `b`, so the three differ.
         let food = w.materials().id("flake_food").unwrap();
-        let (x, y) = w.creature(b).unwrap().centre();
+        let (bx, by) = w.creature(b).unwrap().centre();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        w.set_cell(x as usize, y as usize, food).unwrap();
+        w.set_cell(bx as usize, by as usize, food).unwrap();
         w.tick();
         w.tick();
         card.refresh(&w, false);
@@ -1245,7 +1243,7 @@ mod tests {
         let rebuilt = build_live(card.live.as_ref().unwrap(), true).0;
         assert_eq!(card.image.as_ref(), Some(&rebuilt));
         // Going back to `a`, and to `c`, shows their readings, not b's.
-        for id in [a, c] {
+        for id in [a, third] {
             assert!(card.set(&w, Some(Inspected::Creature(id))));
             let fed = w.creature_needs(w.creature(id).unwrap())[0].satisfaction;
             assert_eq!(bars(&card)[0], (fed.div_ceil(2), 0), "{id:?}");
@@ -1384,5 +1382,41 @@ mod tests {
         let g = Layout::fit((160, 90), (320, 180));
         card.set_narrow(&w, false);
         assert!(card.layout(&w, (320, 180), &g, None, 0).is_some());
+    }
+
+    /// Writes a tetra's live card, just after a first bite, in two columns
+    /// and in one, as PNGs to `target/shots/inspect-need-bars/` when
+    /// `INSPECT_SHOTS` is set.
+    #[test]
+    fn writes_live_card_shots_on_request() {
+        if std::env::var_os("INSPECT_SHOTS").is_none() {
+            return;
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/inspect-need-bars");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut w, [a, ..]) = school();
+        w.set_creature_name(a, "Neo");
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        run(&mut w, &mut card, 250);
+        let food = w.materials().id("flake_food").unwrap();
+        let (x, y) = w.creature(a).unwrap().centre();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        w.set_cell(x as usize, y as usize, food).unwrap();
+        run(&mut w, &mut card, 3);
+        for (name, narrow) in [("live-two-column", false), ("live-narrow", true)] {
+            card.set_narrow(&w, narrow);
+            let image = card.image.as_ref().unwrap();
+            let scale = 5;
+            std::fs::write(
+                dir.join(format!("{name}.png")),
+                crate::testing::png(
+                    &crate::needs::tests::enlarge(&image.pixels, image.size, scale),
+                    (image.size.0 * scale, image.size.1 * scale),
+                ),
+            )
+            .unwrap();
+        }
     }
 }

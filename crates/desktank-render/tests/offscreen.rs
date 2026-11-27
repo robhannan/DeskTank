@@ -1686,3 +1686,83 @@ fn px_at(img: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
     let i = ((y * width + x) * 4) as usize;
     [img[i], img[i + 1], img[i + 2]]
 }
+
+/// A creature's inspect card shows its need meters (a short red feeding bar
+/// just after a first bite, a green social bar, a green chevron), in two
+/// columns on a desktop-sized target and one on a phone-sized one. Writes
+/// both frames to `target/shots/inspect-need-bars/` when `INSPECT_SHOTS` is
+/// set.
+#[test]
+fn the_inspect_card_shows_need_meters_in_two_columns_or_one() {
+    #[path = "../src/testing.rs"]
+    mod testing;
+
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let materials = MaterialTable::builtin().unwrap();
+    let food = materials.id("flake_food").unwrap();
+    let mut world = World::new(
+        WorldConfig {
+            width: 80,
+            height: 45,
+            seed: 7,
+            water_level: 1.0,
+        },
+        materials,
+    )
+    .unwrap();
+    let tetra = world.species().id("neon_tetra").unwrap();
+    let ids = [(30, 20), (34, 20), (38, 20)].map(|(x, y)| world.add_creature(tetra, x, y).unwrap());
+    let mut tank = Tank::new(world, TankConfig::default());
+    tank.set_saver_mode(true);
+    tank.set_inspected(Some(desktank_render::Inspected::Creature(ids[0])));
+    // Settle, then feed the inspected fish and let it take its first bite.
+    for _ in 0..250 {
+        tank.step();
+    }
+    let (x, y) = tank.world().creature(ids[0]).unwrap().centre();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    tank.world_mut()
+        .set_cell(x as usize, y as usize, food)
+        .unwrap();
+    for _ in 0..3 {
+        tank.step();
+    }
+    let (red, green, track) = ([0xd8, 0x40, 0x3c], [0x4c, 0xc0, 0x6e], [0x16, 0x22, 0x34]);
+    let mut heights = Vec::new();
+    for (name, target) in [("desktop", (1280u32, 720u32)), ("narrow", (360, 640))] {
+        let img = render_sized(gpu, &mut tank, format, target);
+        let at = tank.inspect_layout(target).unwrap();
+        let (cw, ch) = at.size();
+        heights.push(ch / at.scale);
+        let colour_in_card = |c: [u8; 3]| {
+            (at.origin.1..at.origin.1 + ch)
+                .flat_map(|py| (at.origin.0..at.origin.0 + cw).map(move |px_| (px_, py)))
+                .filter(|&(px_, py)| px_at(&img, target.0, px_, py) == c)
+                .count()
+        };
+        // Pixels per card pixel is a whole scale, so the meters are crisp.
+        let s = usize::try_from(at.scale).unwrap();
+        assert!(
+            colour_in_card(red) >= 6 * 5 * s * s,
+            "{name}: short red fill"
+        );
+        assert!(
+            colour_in_card(green) >= 7 * s * s,
+            "{name}: the rising chevron"
+        );
+        assert!(colour_in_card(track) > 0, "{name}: track");
+        if std::env::var_os("INSPECT_SHOTS").is_some() {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/shots/inspect-need-bars");
+            std::fs::create_dir_all(&dir).unwrap();
+            // Alpha is opaque in the target already.
+            std::fs::write(
+                dir.join(format!("tank-{name}.png")),
+                testing::png(&img, target),
+            )
+            .unwrap();
+        }
+    }
+    assert!(heights[1] > heights[0], "one column is taller: {heights:?}");
+}

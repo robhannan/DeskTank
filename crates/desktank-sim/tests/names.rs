@@ -163,7 +163,7 @@ fn the_card_shows_the_life_cycle_and_young_are_born_unnamed() {
             .summary()
             .contains(&format!(" · {} · {}", fed.describe(), social.describe()))
     );
-    assert!(!card.summary().contains("Fed"), "a guppy shows none");
+    assert!(!card.summary().contains("Hunger"), "a guppy shows none");
     assert!(!w.creature_card(male).unwrap().female);
     assert!(w.creature_card(CreatureId(999)).is_none());
 

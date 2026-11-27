@@ -328,7 +328,7 @@ impl Trends {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::hud::FRAME;
     use desktank_sim::Need;
@@ -354,9 +354,9 @@ mod tests {
         assert_eq!(of(200).fill, LEVELS, "past full is full");
         assert_eq!(
             (of(0).label, of(100).level),
-            ("Social contact", NeedLevel::Comfortable)
+            ("Socialisation", NeedLevel::Comfortable)
         );
-        assert_eq!(NeedBar::of(reading(Need::Hunger, 5)).label, "Fed");
+        assert_eq!(NeedBar::of(reading(Need::Hunger, 5)).label, "Hunger");
         assert!(of(0).fill < of(30).fill && of(30).fill < of(100).fill);
     }
 
@@ -463,5 +463,411 @@ mod tests {
         assert_eq!(page.bottom(), before);
         draw(&mut page, &[bar(50, 0)], false);
         assert!(page.bottom() > before + font::LINE + METER_H);
+    }
+
+    // ---- Pixel tests: draw bars on a page and read the image back. ----
+
+    /// A card with `bars` drawn in the needs section.
+    fn card(bars: &[NeedBar], narrow: bool) -> crate::card::CardImage {
+        let mut page = Page::new(None);
+        draw(&mut page, bars, narrow);
+        page.finish()
+    }
+
+    fn rgb(img: &crate::card::CardImage, x: u32, y: u32) -> [u8; 3] {
+        let i = ((y * img.size.0 + x) * 4) as usize;
+        [img.pixels[i], img.pixels[i + 1], img.pixels[i + 2]]
+    }
+
+    /// Where each meter is: `(left, top, width)` of every horizontal run of
+    /// the meter frame colour exactly a meter wide that has track below it.
+    fn meters(img: &crate::card::CardImage) -> Vec<(u32, u32, u32)> {
+        let mut found = Vec::new();
+        for y in 0..img.size.1 {
+            let mut x = 0;
+            while x < img.size.0 {
+                if rgb(img, x, y) == METER_FRAME {
+                    let start = x;
+                    while x < img.size.0 && rgb(img, x, y) == METER_FRAME {
+                        x += 1;
+                    }
+                    let width = x - start;
+                    // A meter's top edge has background above and track below.
+                    let above = y == 0 || rgb(img, start + 1, y - 1) == crate::hud::BACKGROUND;
+                    let below = rgb(img, start + 1, y + 1);
+                    if (width == METER_W || width == WIDE_METER_W) && above && below != METER_FRAME
+                    {
+                        found.push((start, y, width));
+                    }
+                } else {
+                    x += 1;
+                }
+            }
+        }
+        found
+    }
+
+    /// The fill's length in pixels along a meter's middle track row, and
+    /// whether the pixel at its end is the brightest (the cap).
+    fn fill_length(img: &crate::card::CardImage, (left, top, width): (u32, u32, u32)) -> u32 {
+        let y = top + METER_H / 2;
+        (1..width - 1)
+            .filter(|&dx| rgb(img, left + dx, y) != TRACK)
+            .count()
+            .try_into()
+            .unwrap()
+    }
+
+    /// The pixels of a meter's chevron slot that are not background, as
+    /// rows of `#` and `.`.
+    fn slot(img: &crate::card::CardImage, (left, top, width): (u32, u32, u32)) -> Vec<String> {
+        let x0 = left + width + SLOT_GAP;
+        (0..METER_H)
+            .map(|dy| {
+                (0..SLOT_W)
+                    .map(|dx| {
+                        if rgb(img, x0 + dx, top + dy) == crate::hud::BACKGROUND {
+                            '.'
+                        } else {
+                            '#'
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn slot_colours(
+        img: &crate::card::CardImage,
+        (left, top, width): (u32, u32, u32),
+    ) -> Vec<[u8; 3]> {
+        let x0 = left + width + SLOT_GAP;
+        let mut seen = Vec::new();
+        for dy in 0..METER_H {
+            for dx in 0..SLOT_W {
+                let c = rgb(img, x0 + dx, top + dy);
+                if c != crate::hud::BACKGROUND && !seen.contains(&c) {
+                    seen.push(c);
+                }
+            }
+        }
+        seen
+    }
+
+    fn luminance(c: [u8; 3]) -> u32 {
+        (299 * u32::from(c[0]) + 587 * u32::from(c[1]) + 114 * u32::from(c[2])) / 1000
+    }
+
+    /// Four needs covering every satisfaction colour, a low need that is
+    /// improving and a high one that is declining.
+    fn four_levels() -> [NeedBar; 4] {
+        [
+            bar(15, 2),  // red, a short fill, improving (a first bite)
+            bar(40, 1),  // amber, low but improving
+            bar(60, 0),  // yellow, steady
+            bar(90, -2), // green, high but declining
+        ]
+    }
+
+    #[test]
+    fn all_four_levels_are_drawn_in_their_colours_with_their_trends() {
+        let bars = four_levels();
+        let img = card(&bars, false);
+        let at = meters(&img);
+        assert_eq!(at.len(), 4);
+        for (&place, (bar, want)) in at.iter().zip(bars.iter().zip([RED, AMBER, YELLOW, GREEN])) {
+            // The fill's body is the level's colour, the track beyond it
+            // muted.
+            let (left, top, _) = place;
+            let fill = fill_length(&img, place);
+            assert_eq!(rgb(&img, left + 2, top + 3), want, "{bar:?}");
+            if fill < METER_W - 2 {
+                assert_eq!(rgb(&img, left + 1 + fill, top + 3), TRACK, "{bar:?}");
+            }
+            // The cap, the last pixel of the fill, is lighter than the body.
+            assert!(
+                luminance(rgb(&img, left + fill, top + 3)) > luminance(want),
+                "{bar:?}"
+            );
+        }
+        // Row-major: the first two are the first row.
+        assert_eq!((at[0].1, at[1].1), (at[0].1, at[0].1));
+        assert_eq!(at[2].1, at[3].1);
+        assert!(at[2].1 > at[0].1);
+        // The trends sit beside them: green rightward, green rightward,
+        // none, red leftward ×2.
+        assert_eq!(slot_colours(&img, at[0]), [GREEN]);
+        assert_eq!(slot_colours(&img, at[1]), [GREEN]);
+        assert_eq!(slot_colours(&img, at[2]), [] as [[u8; 3]; 0]);
+        assert_eq!(slot_colours(&img, at[3]), [RED]);
+        let rows = |shape: [&str; 5], n: usize| -> Vec<String> {
+            let blank = ".".repeat(SLOT_W as usize);
+            let mut rows = vec![blank.clone()];
+            for row in shape {
+                let mut line = vec![b'.'; SLOT_W as usize];
+                for k in 0..n {
+                    for (dx, c) in row.bytes().enumerate() {
+                        if c == b'#' {
+                            line[k * CHEVRON_PITCH as usize + dx] = b'#';
+                        }
+                    }
+                }
+                rows.push(String::from_utf8(line).unwrap());
+            }
+            rows.push(blank);
+            rows
+        };
+        assert_eq!(slot(&img, at[0]), rows(RIGHT, 2));
+        assert_eq!(slot(&img, at[1]), rows(RIGHT, 1));
+        assert_eq!(slot(&img, at[3]), rows(LEFT, 2));
+        // The fills order the same way the readings do.
+        let fills: Vec<_> = at.iter().map(|&m| fill_length(&img, m)).collect();
+        assert!(fills[0] < fills[1] && fills[1] < fills[2] && fills[2] < fills[3]);
+    }
+
+    #[test]
+    fn low_partly_filled_and_full_meters_show_a_boundary_at_every_level() {
+        let levels = [0_u8, 1, 30, 50, 99, 100];
+        let bars: Vec<_> = levels.iter().map(|&s| bar(s, 0)).collect();
+        let img = card(&bars, true);
+        let at = meters(&img);
+        assert_eq!(at.len(), levels.len());
+        let track = WIDE_METER_W - 2;
+        let mut last = None;
+        for (&place, &s) in at.iter().zip(&levels) {
+            let (left, top, width) = place;
+            let fill = fill_length(&img, place);
+            assert_eq!(width, WIDE_METER_W);
+            // Proportional to the satisfaction, empty at 0 and the whole
+            // track at 100.
+            let expected = u32::from(NeedBar::of(reading(Need::Hunger, s)).fill) * track / 50;
+            assert_eq!(fill, expected, "{s}");
+            assert!(last.is_none_or(|l| l <= fill));
+            last = Some(fill);
+            let mid = top + 3;
+            if fill == 0 {
+                // Empty: only the muted track, and the frame still marks it.
+                assert_eq!(rgb(&img, left + 1, mid), TRACK);
+            } else {
+                // The fill ends in a lighter cap, then track or the frame.
+                let cap = rgb(&img, left + fill, mid);
+                let body = rgb(&img, left + 1, mid);
+                assert!(luminance(cap) > luminance(body), "{s}");
+                let next = rgb(&img, left + fill + 1, mid);
+                assert!(next == TRACK || next == METER_FRAME, "{s}");
+            }
+            // Top and bottom frame rows and both ends are always drawn.
+            for dx in 0..width {
+                assert_eq!(rgb(&img, left + dx, top), METER_FRAME);
+                assert_eq!(rgb(&img, left + dx, top + METER_H - 1), METER_FRAME);
+            }
+            assert_eq!(rgb(&img, left, mid), METER_FRAME);
+            assert_eq!(rgb(&img, left + width - 1, mid), METER_FRAME);
+        }
+        assert_eq!(fill_length(&img, at[5]), track);
+        assert_eq!(fill_length(&img, at[0]), 0);
+    }
+
+    #[test]
+    fn fill_length_and_chevron_direction_read_in_greyscale() {
+        let bars = four_levels();
+        let img = card(&bars, false);
+        let at = meters(&img);
+        let grey = |x: u32, y: u32| luminance(rgb(&img, x, y));
+        let background = luminance(crate::hud::BACKGROUND);
+        let track = luminance(TRACK);
+        for (&(left, top, width), bar) in at.iter().zip(&bars) {
+            // Fill versus track: every fill colour is brighter than the
+            // track by a clear margin, so its length reads.
+            let fill = (1..width - 1)
+                .filter(|&dx| grey(left + dx, top + 3) > track + 40)
+                .count();
+            assert_eq!(
+                u32::try_from(fill).unwrap(),
+                fill_length(&img, (left, top, width)),
+                "{bar:?}"
+            );
+        }
+        // A chevron points right when its middle row starts further right
+        // than its top row, and left when further left: read it from where
+        // the ink sits, not from its colour.
+        let points_right = |place: (u32, u32, u32)| {
+            let x0 = place.0 + place.2 + SLOT_GAP;
+            let first =
+                |dy: u32| (0..SLOT_W).find(|&dx| grey(x0 + dx, place.1 + 1 + dy) > background + 60);
+            first(2) > first(0)
+        };
+        assert!(points_right(at[0]), "improving");
+        assert!(points_right(at[1]), "improving");
+        assert!(!points_right(at[3]), "declining");
+        // Steady shows nothing at all.
+        let (left, top, width) = at[2];
+        for dy in 0..METER_H {
+            for dx in 0..SLOT_W {
+                assert_eq!(
+                    grey(left + width + SLOT_GAP + dx, top + dy),
+                    background,
+                    "steady slot"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn trends_never_move_labels_or_meters() {
+        let steady = card(&[bar(40, 0), bar(80, 0)], false);
+        let rising = card(&[bar(40, 3), bar(80, 3)], false);
+        let falling = card(&[bar(40, -3), bar(80, -1)], false);
+        assert_eq!(steady.size, rising.size);
+        assert_eq!(steady.size, falling.size);
+        let at = meters(&steady);
+        assert_eq!(meters(&rising), at);
+        assert_eq!(meters(&falling), at);
+        // Everything outside the chevron slots is pixel for pixel the same.
+        let in_slot = |x: u32, y: u32| {
+            at.iter().any(|&(left, top, width)| {
+                let x0 = left + width + SLOT_GAP;
+                x >= x0 && x < x0 + SLOT_W && y >= top && y < top + METER_H
+            })
+        };
+        for other in [&rising, &falling] {
+            for y in 0..steady.size.1 {
+                for x in 0..steady.size.0 {
+                    if !in_slot(x, y) {
+                        assert_eq!(rgb(&steady, x, y), rgb(other, x, y), "({x}, {y})");
+                    }
+                }
+            }
+        }
+        assert_ne!(steady.pixels, rising.pixels);
+    }
+
+    #[test]
+    fn labels_are_centred_over_equal_width_meters_in_either_layout() {
+        let bars = [bar(30, 0), bar(80, 1), bar(55, 0)];
+        let bars: Vec<_> = bars
+            .iter()
+            .zip(["Hunger", "Socialisation", "Hunger"])
+            .map(|(b, label)| NeedBar { label, ..*b })
+            .collect();
+        for narrow in [false, true] {
+            let img = card(&bars, narrow);
+            let at = meters(&img);
+            assert_eq!(at.len(), 3);
+            assert!(at.iter().all(|m| m.2 == at[0].2), "equal widths");
+            for (&(left, top, width), bar) in at.iter().zip(&bars) {
+                // The label's ink spans the rows just above the meter.
+                let ink: Vec<u32> = (left..left + width)
+                    .filter(|&x| (top - font::LINE..top).any(|y| rgb(&img, x, y) == LABEL))
+                    .collect();
+                let (first, last) = (*ink.first().unwrap(), *ink.last().unwrap());
+                assert_eq!(last - first + 1, font::width(bar.label), "{}", bar.label);
+                let (a, b) = (first - left, left + width - 1 - last);
+                assert!(a.abs_diff(b) <= 1, "{} off centre: {a} {b}", bar.label);
+            }
+        }
+        // Two columns: two to a row, the second beside the first with the
+        // card's text edge on the left; one column: one to a row, centred.
+        let two = meters(&card(&bars, false));
+        assert_eq!(two[0].1, two[1].1);
+        assert_eq!(two[0].0, PAD);
+        assert_eq!(two[1].0, PAD + Columns::new(false).width() + COLUMN_GAP);
+        assert!(two[2].1 > two[0].1 && two[2].0 == two[0].0);
+        let one = meters(&card(&bars, true));
+        assert!(one[0].1 < one[1].1 && one[1].1 < one[2].1);
+        assert!(one.iter().all(|m| m.0 == one[0].0));
+        assert!(one[0].2 > two[0].2, "a narrow card's meters are wider");
+        let width = Page::inner();
+        let used = Columns::new(true).width();
+        assert_eq!(one[0].0, PAD + (width - used) / 2);
+    }
+
+    /// Writes the example cards of the issue as PNGs to
+    /// `target/shots/inspect-need-bars/` when `INSPECT_SHOTS` is set.
+    #[test]
+    fn writes_need_bar_shots_on_request() {
+        if std::env::var_os("INSPECT_SHOTS").is_none() {
+            return;
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/inspect-need-bars");
+        std::fs::create_dir_all(&dir).unwrap();
+        let named = |a: NeedBar, b: NeedBar| {
+            [
+                NeedBar {
+                    label: "Hunger",
+                    ..a
+                },
+                NeedBar {
+                    label: "Socialisation",
+                    ..b
+                },
+            ]
+        };
+        // Four cards, side by side: every colour, short to full fills, and
+        // improving, falling and steady trends.
+        let cards = [
+            named(bar(25, 2), bar(100, 0)),
+            named(bar(40, 1), bar(50, -3)),
+            named(bar(60, 0), bar(10, 3)),
+            named(bar(90, -2), bar(0, -1)),
+        ];
+        let images: Vec<_> = cards.iter().map(|bars| card_with_heading(bars)).collect();
+        let (gap, scale) = (6, 4);
+        let total_w: u32 = images.iter().map(|i| i.size.0).sum::<u32>() + gap * 3;
+        let height = images.iter().map(|i| i.size.1).max().unwrap();
+        let mut sheet = vec![0_u8; (total_w * height * 8 * 4) as usize];
+        // Row one in colour, row two the same in greyscale.
+        let row_h = height;
+        for pass in 0..2_u32 {
+            let mut x0 = 0;
+            for image in &images {
+                for y in 0..image.size.1 {
+                    for x in 0..image.size.0 {
+                        let i = ((y * image.size.0 + x) * 4) as usize;
+                        let mut p = [image.pixels[i], image.pixels[i + 1], image.pixels[i + 2]];
+                        if pass == 1 {
+                            let g = u8::try_from(luminance(p)).unwrap_or(255);
+                            p = [g, g, g];
+                        }
+                        let o = ((((pass * (row_h + gap) + y) * total_w) + x0 + x) * 4) as usize;
+                        sheet[o..o + 3].copy_from_slice(&p);
+                        sheet[o + 3] = 255;
+                    }
+                }
+                x0 += image.size.0 + gap;
+            }
+        }
+        let sheet_h = row_h * 2 + gap;
+        sheet.truncate((total_w * sheet_h * 4) as usize);
+        std::fs::write(
+            dir.join("four-levels-and-trends.png"),
+            crate::testing::png(
+                &enlarge(&sheet, (total_w, sheet_h), scale),
+                (total_w * scale, sheet_h * scale),
+            ),
+        )
+        .unwrap();
+    }
+
+    /// A card with a heading and `bars`, as a creature's live page has.
+    fn card_with_heading(bars: &[NeedBar]) -> crate::card::CardImage {
+        let mut page = Page::new(Some("1/2"));
+        page.heading("Neon tetra #7", "");
+        page.field("Health:", "100%");
+        draw(&mut page, bars, false);
+        page.finish()
+    }
+
+    /// `rgba` enlarged `scale` times, nearest neighbour.
+    pub(crate) fn enlarge(rgba: &[u8], (w, h): (u32, u32), scale: u32) -> Vec<u8> {
+        let mut big = Vec::with_capacity((w * h * scale * scale * 4) as usize);
+        for y in 0..h * scale {
+            for x in 0..w * scale {
+                let i = (((y / scale) * w + x / scale) * 4) as usize;
+                big.extend_from_slice(&rgba[i..i + 4]);
+            }
+        }
+        big
     }
 }

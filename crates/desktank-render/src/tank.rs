@@ -1979,4 +1979,29 @@ mod tests {
         tank.set_time_of_day(0);
         assert!(tank.needs_frame);
     }
+
+    #[test]
+    fn a_narrow_target_lays_the_need_meters_in_one_column_and_a_change_is_one_rebuild() {
+        let mut tank = settled_planted_tank();
+        let tetra = tank.world().species().id("neon_tetra").unwrap();
+        let id = tank.world_mut().add_creature(tetra, 30, 20).unwrap();
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        let height = |tank: &Tank| tank.inspect.image.as_ref().unwrap().size.1;
+        tank.inspect.dirty = false;
+        tank.fit_inspect((1280, 720));
+        assert!(!tank.inspect.dirty, "a wide target changes nothing");
+        let wide = height(&tank);
+        tank.fit_inspect((NARROW_TARGET_W - 1, 640));
+        assert!(tank.inspect.dirty && height(&tank) > wide);
+        tank.inspect.dirty = false;
+        tank.fit_inspect((NARROW_TARGET_W - 1, 480));
+        assert!(!tank.inspect.dirty, "the same layout is free");
+        tank.fit_inspect((NARROW_TARGET_W, 480));
+        assert!(tank.inspect.dirty && height(&tank) == wide);
+        // Nothing inspected: the layout is only remembered, nothing built.
+        tank.set_inspected(None);
+        tank.inspect.dirty = false;
+        tank.fit_inspect((200, 200));
+        assert!(tank.inspect.image.is_none() && !tank.inspect.dirty);
+    }
 }

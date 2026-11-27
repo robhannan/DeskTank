@@ -1459,7 +1459,7 @@ function runName() {
 
 // A creature's card, from its inspect line's parts and its name.
 function creatureText({ parts, name }: Inspected) {
-  const [species, id, over, x, y, stage, age, health, energy, sex, morph, carrying] = parts;
+  const [species, id, over, x, y, stage, age, health, energy, sex, morph, carrying, needs] = parts;
   const days = Number(age);
   const old = days === 0 ? "under a day old" : `${days} day${days === 1 ? "" : "s"} old`;
   const card = [];
@@ -1467,6 +1467,13 @@ function creatureText({ parts, name }: Inspected) {
   card.push(`${label(species)} #${id}`, `${stage} ${sex}`, old, `health ${health}%`, `energy ${energy}%`);
   if (morph !== "-") card.push(label(morph));
   if (carrying !== "-") card.push(`carrying, ${carrying} day${carrying === "1" ? "" : "s"} to go`);
+  // The card's need meters as words: "Hunger 49%, low".
+  if (needs && needs !== "-") {
+    for (const need of needs.split(",")) {
+      const [name, percent, level] = need.split(":");
+      card.push(`${name.replaceAll("_", " ")} ${percent}%, ${level}`);
+    }
+  }
   card.push(`over ${label(over)}`, `cell ${x}, ${y}`);
   return card.join(" · ");
 }
@@ -1526,7 +1533,7 @@ function showInspection() {
   } else if (kind === "creature") {
     // The name is last and may hold spaces.
     closeDeviceActions();
-    inspected = { id: Number(rest[1]), parts: rest.slice(0, 12), name: rest.slice(12).join(" ") };
+    inspected = { id: Number(rest[1]), parts: rest.slice(0, 13), name: rest.slice(13).join(" ") };
     announce(creatureText(inspected));
     nameInput.value = inspected.name;
     placeNameInput();

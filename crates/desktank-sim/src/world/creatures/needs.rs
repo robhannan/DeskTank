@@ -16,13 +16,14 @@ pub enum Need {
 }
 
 impl Need {
-    /// A short label that reads naturally with 0 as unmet and 100 as
-    /// satisfied ("Fed", "Social contact").
+    /// A short label for a meter whose empty end is the need unmet and
+    /// whose full end is it satisfied ("Hunger" full is not hungry,
+    /// "Socialisation" full is in company).
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Hunger => "Fed",
-            Self::Social => "Social contact",
+            Self::Hunger => "Hunger",
+            Self::Social => "Socialisation",
         }
     }
 }
@@ -43,7 +44,7 @@ impl NeedReading {
         NeedLevel::of(self.satisfaction)
     }
 
-    /// The reading as plain text for a screen reader or summary: `Fed 49%,
+    /// The reading as plain text for a screen reader or summary: `Hunger 49%,
     /// low`.
     #[must_use]
     pub fn describe(self) -> String {
@@ -348,8 +349,8 @@ mod tests {
 
     #[test]
     fn readings_are_labelled_and_banded_for_display() {
-        assert_eq!(Need::Hunger.label(), "Fed");
-        assert_eq!(Need::Social.label(), "Social contact");
+        assert_eq!(Need::Hunger.label(), "Hunger");
+        assert_eq!(Need::Social.label(), "Socialisation");
         // 0 is unmet and 100 satisfied; the bands start where a fish gets
         // hungry (a bite fits below 75%).
         let bands: Vec<_> = [0, 25, 26, 49, 50, 74, 75, 100]
@@ -376,7 +377,7 @@ mod tests {
                 satisfaction: 49
             }
             .describe(),
-            "Fed 49%, low"
+            "Hunger 49%, low"
         );
         // A first bite from empty is a quarter of a full stomach: still
         // critical.
