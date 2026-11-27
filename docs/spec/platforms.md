@@ -244,6 +244,13 @@ modes; it is a "window mode" in a page.
     simulation only runs when a tick is due.
   - Where the Battery Status API exists (Chromium) the host drops to
     15 fps on battery. Elsewhere it stays at 30 fps.
+- **Camera tour** (D29): off unless the URL asks. `?tour` or `?tour=1`
+  runs it, `?tour=card` also pins the read-only inspect card, and
+  `?tour=0` stays off. While it runs the page is a screensaver: the first
+  pointer press, wheel turn or key ends the tour for the session and is
+  swallowed, and normal interaction resumes. The name input is off while
+  the tour card shows, and the card isn't announced to screen readers. The
+  tour sizes its views from the canvas, so a resize keeps it.
 - **Sound** (E3): WebAudio, started only after a user gesture, as
   browsers require. On iOS the ring/silent switch can mute it.
 - **Offline / install** (WB4): a web app manifest and service worker,
@@ -369,7 +376,12 @@ over the keyguard while charging).
     glass edges, it runs the camera tour (D29, on by default): the view
     zooms in on one creature at a time, follows it, glides to the next
     and now and then pulls back to the whole tank, optionally with the
-    creature's inspect card stepping through its pages (off by default);
+    creature's inspect card stepping through its pages (off by default).
+    The Dream reads two booleans from its `SharedPreferences` file
+    `dream` on each start and passes them to Rust: `tour` (default
+    true) and `tour_card` (default false). Each start seeds the tour from
+    the world seed and the uptime clock. A3's settings screen edits them.
+    The Activity never tours;
   - its `android:settingsActivity` meta-data opens the app's settings
     (A3).
 - **Choosing the screensaver**: plain Android TV and phones list the
