@@ -1764,42 +1764,88 @@ function endGestures() {
   tank?.pointerLeave();
 }
 
+// How long after the waking press's release its click may still arrive (a
+// mobile tap delay, a stalled main thread) and be swallowed.
+const TOUR_CLICK_WINDOW_MS = 500;
+
 // Ends the tour on the first input and swallows it, so a screensaver wake-up
-// press doesn't also paint or press a button; its release (pointerup, click,
-// keyup) is swallowed too. Normal interaction resumes after that.
+// press doesn't also paint or press a button. What belongs to that input goes
+// too: the waking pointer's release and the click (or auxclick, contextmenu)
+// that follows it, and the waking key's autorepeats and release. A later
+// press is the user's and passes. Registered only when the page tours, and
+// removed once the tour has ended and its input has been let go.
 function wireTourEnd() {
-  let swallowRelease = false;
-  const swallowedKeys = new Set<string>();
+  if (!touring) return;
+  let wakePointer: number | null = null; // the waking press, until it is released
+  let clickPending = false; // its click may still follow the release
+  let clickTimer = 0;
+  let wakeKey: string | null = null; // the waking key, until it is released
+  const listeners: [string, (e: Event) => void][] = [];
+  const on = (types: string[], fn: (e: Event) => void) => {
+    for (const type of types) {
+      window.addEventListener(type, fn, { capture: true, passive: false });
+      listeners.push([type, fn]);
+    }
+  };
   const stop = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
   };
-  const endTour = (e: Event) => {
-    if (!touring) return;
-    touring = false;
-    tank.setTour(false, false, 0);
-    closeName();
-    if (e.type === "pointerdown") swallowRelease = true;
-    if (e instanceof KeyboardEvent) swallowedKeys.add(e.key);
-    stop(e);
-    kick();
+  // Without a code (some virtual keyboards) the key stands in for it.
+  const keyId = (e: KeyboardEvent) => e.code || e.key;
+  const tidy = () => {
+    if (touring || wakePointer !== null || clickPending || wakeKey !== null) return;
+    for (const [type, fn] of listeners) window.removeEventListener(type, fn, { capture: true });
+    listeners.length = 0;
   };
-  const opts = { capture: true, passive: false };
-  for (const type of ["pointerdown", "wheel", "keydown"]) window.addEventListener(type, endTour, opts);
-  for (const type of ["pointerup", "pointercancel", "click"]) {
-    window.addEventListener(
-      type,
-      (e) => {
-        if (!swallowRelease) return;
-        stop(e);
-        // The click follows the pointerup; drop the flag once it has passed.
-        if (type !== "pointerup") swallowRelease = false;
-        else setTimeout(() => (swallowRelease = false), 100);
-      },
-      opts,
-    );
-  }
-  window.addEventListener("keyup", (e) => (swallowedKeys.delete(e.key) ? stop(e) : undefined), opts);
+  const endClickWindow = () => {
+    clickPending = false;
+    clearTimeout(clickTimer);
+    tidy();
+  };
+  on(["pointerdown", "wheel", "keydown"], (e) => {
+    if (touring) {
+      touring = false;
+      tank.setTour(false, false, 0);
+      closeName();
+      if (e instanceof PointerEvent) wakePointer = e.pointerId;
+      if (e instanceof KeyboardEvent) wakeKey = keyId(e);
+      stop(e);
+      kick();
+      tidy();
+      return;
+    }
+    if (e instanceof KeyboardEvent && wakeKey !== null && keyId(e) === wakeKey) stop(e); // autorepeat
+    // A new press is the user's own: the waking click is no longer coming.
+    else if (e instanceof PointerEvent && e.pointerId !== wakePointer && clickPending) endClickWindow();
+  });
+  on(["pointerup", "pointercancel"], (e) => {
+    if (wakePointer === null || (e as PointerEvent).pointerId !== wakePointer) return;
+    stop(e);
+    wakePointer = null;
+    if (e.type === "pointerup") {
+      clickPending = true;
+      clearTimeout(clickTimer);
+      clickTimer = window.setTimeout(endClickWindow, TOUR_CLICK_WINDOW_MS);
+    } else tidy();
+  });
+  on(["click", "auxclick", "contextmenu"], (e) => {
+    if (wakePointer === null && !clickPending) return;
+    stop(e);
+    if (e.type !== "contextmenu" && wakePointer === null) endClickWindow();
+  });
+  on(["keyup"], (e) => {
+    if (wakeKey === null || keyId(e as KeyboardEvent) !== wakeKey) return;
+    stop(e);
+    wakeKey = null;
+    tidy();
+  });
+  // A release that happens elsewhere never arrives: let go on losing focus.
+  on(["blur"], () => {
+    wakePointer = null;
+    wakeKey = null;
+    endClickWindow();
+  });
 }
 
 function wireInput() {
