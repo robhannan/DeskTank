@@ -439,6 +439,9 @@ fn fill_enclosed(raw: &mut [bool], side: usize) {
 fn trim_spurs(raw: &[bool], core: &[bool], side: usize) -> Vec<bool> {
     const WIDTH: usize = 4;
     let mut solid = core.to_vec();
+    if side < WIDTH {
+        return solid;
+    }
     for y in 0..=side - WIDTH {
         for x in 0..=side - WIDTH {
             let rows = (y..y + WIDTH).map(|row| row * side + x..row * side + x + WIDTH);
