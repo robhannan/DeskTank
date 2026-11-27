@@ -1322,6 +1322,11 @@ impl World {
             }
         }
         let piece = &pieces[keeper];
+        let had_roots = self
+            .plants
+            .table
+            .get(&id)
+            .is_some_and(|p| p.parts[Part::Root.count_slot()] > 0);
         let new_base = if piece.binary_search(&base).is_ok() {
             base
         } else {
@@ -1349,7 +1354,7 @@ impl World {
         let stem = self.plants.material(Part::Stem);
         let has_stem =
             stem.is_some() && piece.iter().any(|&i| Some(self.cells[i].material) == stem);
-        if rooted_form && has_stem && !self.piece_anchored(piece, species) {
+        if rooted_form && had_roots && has_stem && !self.piece_anchored(piece, species) {
             self.plants.rafts.entry(id).or_insert_with(Raft::new);
         }
         self.wake_raft(id);
