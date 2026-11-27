@@ -354,7 +354,7 @@ pub(crate) mod tests {
         assert_eq!(of(200).fill, LEVELS, "past full is full");
         assert_eq!(
             (of(0).label, of(100).level),
-            ("Socialisation", NeedLevel::Comfortable)
+            ("Social", NeedLevel::Comfortable)
         );
         assert_eq!(NeedBar::of(reading(Need::Hunger, 5)).label, "Hunger");
         assert!(of(0).fill < of(30).fill && of(30).fill < of(100).fill);
@@ -747,7 +747,7 @@ pub(crate) mod tests {
         let bars = [bar(30, 0), bar(80, 1), bar(55, 0)];
         let bars: Vec<_> = bars
             .iter()
-            .zip(["Hunger", "Socialisation", "Hunger"])
+            .zip(["Hunger", "Social", "Hunger"])
             .map(|(b, label)| NeedBar { label, ..*b })
             .collect();
         for narrow in [false, true] {
@@ -799,7 +799,7 @@ pub(crate) mod tests {
                     ..a
                 },
                 NeedBar {
-                    label: "Socialisation",
+                    label: "Social",
                     ..b
                 },
             ]

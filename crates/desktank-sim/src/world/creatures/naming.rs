@@ -81,7 +81,7 @@ pub struct CreatureCard {
 impl CreatureCard {
     /// The card as one line: `Bubbles · neon tetra #3 · adult female ·
     /// 12 days old · health 80% · energy 60% · Hunger 49%, low ·
-    /// Socialisation 100%, comfortable · red · carrying, 5 days to go` (the
+    /// Social 100%, comfortable · red · carrying, 5 days to go` (the
     /// parts that apply).
     #[must_use]
     pub fn summary(&self) -> String {

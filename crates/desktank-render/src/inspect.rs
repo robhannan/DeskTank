@@ -1145,7 +1145,7 @@ mod tests {
         let (w, [a, ..]) = school();
         let tetra = live(&w, Inspected::Creature(a)).unwrap();
         let labels: Vec<_> = tetra.needs.iter().map(|b| b.label).collect();
-        assert_eq!(labels, ["Hunger", "Socialisation"]);
+        assert_eq!(labels, ["Hunger", "Social"]);
         // The bars are the simulation's own per-creature readings.
         let readings = w.creature_needs(w.creature(a).unwrap());
         assert_eq!(readings.len(), 2);

@@ -18,12 +18,12 @@ pub enum Need {
 impl Need {
     /// A short label for a meter whose empty end is the need unmet and
     /// whose full end is it satisfied ("Hunger" full is not hungry,
-    /// "Socialisation" full is in company).
+    /// "Social" full is in company).
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::Hunger => "Hunger",
-            Self::Social => "Socialisation",
+            Self::Social => "Social",
         }
     }
 }
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn readings_are_labelled_and_banded_for_display() {
         assert_eq!(Need::Hunger.label(), "Hunger");
-        assert_eq!(Need::Social.label(), "Socialisation");
+        assert_eq!(Need::Social.label(), "Social");
         // 0 is unmet and 100 satisfied; the bands start where a fish gets
         // hungry (a bite fits below 75%).
         let bands: Vec<_> = [0, 25, 26, 49, 50, 74, 75, 100]

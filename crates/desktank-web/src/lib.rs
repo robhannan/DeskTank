@@ -909,7 +909,7 @@ impl WebTank {
     /// [`desktank_sim::Limit::key`]), `"creature <species> <id> <material>
     /// <column> <row> <stage> <age days> <health %> <energy %> <female|male>
     /// <morph|-> <carrying days|-> <needs|-> <name…>"` (needs as
-    /// `Hunger:49:low,Socialisation:100:comfortable`: label, percent and
+    /// `Hunger:49:low,Social:100:comfortable`: label, percent and
     /// level, which the page announces so the card's meters have a text
     /// equivalent; the name, last, may hold spaces or be empty; see
     /// [`desktank_sim::CreatureCard`]), or `""` if nothing new.
@@ -1651,7 +1651,7 @@ impl WebTank {
 }
 
 /// A creature's need readings as one word for its inspect line, so a screen
-/// reader hears what the card's meters show: `Hunger:49:low,Socialisation:100:comfortable`
+/// reader hears what the card's meters show: `Hunger:49:low,Social:100:comfortable`
 /// (label with `_` for spaces, satisfaction percent, level), or `-` for a
 /// species with none.
 fn needs_token(card: &CreatureCard) -> String {
