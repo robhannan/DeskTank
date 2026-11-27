@@ -50,8 +50,8 @@ use desktank_sim::tools::{
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
-    Mount, Propagule, RinseKind, Script, Species, World, WorldConfig, catch_up_seconds, cheats,
-    save,
+    Mount, NeedReading, Propagule, RinseKind, Script, Species, World, WorldConfig,
+    catch_up_seconds, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -905,8 +905,10 @@ impl WebTank {
 
     /// What inspect found since the last call, once: `"cell <material>
     /// <column> <row>"`, `"plant <species> <id> <age days> <health %>
-    /// <cells> <limit> <column> <row>"` (limit as
-    /// [`desktank_sim::Limit::key`]), `"creature <species> <id> <material>
+    /// <cells> <limit> <column> <row> <needs>"` (limit as
+    /// [`desktank_sim::Limit::key`]; needs as for a creature, e.g.
+    /// `Light:87:comfortable,CO₂:50:middling,Nutrients:97:comfortable`),
+    /// `"creature <species> <id> <material>
     /// <column> <row> <stage> <age days> <health %> <energy %> <female|male>
     /// <morph|-> <carrying days|-> <needs|-> <name…>"` (needs as
     /// `Hunger:49:low,Social:100:comfortable`: label, percent and
@@ -1464,13 +1466,15 @@ impl WebTank {
                                 .plant_species()
                                 .get(p.species)
                                 .map_or("?", |s| s.name.as_str());
+                            let needs = world.plant_needs(id).map_or_else(Vec::new, Vec::from);
                             format!(
-                                "plant {name} {} {} {:.0} {} {} {x} {y}",
+                                "plant {name} {} {} {:.0} {} {} {x} {y} {}",
                                 id.0,
                                 p.age_days(),
                                 p.health * 100.0,
                                 p.size(),
-                                p.limit.key()
+                                p.limit.key(),
+                                needs_token(&needs)
                             )
                         })
                     }
@@ -1663,15 +1667,15 @@ impl WebTank {
     }
 }
 
-/// A creature's need readings as one word for its inspect line, so a screen
-/// reader hears what the card's meters show: `Hunger:49:low,Social:100:comfortable`
-/// (label with `_` for spaces, satisfaction percent, level), or `-` for a
-/// species with none.
-fn needs_token(card: &CreatureCard) -> String {
-    if card.needs.is_empty() {
+/// A creature's or plant's need readings as one word for its inspect line,
+/// so a screen reader hears what the card's meters show:
+/// `Hunger:49:low,Social:100:comfortable` (label with `_` for spaces,
+/// satisfaction percent, level), or `-` for a species with none.
+fn needs_token(needs: &[NeedReading]) -> String {
+    if needs.is_empty() {
         return "-".to_owned();
     }
-    card.needs
+    needs
         .iter()
         .map(|r| {
             format!(
@@ -1699,7 +1703,7 @@ fn creature_line(card: &CreatureCard, over: &str, x: usize, y: usize) -> String 
         if card.female { "female" } else { "male" },
         dash(card.morph.clone()),
         dash(card.carrying_days.map(|d| d.to_string())),
-        needs_token(card),
+        needs_token(&card.needs),
         card.name.as_deref().unwrap_or(""),
     )
 }
