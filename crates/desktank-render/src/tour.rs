@@ -539,7 +539,9 @@ impl Tour {
 }
 
 /// `want` as a zoom of `stage`: never below the one that covers the target
-/// (so no letterbox shows) nor above [`MAX_ZOOM`].
+/// (so no letterbox shows) nor above [`MAX_ZOOM`]. Past an aspect about
+/// 14:1 wider than the tank's, covering needs more than [`MAX_ZOOM`] and a
+/// letterbox shows; no real display gets there.
 fn focus_zoom(want: f32, stage: &Stage) -> f32 {
     want.max(stage.min_zoom()).clamp(1.0, MAX_ZOOM)
 }
@@ -693,8 +695,8 @@ mod tests {
 
     #[test]
     fn the_step_size_does_not_change_where_a_glide_goes() {
-        // A static world, so only the step size differs: the same seed holds
-        // the same picks and times, and the views agree to a small fraction.
+        // A static world, so only the step size differs: at this instant the
+        // same seed has the same target and the views agree closely.
         let s = stage(WIDE_16_9);
         let w = world(&FISH);
         let (mut fine, mut coarse) = (Tour::new(9), Tour::new(9));

@@ -911,7 +911,7 @@ impl Tank {
     /// Tells the tank the size in pixels of the target it is shown in, for
     /// the tour to size its views (see [`Tank::set_tour`]). Call it at
     /// start-up and on every resize; a draw sets it too. A zero size counts
-    /// as unknown.
+    /// as unknown: the tour keeps its last view until a size is known.
     pub fn set_target_size(&mut self, size: (u32, u32)) {
         if self.target_size == size {
             return;
@@ -2021,10 +2021,11 @@ mod tests {
             assert!(tank.camera().is_some(), "the camera is set at once");
             assert_eq!(tank.tour(), Some(TourSettings::default()));
             let before = tank.camera();
-            // 100 Hz host ticks: frames come only as the 30 fps cap allows.
+            // 100 Hz host ticks: the view moves every 20 Hz sim step, and
+            // frames never come faster than the 30 fps cap allows.
             let frames = count_frames_every(&mut tank, Duration::ZERO, 20, 10);
             assert!(
-                (200..=601).contains(&frames),
+                (380..=601).contains(&frames),
                 "{fish} fish: {frames} frames in 20 s"
             );
             assert_ne!(tank.camera(), before, "the view moved");
@@ -2163,12 +2164,13 @@ mod tests {
         assert_eq!(tank.inspected(), Some(Inspected::Creature(id)));
         assert_eq!(tank.inspect_page(), InspectPage::Live);
         assert!(tank.inspect_layout(TOUR_TARGET).is_some(), "it is drawn");
-        // Live for 12 s, then species, then live.
+        // Live for 12 s, then species, then live (checked away from the
+        // turns at 12 s and 24 s).
         for (turn, (seconds, page)) in [
             (11, InspectPage::Live),
             (2, InspectPage::Species),
-            (11, InspectPage::Species),
-            (2, InspectPage::Live),
+            (9, InspectPage::Species),
+            (4, InspectPage::Live),
         ]
         .into_iter()
         .enumerate()
@@ -2247,9 +2249,11 @@ mod tests {
         named.world_mut().set_creature_name(only, "Bubbles");
         named.set_inspect_naming(true);
         step_to_a_tour_card(&mut named, 60);
-        assert_ne!(
-            named.inspect.image, tank.inspect.image,
-            "the name row is drawn"
+        let mut viewer = InspectCard::default();
+        viewer.set(named.world(), Some(Inspected::Creature(only)));
+        assert_eq!(
+            named.inspect.image, viewer.image,
+            "the viewer's card, with its name row"
         );
         assert_eq!(named.inspect_name_rect(TOUR_TARGET), None);
         named.set_inspect_name_edit(Some("Bub"));
