@@ -13,8 +13,8 @@ use desktank_sim::{
     Brush, Ecology, FieldKind, MaterialId, MaterialTable, Placeable, Rect, World, WorldConfig,
 };
 
-const REACTIONS: &str = include_str!("../../../assets/reactions.toml");
-const FIELDS: &str = include_str!("../../../assets/fields.toml");
+const REACTIONS: &str = include_str!("../../../../assets/reactions.toml");
+const FIELDS: &str = include_str!("../../../../assets/fields.toml");
 
 fn world(width: usize, height: usize, seed: u64, water_level: f32) -> World {
     World::new(
@@ -392,10 +392,10 @@ fn the_current_carries_floating_and_liquid_cells_downstream() {
     let dye = "id = 70\nname = \"dye\"\nclass = \"liquid\"\ndensity = 1.0\ncolour = \"#ff00ff\"";
     let mut sources: Vec<&str> = vec![dye];
     for src in [
-        include_str!("../../../assets/materials/water.toml"),
-        include_str!("../../../assets/materials/air.toml"),
-        include_str!("../../../assets/materials/flake_food.toml"),
-        include_str!("../../../assets/materials/device.toml"),
+        include_str!("../../../../assets/materials/water.toml"),
+        include_str!("../../../../assets/materials/air.toml"),
+        include_str!("../../../../assets/materials/flake_food.toml"),
+        include_str!("../../../../assets/materials/device.toml"),
     ] {
         sources.push(src);
     }

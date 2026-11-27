@@ -1,5 +1,5 @@
 // CIEDE2000 colour difference on sRGB pixels: a port of the render tests'
-// comparison (crates/desktank/tests/support/mod.rs), so the web is judged by
+// comparison (crates/desktank/tests/it/support/mod.rs), so the web is judged by
 // the same SPEC §7 tolerance as native captures.
 
 export type Triple = [number, number, number];
