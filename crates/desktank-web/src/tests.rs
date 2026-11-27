@@ -1487,3 +1487,18 @@ fn flip_device_only_applies_to_flippable_device_tools() {
     assert!(!t.flip_device());
     assert!(!t.device_flipped());
 }
+
+#[test]
+fn the_tour_starts_and_ends_and_a_resize_keeps_it() {
+    let mut t = tank();
+    assert!(!t.touring());
+    t.set_tour(true, true, 3);
+    assert!(t.touring());
+    assert_eq!(t.tank().tour().map(|s| (s.seed, s.card)), Some((3, true)));
+    // The canvas size reaches the tour, so a resize doesn't end it.
+    t.resize(640, 360);
+    assert!(t.touring());
+    t.set_tour(false, false, 0);
+    assert!(!t.touring());
+    assert!(t.tank().camera().is_none());
+}
