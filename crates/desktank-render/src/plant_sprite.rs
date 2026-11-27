@@ -1195,4 +1195,172 @@ mod tests {
             .unwrap();
         }
     }
+
+    /// Writes, when `STEM_SHOTS` names a prefix (`before`, `after`), one PNG
+    /// per stem species to `target/shots/stem-before-after/`: its pane
+    /// sprite, then the same species placed Mature in a tank at scale 2 and
+    /// at scale 4 (quarter-cell art), all enlarged four times the sprite's
+    /// pixels, and a contact sheet of the five.
+    #[test]
+    fn writes_stem_before_after_on_request() {
+        let Some(prefix) = std::env::var_os("STEM_SHOTS") else {
+            return;
+        };
+        let prefix = prefix.to_string_lossy().into_owned();
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let Ok(gpu) = pollster::block_on(crate::Gpu::new(
+            &instance,
+            None,
+            crate::GpuOptions::default(),
+        )) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/stem-before-after");
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = table();
+        let (cw, ch) = (48_i64, 64_i64);
+        let bg = crate::hud::BACKGROUND;
+        // Tank pixels are shown at 4x (scale 2) or 2x (scale 4): the same size.
+        let tank_shot = |name: &str, scale: u32| -> Vec<u8> {
+            let m = MaterialTable::builtin().unwrap();
+            let mut world = desktank_sim::World::new(
+                desktank_sim::WorldConfig {
+                    width: cw as usize,
+                    height: ch as usize,
+                    seed: 7,
+                    water_level: 0.95,
+                },
+                m,
+            )
+            .unwrap();
+            let soil = world.materials().id("aquasoil").unwrap();
+            world
+                .fill_rect(
+                    desktank_sim::Rect {
+                        x0: 0,
+                        y0: 58,
+                        x1: cw as usize,
+                        y1: ch as usize,
+                    },
+                    soil,
+                    desktank_sim::Brush::Replace,
+                )
+                .unwrap();
+            let id = world.plant_species().id(name).unwrap();
+            world
+                .place_plant(id, desktank_sim::PlantStage::Mature, cw / 2, 57, false)
+                .unwrap()
+                .unwrap();
+            let mut tank = crate::Tank::new(world, crate::TankConfig::default());
+            tank.set_time_of_day(12 * 60);
+            tank.step();
+            tank.capture(&gpu, (cw as u32 * scale, ch as u32 * scale))
+                .unwrap()
+        };
+        let stems: Vec<&PlantSpecies> = t
+            .iter()
+            .filter(|sp| matches!(sp.form, Form::Stem(_)))
+            .collect();
+        for sp in stems {
+            let ((sw, sh), px) = build(sp);
+            // Enlarge `rgba` (`w` wide), cropped to `crop` (x0, y0, w, h),
+            // `k` times.
+            let up = |rgba: &[u8], w: usize, crop: (usize, usize, usize, usize), k: usize| {
+                let (cx, cy, cw, ch) = crop;
+                let mut out = vec![0u8; cw * k * ch * k * 4];
+                for y in 0..ch * k {
+                    for x in 0..cw * k {
+                        let s = ((cy + y / k) * w + cx + x / k) * 4;
+                        let o = (y * cw * k + x) * 4;
+                        out[o..o + 4].copy_from_slice(&rgba[s..s + 4]);
+                    }
+                }
+                out
+            };
+            let blit = |img: &mut Vec<u8>,
+                        total_w: usize,
+                        src: &[u8],
+                        (w, h): (usize, usize),
+                        (x0, y0): (usize, usize)| {
+                for y in 0..h {
+                    let o = ((y0 + y) * total_w + x0) * 4;
+                    img[o..o + w * 4].copy_from_slice(&src[y * w * 4..(y + 1) * w * 4]);
+                }
+            };
+            let write = |name: String, img: &[u8], (w, h): (usize, usize)| {
+                std::fs::write(
+                    dir.join(name),
+                    crate::testing::png(
+                        img,
+                        (u32::try_from(w).unwrap(), u32::try_from(h).unwrap()),
+                    ),
+                )
+                .unwrap();
+            };
+            let spr: Vec<u8> = px
+                .iter()
+                .flat_map(|p| {
+                    if p[3] == 255 {
+                        *p
+                    } else {
+                        [bg[0], bg[1], bg[2], 255]
+                    }
+                })
+                .collect();
+            let (two, four) = (tank_shot(&sp.name, 2), tank_shot(&sp.name, 4));
+            let (cwu, chu) = (cw as usize, ch as usize);
+            // The whole plant: sprite and tank at the same pixel size (the
+            // scale-2 tank shows a texel as a pixel, as the sprite does),
+            // then the quarter-cell tank at half the zoom.
+            let (x0, y0, pw, ph) = (cwu / 2 - 16, 6, 32, chu - 6);
+            let (k, gap) = (6, 16);
+            let (spr_w, spr_h) = (sw * k, sh * k);
+            let tank_w = pw * 2 * k;
+            let panel_h = ph * 2 * k;
+            let total_w = spr_w + gap + tank_w + gap + tank_w;
+            let mut img: Vec<u8> = (0..total_w * panel_h)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect();
+            let spr_up = up(&spr, sw, (0, 0, sw, sh), k);
+            blit(
+                &mut img,
+                total_w,
+                &spr_up,
+                (spr_w, spr_h),
+                (0, panel_h - spr_h - 4 * k),
+            );
+            let a = up(&two, cwu * 2, (x0 * 2, y0 * 2, pw * 2, ph * 2), k);
+            blit(&mut img, total_w, &a, (tank_w, panel_h), (spr_w + gap, 0));
+            let b = up(&four, cwu * 4, (x0 * 4, y0 * 4, pw * 4, ph * 4), k / 2);
+            blit(
+                &mut img,
+                total_w,
+                &b,
+                (tank_w, panel_h),
+                (spr_w + gap + tank_w + gap, 0),
+            );
+            write(
+                format!("{prefix}-{}.png", sp.name),
+                &img,
+                (total_w, panel_h),
+            );
+            // A close look at the plant's upper half.
+            let (zx, zy, zw, zh) = (cwu / 2 - 14, 14, 28, 20);
+            let zk = 8;
+            let a = up(&two, cwu * 2, (zx * 2, zy * 2, zw * 2, zh * 2), zk * 2);
+            let b = up(&four, cwu * 4, (zx * 4, zy * 4, zw * 4, zh * 4), zk);
+            let zw_px = zw * 2 * zk * 2;
+            let zh_px = zh * 2 * zk * 2;
+            let mut img: Vec<u8> = (0..(zw_px * 2 + gap) * zh_px)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect();
+            let tw = zw_px * 2 + gap;
+            blit(&mut img, tw, &a, (zw_px, zh_px), (0, 0));
+            blit(&mut img, tw, &b, (zw_px, zh_px), (zw_px + gap, 0));
+            write(format!("{prefix}-{}-zoom.png", sp.name), &img, (tw, zh_px));
+        }
+    }
 }

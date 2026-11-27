@@ -506,10 +506,20 @@ fn push_plant_ghost(world: &World, ghost: &PlantGhost, sprites: &mut Vec<Sprite>
         Part::Stem | Part::Runner | Part::Rhizome => (1, &species.colours.stem),
         Part::Leaf | Part::Float => (2, &species.colours.leaf),
     };
+    // A stem leaf's upper cell counts as the row cell it sits on.
+    let stem = matches!(species.form, desktank_sim::plants::Form::Stem(_));
+    let position = |c: &desktank_sim::PlantGhostCell| {
+        let at = desktank_sim::plants::plant_position(c.variant);
+        if stem && c.part == Part::Leaf && at >= desktank_sim::plants::LEAF_UPPER {
+            at - desktank_sim::plants::LEAF_UPPER
+        } else {
+            at
+        }
+    };
     let mut longest = [1_u8; 3];
     for c in &ghost.cells {
         let (k, _) = ramp_of(c.part);
-        longest[k] = longest[k].max(desktank_sim::plants::plant_position(c.variant));
+        longest[k] = longest[k].max(position(c));
     }
     let tint = if ghost.fits { 0.0 } else { 1.0 };
     for c in ghost.cells.iter().take(MAX_GHOST_CELLS) {
@@ -517,8 +527,7 @@ fn push_plant_ghost(world: &World, ghost: &PlantGhost, sprites: &mut Vec<Sprite>
         let Some(last) = ramp.len().checked_sub(1) else {
             continue;
         };
-        let along =
-            f32::from(desktank_sim::plants::plant_position(c.variant)) / f32::from(longest[k]);
+        let along = f32::from(position(c)) / f32::from(longest[k]);
         // Ramp shades are few: exact in f32.
         #[allow(clippy::cast_precision_loss)]
         let at = along * last as f32 + (f32::from(c.variant >> 6) - 1.5) * 0.35;

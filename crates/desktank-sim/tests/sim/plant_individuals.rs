@@ -303,9 +303,10 @@ fn a_starving_plants_tint_changes_without_waking_a_chunk_or_rewriting_cells() {
     };
     let cells = drawn(&w);
     let version = w.plants_version();
-    // 70 s of starvation: health falls after its 20 s tolerance, but stays
-    // above the 0.5 at which leaves drop.
-    for _ in 0..70 * 20 {
+    // 60 s of starvation: health falls after its 20 s tolerance (0.01 a
+    // second), but stays above the 0.5 at which leaves drop (70 s would end
+    // on it, so a plant's update phase would decide).
+    for _ in 0..60 * 20 {
         drain(&mut w);
         w.tick();
         assert_eq!(w.awake_chunks(), 0, "tick {}", w.tick_count());

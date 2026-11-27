@@ -545,6 +545,57 @@ pub struct StemForm {
     pub substrates: Vec<MaterialId>,
 }
 
+/// What a broad stem leaf's upper cells add to their position along the
+/// leaf (see [`StemForm::leaf_upper`]): a position at or above it is the
+/// cell stacked on the leaf's row, at `position - LEAF_UPPER`.
+pub const LEAF_UPPER: u8 = 32;
+
+impl StemForm {
+    /// How many cells long the leaves at a node `pos` cells up a stem of at
+    /// most `height` are, when the lowest are `length`: they shorten
+    /// towards the growing tip (to 40% of `length` at the full height,
+    /// never below one cell, alternating a cell between neighbouring nodes
+    /// where it falls between two lengths), as the species sprite's do. Fixed by the
+    /// node's height, so a growing stem's lower leaves keep their length.
+    #[must_use]
+    pub fn leaf_taper(length: u8, height: u8, pos: u8) -> u8 {
+        let (l, h) = (i64::from(length), i64::from(height.max(1)));
+        let p = i64::from(pos).min(h);
+        // In quarter cells, rounded one way at every other node and the other
+        // at the next, so the taper steps in halves, not whole cells.
+        let quarters = 4 * l * (5 * h - 3 * p) / (5 * h);
+        let n = (quarters + 2 + if (p / 2) % 2 == 1 { 1 } else { -1 }) / 4;
+        u8::try_from(n.clamp(1, l.max(1))).unwrap_or(1)
+    }
+
+    /// Whether the leaves at the node `pos` cells up the stem are broad
+    /// ones that grow an upper cell (see [`StemForm::leaf_upper`]): every
+    /// other node, so the tiers alternate broad and narrow and a swimmer
+    /// can pass between them (a stack at every node is a wall).
+    #[must_use]
+    pub fn broad_node(&self, pos: u8) -> bool {
+        (pos / self.internode.max(1)) % 2 == 1
+    }
+
+    /// The positions along a leaf of `length` cells, as `first..=last`, that
+    /// carry a second cell above them (at [`LEAF_UPPER`] + their position)
+    /// when the leaves are `shape`: only the broad shapes (lanceolate and
+    /// round) fill the internode row above a node's leaf, as a blade two
+    /// cells thick at its middle; a leaf of one or two cells has it all
+    /// along. Needle and feather leaves stay a row thick.
+    #[must_use]
+    pub fn leaf_upper(shape: LeafShape, length: u8) -> Option<(u8, u8)> {
+        if !matches!(shape, LeafShape::Lanceolate | LeafShape::Round) || length >= LEAF_UPPER {
+            return None;
+        }
+        Some(if length <= 2 {
+            (length.max(1), length.max(1))
+        } else {
+            (2, length - 1)
+        })
+    }
+}
+
 /// Parameters of the mat form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatForm {

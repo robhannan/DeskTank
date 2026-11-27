@@ -32,8 +32,8 @@ use std::sync::Arc;
 use super::PlantId;
 use crate::material::MaterialId;
 use crate::plants::{
-    BallForm, EpiphyteForm, FloaterForm, Form, MAX_POSITION, MatForm, Part, PlantSpecies,
-    PlantSpeciesId, PlantStage, RosetteForm, StemForm, plant_variant,
+    BallForm, EpiphyteForm, FloaterForm, Form, LEAF_UPPER, LeafShape, MAX_POSITION, MatForm, Part,
+    PlantSpecies, PlantSpeciesId, PlantStage, RosetteForm, StemForm, plant_variant,
 };
 use crate::rng::splitmix64;
 use crate::world::{World, WorldError};
@@ -526,7 +526,7 @@ impl World {
         for _ in 0..24 {
             let mut b = Builder::new(self, s, key, flip, strict);
             match &s.form {
-                Form::Stem(f) => gen_stem(&mut b, f, frac, anchor),
+                Form::Stem(f) => gen_stem(&mut b, f, s.look.leaf, frac, anchor),
                 Form::Rosette(f) | Form::Carpet(f) => gen_rosette(&mut b, f, frac, mature, anchor),
                 Form::Floater(f) => gen_floater(&mut b, f, frac, anchor),
                 Form::Epiphyte(f) => gen_epiphyte(&mut b, f, frac, anchor),
@@ -554,7 +554,7 @@ fn crown_shift(f: &RosetteForm, flip: bool) -> i64 {
     if flip { crown / 2 } else { (crown - 1) / 2 }
 }
 
-fn gen_stem(b: &mut Builder<'_>, f: &StemForm, frac: f64, (bx, by): (i64, i64)) {
+fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx, by): (i64, i64)) {
     let h = scaled(i64::from(f.height), frac);
     if !b.put(bx, by, Part::Stem, 1) {
         b.core = false;
@@ -625,18 +625,42 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, frac: f64, (bx, by): (i64, i64)) 
         }
     }
     // Pairs of leaves at the nodes.
-    let leaf = scaled(i64::from(f.leaf_length), frac);
-    let all = nodes.clone();
-    for (x, y, pos) in all {
+    // Leaves shorten towards the tip (`StemForm::leaf_taper`), and broad
+    // ones are two cells thick where they are widest: a second cell over
+    // the row's, so the blade fills the internode row above its node.
+    let leaves = |pos: i64| {
+        let at = u8::try_from(pos).unwrap_or(u8::MAX);
+        let len = StemForm::leaf_taper(f.leaf_length, f.height, at);
+        (len, StemForm::leaf_upper(shape, len))
+    };
+    for &(x, y, pos) in &nodes {
         if !node(pos) {
             continue;
         }
+        let (len, _) = leaves(pos);
         for rel in [-1i64, 1] {
             let dx = rel * b.mir;
-            for k in 1..=leaf {
+            for k in 1..=i64::from(len) {
                 let (lx, ly) = (x + dx * k, y);
                 if b.own(lx, ly + 1, Part::Stem) || !b.put(lx, ly, Part::Leaf, k) {
                     break;
+                }
+            }
+        }
+    }
+    for &(x, y, pos) in &nodes {
+        let Some((first, last)) = leaves(pos)
+            .1
+            .filter(|_| node(pos) && f.broad_node(u8::try_from(pos).unwrap_or(u8::MAX)))
+        else {
+            continue;
+        };
+        for rel in [-1i64, 1] {
+            let dx = rel * b.mir;
+            for k in i64::from(first)..=i64::from(last) {
+                let at = (x + dx * k, y);
+                if b.own(at.0, at.1, Part::Leaf) {
+                    b.put(at.0, at.1 - 1, Part::Leaf, i64::from(LEAF_UPPER) + k);
                 }
             }
         }

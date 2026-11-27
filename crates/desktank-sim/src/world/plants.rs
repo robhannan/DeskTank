@@ -72,9 +72,9 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    BallForm, COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, Limit, Part, PlantSpecies,
-    PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
-    propagule_age, propagule_species, propagule_state,
+    BallForm, COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, LEAF_UPPER, Limit, Part,
+    PlantSpecies, PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, StemForm,
+    plant_position, plant_variant, propagule_age, propagule_species, propagule_state,
 };
 use crate::rng::splitmix64;
 use crate::save::{SaveError, v1, v8};
@@ -576,7 +576,11 @@ impl World {
         };
         let (x, y) = (i % self.width, i / self.width);
         let (key, spread) = match (part, depth.shape) {
-            (Part::Leaf, Shape::Stem { base_x }) => (((y as u64) << 1) | u64::from(x < base_x), 1),
+            // A broad leaf's upper cell shares its row cell's band.
+            (Part::Leaf, Shape::Stem { base_x }) => {
+                let row = y + usize::from(plant_position(cell.variant) >= LEAF_UPPER);
+                (((row as u64) << 1) | u64::from(x < base_x), 1)
+            }
             // Leaf pads lie across columns: a plant's pads share a band.
             (
                 Part::Leaf,
@@ -1450,6 +1454,21 @@ impl World {
         let mut seen = vec![false; r.area()];
         let mut pieces = Vec::new();
         let mut stack = Vec::new();
+        // On a stem plant a broad leaf's upper cell joins the row cell under
+        // it and no other leaf above, so the leaves of neighbouring nodes
+        // don't bridge a cut stem.
+        let stem_plant = self
+            .plants
+            .table
+            .get(&id)
+            .and_then(|p| self.plants.species.get(p.species))
+            .is_some_and(|s| matches!(s.form, Form::Stem(_)));
+        let leaf = self.plants.material(Part::Leaf);
+        let upper_leaf = |i: usize| {
+            let c = self.cells[i];
+            Some(c.material) == leaf && plant_position(c.variant) >= LEAF_UPPER
+        };
+        let leaf_at = |i: usize| Some(self.cells[i].material) == leaf;
         for &start in cells {
             if seen[local(start)] {
                 continue;
@@ -1466,8 +1485,16 @@ impl World {
                     (y > r.y0).then(|| i - self.width),
                     (y + 1 < r.y1).then(|| i + self.width),
                 ];
-                for j in neighbours.into_iter().flatten() {
-                    if !seen[local(j)] && self.is_plant_member(j, id) {
+                for (k, j) in neighbours.into_iter().enumerate() {
+                    let Some(j) = j else { continue };
+                    // k is 2 for the cell above and 3 for the one below.
+                    let bridge = stem_plant
+                        && match k {
+                            2 => upper_leaf(i) && leaf_at(j) && !upper_leaf(j),
+                            3 => upper_leaf(j) && leaf_at(i) && !upper_leaf(i),
+                            _ => false,
+                        };
+                    if !bridge && !seen[local(j)] && self.is_plant_member(j, id) {
                         seen[local(j)] = true;
                         stack.push(j);
                     }
@@ -2277,7 +2304,9 @@ impl World {
                         }
                     }
                 }
-                Some(Part::Leaf) if pos < f.leaf_length => {
+                // A row cell of a leaf (an upper cell, at or past `LEAF_UPPER`,
+                // only grows from the row below it).
+                Some(Part::Leaf) if pos < LEAF_UPPER => {
                     let from_left = self.at(x, y, -1, 0).is_some_and(|l| {
                         let lc = self.cells[l];
                         lc.state == id
@@ -2286,13 +2315,31 @@ impl World {
                                     && self.plants.part(lc.material) == Some(Part::Leaf)
                                     && plant_position(lc.variant) == pos - 1))
                     });
-                    let dx = if from_left { 1 } else { -1 };
-                    if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
+                    let dx: isize = if from_left { 1 } else { -1 };
+                    // Leaves shorten towards the tip: this one's length
+                    // follows how high up the stem its node is (a leaf whose
+                    // stem is gone keeps the full length).
+                    let node = self
+                        .at(x, y, -dx * isize::from(pos), 0)
+                        .filter(|&j| is_own_stem(j))
+                        .map_or(0, |j| plant_position(self.cells[j].variant));
+                    let len = StemForm::leaf_taper(f.leaf_length, f.height, node);
+                    if pos < len
+                        && let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
                         && !self
                             .at(j % self.width, j / self.width, 0, 1)
                             .is_some_and(is_own_stem)
                     {
                         sites.push(Site::new(j, Part::Leaf, pos + 1, LEAF_WEIGHT));
+                    }
+                    // A broad leaf's widest cells put out one above them,
+                    // filling the row above the node.
+                    if f.broad_node(node)
+                        && StemForm::leaf_upper(s.look.leaf, len)
+                            .is_some_and(|(first, last)| (first..=last).contains(&pos))
+                        && let Some(j) = self.at(x, y, 0, -1).filter(|&j| is_water(j))
+                    {
+                        sites.push(Site::new(j, Part::Leaf, LEAF_UPPER + pos, LEAF_WEIGHT));
                     }
                 }
                 Some(Part::Root) if pos < f.root_depth => {

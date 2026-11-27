@@ -153,7 +153,18 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     chance of a side shoot, which steps two cells out before rising so it
     keeps a one-cell gap from the main stem (leaves stop short of a rising
     shoot below them); any stem reaching the top water row trails sideways
-    along it up to `height`.
+    along it up to `height`. *Stem leaves in the tank look like the info
+    pane's sprite:* leaf length falls towards the growing tip
+    (`StemForm::leaf_taper`: `leaf_length` low on the stem, shortening to
+    40% of it at `height`, never under one cell, rounded one way and the
+    next at alternate nodes so it steps in halves; fixed by the node's
+    height, so a growing stem's lower leaves keep their length), and at
+    every other node the broad shapes (lanceolate, round) grow an *upper
+    cell* over their middle cells (`StemForm::leaf_upper`; position
+    `LEAF_UPPER` (32) plus its row cell's), so the blade is two cells thick
+    where widest. A plant's pieces don't join through an upper cell and the
+    leaf above it, so cutting the stem still frees the top. Needle and
+    feather leaves stay a row thick.
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
     *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from

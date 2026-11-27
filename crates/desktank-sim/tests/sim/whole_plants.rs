@@ -688,3 +688,67 @@ fn clicking_places_a_whole_plant_with_a_ghost_and_a_flip() {
     assert!(t.plant_ghost(&w).is_none());
     assert!(!t.can_flip(&w));
 }
+
+/// Stem leaves taper: a mature hygrophila's leaves are longest low on the
+/// stem and shortest at the top, as `StemForm::leaf_taper` says, and its
+/// broad leaves grow upper cells at every other node, which don't join the
+/// leaf above them.
+#[test]
+fn a_mature_stem_plant_tapers_and_broad_leaves_have_upper_cells() {
+    let mut w = tank(3);
+    let (x, y) = spot(&w, "hygrophila");
+    let plant = place(&mut w, "hygrophila", PlantStage::Mature, x, y, false);
+    let cells = cells_of(&w, plant);
+    let sp = w.plant_species().get(species(&w, "hygrophila")).unwrap();
+    let desktank_sim::plants::Form::Stem(f) = &sp.form else {
+        panic!("hygrophila is a stem plant");
+    };
+    let leaf = id(&w, "leaf");
+    let stem = id(&w, "stem");
+    let at = |x: usize, y: usize| w.cell(x, y).unwrap();
+    // The longest leaf (row cells only) at each node row.
+    let mut longest: std::collections::BTreeMap<usize, u8> = std::collections::BTreeMap::new();
+    let mut upper = 0;
+    for &(cx, cy) in &cells {
+        let c = at(cx, cy);
+        if c.material != leaf {
+            continue;
+        }
+        let pos = desktank_sim::plants::plant_position(c.variant);
+        if pos >= desktank_sim::plants::LEAF_UPPER {
+            upper += 1;
+            // Over a row cell of the same leaf.
+            let below = at(cx, cy + 1);
+            assert_eq!(below.material, leaf);
+            assert_eq!(
+                desktank_sim::plants::plant_position(below.variant),
+                pos - desktank_sim::plants::LEAF_UPPER
+            );
+        } else {
+            let e = longest.entry(cy).or_default();
+            *e = (*e).max(pos);
+        }
+    }
+    assert!(upper > 0, "no upper cells");
+    let rows: Vec<(usize, u8)> = longest.into_iter().collect();
+    // Rows count up from the top: the lowest leaves are the longest.
+    let (top, bottom) = (rows.first().unwrap().1, rows.last().unwrap().1);
+    assert_eq!(bottom, f.leaf_length);
+    assert!(top < bottom, "top leaves {top}, bottom {bottom}");
+    // Each node's length is what the taper gives at its stem height.
+    for &(cx, cy) in &cells {
+        let c = at(cx, cy);
+        if c.material != stem
+            || (desktank_sim::plants::plant_position(c.variant)) % f.internode != 0
+        {
+            continue;
+        }
+        let pos = desktank_sim::plants::plant_position(c.variant);
+        if let Some(&(_, len)) = rows.iter().find(|r| r.0 == cy) {
+            assert!(
+                len <= desktank_sim::plants::StemForm::leaf_taper(f.leaf_length, f.height, pos),
+                "node {pos}: {len}"
+            );
+        }
+    }
+}
