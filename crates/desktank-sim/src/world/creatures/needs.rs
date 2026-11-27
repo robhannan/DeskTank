@@ -4,7 +4,7 @@
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
 
-use super::{Creature, FULL, Kind, ONE, SaveError, World, salt};
+use super::{BITE, Creature, FULL, Kind, ONE, SaveError, World, salt};
 
 /// A need tracked by the simulation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +26,11 @@ pub struct NeedReading {
 
 const PERCENT: u8 = 100;
 const MAX_COMMITMENT: u8 = 23;
+/// How much a fish values staying with a school it is already part of, in
+/// the units of a deficit. It is enough to keep a fish that has just eaten
+/// beside its mates when the next flake is some way off, and too little to
+/// hold back a hungry one.
+const COMPANY: u64 = 50;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Action {
@@ -76,6 +81,20 @@ impl State {
 fn satiety_percent(c: &Creature) -> u8 {
     u8::try_from(u32::from(c.satiety.min(FULL)) * u32::from(PERCENT) / u32::from(FULL))
         .unwrap_or(PERCENT)
+}
+
+/// How strongly food draws the fish, from 0 (not at all) to 100 (starving).
+///
+/// Satiety is a stock, but a flake is a small meal. The first bite's worth
+/// of satiety counts three times as much towards feeling fed as the rest, so
+/// a fish that has just eaten one flake gives the next little attention and
+/// recovers its appetite over the half-minute the bite lasts. It reads only
+/// the stored satiety, so a repeated feeding needs no extra saved state.
+fn appetite(c: &Creature) -> u64 {
+    let satiety = u64::from(satiety_percent(c));
+    let bite = u64::from(BITE) * u64::from(PERCENT) / u64::from(FULL);
+    let (first, rest) = (satiety.min(bite), satiety.saturating_sub(bite));
+    u64::from(PERCENT).saturating_sub(first * 3 + rest / 3)
 }
 
 /// Discount the benefit by travel distance in whole cells, with roughly
@@ -131,14 +150,12 @@ impl World {
         let q = self.quirks(c);
         let hunger = q.scale(salt::HUNGER_WEIGHT, 85, 115, u64::from(weights.hunger));
         let sociability = q.scale(salt::SOCIAL_WEIGHT, 85, 115, u64::from(weights.social));
-        let forage = food.map(|(x, y, _)| {
-            let deficit = u64::from(PERCENT - satiety_percent(c));
-            benefit(deficit * hunger / 100, super::dist(c.x - x, c.y - y))
-        });
+        let forage = food
+            .map(|(x, y, _)| benefit(appetite(c) * hunger / 100, super::dist(c.x - x, c.y - y)));
         let school = nearest.filter(|_| school_available).map(|distance| {
             // Even a satisfied fish can maintain contact with its school.
             benefit(
-                16 + u64::from(PERCENT - social) * sociability / 100,
+                COMPANY + u64::from(PERCENT - social) * sociability / 100,
                 distance,
             )
         });
@@ -301,7 +318,7 @@ mod tests {
         let (mut world, ids) = tank(&[(40, 160), (45, 160)]);
         world.tick();
         let mut c = world.creature(ids[0]).unwrap().clone();
-        c.satiety = FULL / 2;
+        c.satiety = 0;
         c.needs.interrupt();
         let k = world.grown_kind(&c).unwrap();
         let choose = |distance, seed| {
@@ -316,6 +333,47 @@ mod tests {
             let choice = choose(d, 1);
             (2..32).any(|seed| choose(d, seed) != choice)
         }));
+    }
+
+    #[test]
+    fn a_flake_takes_the_edge_off_a_starving_fish_for_about_half_a_minute() {
+        let (world, ids) = tank(&[(40, 160)]);
+        let c = world.creature(ids[0]).unwrap();
+        let at = |satiety| {
+            appetite(&Creature {
+                satiety,
+                ..c.clone()
+            })
+        };
+        assert_eq!((at(0), at(BITE), at(FULL)), (100, 25, 0));
+        // Eating a flake takes three quarters off, then it comes back as the
+        // bite wears off; the rest of the belly counts for less.
+        assert!(at(BITE / 2) > at(BITE) && at(BITE / 2) < at(0));
+        assert!(at(BITE) - at(BITE + BITE / 2) < at(BITE / 2) - at(BITE));
+        assert!((0..=FULL).step_by(7).map(at).is_sorted_by(|a, b| a >= b));
+    }
+
+    #[test]
+    fn a_fish_that_just_ate_stays_with_its_school_while_a_hungry_one_goes() {
+        let (mut world, ids) = tank(&[(40, 160), (45, 160), (50, 160)]);
+        world.tick();
+        let c = world.creature(ids[0]).unwrap().clone();
+        let k = world.grown_kind(&c).unwrap();
+        let food = Some((c.x + 40 * ONE, c.y, k.top));
+        let choose = |satiety, seed| {
+            let mut c = c.clone();
+            c.satiety = satiety;
+            c.needs.interrupt();
+            let mut rng = crate::rng::chunk_stream(seed, world.tick, 99);
+            world.choose_need_action(&k, &mut c, food, &mut rng)
+        };
+        for seed in 1..64 {
+            assert_eq!(choose(0, seed), Action::Forage, "hungry, seed {seed}");
+            assert_eq!(choose(BITE, seed), Action::School, "fed, seed {seed}");
+            // A little over twenty seconds later the bite has worn off and
+            // food that is still there draws it again.
+            assert_eq!(choose(BITE / 5, seed), Action::Forage, "later, seed {seed}");
+        }
     }
 
     #[test]
