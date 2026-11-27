@@ -32,7 +32,13 @@ class DeskTankDream : DreamService(), SurfaceHolder.Callback {
 
     override fun onDreamingStarted() {
         super.onDreamingStarted()
-        Native.started(token, app = false)
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        Native.started(
+            token,
+            app = false,
+            tour = prefs.getBoolean(KEY_TOUR, true),
+            tourCard = prefs.getBoolean(KEY_TOUR_CARD, false),
+        )
     }
 
     override fun onDreamingStopped() {
@@ -46,4 +52,12 @@ class DeskTankDream : DreamService(), SurfaceHolder.Callback {
         Native.surfaceChanged(token, width, height)
 
     override fun surfaceDestroyed(holder: SurfaceHolder) = Native.surfaceDestroyed(token)
+
+    private companion object {
+        // The camera tour's settings (SPEC §3.6, D29); A3's settings screen
+        // edits them. The tour is on by default and its card off.
+        const val PREFS = "dream"
+        const val KEY_TOUR = "tour"
+        const val KEY_TOUR_CARD = "tour_card"
+    }
 }

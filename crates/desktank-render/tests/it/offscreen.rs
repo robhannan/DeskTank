@@ -1955,6 +1955,21 @@ fn the_full_view_camera_reproduces_the_plain_picture() {
 #[test]
 fn a_zoomed_camera_puts_a_cell_where_the_mapping_says() {
     let Some(gpu) = gpu() else { return };
+    check_zoomed_camera_mapping(gpu);
+}
+
+#[test]
+fn a_compact_camera_preserves_the_zoomed_mapping() {
+    let Some(gpu) = open_gpu(GpuOptions {
+        compact_camera: true,
+        ..GpuOptions::default()
+    }) else {
+        return;
+    };
+    check_zoomed_camera_mapping(&gpu);
+}
+
+fn check_zoomed_camera_mapping(gpu: &Gpu) {
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let target = CAMERA_TARGET;
     let (mut plain, _) = camera_tank();

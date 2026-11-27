@@ -40,7 +40,7 @@ class DeskTankActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onResume() {
         super.onResume()
-        Native.started(token, app = true)
+        Native.started(token, app = true, tour = false, tourCard = false)
     }
 
     override fun onPause() {

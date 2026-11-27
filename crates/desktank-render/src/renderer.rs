@@ -711,6 +711,20 @@ impl Renderer {
         timer: Option<&GpuTimer>,
     ) {
         let camera = camera.filter(|v| v.is_valid() && size.0 > 0 && size.1 > 0);
+        let divisor = if camera.is_some() && gpu.compact_camera {
+            (layout.scale / 2).max(1)
+        } else {
+            1
+        };
+        let source_size = (size.0.div_ceil(divisor), size.1.div_ceil(divisor));
+        let source_layout = Layout {
+            scale: layout.scale / divisor,
+            offset: (
+                layout.offset.0 / i64::from(divisor),
+                layout.offset.1 / i64::from(divisor),
+            ),
+            ..layout
+        };
         // With a camera the tank draws without the overlay, which draws in
         // screen space afterwards (the field tint belongs to the tank).
         let tank_overlay = if camera.is_some() {
@@ -727,9 +741,9 @@ impl Renderer {
         };
         #[allow(clippy::cast_precision_loss)] // pixels
         let bytes = self.pack_view(
-            size,
-            (layout.offset.0 as f32, layout.offset.1 as f32),
-            layout.scale as f32,
+            source_size,
+            (source_layout.offset.0 as f32, source_layout.offset.1 as f32),
+            source_layout.scale as f32,
             surface_row,
             daylight,
             phase,
@@ -796,10 +810,12 @@ impl Renderer {
             return;
         };
 
-        self.build_camera(gpu, size);
+        self.build_camera(gpu, source_size);
         let backdrop = camera_backdrop(self.format, overlay_water_alpha, oled);
         if let Some(camera) = self.camera.as_mut() {
-            camera.post.update(gpu, view, &layout, size, backdrop);
+            camera
+                .post
+                .update(gpu, view, &source_layout, size, source_size, backdrop);
         }
         let Some(image) = self.offscreen.as_ref().map(|o| o.view().clone()) else {
             return;
@@ -812,7 +828,7 @@ impl Renderer {
                 &image,
                 timer.map(GpuTimer::begin_writes),
             );
-            self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
+            self.draw_view(&mut pass, &self.bind_group, source_layout.scale, front_pass);
         }
         // Where the view puts the grid, for the overlay's brush outline.
         let (sx, sy) = view.pixels_per_cell(size);

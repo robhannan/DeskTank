@@ -43,7 +43,7 @@ use core::time::Duration;
 
 use desktank_render::{
     BrushPreview, Card, CardAnchor, FieldOverlay, InspectPage, Inspected, Layout, Magnifier, Tank,
-    TankConfig,
+    TankConfig, TourSettings,
 };
 use desktank_sim::tools::{
     self, AddRefused, Button, Inspection, Outcome, PaletteItem, PalettePath, Tool, Tools,
@@ -1222,7 +1222,27 @@ impl WebTank {
         if let Some(g) = &mut self.graphics {
             g.resize(self.size);
         }
+        self.tank.set_target_size(self.size);
         self.tank.invalidate();
+    }
+
+    /// Starts the screensaver camera tour (D29) seeded with `seed`, with the
+    /// read-only inspect card of the creature in focus if `card`; or ends it
+    /// (`on` false), which gives the full tank view back. The page tours
+    /// only when the URL asks (`?tour`), and ends the tour on the first
+    /// input.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setTour))]
+    pub fn set_tour(&mut self, on: bool, card: bool, seed: u32) {
+        self.tank.set_tour(on.then_some(TourSettings {
+            seed: u64::from(seed),
+            card,
+        }));
+    }
+
+    /// Whether the camera tour is running.
+    #[must_use]
+    pub fn touring(&self) -> bool {
+        self.tank.tour().is_some()
     }
 
     /// The cell under canvas pixel `(x, y)` as `[column, row]`. Signed and
@@ -1342,6 +1362,7 @@ impl WebTank {
         let mut tank = Tank::new(world, TankConfig::default());
         // The palette is DOM, below the canvas, so the card sits nearest it.
         tank.set_card_anchor(CardAnchor::Bottom);
+        tank.set_target_size((size.0.max(1), size.1.max(1)));
         Ok(Self {
             tank,
             tools: Tools::new(sand),

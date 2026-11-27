@@ -126,6 +126,18 @@ const splitGrid: boolean | undefined = params.has("grid")
 // where wgpu's sRGB present shader draws nothing on Chrome 68's SwiftShader.
 const srgbCanvas = params.has("srgb") ? params.get("srgb") === "1" : build !== "webos";
 
+// The screensaver camera tour (D29), opt-in only: ?tour or ?tour=1 tours, and
+// ?tour=card also pins the read-only inspect card to the creature in focus
+// (?tour=0 stays off). While it runs the page acts as a screensaver: the first
+// pointer press, wheel turn or key ends it for the session and is swallowed
+// (endTour). The tour card is drawn in the canvas and never announced: a
+// screen-reader user would hear a new creature every 30 s, and the page has
+// no focus to move.
+const tourParam = params.get("tour");
+let touring = tourParam !== null && !["0", "false", "off"].includes(tourParam);
+const tourCard = tourParam === "card";
+const tourSeed = (Math.random() * 0x1_0000_0000) >>> 0;
+
 // The page's elements are all in index.html, so a lookup never misses.
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("tank");
@@ -420,6 +432,7 @@ function replaceTank(next: WebTank) {
   // Cards are drawn in device pixels: at least one canvas pixel per CSS pixel
   // per card pixel, so a phone's text is readable.
   tank.setCardMinScale(Math.ceil(pixelRatio()));
+  tank.setTour(touring, tourCard, tourSeed);
   showSettings();
   showCreatureCap(true);
   showZoom();
@@ -1380,7 +1393,8 @@ function runDeviceGuardToggle() {
 
 // Whether the inspected creature can be named from here.
 function canName() {
-  return owner && !handingOver && inspected !== null && tank.inspectPage() !== 0;
+  // Never while touring: the tour card is read-only and the page takes no text.
+  return !touring && owner && !handingOver && inspected !== null && tank.inspectPage() !== 0;
 }
 
 // The shortest the name input is, in CSS pixels (a comfortable tap target).
@@ -1758,7 +1772,92 @@ function endGestures() {
   tank?.pointerLeave();
 }
 
+// How long after the waking press's release its click may still arrive (a
+// mobile tap delay, a stalled main thread) and be swallowed.
+const TOUR_CLICK_WINDOW_MS = 500;
+
+// Ends the tour on the first input and swallows it, so a screensaver wake-up
+// press doesn't also paint or press a button. What belongs to that input goes
+// too: the waking pointer's release and the click (or auxclick, contextmenu)
+// that follows it, and the waking key's autorepeats and release. A later
+// press is the user's and passes. Registered only when the page tours, and
+// removed once the tour has ended and its input has been let go.
+function wireTourEnd() {
+  if (!touring) return;
+  let wakePointer: number | null = null; // the waking press, until it is released
+  let clickPending = false; // its click may still follow the release
+  let clickTimer = 0;
+  let wakeKey: string | null = null; // the waking key, until it is released
+  const listeners: [string, (e: Event) => void][] = [];
+  const on = (types: string[], fn: (e: Event) => void) => {
+    for (const type of types) {
+      window.addEventListener(type, fn, { capture: true, passive: false });
+      listeners.push([type, fn]);
+    }
+  };
+  const stop = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  // Without a code (some virtual keyboards) the key stands in for it.
+  const keyId = (e: KeyboardEvent) => e.code || e.key;
+  const tidy = () => {
+    if (touring || wakePointer !== null || clickPending || wakeKey !== null) return;
+    for (const [type, fn] of listeners) window.removeEventListener(type, fn, { capture: true });
+    listeners.length = 0;
+  };
+  const endClickWindow = () => {
+    clickPending = false;
+    clearTimeout(clickTimer);
+    tidy();
+  };
+  on(["pointerdown", "wheel", "keydown"], (e) => {
+    if (touring) {
+      touring = false;
+      tank.setTour(false, false, 0);
+      closeName();
+      if (e instanceof PointerEvent) wakePointer = e.pointerId;
+      if (e instanceof KeyboardEvent) wakeKey = keyId(e);
+      stop(e);
+      kick();
+      tidy();
+      return;
+    }
+    if (e instanceof KeyboardEvent && wakeKey !== null && keyId(e) === wakeKey) stop(e); // autorepeat
+    // A new press is the user's own: the waking click is no longer coming.
+    else if (e instanceof PointerEvent && e.pointerId !== wakePointer && clickPending) endClickWindow();
+  });
+  on(["pointerup", "pointercancel"], (e) => {
+    if (wakePointer === null || (e as PointerEvent).pointerId !== wakePointer) return;
+    stop(e);
+    wakePointer = null;
+    if (e.type === "pointerup") {
+      clickPending = true;
+      clearTimeout(clickTimer);
+      clickTimer = window.setTimeout(endClickWindow, TOUR_CLICK_WINDOW_MS);
+    } else tidy();
+  });
+  on(["click", "auxclick", "contextmenu"], (e) => {
+    if (wakePointer === null && !clickPending) return;
+    stop(e);
+    if (e.type !== "contextmenu" && wakePointer === null) endClickWindow();
+  });
+  on(["keyup"], (e) => {
+    if (wakeKey === null || keyId(e as KeyboardEvent) !== wakeKey) return;
+    stop(e);
+    wakeKey = null;
+    tidy();
+  });
+  // A release that happens elsewhere never arrives: let go on losing focus.
+  on(["blur"], () => {
+    wakePointer = null;
+    wakeKey = null;
+    endClickWindow();
+  });
+}
+
 function wireInput() {
+  wireTourEnd();
   canvas.addEventListener("pointerdown", (e) => {
     // Cancelling the press keeps the browser from moving focus, so a press
     // elsewhere ends naming by hand.

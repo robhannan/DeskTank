@@ -67,8 +67,12 @@ internal object Native {
     /** Returns once Rust has let go of the surface. */
     @JvmStatic external fun surfaceDestroyed(id: Long)
 
-    /** From onResume for the Activity and onDreamingStarted for the Dream. */
-    @JvmStatic external fun started(id: Long, app: Boolean)
+    /**
+     * From onResume for the Activity and onDreamingStarted for the Dream.
+     * [tour] and [tourCard] are the Dream's camera-tour preferences (D29);
+     * the Activity passes false for both and Rust ignores them.
+     */
+    @JvmStatic external fun started(id: Long, app: Boolean, tour: Boolean, tourCard: Boolean)
 
     @JvmStatic external fun stopped(id: Long)
 
