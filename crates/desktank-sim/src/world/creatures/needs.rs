@@ -15,6 +15,19 @@ pub enum Need {
     Social,
 }
 
+impl Need {
+    /// A short label for a meter whose empty end is the need unmet and
+    /// whose full end is it satisfied ("Hunger" full is not hungry,
+    /// "Social" full is in company).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Hunger => "Hunger",
+            Self::Social => "Social",
+        }
+    }
+}
+
 /// The satisfaction of one need, independent of its influence on steering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NeedReading {
@@ -22,6 +35,64 @@ pub struct NeedReading {
     pub need: Need,
     /// From 0 (unsatisfied) to 100 (fully satisfied).
     pub satisfaction: u8,
+}
+
+impl NeedReading {
+    /// How well the need is met, in words.
+    #[must_use]
+    pub const fn level(self) -> NeedLevel {
+        NeedLevel::of(self.satisfaction)
+    }
+
+    /// The reading as plain text for a screen reader or summary: `Hunger 49%,
+    /// low`.
+    #[must_use]
+    pub fn describe(self) -> String {
+        format!(
+            "{} {}%, {}",
+            self.need.label(),
+            self.satisfaction,
+            self.level().name()
+        )
+    }
+}
+
+/// How well a need is met, from a satisfaction percentage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NeedLevel {
+    /// 0 to 25: critically unmet. A fish that has just taken its first
+    /// bite is still here.
+    Critical,
+    /// 26 to 49: low.
+    Low,
+    /// 50 to 74: middling.
+    Middling,
+    /// 75 to 100: comfortable. A fish is hungry only below this.
+    Comfortable,
+}
+
+impl NeedLevel {
+    /// The level of `satisfaction` percent (values over 100 count as 100).
+    #[must_use]
+    pub const fn of(satisfaction: u8) -> Self {
+        match satisfaction {
+            0..=25 => Self::Critical,
+            26..=49 => Self::Low,
+            50..=74 => Self::Middling,
+            _ => Self::Comfortable,
+        }
+    }
+
+    /// One lower-case word for it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::Low => "low",
+            Self::Middling => "middling",
+            Self::Comfortable => "comfortable",
+        }
+    }
 }
 
 const PERCENT: u8 = 100;
@@ -238,6 +309,8 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    use super::super::BITE;
+    use super::NeedLevel::{Comfortable, Critical, Low, Middling};
     use super::*;
     use crate::{CreatureId, MaterialTable, WorldConfig, save};
 
@@ -272,6 +345,43 @@ mod tests {
         let guppy = world.species().id("guppy").unwrap();
         let guppy = world.add_creature(guppy, 40, 170).unwrap();
         assert_eq!(readings(&world, guppy), [] as [u8; 0]);
+    }
+
+    #[test]
+    fn readings_are_labelled_and_banded_for_display() {
+        assert_eq!(Need::Hunger.label(), "Hunger");
+        assert_eq!(Need::Social.label(), "Social");
+        // 0 is unmet and 100 satisfied; the bands start where a fish gets
+        // hungry (a bite fits below 75%).
+        let bands: Vec<_> = [0, 25, 26, 49, 50, 74, 75, 100]
+            .into_iter()
+            .map(NeedLevel::of)
+            .collect();
+        assert_eq!(
+            bands,
+            [
+                Critical,
+                Critical,
+                Low,
+                Low,
+                Middling,
+                Middling,
+                Comfortable,
+                Comfortable
+            ]
+        );
+        assert!(Critical < Low && Low < Middling && Middling < Comfortable);
+        assert_eq!(
+            NeedReading {
+                need: Need::Hunger,
+                satisfaction: 49
+            }
+            .describe(),
+            "Hunger 49%, low"
+        );
+        // A first bite from empty is a quarter of a full stomach: still
+        // critical.
+        assert_eq!(u32::from(BITE) * 100 / u32::from(FULL), 25);
     }
 
     #[test]

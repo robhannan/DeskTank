@@ -18,6 +18,11 @@ use crate::{Gpu, TankSurface};
 /// Frame-rate cap for optional plant sway (SPEC §2.7, T6d).
 pub const SWAY_MAX_FPS: u32 = 10;
 
+/// Targets narrower than this many pixels (three card widths: a phone held
+/// upright, a small window) lay the inspect card's need meters out in one
+/// column.
+pub const NARROW_TARGET_W: u32 = 3 * crate::card::CARD_W;
+
 /// Minimum interval between sway-only redraws (100 ms = 10 fps).
 const SWAY_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -591,6 +596,15 @@ impl Tank {
         }
     }
 
+    /// Lays the inspect card out for a `size`-pixel target: a narrow target
+    /// (see [`NARROW_TARGET_W`]) gets one column of need meters, the
+    /// rest two. A change rebuilds the card for the frame being drawn.
+    fn fit_inspect(&mut self, size: (u32, u32)) {
+        self.needs_frame |= self
+            .inspect
+            .set_narrow(&self.world, size.0 < NARROW_TARGET_W);
+    }
+
     /// Shows (or hides) the brush outline. A change asks for a frame.
     pub fn set_cursor(&mut self, cursor: Option<BrushPreview>) {
         if self.cursor != cursor {
@@ -882,6 +896,9 @@ impl Tank {
             self.card_dirty = true;
             self.inspect.dirty = true;
         }
+        // Fit the narrow/wide breakpoint before refreshing so a resize never
+        // rebuilds the inspect card twice in one frame.
+        self.fit_inspect(size);
         // Edits made through `world_mut` while paused may have removed it.
         self.refresh_inspect();
         let layout = self.layout(size);
@@ -1963,5 +1980,30 @@ mod tests {
         assert!(!tank.needs_frame);
         tank.set_time_of_day(0);
         assert!(tank.needs_frame);
+    }
+
+    #[test]
+    fn a_narrow_target_lays_the_need_meters_in_one_column_and_a_change_is_one_rebuild() {
+        let mut tank = settled_planted_tank();
+        let tetra = tank.world().species().id("neon_tetra").unwrap();
+        let id = tank.world_mut().add_creature(tetra, 30, 20).unwrap();
+        tank.set_inspected(Some(Inspected::Creature(id)));
+        let height = |tank: &Tank| tank.inspect.image.as_ref().unwrap().size.1;
+        tank.inspect.dirty = false;
+        tank.fit_inspect((1280, 720));
+        assert!(!tank.inspect.dirty, "a wide target changes nothing");
+        let wide = height(&tank);
+        tank.fit_inspect((NARROW_TARGET_W - 1, 640));
+        assert!(tank.inspect.dirty && height(&tank) > wide);
+        tank.inspect.dirty = false;
+        tank.fit_inspect((NARROW_TARGET_W - 1, 480));
+        assert!(!tank.inspect.dirty, "the same layout is free");
+        tank.fit_inspect((NARROW_TARGET_W, 480));
+        assert!(tank.inspect.dirty && height(&tank) == wide);
+        // Nothing inspected: the layout is only remembered, nothing built.
+        tank.set_inspected(None);
+        tank.inspect.dirty = false;
+        tank.fit_inspect((200, 200));
+        assert!(tank.inspect.image.is_none() && !tank.inspect.dirty);
     }
 }

@@ -68,9 +68,9 @@ pub const HUD_TEXTURE: (u32, u32) = (
 pub const TEXTURE_Y: u32 = hud::MAX_SIZE.1;
 
 /// Pixels between the card's edge and its text.
-const PAD: u32 = 4;
+pub(crate) const PAD: u32 = 4;
 /// Extra pixels between paragraphs.
-const PARA_GAP: u32 = 3;
+pub(crate) const PARA_GAP: u32 = 3;
 /// Pixels between the male and female sprites.
 const SPRITE_GAP: u32 = 8;
 /// Tallest a sprite may be drawn, in card pixels: it is doubled only if
@@ -81,7 +81,7 @@ const SPROUT_SCALE: u32 = 3;
 
 /// Text colours (the frame and background are the palette's).
 pub(crate) const TITLE: [u8; 3] = SELECTED;
-const LABEL: [u8; 3] = OPEN;
+pub(crate) const LABEL: [u8; 3] = OPEN;
 pub(crate) const BODY: [u8; 3] = ICON_FG;
 pub(crate) const LATIN: [u8; 3] = [0x8f, 0xa6, 0xc0];
 
@@ -213,7 +213,7 @@ impl Page {
     }
 
     /// Width of the text area.
-    const fn inner() -> u32 {
+    pub(crate) const fn inner() -> u32 {
         CARD_W - 2 * PAD
     }
 
@@ -221,7 +221,18 @@ impl Page {
         font::draw(&mut self.pixels, CARD_MAX, (x, self.y), text, colour);
     }
 
-    fn put(&mut self, x: u32, y: u32, c: [u8; 3]) {
+    /// Draws `text` with its top-left at `(x, y)`.
+    pub(crate) fn text_at(&mut self, x: u32, y: u32, text: &str, colour: [u8; 3]) {
+        font::draw(&mut self.pixels, CARD_MAX, (x, y), text, colour);
+    }
+
+    /// Moves the next thing down by `dy` pixels.
+    pub(crate) fn skip(&mut self, dy: u32) {
+        self.y += dy;
+    }
+
+    /// One pixel of colour `c` (cut off outside the page).
+    pub(crate) fn put(&mut self, x: u32, y: u32, c: [u8; 3]) {
         if x < CARD_MAX.0 && y < CARD_MAX.1 {
             let i = ((y * CARD_MAX.0 + x) * 4) as usize;
             self.pixels[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
@@ -241,6 +252,12 @@ impl Page {
             self.y += font::LINE;
         }
         self.y += PARA_GAP;
+    }
+
+    /// A one-line section heading in the label colour.
+    pub(crate) fn section(&mut self, text: &str) {
+        self.text(PAD, text, LABEL);
+        self.y += font::LINE + 1;
     }
 
     /// Wrapped text in `colour`.
@@ -1015,64 +1032,9 @@ mod tests {
             }
             std::fs::write(
                 dir.join(format!("card-{name}.png")),
-                png(&big, (w * scale, h * scale)),
+                crate::testing::png(&big, (w * scale, h * scale)),
             )
             .unwrap();
         }
-    }
-
-    /// A minimal PNG of tightly packed RGBA: stored (uncompressed) blocks.
-    fn png(rgba: &[u8], (width, height): (u32, u32)) -> Vec<u8> {
-        fn crc(bytes: &[u8]) -> u32 {
-            let mut c = !0_u32;
-            for &b in bytes {
-                c ^= u32::from(b);
-                for _ in 0..8 {
-                    c = if c & 1 == 1 {
-                        0xedb8_8320 ^ (c >> 1)
-                    } else {
-                        c >> 1
-                    };
-                }
-            }
-            !c
-        }
-        fn chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
-            out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
-            let start = out.len();
-            out.extend_from_slice(&kind);
-            out.extend_from_slice(data);
-            let sum = crc(&out[start..]);
-            out.extend_from_slice(&sum.to_be_bytes());
-        }
-        let mut raw = Vec::new();
-        for row in rgba.chunks((width * 4) as usize) {
-            raw.push(0);
-            raw.extend_from_slice(row);
-        }
-        let mut zlib = vec![0x78, 0x01];
-        let mut blocks = raw.chunks(65535).peekable();
-        while let Some(block) = blocks.next() {
-            zlib.push(u8::from(blocks.peek().is_none()));
-            let len = u16::try_from(block.len()).unwrap();
-            zlib.extend_from_slice(&len.to_le_bytes());
-            zlib.extend_from_slice(&(!len).to_le_bytes());
-            zlib.extend_from_slice(block);
-        }
-        let (mut low, mut high) = (1_u32, 0_u32);
-        for &x in &raw {
-            low = (low + u32::from(x)) % 65521;
-            high = (high + low) % 65521;
-        }
-        zlib.extend_from_slice(&((high << 16) | low).to_be_bytes());
-        let mut out = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        let mut header = Vec::new();
-        header.extend_from_slice(&width.to_be_bytes());
-        header.extend_from_slice(&height.to_be_bytes());
-        header.extend_from_slice(&[8, 6, 0, 0, 0]);
-        chunk(&mut out, *b"IHDR", &header);
-        chunk(&mut out, *b"IDAT", &zlib);
-        chunk(&mut out, *b"IEND", &[]);
-        out
     }
 }

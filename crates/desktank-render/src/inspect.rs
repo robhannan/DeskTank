@@ -19,9 +19,16 @@
 //! the row shows it with a caret (steady, so a blink never asks for frames)
 //! and a hint. The card never reads the keyboard itself.
 //!
-//! The live page is rebuilt only when its text changes (energy moves a
-//! percent, a day passes, a letter is typed), never per frame; while nothing
-//! is inspected nothing is built, uploaded or drawn.
+//! A creature of a species with needs also shows a **Needs** section of
+//! labelled meters (SPEC §2.5, [`crate::needs`]): how well each need is met
+//! and which way it is moving, taken from the simulation's own per-creature
+//! satisfaction and a short history of it that lasts only while it is
+//! inspected.
+//!
+//! The live page is rebuilt only when what it shows changes (energy moves a
+//! percent, a meter's fill or trend moves a step, a day passes, a letter is
+//! typed), never per frame; while nothing is inspected nothing is built,
+//! uploaded or drawn.
 
 use desktank_sim::tools::Inspection;
 use desktank_sim::{
@@ -33,6 +40,7 @@ use crate::card::{
 };
 use crate::hud::PaletteLayout;
 use crate::layout::Layout;
+use crate::needs::{self, NeedBar, Trends};
 
 /// The row of the HUD texture where the inspect card's region starts (below
 /// the species card's; its left edge is column 0).
@@ -129,6 +137,10 @@ pub(crate) struct InspectCard {
     /// The name row in the image, as `[x, y, width, height]` in card
     /// pixels (none unless the live page shows it and naming is allowed).
     name_row: Option<[u32; 4]>,
+    /// Whether the card is narrow: the needs then take one column.
+    narrow: bool,
+    /// The history the needs' trends are read from.
+    trends: Trends,
 }
 
 impl InspectCard {
@@ -141,8 +153,20 @@ impl InspectCard {
         self.what = what;
         self.page = InspectPage::Live;
         self.edit = None;
+        // A trend belongs to one creature: the next starts afresh.
+        self.trends.reset();
         self.refresh(world, true);
         true
+    }
+
+    /// Lays the needs out in one column (a narrow card) or two; returns
+    /// whether a frame is needed.
+    pub(crate) fn set_narrow(&mut self, world: &World, narrow: bool) -> bool {
+        if self.narrow == narrow {
+            return false;
+        }
+        self.narrow = narrow;
+        self.what.is_some() && self.refresh(world, false)
     }
 
     /// Allows (or stops) naming creatures, which shows (or hides) the
@@ -223,6 +247,7 @@ impl InspectCard {
         let Some(mut live) = live(world, what) else {
             *self = Self {
                 can_name: self.can_name,
+                narrow: self.narrow,
                 ..Self::default()
             };
             return true;
@@ -230,6 +255,10 @@ impl InspectCard {
         if let Some(row) = &mut live.name {
             row.can_name = self.can_name;
             row.editing.clone_from(&self.edit);
+        }
+        live.narrow = self.narrow;
+        if let Inspected::Creature(id) = what {
+            self.read_trends(world, id, &mut live);
         }
         let changed = self.live.as_ref() != Some(&live);
         let rebuild = force || (changed && self.page == InspectPage::Live);
@@ -242,6 +271,16 @@ impl InspectCard {
             self.live = Some(live);
         }
         rebuild
+    }
+
+    /// Fills in the trend of each of `live`'s need meters from the history.
+    fn read_trends(&mut self, world: &World, id: CreatureId, live: &mut Live) {
+        let Some(c) = world.creature(id) else { return };
+        let readings = world.creature_needs(c);
+        let trends = self.trends.observe(id, world.tick_count(), &readings);
+        for (bar, trend) in live.needs.iter_mut().zip(trends) {
+            bar.trend = trend;
+        }
     }
 
     /// Where it is drawn in a `target`-pixel surface laid out as `grid`.
@@ -273,6 +312,11 @@ pub(crate) struct Live {
     fields: Vec<(&'static str, String)>,
     /// A creature's Name row.
     name: Option<NameRow>,
+    /// A creature's need meters, in display order (none for a species
+    /// without supported needs).
+    needs: Vec<NeedBar>,
+    /// Whether the needs take one column, not two.
+    narrow: bool,
 }
 
 /// A creature's Name row: what is drawn changes with any of these.
@@ -343,6 +387,8 @@ fn cell_live(world: &World, x: usize, y: usize) -> Option<Live> {
             ("Cell:", format!("{x}, {y}")),
         ],
         name: None,
+        needs: Vec::new(),
+        narrow: false,
     })
 }
 
@@ -386,6 +432,8 @@ fn device_live(world: &World, id: DeviceId) -> Option<Live> {
         subtitle: String::new(),
         fields,
         name: None,
+        needs: Vec::new(),
+        narrow: false,
     })
 }
 
@@ -422,9 +470,9 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
     }
     match world.unmet_need(species) {
         Some(UnmetNeed::Depth { needs, .. }) => {
-            fields.push(("Needs:", format!("{needs} cells of water")));
+            fields.push(("Lacks:", format!("{needs} cells of water")));
         }
-        Some(UnmetNeed::Air) => fields.push(("Needs:", "air at the surface".to_owned())),
+        Some(UnmetNeed::Air) => fields.push(("Lacks:", "air at the surface".to_owned())),
         None => {}
     }
     Some(Live {
@@ -435,6 +483,13 @@ fn creature_live(world: &World, id: CreatureId) -> Option<Live> {
             name: card.name,
             ..NameRow::default()
         }),
+        needs: card
+            .needs
+            .iter()
+            .take(crate::needs::MAX_NEEDS)
+            .map(|&r| NeedBar::of(r))
+            .collect(),
+        narrow: false,
     })
 }
 
@@ -458,6 +513,8 @@ fn plant_live(world: &World, id: PlantId) -> Option<Live> {
             ("Growth:", p.limit.describe()),
         ],
         name: None,
+        needs: Vec::new(),
+        narrow: false,
     })
 }
 
@@ -471,6 +528,7 @@ pub(crate) fn build_live(live: &Live, numbered: bool) -> (CardImage, Option<[u32
     for (label, text) in &live.fields {
         page.field(label, text);
     }
+    needs::draw(&mut page, &live.needs, live.narrow);
     (page.finish(), row)
 }
 
@@ -1057,5 +1115,313 @@ mod tests {
             CardLayout::beside((1280, 720), &grid(), None, 0, [0.0; 4], (0, 0)),
             None
         );
+    }
+
+    /// A school of three neon tetras (the species with needs) in a tank:
+    /// the first, `a`, is the one inspected.
+    fn school() -> (World, [CreatureId; 3]) {
+        let mut w = world();
+        let tetra = w.species().id("neon_tetra").unwrap();
+        let ids = [(80, 50), (84, 50), (88, 50)].map(|(x, y)| w.add_creature(tetra, x, y).unwrap());
+        (w, ids)
+    }
+
+    /// The fill and trend of each of `card`'s bars.
+    fn bars(card: &InspectCard) -> Vec<(u8, i8)> {
+        card.live
+            .as_ref()
+            .unwrap()
+            .needs
+            .iter()
+            .map(|b| (b.fill, b.trend))
+            .collect()
+    }
+
+    /// Ticks `w` `n` times, refreshing `card` each tick as a tank does.
+    fn run(w: &mut World, card: &mut InspectCard, n: u32) {
+        for _ in 0..n {
+            w.tick();
+            card.refresh(w, false);
+        }
+    }
+
+    #[test]
+    fn a_creature_with_needs_shows_one_labelled_bar_per_need_and_others_none() {
+        let (w, [a, ..]) = school();
+        let tetra = live(&w, Inspected::Creature(a)).unwrap();
+        let labels: Vec<_> = tetra.needs.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["Hunger", "Social"]);
+        // The bars are the simulation's own per-creature readings.
+        let readings = w.creature_needs(w.creature(a).unwrap());
+        assert_eq!(readings.len(), 2);
+        for (bar, reading) in tetra.needs.iter().zip(&readings) {
+            assert_eq!(*bar, NeedBar::of(*reading));
+        }
+        let (with, _) = build_live(&tetra, true);
+        let mut plain = tetra.clone();
+        plain.needs.clear();
+        let (without, _) = build_live(&plain, true);
+        assert!(with.size.1 > without.size.1 + font::LINE);
+        assert!(!with.clipped);
+        // A species without supported needs, a plant, a cell and a device
+        // have no Needs section.
+        let mut w = w;
+        let guppy = w.species().id("guppy").unwrap();
+        let g = w.add_creature(guppy, 80, 40).unwrap();
+        assert_eq!(live(&w, Inspected::Creature(g)).unwrap().needs, []);
+        assert_eq!(
+            live(&w, Inspected::Cell { x: 10, y: 60 }).unwrap().needs,
+            []
+        );
+        // The Needs heading is the section's only mark when it is empty:
+        // no bars, no heading.
+        let (guppy_page, _) = build_live(&live(&w, Inspected::Creature(g)).unwrap(), true);
+        assert!(guppy_page.size.1 < with.size.1);
+    }
+
+    #[test]
+    fn eating_raises_the_feeding_bar_and_a_fish_back_with_its_school_restores_social() {
+        let (mut w, [a, ..]) = school();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        // A hungry tetra among companions: empty feeding bar, full social
+        // (it takes a moment to look around), both long steady.
+        let at = |card: &InspectCard, i: usize| bars(card)[i];
+        run(&mut w, &mut card, 250);
+        assert_eq!(bars(&card), [(0, 0), (needs::LEVELS, 0)]);
+        let food = w.materials().id("flake_food").unwrap();
+        let (x, y) = w.creature(a).unwrap().centre();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        w.set_cell(x as usize, y as usize, food).unwrap();
+        run(&mut w, &mut card, 3);
+        let (fill, trend) = at(&card, 0);
+        assert!(fill > 0, "eating raised the bar");
+        assert!(trend > 0, "and it is improving: {trend}");
+        assert_eq!(at(&card, 1), (50, 0), "the other need did not move");
+        assert_eq!(
+            card.live.as_ref().unwrap().needs[0].level,
+            desktank_sim::NeedLevel::Critical,
+            "a first bite is still critically unmet"
+        );
+        // Five seconds on it is steady again, only slowly falling.
+        run(&mut w, &mut card, 110);
+        assert_eq!(at(&card, 0).1, 0);
+        assert!(at(&card, 0).0 > 0);
+
+        // Away from its companions the social bar empties and falls ...
+        assert!(w.move_creature(a, 10, 80));
+        run(&mut w, &mut card, 40);
+        assert_eq!(at(&card, 1), (0, -3));
+        // ... and as it swims back to its school the social bar fills and
+        // rises again.
+        let back = (0..600).find_map(|_| {
+            run(&mut w, &mut card, 1);
+            Some(at(&card, 1)).filter(|&(fill, trend)| fill > 0 && trend > 0)
+        });
+        assert!(back.is_some(), "it rejoins its school");
+    }
+
+    #[test]
+    fn switching_fish_shows_the_new_individuals_values_at_once() {
+        let (mut w, [a, b, third]) = school();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        run(&mut w, &mut card, 200);
+        // Feed only `b`, so the three differ.
+        let food = w.materials().id("flake_food").unwrap();
+        let (bx, by) = w.creature(b).unwrap().centre();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        w.set_cell(bx as usize, by as usize, food).unwrap();
+        w.tick();
+        w.tick();
+        card.refresh(&w, false);
+        let a_bars = bars(&card);
+        // Inspecting `b` shows b's meal straight away, with no trend yet (a
+        // trend is read from a creature's own history), never a's bars.
+        assert!(card.set(&w, Some(Inspected::Creature(b))));
+        let b_bars = bars(&card);
+        let b_fed = w.creature_needs(w.creature(b).unwrap())[0].satisfaction;
+        assert!(b_fed > 0);
+        assert_eq!(b_bars[0], (b_fed.div_ceil(2), 0));
+        assert_ne!(b_bars, a_bars);
+        // The image matches what building it afresh gives.
+        let rebuilt = build_live(card.live.as_ref().unwrap(), true).0;
+        assert_eq!(card.image.as_ref(), Some(&rebuilt));
+        // Going back to `a`, and to `c`, shows their readings, not b's.
+        for id in [a, third] {
+            assert!(card.set(&w, Some(Inspected::Creature(id))));
+            let fed = w.creature_needs(w.creature(id).unwrap())[0].satisfaction;
+            assert_eq!(bars(&card)[0], (fed.div_ceil(2), 0), "{id:?}");
+        }
+    }
+
+    #[test]
+    fn the_card_is_rebuilt_only_when_a_meter_moves_and_not_at_all_when_closed() {
+        let (mut w, [a, ..]) = school();
+        let mut card = InspectCard::default();
+        // Closed: nothing is remembered, built or asked for.
+        run(&mut w, &mut card, 50);
+        assert!(card.image.is_none() && !card.dirty && card.trends.is_empty());
+        assert!(!card.refresh(&w, false));
+
+        card.set(&w, Some(Inspected::Creature(a)));
+        card.dirty = false;
+        let (mut rebuilds, mut previous) = (0, card.image.clone());
+        for _ in 0..600 {
+            w.tick();
+            if card.refresh(&w, false) {
+                rebuilds += 1;
+                assert!(card.dirty);
+                assert_ne!(card.image, previous, "rebuilt only for a change");
+            } else {
+                assert!(!card.dirty || card.image != previous);
+                assert_eq!(card.image, previous, "no change, no rebuild");
+            }
+            card.dirty = false;
+            previous.clone_from(&card.image);
+        }
+        // Thirty seconds of a settled fish rebuild well under once a second
+        // (energy, hunger and the school each step now and then).
+        assert!(rebuilds < 40, "{rebuilds} rebuilds in 600 ticks");
+
+        // Closing forgets the history and does no more work.
+        assert!(card.set(&w, None));
+        assert!(card.image.is_none() && card.trends.is_empty());
+        card.dirty = false;
+        run(&mut w, &mut card, 100);
+        assert!(card.image.is_none() && !card.dirty && card.trends.is_empty());
+        // A creature that is gone closes the card.
+        card.set(&w, Some(Inspected::Creature(a)));
+        assert!(w.remove_creature(a));
+        assert!(card.refresh(&w, false));
+        assert!(card.what.is_none() && card.image.is_none());
+    }
+
+    #[test]
+    fn a_narrow_card_stacks_the_needs_in_one_column() {
+        let (w, [a, ..]) = school();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        let wide = card.image.clone().unwrap();
+        // Setting the same layout again is free; changing it rebuilds once.
+        assert!(!card.set_narrow(&w, false));
+        card.dirty = false;
+        assert!(card.set_narrow(&w, true));
+        assert!(card.dirty);
+        let narrow = card.image.clone().unwrap();
+        assert!(narrow.size.1 > wide.size.1, "one column is taller");
+        assert!(!narrow.clipped && !wide.clipped);
+        assert_eq!(narrow.size.0, wide.size.0, "the card is as wide");
+        // It survives the species page and back, and a new creature.
+        assert!(card.set_page(&w, InspectPage::Species));
+        assert!(card.set_page(&w, InspectPage::Live));
+        assert_eq!(card.image.as_ref(), Some(&narrow));
+        assert!(card.set_narrow(&w, false));
+        assert_eq!(card.image.as_ref(), Some(&wide));
+        // With nothing inspected it is just remembered.
+        assert!(card.set(&w, None));
+        assert!(!card.set_narrow(&w, true));
+        assert!(card.image.is_none());
+        card.set(&w, Some(Inspected::Creature(a)));
+        assert_eq!(card.image.as_ref(), Some(&narrow));
+    }
+
+    #[test]
+    fn naming_and_the_species_page_still_work_on_a_card_with_needs() {
+        let (w, [a, ..]) = school();
+        let g = grid();
+        let target = (1280, 720);
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        assert!(card.set_can_name(&w, true));
+        let at = card.layout(&w, target, &g, None, 0).unwrap();
+        let rect = card.name_rect(&at).expect("the Name row can be clicked");
+        // The row is above the Needs section and inside the card.
+        let [_, top, _, height] = card.name_row.unwrap();
+        let needs_top =
+            card.image.as_ref().unwrap().size.1 - 4 - (font::LINE + 1 + font::LINE + 7) - 3;
+        assert!(top + height <= needs_top, "{top} {height} {needs_top}");
+        assert!(rect.contains(f64::from(rect.origin.0 + 1), f64::from(rect.origin.1 + 1)));
+        // Page 1/2 to 2/2 and back.
+        let live_page = card.image.clone();
+        assert!(card.set_page(&w, InspectPage::Species));
+        assert_eq!(card.page.tag(), "2/2");
+        assert_ne!(card.image, live_page);
+        assert!(
+            card.layout(&w, target, &g, None, 0)
+                .and_then(|at| card.name_rect(&at))
+                .is_none()
+        );
+        assert!(card.set_page(&w, InspectPage::Live));
+        assert_eq!(card.image, live_page);
+        assert_eq!(card.page.tag(), "1/2");
+        // Typing a name keeps the bars and the card un-clipped.
+        assert!(card.set_name_edit(&w, Some("Neo")));
+        let editing = card.image.as_ref().unwrap();
+        assert!(!editing.clipped);
+        assert_eq!(bars(&card).len(), 2);
+    }
+
+    #[test]
+    fn the_card_with_needs_fits_small_and_large_targets() {
+        let (w, [a, ..]) = school();
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        for narrow in [false, true] {
+            card.set_narrow(&w, narrow);
+            let size = card.image.as_ref().unwrap().size;
+            assert!(size.1 <= card::CARD_MAX.1, "{narrow}: {size:?}");
+            // A phone-sized target still fits it at scale 1, a desktop one
+            // draws it larger.
+            for (target, scale_at_least) in [((360, 640), 1), ((1280, 720), 2)] {
+                let g = Layout::fit((320, 180), target);
+                let at = card
+                    .layout(&w, target, &g, None, 0)
+                    .unwrap_or_else(|| panic!("{narrow} {target:?}"));
+                assert!(at.scale >= scale_at_least, "{target:?}: {at:?}");
+                let (cw, ch) = at.size();
+                assert!(at.origin.0 + cw <= target.0 && at.origin.1 + ch <= target.1);
+            }
+        }
+        // Even a 320×180 canvas (a TV safe area, an embed) fits it once.
+        let g = Layout::fit((160, 90), (320, 180));
+        card.set_narrow(&w, false);
+        assert!(card.layout(&w, (320, 180), &g, None, 0).is_some());
+    }
+
+    /// Writes a tetra's live card, just after a first bite, in two columns
+    /// and in one, as PNGs to `target/shots/inspect-need-bars/` when
+    /// `INSPECT_SHOTS` is set.
+    #[test]
+    fn writes_live_card_shots_on_request() {
+        if std::env::var_os("INSPECT_SHOTS").is_none() {
+            return;
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/inspect-need-bars");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut w, [a, ..]) = school();
+        w.set_creature_name(a, "Neo");
+        let mut card = InspectCard::default();
+        card.set(&w, Some(Inspected::Creature(a)));
+        run(&mut w, &mut card, 250);
+        let food = w.materials().id("flake_food").unwrap();
+        let (x, y) = w.creature(a).unwrap().centre();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        w.set_cell(x as usize, y as usize, food).unwrap();
+        run(&mut w, &mut card, 3);
+        for (name, narrow) in [("live-two-column", false), ("live-narrow", true)] {
+            card.set_narrow(&w, narrow);
+            let image = card.image.as_ref().unwrap();
+            let scale = 5;
+            std::fs::write(
+                dir.join(format!("{name}.png")),
+                crate::testing::png(
+                    &crate::needs::tests::enlarge(&image.pixels, image.size, scale),
+                    (image.size.0 * scale, image.size.1 * scale),
+                ),
+            )
+            .unwrap();
+        }
     }
 }
