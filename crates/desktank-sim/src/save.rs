@@ -1152,8 +1152,13 @@ mod tests {
             .find(|p| p.id != floater)
             .unwrap()
             .id;
-        let bad: [fn(&mut v9::Raft, u16); 4] = [
-            |r, other| r.plant = other,
+        // A raft may belong to any plant: an unrooted cutting drifts too
+        // (#469), so a save with one needs no new version.
+        let mut piece = good.clone();
+        piece.rafts[0].plant = other;
+        piece.rafts.push(good.rafts[0]);
+        assert_eq!(load(piece).unwrap().to_v9().rafts.len(), 2);
+        let bad: [fn(&mut v9::Raft, u16); 3] = [
             |r, _| r.plant = 999,
             |r, _| r.off = (0, 5 * 256),
             |r, _| r.vel = (-5 * 256, 0),

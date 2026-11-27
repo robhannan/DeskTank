@@ -372,6 +372,16 @@ fn layered_mat_builds_multiple_layers_and_falls_off_when_support_is_gone() {
         .unwrap();
     run(&mut w, 8 * MINUTE);
     check_table(&w);
+    // What falls away from the rest is a loose piece that drifts and sinks
+    // looking for something to cling to (#289): none of it is still held.
+    assert!(
+        plants_of(&w, xmas).iter().all(|p| w.plant_unrooted(p.id)),
+        "layered christmas moss stayed on: {:?}",
+        plants_of(&w, xmas)
+    );
+    // Nothing it can cling to, so those rot within 7.5 minutes.
+    run(&mut w, 8 * MINUTE);
+    check_table(&w);
     assert!(
         plants_of(&w, xmas).is_empty(),
         "layered christmas moss fell off completely: {:?}",

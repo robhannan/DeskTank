@@ -1130,10 +1130,13 @@ impl Running {
         self.tank.set_card(card);
         let pointer = self.tools.pointer().filter(|_| self.avoid_cursor);
         self.tank.world_mut().set_creature_cursor(pointer);
-        let cursor = self.tools.preview().map(|(x, y, radius)| BrushPreview {
-            cell: (x, y),
-            radius,
-        });
+        let cursor = self
+            .tools
+            .preview(self.tank.world())
+            .map(|(x, y, radius)| BrushPreview {
+                cell: (x, y),
+                radius,
+            });
         self.tank.set_cursor(cursor);
         let ghost = self.tools.ghost(self.tank.world());
         self.tank.set_device_ghost(ghost);

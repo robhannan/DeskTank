@@ -16,9 +16,11 @@
 //! out. Inspect reports the creature under the pointer, if any, or the
 //! plant, and the cell's material. A creature slot in the palette adds one
 //! of its species per click. A plant slot (one per species, like the
-//! creatures) pours its species as the propagule picked for it with
+//! creatures) uses its species as the propagule picked for it with
 //! [`Tools::set_plant_propagule`] (seeds, cuttings, fragments, runners or
-//! buds; the species' default until one is picked).
+//! buds; the species' default until one is picked): seeds pour as powder
+//! with the brush, anything else places one small piece of the species'
+//! real plant cells per click ([`World::place_propagule`]).
 //!
 //! The palette is a two-level tree ([`PaletteTab`], [`Tools::palette_tree`];
 //! the categories are [`crate::palette`]'s): hosts show the top tabs, the
@@ -91,8 +93,8 @@ pub enum Tool {
     Place(Placeable),
     /// Add a creature of this species, once per click.
     AddCreature(SpeciesId),
-    /// Pour this plant species as the propagule picked for it
-    /// ([`Tools::plant_propagule`]).
+    /// Use this plant species as the propagule picked for it
+    /// ([`Tools::plant_propagule`]): pour seeds, or place one piece.
     Plant(PlantSpeciesId),
 }
 
@@ -221,7 +223,7 @@ struct Stroke {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Pour,
-    /// Pour a plant species' seeds or cuttings.
+    /// Pour a plant species' seeds.
     Plant,
     Scoop,
     /// Glue (`Some(true)`) or free bodies; `None` until the stroke first
@@ -619,18 +621,21 @@ impl Tools {
     }
 
     /// The brush outline to preview at the pointer, `(x, y, radius)` in
-    /// cells: for pour, scoop and glue, or any stroke that uses the brush.
+    /// cells: for pour, scoop and glue, seeds, or any stroke that uses the
+    /// brush. A plant slot placing a piece (anything but seeds) has none.
     #[must_use]
-    pub fn preview(&self) -> Option<(i64, i64, u32)> {
+    pub fn preview(&self, world: &World) -> Option<(i64, i64, u32)> {
         let painting = match self.stroke {
             Some(s) => matches!(
                 s.action,
                 Action::Pour | Action::Plant | Action::Scoop | Action::Glue(_)
             ),
-            None => matches!(
-                self.tool,
-                Tool::Pour | Tool::Plant(_) | Tool::Scoop | Tool::Glue
-            ),
+            None => match self.tool {
+                Tool::Pour | Tool::Scoop | Tool::Glue => true,
+                // Only seeds pour with the brush; a placed piece has none.
+                Tool::Plant(_) => self.plant_propagule(world) == Some(Propagule::Seeds),
+                _ => false,
+            },
         };
         let (x, y) = self.pointer?;
         painting.then_some((x, y, self.radius))
@@ -669,7 +674,12 @@ impl Tools {
         let action = match (button, self.tool) {
             (Button::Secondary, _) | (Button::Primary, Tool::Scoop) => Action::Scoop,
             (Button::Primary, Tool::Pour) => Action::Pour,
-            (Button::Primary, Tool::Plant(_)) => Action::Plant,
+            (Button::Primary, Tool::Plant(_)) => match self.plant_propagule(world) {
+                // Seeds pour as powder with the brush; any other
+                // propagule is one placed piece per click.
+                Some(Propagule::Seeds) | None => Action::Plant,
+                Some(_) => Action::Place,
+            },
             (Button::Primary, Tool::Glue) => Action::Glue(None),
             (Button::Primary, Tool::Net) => {
                 Action::Net(world.creature_at(cell.0, cell.1).and_then(|id| {
@@ -701,6 +711,19 @@ impl Tools {
                         .place_flipped(p, cell.0, cell.1, self.flip)
                         .unwrap_or(0),
                 ),
+                // One piece per click; a full tank or no open water there
+                // places nothing.
+                Tool::Plant(species) => self
+                    .plant_propagule(world)
+                    .and_then(|p| {
+                        world
+                            .place_propagule(cell.0, cell.1, species, p)
+                            .ok()
+                            .flatten()
+                    })
+                    .map_or(Outcome::None, |id| {
+                        Outcome::Painted(world.plant(id).map_or(1, |p| p.size() as usize))
+                    }),
                 // No room (solid/air there) or a full tank reports why.
                 Tool::AddCreature(s) => {
                     match world.add_palette_creature(s, cell.0, cell.1, self.morph_for(world, s)) {
@@ -1175,7 +1198,7 @@ mod tests {
         let yi = i64::try_from(y).unwrap();
         t.press(&mut w, Button::Secondary, (40, yi));
         t.moved(&mut w, (59, yi));
-        assert_eq!(t.preview(), Some((59, yi, DEFAULT_RADIUS)));
+        assert_eq!(t.preview(&w), Some((59, yi, DEFAULT_RADIUS)));
         t.release(&mut w, Button::Secondary);
         assert!((40..60).all(|x| at(&w, x, y) == water));
         // Releasing the other button doesn't end a stroke it didn't start,
@@ -1212,7 +1235,7 @@ mod tests {
         assert_eq!(t.press(&mut w, Button::Primary, (80, 60)), Outcome::None);
         assert_eq!(t.moved(&mut w, (90, 60)), Outcome::None);
         t.release(&mut w, Button::Primary);
-        assert_eq!(t.preview(), None);
+        assert_eq!(t.preview(&w), None);
         assert_eq!(w.state_hash(), before);
     }
 
@@ -1560,7 +1583,7 @@ mod tests {
         assert_eq!(t.next_plant_propagule(&w), None);
         t.select(PaletteItem::Tool(Tool::Plant(hyg)));
         assert_eq!(t.selected_plant(), Some(hyg));
-        assert!(t.preview().is_none(), "no pointer yet");
+        assert!(t.preview(&w).is_none(), "no pointer yet");
         assert_eq!(t.plant_propagule(&w), Some(Propagule::Cuttings));
         assert!(t.set_plant_propagule(&w, Propagule::Seeds));
         // Picks are per species: moss only grows from fragments, rotala
@@ -1629,7 +1652,7 @@ mod tests {
         );
         t.select(PaletteItem::Tool(Tool::Place(Placeable::InternalFilter)));
         assert!(t.can_flip(&w), "side-glass internal filter flips");
-        assert_eq!(t.preview(), None);
+        assert_eq!(t.preview(&w), None);
         // The ghost follows the pointer: on the nearer (left) glass, or the
         // other one when flipped.
         t.moved(&mut w, (20, 40));
@@ -1774,12 +1797,12 @@ mod tests {
         t.select(PaletteItem::Tool(Tool::Magnify));
         // No pointer yet: no lens, no brush preview.
         assert_eq!(t.magnifier(), None);
-        assert_eq!(t.preview(), None);
+        assert_eq!(t.preview(&w), None);
 
         // Hovering shows the magnifier at the default zoom and changes nothing.
         assert_eq!(t.moved(&mut w, (40, 30)), Outcome::None);
         assert_eq!(t.magnifier(), Some((40, 30, 2)));
-        assert_eq!(t.preview(), None);
+        assert_eq!(t.preview(&w), None);
 
         // A click (press + release on the same cell) cycles zoom through ZOOM_LEVELS.
         for &want in &ZOOM_LEVELS[1..] {
@@ -1825,7 +1848,7 @@ mod tests {
             Outcome::Painted(_)
         ));
         assert_eq!(t.magnifier(), None);
-        assert!(t.preview().is_some());
+        assert!(t.preview(&w).is_some());
         t.release(&mut w, Button::Secondary);
         assert_eq!(t.magnifier(), Some((60, 40, 6)));
 

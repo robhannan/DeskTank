@@ -26,8 +26,9 @@
 //! glued = true       # a rigid material's body is glued in place (default false)
 //! # plant = "rotala" # instead of a material: pour this plant species
 //!                    # (assets/plants), as its palette slot does
-//! # propagule = "seeds" # with `plant`: "seeds", "cuttings", "fragments" or "runners", one the
-//!                    # species lists (default: cuttings if it lists them, else its first)
+//! # propagule = "seeds" # with `plant`: "seeds", "cuttings", "fragments", "runners" or "buds", one
+//!                    # the species lists (default: cuttings if it lists them, else its first);
+//!                    # an unknown plant or one it doesn't list fails when the script is parsed
 //!
 //! [[place]]
 //! tick = 0           # tick to place on (default 0)
@@ -66,7 +67,10 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::{BodyId, Brush, Placeable, Propagule, World, WorldConfig, WorldError};
+use crate::{
+    BodyId, Brush, MaterialTable, Placeable, PlantSpeciesTable, Propagule, World, WorldConfig,
+    WorldError,
+};
 
 /// Most creatures one `[[creature]]` entry may add.
 #[allow(clippy::cast_possible_truncation)] // 128
@@ -381,7 +385,9 @@ impl Script {
     /// # Errors
     ///
     /// Returns an error if the TOML is malformed, has unknown keys, sets
-    /// `frame_every` to zero, or a pour names a propagule without a plant.
+    /// `frame_every` to zero, a pour names a propagule without a plant, or
+    /// a pour names a plant species (or a propagule it doesn't grow from)
+    /// the built-in species don't have.
     pub fn parse(source: &str) -> Result<Self, ScriptError> {
         let script: Self = toml::from_str(source)?;
         if script.frame_every == 0 {
@@ -402,6 +408,7 @@ impl Script {
         {
             return Err(ScriptError::PropaguleWithoutPlant(q.name()));
         }
+        script.check_plants()?;
         if let Some(c) = script.creatures.iter().find(|c| c.count > MAX_COUNT) {
             return Err(ScriptError::TooMany(c.count));
         }
@@ -409,6 +416,41 @@ impl Script {
             return Err(ScriptError::FilmDensity(f.density));
         }
         Ok(script)
+    }
+
+    /// Checks every plant pour against the built-in species a script's
+    /// world has: the species must exist and grow from its propagule, so a
+    /// script that couldn't plant what it says fails at parse time, not
+    /// part-way through a run.
+    fn check_plants(&self) -> Result<(), ScriptError> {
+        if self.pours.iter().all(|p| p.plant.is_none()) {
+            return Ok(());
+        }
+        // The same table `World::new` builds; if it can't be built there is
+        // nothing to check against, and the run reports it.
+        let Ok(species) = MaterialTable::builtin()
+            .map_err(|e| e.to_string())
+            .and_then(|m| PlantSpeciesTable::builtin_for(&m).map_err(|e| e.to_string()))
+        else {
+            return Ok(());
+        };
+        for p in &self.pours {
+            let Some(name) = &p.plant else {
+                continue;
+            };
+            let s = species
+                .iter()
+                .find(|s| s.name == *name)
+                .ok_or_else(|| ScriptError::UnknownPlantSpecies(name.clone()))?;
+            let propagule = p.propagule.unwrap_or_else(|| s.default_propagule());
+            if !s.grows_from(propagule) {
+                return Err(ScriptError::BadPropagule {
+                    plant: name.clone(),
+                    propagule: propagule.name(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// The world configuration for `seed`.
@@ -749,14 +791,28 @@ mod tests {
         s.run(&mut w, 1).unwrap();
         let cutting = w.materials().id("cutting").unwrap();
         assert_eq!(w.material_counts()[usize::from(cutting.0)], 1);
-        // Rotala only grows from cuttings.
-        let s = Script::parse("[[pour]]\nx = 32\ny = 8\nplant = \"rotala\"\npropagule = \"seeds\"")
-            .unwrap();
-        let mut w = world(&s, 1);
+        // Rotala only grows from cuttings: a script that pours its seeds
+        // fails when parsed, as does one pouring an unknown plant.
         assert!(matches!(
-            s.run(&mut w, 1),
-            Err(ScriptError::BadPropagule { .. })
+            Script::parse("[[pour]]\nx = 32\ny = 8\nplant = \"rotala\"\npropagule = \"seeds\""),
+            Err(ScriptError::BadPropagule {
+                propagule: "seeds",
+                ..
+            })
         ));
+        assert!(matches!(
+            Script::parse("[[pour]]\nx = 32\ny = 8\nplant = \"kelp\""),
+            Err(ScriptError::UnknownPlantSpecies(_))
+        ));
+        // Runners and buds are checked the same way.
+        assert!(matches!(
+            Script::parse(&pour("propagule = \"buds\"")),
+            Err(ScriptError::BadPropagule {
+                propagule: "buds",
+                ..
+            })
+        ));
+        assert!(Script::parse(&pour("propagule = \"fragments\"")).is_ok());
         // A propagule needs a plant, and a known name.
         assert!(matches!(
             Script::parse("[[pour]]\nx = 1\ny = 1\nmaterial = \"sand\"\npropagule = \"seeds\""),
