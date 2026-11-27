@@ -739,7 +739,7 @@ fn a_mature_stem_plant_tapers_and_broad_leaves_have_upper_cells() {
     for &(cx, cy) in &cells {
         let c = at(cx, cy);
         if c.material != stem
-            || (desktank_sim::plants::plant_position(c.variant)) % f.internode != 0
+            || !desktank_sim::plants::plant_position(c.variant).is_multiple_of(f.internode)
         {
             continue;
         }
