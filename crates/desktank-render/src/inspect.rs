@@ -120,6 +120,7 @@ impl InspectPage {
 /// The inspect card a tank shows: what it is pinned to, its page and its
 /// image, kept up to date with the world by [`InspectCard::refresh`].
 #[derive(Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // independent card states
 pub(crate) struct InspectCard {
     /// What it is pinned to, if anything.
     pub(crate) what: Option<Inspected>,
