@@ -439,14 +439,18 @@ impl World {
         sponge: Option<(i32, i32, i32)>,
         rng: &mut Pcg32,
     ) -> (i32, i32, i32) {
+        self.observe_shelter(k, c);
         if let Some(target) = super::pursuit::flee_target(k, c) {
             c.needs.interrupt();
             return target;
         }
-        if c.retarget == 0 || dist(c.tx - c.x, c.ty - c.y) <= REACHED {
+        // A fish committed to cover keeps its spot: it holds there rather
+        // than wandering off on arrival.
+        let covering = c.needs.action == super::needs::Action::Cover;
+        if !covering && (c.retarget == 0 || dist(c.tx - c.x, c.ty - c.y) <= REACHED) {
             self.pick_target(k, c, rng);
         } else {
-            c.retarget -= 1;
+            c.retarget = c.retarget.saturating_sub(1);
         }
 
         if !k.curious
@@ -492,9 +496,20 @@ impl World {
                     food
                 }
                 super::needs::Action::School if !straying => self.school_target(k, c),
+                super::needs::Action::Cover => Some(World::cover_target(k, c)),
                 _ => None,
             };
-            return target.unwrap_or((c.tx, c.ty, k.cruise));
+            if let Some(target) = target {
+                return target;
+            }
+            // Nothing in particular to do: it wanders as any species does,
+            // with its curiosity about the cursor.
+            if k.curious
+                && let Some(target) = self.curious_cursor_target(k, c)
+            {
+                return target;
+            }
+            return self.wander_target(k, c);
         }
         if let Some(target) = food {
             return target;
@@ -515,6 +530,12 @@ impl World {
                 return target;
             }
         }
+        self.wander_target(k, c)
+    }
+
+    /// Heading for the wander target: a live-food swimmer at its own pace,
+    /// a bottom walker staying on its row.
+    fn wander_target(&self, k: &Kind, c: &Creature) -> (i32, i32, i32) {
         let speed = if k.live && k.zone == Zone::Mid {
             super::live::swim_pace(k, c.id, self.tick)
         } else {
