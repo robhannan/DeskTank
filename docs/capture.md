@@ -44,6 +44,7 @@ repeat = 40        # pour on this many consecutive ticks (default 1)
 x = 80             # disc centre, in cells from the top left
 y = 10
 dx = 1             # move the centre this many cells per repeat (default 0)
+dy = 0             # and this many rows per repeat (default 0)
 radius = 3         # disc radius in cells (default 2)
 material = "sand"  # a material name from assets/materials
 brush = "pour"     # "pour" fills only fluid cells; "replace" overwrites (default "pour")

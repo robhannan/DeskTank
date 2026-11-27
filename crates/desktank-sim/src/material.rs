@@ -103,6 +103,24 @@ pub const MAX_RUN: usize = 4;
 /// Longest allowed `float_time`, in seconds (fits the u16 cell state).
 pub const MAX_FLOAT_TIME: f32 = 3000.0;
 
+/// How a rigid material's brush strokes are weathered into a natural
+/// outline (the `shape` key of its TOML, SPEC §2.1): the quarter-cell
+/// outline of a stroke is trimmed along its edge by a position-seeded
+/// field instead of staying a plain disc.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlineShape {
+    /// The brush's plain round outline (`rock`, `driftwood`).
+    #[default]
+    Round,
+    /// Flat faces meeting at corners, jagged tips and chipped edges
+    /// (Seiryu stone).
+    Angular,
+    /// Stepped, notched edges along one ridge direction, with bites out of
+    /// the outline (dragon stone).
+    Layered,
+}
+
 /// One material, validated.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Material {
@@ -133,6 +151,8 @@ pub struct Material {
     pub passable: bool,
     /// Placeholder palette colour (sRGB).
     pub colour: [u8; 3],
+    /// Rigid materials: how a brush stroke's outline is weathered.
+    pub shape: OutlineShape,
     /// The palette sub-category it is poured from, or `None` if it isn't
     /// offered for pouring (air, the tissue plants grow, device cells).
     pub palette: Option<PalettePath>,
@@ -203,6 +223,8 @@ struct MaterialDef {
     #[serde(default)]
     passable: bool,
     colour: String,
+    #[serde(default)]
+    shape: OutlineShape,
     palette: Option<String>,
     #[serde(default)]
     palette_order: u8,
@@ -384,6 +406,9 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
     if d.passable && !slides {
         return Err(invalid("passable only applies to powder and floating"));
     }
+    if d.shape != OutlineShape::Round && d.class != MovementClass::Rigid {
+        return Err(invalid("shape only applies to rigid"));
+    }
     let palette = d
         .palette
         .as_deref()
@@ -406,6 +431,7 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         opacity,
         passable: d.passable,
         colour,
+        shape: d.shape,
         palette,
         palette_order: d.palette_order,
     })
@@ -448,6 +474,28 @@ mod tests {
         // Ordered by ID.
         let ids: Vec<_> = t.iter().map(|m| m.id).collect();
         assert!(ids.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn shape_defaults_to_round_and_only_applies_to_rigid() {
+        let t = MaterialTable::builtin().unwrap();
+        let shape = |name: &str| t.get(t.id(name).unwrap()).unwrap().shape;
+        assert_eq!(shape("rock"), OutlineShape::Round);
+        assert_eq!(shape("driftwood"), OutlineShape::Round);
+        assert_eq!(shape("seiryu_stone"), OutlineShape::Angular);
+        assert_eq!(shape("dragon_stone"), OutlineShape::Layered);
+        let rigid = "id = 1\nname = \"a\"\nclass = \"rigid\"\ndensity = 2.0\ncolour = \"#000000\"\nshape = \"angular\"";
+        assert!(MaterialTable::from_toml_sources(&[rigid]).is_ok());
+        let sand = "id = 1\nname = \"a\"\nclass = \"powder\"\ndensity = 2.0\ncolour = \"#000000\"\nshape = \"angular\"";
+        assert!(matches!(
+            MaterialTable::from_toml_sources(&[sand]),
+            Err(MaterialError::Invalid { .. })
+        ));
+        let odd = rigid.replace("angular", "pointy");
+        assert!(matches!(
+            MaterialTable::from_toml_sources(&[&odd]),
+            Err(MaterialError::Parse { .. })
+        ));
     }
 
     #[test]

@@ -3,7 +3,8 @@
 //! saves.
 
 use desktank_sim::{
-    Brush, FieldKind, MaterialId, MaterialTable, Propagule, Rect, World, WorldConfig, save,
+    Brush, FULL_MASK, FieldKind, MaterialId, MaterialTable, Propagule, Rect, World, WorldConfig,
+    disc_mask, quarter_bit, save,
 };
 
 /// The stones, with the plain rock first.
@@ -167,5 +168,211 @@ fn a_save_with_the_new_stones_round_trips() {
         let stone = id(&loaded, name);
         assert_eq!(positions(&loaded, stone), positions(&w, stone), "{name}");
         assert!(!positions(&loaded, stone).is_empty(), "{name}");
+    }
+}
+
+/// The weathered stones, with their shapes' names.
+const WEATHERED: [&str; 2] = ["dragon_stone", "seiryu_stone"];
+
+/// A drag of dabs: a rising stroke of a stone, as a tool drag would make.
+fn drag(w: &mut World, name: &str, radius: u32) {
+    let stone = id(w, name);
+    let mut body = None;
+    for i in 0..24 {
+        let (_, b) = w
+            .paint_into(30 + i, 70 - i / 3, radius, stone, Brush::Replace, body)
+            .unwrap();
+        body = b;
+    }
+}
+
+/// Every cell's mask in the grid, row by row.
+fn masks(w: &World) -> Vec<u16> {
+    let mut out = Vec::new();
+    for y in 0..w.height() {
+        for x in 0..w.width() {
+            out.push(w.cell_mask(x, y));
+        }
+    }
+    out
+}
+
+/// The number of 4-connected pieces of `stone`'s drawn quarters.
+fn quarter_pieces(w: &World, stone: MaterialId) -> usize {
+    let side = (4 * w.width(), 4 * w.height());
+    let drawn = |x: usize, y: usize| {
+        let (cx, cy) = (x / 4, y / 4);
+        w.cell(cx, cy).is_some_and(|c| c.material == stone)
+            && w.cell_mask(cx, cy) & quarter_bit(x % 4, y % 4) != 0
+    };
+    let mut seen = vec![false; side.0 * side.1];
+    let mut pieces = 0;
+    for y in 0..side.1 {
+        for x in 0..side.0 {
+            if seen[y * side.0 + x] || !drawn(x, y) {
+                continue;
+            }
+            pieces += 1;
+            seen[y * side.0 + x] = true;
+            let mut stack = vec![(x, y)];
+            while let Some((x, y)) = stack.pop() {
+                let around = [
+                    (x.wrapping_sub(1), y),
+                    (x + 1, y),
+                    (x, y.wrapping_sub(1)),
+                    (x, y + 1),
+                ];
+                for (nx, ny) in around {
+                    if nx < side.0 && ny < side.1 && !seen[ny * side.0 + nx] && drawn(nx, ny) {
+                        seen[ny * side.0 + nx] = true;
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+        }
+    }
+    pieces
+}
+
+/// The quarters drawn for `stone` over the whole grid.
+fn drawn_quarters(w: &World, stone: MaterialId) -> u32 {
+    positions(w, stone)
+        .iter()
+        .map(|&(x, y)| w.cell_mask(x, y).count_ones())
+        .sum()
+}
+
+#[test]
+fn weathered_strokes_are_not_the_plain_brush_circle() {
+    for name in WEATHERED {
+        let mut plain = world(120, 100, 4);
+        let mut stone = world(120, 100, 4);
+        drag(&mut plain, "rock", 8);
+        drag(&mut stone, name, 8);
+        let (rock, kind) = (id(&plain, "rock"), id(&stone, name));
+        // The same cells are drawn at the same places: the weathering trims
+        // quarters and drops fringe cells, it doesn't move the stone.
+        let cells = positions(&stone, kind);
+        assert!(positions(&plain, rock).len() >= cells.len(), "{name}");
+        let trimmed = cells
+            .iter()
+            .filter(|&&(x, y)| stone.cell_mask(x, y) != plain.cell_mask(x, y))
+            .count();
+        assert!(trimmed > cells.len() / 12, "{name}: only {trimmed} trimmed");
+        // About the size painted: trimmed, not shrunk away.
+        let (plain_q, stone_q) = (drawn_quarters(&plain, rock), drawn_quarters(&stone, kind));
+        assert!(stone_q < plain_q, "{name}: {stone_q} of {plain_q}");
+        assert!(
+            stone_q * 100 > plain_q * 55,
+            "{name}: {stone_q} of {plain_q}"
+        );
+        // No rigid cell is left invisible.
+        for &(x, y) in &cells {
+            assert_ne!(stone.cell_mask(x, y), 0, "{name} ({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn a_weathered_stroke_is_one_piece() {
+    for name in WEATHERED {
+        for seed in 0..6 {
+            for radius in [4, 6, 9] {
+                let mut w = world(120, 100, seed);
+                drag(&mut w, name, radius);
+                assert_eq!(w.bodies().count(), 1, "{name} seed {seed} r {radius}");
+                assert_eq!(
+                    quarter_pieces(&w, id(&w, name)),
+                    1,
+                    "{name} seed {seed} r {radius}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn weathering_is_deterministic_and_seeded() {
+    for name in WEATHERED {
+        let (mut a, mut b, mut c) = (world(120, 100, 4), world(120, 100, 4), world(120, 100, 5));
+        for w in [&mut a, &mut b, &mut c] {
+            drag(w, name, 8);
+        }
+        assert_eq!(masks(&a), masks(&b), "{name}: same seed, same stone");
+        assert_eq!(a.state_hash(), b.state_hash(), "{name}");
+        assert_ne!(masks(&a), masks(&c), "{name}: another seed, another stone");
+        // Drawing over the same strokes again changes nothing: the edge is
+        // a function of position, not of the dab that reached it.
+        let before = a.state_hash();
+        drag(&mut a, name, 8);
+        assert_eq!(a.state_hash(), before, "{name}: redrawn stroke changed");
+    }
+}
+
+#[test]
+fn plain_rock_and_driftwood_keep_the_brush_outline() {
+    for name in ["rock", "driftwood"] {
+        for radius in [1_u32, 4, 9] {
+            let mut w = world(80, 80, 6);
+            let stone = id(&w, name);
+            w.paint(40, 40, radius, stone, Brush::Replace).unwrap();
+            let r = i64::from(radius);
+            let mut partial = 0;
+            for y in 0..80_i64 {
+                for x in 0..80_i64 {
+                    let (dx, dy) = (x - 40, y - 40);
+                    if dx * dx + dy * dy > r * r + r {
+                        continue;
+                    }
+                    let got = w.cell_mask(usize::try_from(x).unwrap(), usize::try_from(y).unwrap());
+                    assert_eq!(got, disc_mask(dx, dy, r), "{name} r {radius} ({dx}, {dy})");
+                    partial += usize::from(got != FULL_MASK);
+                }
+            }
+            assert!(partial > 0, "{name} r {radius}");
+        }
+    }
+}
+
+#[test]
+fn tiny_dabs_of_a_weathered_stone_stay_round() {
+    for name in WEATHERED {
+        for radius in [0_u32, 1, 2] {
+            let mut w = world(60, 60, 6);
+            w.paint(30, 30, radius, id(&w, name), Brush::Replace)
+                .unwrap();
+            let r = i64::from(radius);
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx * dx + dy * dy <= r * r + r {
+                        let at = |d: i64| usize::try_from(30 + d).unwrap();
+                        assert_eq!(w.cell_mask(at(dx), at(dy)), disc_mask(dx, dy, r), "{name}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_weathered_shape_survives_a_save_and_a_fall() {
+    let mut w = world(120, 100, 9);
+    let sand = id(&w, "sand");
+    w.fill_rect(rect(0, 90, 120, 100), sand, Brush::Replace)
+        .unwrap();
+    for name in WEATHERED {
+        drag(&mut w, name, 6);
+        run(&mut w, 400);
+    }
+    let bytes = save::encode(&w);
+    let loaded = save::decode(&bytes, MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(masks(&loaded), masks(&w));
+    assert_eq!(loaded.state_hash(), w.state_hash());
+    assert_eq!(save::encode(&loaded), bytes);
+    for name in WEATHERED {
+        let stone = id(&w, name);
+        assert!(drawn_quarters(&w, stone) > 0, "{name}");
+        // It still rests as one trimmed piece after loading.
+        assert_eq!(quarter_pieces(&loaded, stone), quarter_pieces(&w, stone));
     }
 }

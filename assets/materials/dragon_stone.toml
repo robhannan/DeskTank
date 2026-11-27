@@ -9,3 +9,6 @@ palette = "build/hardscape"
 class = "rigid"
 density = 2.2
 colour = "#a08c68"
+# Weathered outline: strokes take stepped, notched edges along one ridge
+# direction (`shape`, SPEC §2.1).
+shape = "layered"

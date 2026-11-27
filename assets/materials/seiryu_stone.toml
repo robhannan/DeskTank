@@ -9,3 +9,6 @@ palette = "build/hardscape"
 class = "rigid"
 density = 2.7
 colour = "#6b6f72"
+# Weathered outline: strokes take faceted edges with sharp tips (`shape`,
+# SPEC §2.1).
+shape = "angular"
