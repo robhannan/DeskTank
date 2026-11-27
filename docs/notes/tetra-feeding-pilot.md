@@ -23,7 +23,7 @@ intervals, plus a matching 12 × 15 s run with no food. A fish "approaches"
 when it ends up 10 cells nearer the drop within 2 s. The replay in
 `scripts/tetra-feeding-replay.ts` draws `--trace` files from several builds
 side by side with Inspect closed (`desktank-sim` regression tests live in
-`crates/desktank-sim/tests/tetra_feeding.rs`).
+`crates/desktank-sim/tests/sim/tetra_feeding.rs`).
 
 ## Results (12 seeded schools, 144 flakes per row)
 
