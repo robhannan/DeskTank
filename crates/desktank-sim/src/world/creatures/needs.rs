@@ -91,6 +91,9 @@ fn satiety_percent(c: &Creature) -> u8 {
 /// recovers its appetite over the half-minute the bite lasts. It reads only
 /// the stored satiety, so a repeated feeding needs no extra saved state.
 fn appetite(c: &Creature) -> u64 {
+    const {
+        assert!(BITE as u64 * 4 == FULL as u64);
+    }
     let satiety = u64::from(satiety_percent(c));
     let bite = u64::from(BITE) * u64::from(PERCENT) / u64::from(FULL);
     let (first, rest) = (satiety.min(bite), satiety.saturating_sub(bite));

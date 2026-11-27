@@ -232,15 +232,20 @@ function frame(panels: { label: string; trace: Trace }[], tick: number): Canvas 
     });
     // Status: how many fish moved at least ten cells closer within two seconds.
     const phase = [...FLAKES].reverse().find((f) => f.tick <= tick);
-    let status = "NO FOOD IN THE TANK";
+    let status = "";
     if (phase) {
       const since = tick - phase.tick;
+      const limit = Math.min(tick, phase.tick + 2 * TICKS_PER_SECOND + 1);
       const closer = ids.filter((id) => {
-        const at = (t: number) => trace.fish.get(id)?.get(t);
-        const start = at(phase.tick + 1);
-        const now = at(Math.min(tick, phase.tick + 2 * TICKS_PER_SECOND + 1));
-        if (!start || !now) return false;
-        return Math.hypot(start.x - phase.x, start.y - 2) - Math.hypot(now.x - phase.x, now.y - 2) >= 10;
+        const samples = trace.fish.get(id);
+        const start = samples?.get(phase.tick + 1);
+        if (!samples || !start) return false;
+        const startDist = Math.hypot(start.x - phase.x, start.y - 2);
+        for (const [t, sample] of samples) {
+          if (t < phase.tick + 1 || t > limit) continue;
+          if (startDist - Math.hypot(sample.x - phase.x, sample.y - 2) >= 10) return true;
+        }
+        return false;
       }).length;
       status = `${phase.label}: ${(since / TICKS_PER_SECOND).toFixed(1)} S, CLOSER IN 2 S ${closer}/${ids.length}`;
       if (since > 10 * TICKS_PER_SECOND && !(trace.flakes.get(tick)?.length)) status = `${phase.label}: EATEN, NO FOOD NOW`;
@@ -267,7 +272,13 @@ if (!values.out || !values.panel?.length) {
   process.exit(1);
 }
 const panels = values.panel.map((spec) => {
-  const [label, path] = spec.split("=");
+  const idx = spec.indexOf("=");
+  if (idx === -1 || idx === 0 || idx === spec.length - 1) {
+    console.error(`invalid --panel "${spec}", expected "LABEL=trace.csv"`);
+    process.exit(1);
+  }
+  const label = spec.slice(0, idx);
+  const path = spec.slice(idx + 1);
   return { label, trace: load(path) };
 });
 const out = values.out;

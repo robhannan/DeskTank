@@ -381,9 +381,9 @@ fn summary(out: &mut impl Write, seeds: u64) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Positions of the fish and flake every second tick, for a replay: four
-/// quiet seconds, a flake on the left, another on the right 15 s later, then
-/// a long quiet spell. `P,tick,id,x,y,left,hungry,eaten` and `F,tick,x,y`.
+/// Positions of the fish and flake every second tick, for a replay: a flake
+/// on the left at t=0, another on the right 15 s later, then a long quiet
+/// spell. `P,tick,id,x,y,left,hungry,eaten` and `F,tick,x,y`.
 fn trace(out: &mut impl Write, seed: u64) -> Result<(), Box<dyn Error>> {
     let mut world = school(seed)?;
     let flake = world.materials().id("flake_food").ok_or("missing flake")?;
