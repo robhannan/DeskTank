@@ -1573,7 +1573,7 @@ fn seiryu_vein(w: vec2<f32>) -> f32 {
 // Seiryu at `w` (cells): mid-to-dark grey limestone, roughly pitted in
 // clusters, streaked with dark crevices running down, with pale worn faces
 // that fade in softly and thin tan-rust veins.
-fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
+fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>, at: vec2<i32>, mat: i32) -> vec3<f32> {
     let g = f32(grain & 255u) / 255.0 - 0.5;
     // Broad faces of different brightness (a facet per few cells, sheared),
     // cool and dark in the hollows, warmer where lit.
@@ -1617,13 +1617,28 @@ fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
     if f32((grain >> 8u) & 255u) / 255.0 < 0.05 + 0.10 * cluster {
         col = col * 0.80;
     }
-    // Thin wandering tan-rust veins, in some places only: the distance to the
-    // noise's mid-line from its gradient, so every vein is the same width
-    // (about two texels at 2x) wherever the noise is steep or flat.
+    // Thin, sparse, greyish tan veins running across the faces, in some
+    // places only: the distance to two of the noise's contours from its
+    // gradient, so every vein is the same width (about a texel and a half at
+    // 2x) wherever the noise is steep or flat. They are strongest in some
+    // patches and faint elsewhere, and thin out toward the outline (none
+    // within a cell of an edge, under half strength within two), so a thin
+    // spire carries none and no vein reads as an orange edge stripe.
     let v0 = seiryu_vein(w);
     let grad = length(vec2<f32>(seiryu_vein(w + vec2<f32>(0.2, 0.0)) - v0, seiryu_vein(w + vec2<f32>(0.0, 0.2)) - v0)) / 0.2 + 0.001;
-    if abs(v0 - 0.5) / grad < 0.30 && vnoise(w * 0.09 + 23.0) > 0.26 {
-        col = mix(col, vec3<f32>(0.66, 0.54, 0.40) * (0.9 + 0.2 * tone), 0.75);
+    let vein_zone = 0.55 + 0.45 * smoothstep(0.20, 0.55, vnoise(w * 0.09 + 23.0));
+    if min(abs(v0 - 0.5), abs(v0 - 0.34)) / grad < 0.28 {
+        let near = same_mat(at + vec2<i32>(1, 0), mat) && same_mat(at + vec2<i32>(-1, 0), mat)
+            && same_mat(at + vec2<i32>(0, 1), mat) && same_mat(at + vec2<i32>(0, -1), mat)
+            && same_mat(at + vec2<i32>(1, 1), mat) && same_mat(at + vec2<i32>(-1, -1), mat)
+            && same_mat(at + vec2<i32>(1, -1), mat) && same_mat(at + vec2<i32>(-1, 1), mat);
+        if near {
+            let far = same_mat(at + vec2<i32>(2, 0), mat) && same_mat(at + vec2<i32>(-2, 0), mat)
+                && same_mat(at + vec2<i32>(0, 2), mat) && same_mat(at + vec2<i32>(0, -2), mat);
+            // A warm tint of the local grey, not a flat colour, so a vein
+            // stays a faint rust shift on light and dark faces alike.
+            col = mix(col, col * vec3<f32>(1.20, 1.0, 0.80), vein_zone * select(0.40, 0.85, far));
+        }
     }
     return col;
 }
@@ -1963,7 +1978,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             stone = dragon_stone_colour(stone_cell(p, fine), grain, base);
             k = 1.0 + (f32(facet & 7u) - 3.5) * 0.012 + cell_n;
         } else if style == STYLE_SEIRYU {
-            stone = seiryu_colour(stone_cell(p, fine), grain, base);
+            stone = seiryu_colour(stone_cell(p, fine), grain, base, at, mat);
             k = 1.0 + (f32(facet & 7u) - 3.5) * 0.018 + cell_n;
         }
         // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
