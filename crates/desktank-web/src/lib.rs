@@ -50,8 +50,8 @@ use desktank_sim::tools::{
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
-    Mount, NeedReading, PlantStart, RinseKind, Script, Species, World, WorldConfig,
-    catch_up_seconds, cheats, save,
+    Mount, NeedReading, NewTankConfig, PlantStart, RinseKind, Script, Species, TankPreset, World,
+    WorldConfig, catch_up_seconds, cheats, dimensions_cm as sim_dimensions_cm, save,
 };
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -123,6 +123,26 @@ pub fn brush_range() -> Vec<u32> {
 #[must_use]
 pub fn zoom_levels() -> Vec<u32> {
     tools::ZOOM_LEVELS.to_vec()
+}
+
+/// A tank of `cols`×`rows` cells in centimetres, `[width, height]`
+/// ([`desktank_sim::dimensions_cm`]), for the New Tank dialog's readout.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = dimensionsCm))]
+#[must_use]
+pub fn dimensions_cm(cols: u32, rows: u32) -> Vec<f32> {
+    let (w, h) = sim_dimensions_cm(cols as usize, rows as usize);
+    vec![w, h]
+}
+
+/// The New Tank presets ([`TankPreset::ALL`]), in order, each as
+/// `"<id>\t<name>\t<description>"`. Pass the id to [`WebTank::from_new_tank`].
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = tankPresets))]
+#[must_use]
+pub fn tank_presets() -> Vec<String> {
+    TankPreset::ALL
+        .iter()
+        .map(|p| format!("{}\t{}\t{}", p.id(), p.name(), p.description()))
+        .collect()
 }
 
 /// A tank on the page: the world, its pacing and the interact tools, plus
@@ -215,6 +235,53 @@ impl WebTank {
         let mut tank = Self::with_world(world, (canvas_width, canvas_height))?;
         tank.running = false;
         Ok(tank)
+    }
+
+    /// A new tank from the New Tank dialog: `width`×`height` cells, the
+    /// starter layout `preset` (an id from [`tank_presets`]), and the initial
+    /// settings (`population_cap`, `time_ratio` clamp like
+    /// [`WebTank::set_creature_cap`] and [`WebTank::set_time_ratio`]).
+    /// `include_devices` places the preset's starter devices, if it has any.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if the size is outside `1..=`[`MAX_GRID_SIDE`], the
+    /// water level is outside `0..=1` or `preset` is unknown.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = fromNewTank))]
+    #[allow(clippy::too_many_arguments)] // Flat primitives are what wasm-bindgen passes cleanly.
+    pub fn from_new_tank(
+        width: u32,
+        height: u32,
+        seed: u32,
+        preset: &str,
+        water_level: f32,
+        include_devices: bool,
+        easy_mode: bool,
+        population_cap: u16,
+        time_ratio: f32,
+        canvas_width: u32,
+        canvas_height: u32,
+    ) -> Result<WebTank, String> {
+        check_side(width, height)?;
+        let preset = TankPreset::from_id(preset)
+            .ok_or_else(|| format!("unknown tank preset \"{preset}\""))?;
+        let config = NewTankConfig {
+            world: WorldConfig {
+                width: width as usize,
+                height: height as usize,
+                seed: u64::from(seed),
+                water_level,
+            },
+            preset,
+            include_devices,
+            easy_mode,
+            population_cap,
+            time_ratio,
+        };
+        let world = config
+            .build_with_materials(builtin()?)
+            .map_err(|e| e.to_string())?;
+        Self::with_world(world, (canvas_width, canvas_height))
     }
 
     /// Opens a save file (the native app's `.dtank` format, SPEC §2.6) at
@@ -809,6 +876,24 @@ impl WebTank {
     #[must_use]
     pub fn easy_mode(&self) -> bool {
         self.tank.world().easy_mode()
+    }
+
+    /// Sets the life-time multiplier (1 is real time), clamped to the sim's
+    /// range. Marks the tank dirty when it changes.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setTimeRatio))]
+    pub fn set_time_ratio(&mut self, ratio: f32) {
+        let prev = self.tank.world().time_ratio();
+        let set = self.tank.world_mut().set_time_ratio(ratio);
+        if set.to_bits() != prev.to_bits() {
+            self.dirty = true;
+        }
+    }
+
+    /// The life-time multiplier (saved with the tank).
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = timeRatio))]
+    #[must_use]
+    pub fn time_ratio(&self) -> f32 {
+        self.tank.world().time_ratio()
     }
 
     /// Enables fish fleeing the pointer. Off by default.

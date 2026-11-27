@@ -2,7 +2,7 @@
 // WebGL2 and once with the default backend (WebGPU, falling back to WebGL2
 // where the browser has no adapter), with no console errors.
 import { expect, test } from "@playwright/test";
-import { boxOf, callTank, choose, framesDrawn, open, openPaused, type TankMethod, watchErrors, type WebTank } from "./support.ts";
+import { boxOf, callTank, choose, createNewTank, framesDrawn, open, openPaused, type TankMethod, watchErrors, type WebTank } from "./support.ts";
 
 declare global {
   interface Window {
@@ -69,11 +69,11 @@ test("recovers from a lost WebGL2 context without a reload", async ({ page }) =>
   expect(errors).toEqual([]);
 });
 
-test("reset and a new seed start a fresh tank that draws", async ({ page }) => {
+test("a new tank and a new seed start a fresh tank that draws", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "Reset" }).click();
+  await createNewTank(page);
   await expect.poll(() => page.evaluate(() => window.desktank.tank.framesDrawn())).toBeGreaterThan(0);
   const hash = await page.evaluate(() => window.desktank.tank.stateHash());
   await page.getByRole("button", { name: "Settings" }).click();
@@ -85,7 +85,7 @@ test("reset and a new seed start a fresh tank that draws", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("reset during a lost WebGL2 context draws once restored", async ({ page }) => {
+test("a new tank during a lost WebGL2 context draws once restored", async ({ page }) => {
   const errors = watchErrors(page);
   await open(page, "?backend=webgl2");
   await page.evaluate(() => {
@@ -93,7 +93,7 @@ test("reset during a lost WebGL2 context draws once restored", async ({ page }) 
     window.loseExt = gl.getExtension("WEBGL_lose_context")!;
     window.loseExt.loseContext();
   });
-  await page.getByRole("button", { name: "Reset" }).click();
+  await createNewTank(page);
   await page.waitForTimeout(200);
   expect(await page.evaluate(() => window.desktank.tank.framesDrawn()), "the new tank waits for the context").toBe(0);
   await page.evaluate(() => window.loseExt.restoreContext());
@@ -158,7 +158,7 @@ test("each plant species has a palette item that pours it", async ({ page }) => 
   expect(await tank("materialCount", "stem")).toBeGreaterThan(0);
   expect(await tank("materialCount", "cutting")).toBe(0);
   // The selection survives a reset.
-  await page.getByRole("button", { name: "Reset" }).click();
+  await createNewTank(page);
   await expect(page.getByRole("radio", { name: "Java moss" })).toHaveAttribute("aria-checked", "true");
   expect(errors).toEqual([]);
 });
@@ -213,7 +213,7 @@ test("the propagule chips offer the species' own methods and pour seeds", async 
   // Hygrophila keeps its seeds pick, through a reset too.
   await choose(page, "Hygrophila");
   await expect(row.getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
-  await page.getByRole("button", { name: "Reset" }).click();
+  await createNewTank(page);
   await expect(row.getByRole("radio", { name: "Seeds" })).toHaveAttribute("aria-checked", "true");
   await choose(page, "Duckweed");
   await expect.poll(() => tank("plantPropagule")).toBe("mature");

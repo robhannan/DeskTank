@@ -26,7 +26,7 @@
 // The webOS build (`pnpm build:web -- --legacy`, SPEC D26) runs this same
 // page on Chrome 68: <html data-build="webos">, MVP wasm, lowered syntax.
 // Keep to Chrome 68's APIs or feature-detect (docs/notes/web-and-webos.md).
-import init, { Graphics, WebTank, brushRange, gridFor, zoomLevels } from "./pkg/desktank_web.js";
+import init, { Graphics, WebTank, brushRange, dimensionsCm, gridFor, tankPresets, zoomLevels } from "./pkg/desktank_web.js";
 import type { Hooks, Settings } from "./hooks.js";
 import type { Save } from "./store.ts";
 import { Ownership } from "./ownership.ts";
@@ -98,9 +98,11 @@ const SETTINGS_KEY = "desktank.settings.v1";
 const TANK = "main";
 const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
+const TIME_RATIO_MIN = 0.1; // the sim clamps to this range too
+const TIME_RATIO_MAX = 100;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, oled: false, ruler: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, oled: false, ruler: false, stats: true, seed: 1, radius: 3, timeRatio: 1,
 });
 
 const params = new URLSearchParams(location.search);
@@ -215,6 +217,13 @@ let ownership: Ownership | null = null;
 let owner = false; // this tab simulates and saves the tank
 let epoch: number | null = null; // this owner's claim (store.ts); writes need it
 let handingOver = false;
+// The New tank setup: the real tank waits in `stashedTank`, paused,
+// while a paused preview of the draft shows on the canvas. Null when closed.
+let stashedTank: WebTank | null = null;
+let stashedRunning = false; // whether the stashed tank was running
+let draft: NewTankDraft | null = null;
+let previewKey = ""; // the draft the shown preview was built from
+let settingsWasOpen = false; // the Settings panel, closed while New tank is open
 let started = false; // the first tank is open
 let nextAutosave = Infinity;
 let saveFailed = false; // the last write failed: write again even if unchanged
@@ -297,6 +306,7 @@ function loadSettings(): Settings {
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
     seed: int(saved.seed, 0, 0xffffffff, DEFAULTS.seed),
     radius: int(saved.radius, 0, 24, DEFAULTS.radius), // the tank clamps it too
+    timeRatio: typeof saved.timeRatio === "number" && saved.timeRatio >= TIME_RATIO_MIN && saved.timeRatio <= TIME_RATIO_MAX ? saved.timeRatio : DEFAULTS.timeRatio,
   };
 }
 
@@ -340,6 +350,8 @@ function showSettings() {
     tank.setAllowSwayOnBattery(settings.swayOnBattery);
     tank.setOled(settings.oled);
     tank.setRuler(settings.ruler);
+    // The New tank preview shows its own draft, not the saved settings.
+    if (stashedTank && draft) showDraftOnPreview();
     tank.setOnBattery(onBattery);
     tank.setHidden(hidden);
     tank.setRadius(settings.radius);
@@ -414,8 +426,9 @@ function setCanvasSize([w, h]: Point) {
 }
 
 // Swaps in a new tank; it takes over the old tank's graphics where it can,
-// otherwise the caller attaches graphics to it.
-function replaceTank(next: WebTank) {
+// otherwise the caller attaches graphics to it. The old tank is freed unless
+// `discard` is false (the New tank setup keeps the real tank aside).
+function replaceTank(next: WebTank, discard = true) {
   // A new tank keeps the selection; the first starts on sand.
   const selected = tank?.selected() ?? next.selected();
   const zoom = tank?.zoom() ?? next.zoom();
@@ -426,7 +439,7 @@ function replaceTank(next: WebTank) {
     // Reuse the graphics and compiled pipelines (a lost context can't be).
     if (!contextLost && !restoring) next.takeGraphics(tank);
   }
-  tank?.free();
+  if (discard) tank?.free();
   tank = next;
   tank.setNamingAllowed(owner && !handingOver);
   hiddenAt = owner && !handingOver && hidden ? Date.now() : null;
@@ -468,7 +481,11 @@ async function attachGraphics(): Promise<boolean> {
 function newTank(): WebTank {
   const [w, h] = sizeCanvas();
   const [, cols, rows] = gridFor(w, h, settings.scale);
-  return new WebTank(cols, rows, settings.seed, w, h);
+  const t = new WebTank(cols, rows, settings.seed, w, h);
+  // The time ratio is saved with each tank: a loaded or imported one keeps
+  // its own, and only new tanks take the page's.
+  t.setTimeRatio(settings.timeRatio);
+  return t;
 }
 
 function sizeCanvas(): Point {
@@ -479,11 +496,13 @@ function sizeCanvas(): Point {
 }
 
 // Swaps in `next` as the shown tank and reopens the graphics for it.
-async function showTank(next: WebTank) {
+async function showTank(next: WebTank, preview = false) {
+  // Anything but a preview replaces the real tank, so the setup is over.
+  if (!preview && stashedTank) cancelNewTank().catch((err) => showError(String(err)));
   endGestures();
   // The new tank takes the old one's graphics; reopen them only if it
   // couldn't (none yet, or a lost context).
-  replaceTank(next);
+  replaceTank(next, tank !== stashedTank);
   if (!owner) setRunning(false);
   // During a loss or recovery, the recovery attaches to the new tank.
   if (!tank.backend() && !restoring) await recover(false);
@@ -495,6 +514,275 @@ async function reset() {
   if (!owner) return;
   await showTank(newTank());
   persist("reset", true);
+}
+
+// --- New tank ----------------------------------------------------------------
+
+// The setup panel's choices. Every change rebuilds a paused preview tank from
+// them (WebTank.fromNewTank) on the main canvas, which takes over the real
+// tank's graphics: no second GPU context, and one frame per change.
+interface NewTankDraft {
+  scale: number; // 0 is auto
+  preset: string;
+  seed: number;
+  waterLevel: number; // percent of the height
+  devices: boolean;
+  easyMode: boolean;
+  timeRatio: number;
+  catchUp: boolean;
+  cap: number;
+  oled: boolean;
+}
+
+const NT_WATER_DEFAULT = 96;
+const newTankPanel = $("new-tank-panel");
+const newTankBtn = $<HTMLButtonElement>("new-tank");
+const ntInput = (id: string) => $<HTMLInputElement>(`nt-${id}`);
+// The menu's other buttons act on the shown tank, so they wait while a preview is.
+const menuButtons = () => document.querySelectorAll<HTMLButtonElement>("nav.menu > button:not(#new-tank)");
+
+function randomSeed() {
+  return crypto.getRandomValues(new Uint32Array(1))[0];
+}
+
+// The panel's controls as a draft, each clamped to its range. A half-typed
+// number never throws, it reads as the nearest valid one.
+function readDraft(): NewTankDraft {
+  const num = (id: string, lo: number, hi: number, d: number, whole: boolean) => {
+    const raw = ntInput(id).value.trim();
+    const v = raw === "" ? d : Number(raw);
+    return Number.isFinite(v) ? Math.max(lo, Math.min(hi, whole ? Math.floor(v) : v)) : d;
+  };
+  return {
+    scale: Number($<HTMLSelectElement>("nt-scale").value),
+    preset: $<HTMLSelectElement>("nt-preset").value,
+    seed: num("seed", 0, 0xffffffff, 1, true),
+    waterLevel: num("water-level", 50, 100, NT_WATER_DEFAULT, true),
+    devices: ntInput("devices").checked,
+    easyMode: ntInput("easy-mode").checked,
+    timeRatio: num("time-ratio", TIME_RATIO_MIN, TIME_RATIO_MAX, 1, false),
+    catchUp: ntInput("catch-up").checked,
+    cap: num("creature-cap", 1, tank.maxCreatureCap(), tank.defaultCreatureCap(), true),
+    oled: ntInput("oled").checked,
+  };
+}
+
+// Writes a draft back to the controls (normalising what was typed).
+function showDraft(d: NewTankDraft) {
+  $<HTMLSelectElement>("nt-scale").value = String(d.scale);
+  $<HTMLSelectElement>("nt-preset").value = d.preset;
+  ntInput("seed").value = String(d.seed);
+  ntInput("water-level").value = String(d.waterLevel);
+  $<HTMLOutputElement>("nt-water-level-out").value = `${d.waterLevel}%`;
+  ntInput("devices").checked = d.devices;
+  // The empty tank has no starter devices to leave out.
+  ntInput("devices").disabled = d.preset === "empty";
+  ntInput("easy-mode").checked = d.easyMode;
+  ntInput("time-ratio").value = String(d.timeRatio);
+  ntInput("catch-up").checked = d.catchUp;
+  ntInput("creature-cap").value = String(d.cap);
+  ntInput("oled").checked = d.oled;
+}
+
+// What the preview must show whatever the saved settings say: the ruler (to
+// read the size off), and the draft's own OLED, easy mode and time ratio.
+function showDraftOnPreview() {
+  if (!draft) return;
+  tank.setRuler(true);
+  tank.setOled(draft.oled);
+  tank.setEasyMode(draft.easyMode);
+  tank.setTimeRatio(draft.timeRatio);
+}
+
+// The tank's size in centimetres, for the dimensions readout.
+function showDimensions(cols: number, rows: number) {
+  const [w, h] = dimensionsCm(cols, rows);
+  const cm = (v: number) => String(Math.round(v * 10) / 10);
+  $<HTMLOutputElement>("nt-dimensions").value = `${cm(w)} × ${cm(h)} cm (${cols} × ${rows} cells)`;
+}
+
+// Builds the preview of `d` and shows it in place of the shown tank.
+async function showPreview(d: NewTankDraft) {
+  const [w, h] = sizeCanvas();
+  const [, cols, rows] = gridFor(w, h, d.scale);
+  showDimensions(cols, rows);
+  let next: WebTank;
+  try {
+    next = WebTank.fromNewTank(cols, rows, d.seed, d.preset, d.waterLevel / 100, d.devices, d.easyMode, d.cap, d.timeRatio, w, h);
+  } catch (err) {
+    notice(`Couldn't preview the new tank: ${err}`);
+    return;
+  }
+  // Paused before it is shown, so it never ticks: it draws one frame per change.
+  next.setRunning(false);
+  draft = d;
+  previewKey = layoutKey(d);
+  await showTank(next, true);
+}
+
+// The draft fields that shape the generated tank; the rest are settings the
+// preview takes without being rebuilt.
+function layoutKey(d: NewTankDraft) {
+  return JSON.stringify([d.scale, d.preset, d.seed, d.waterLevel, d.devices]);
+}
+
+// A control changed: rebuild the preview from the controls, or only apply
+// the settings when the layout is the same.
+function previewNewTank() {
+  if (!stashedTank) return Promise.resolve();
+  const d = readDraft();
+  $<HTMLOutputElement>("nt-water-level-out").value = `${d.waterLevel}%`;
+  ntInput("devices").disabled = d.preset === "empty";
+  describePreset();
+  if (draft && layoutKey(d) === previewKey) {
+    draft = d;
+    showDraftOnPreview();
+    tank.setCreatureCap(d.cap);
+    kick();
+    return Promise.resolve();
+  }
+  return showPreview(d).catch((err) => showError(String(err)));
+}
+
+// Input events (a dragged slider fires one per step) rebuild at most once a frame.
+let previewFrame = 0;
+function schedulePreview() {
+  if (previewFrame) return;
+  previewFrame = requestAnimationFrame(() => {
+    previewFrame = 0;
+    void previewNewTank();
+  });
+}
+
+function describePreset() {
+  $("nt-preset-desc").textContent = $<HTMLSelectElement>("nt-preset").selectedOptions[0]?.title ?? "";
+}
+
+// Opens the setup: the real tank steps aside, paused and untouched, behind a
+// preview of the first draft (the saved scale, seed, OLED and so on).
+async function openNewTank() {
+  if (!owner || handingOver || stashedTank || !started) return;
+  endGestures();
+  closeCheat();
+  closeName();
+  closeDeviceActions();
+  stashedRunning = tank.running();
+  stashedTank = tank;
+  stashedTank.setRunning(false);
+  newTankBtn.setAttribute("aria-expanded", "true");
+  const toggle = $("settings-toggle");
+  settingsWasOpen = toggle.getAttribute("aria-expanded") === "true";
+  toggle.setAttribute("aria-expanded", "false");
+  $("settings").hidden = true;
+  $("tools").hidden = true;
+  newTankPanel.hidden = false;
+  for (const b of menuButtons()) b.inert = true;
+  const first: NewTankDraft = {
+    scale: settings.scale,
+    preset: $<HTMLSelectElement>("nt-preset").options[0]?.value ?? "empty",
+    seed: settings.seed,
+    waterLevel: NT_WATER_DEFAULT,
+    devices: true,
+    easyMode: settings.easyMode,
+    timeRatio: settings.timeRatio,
+    catchUp: settings.catchUp,
+    cap: tank.defaultCreatureCap(),
+    oled: settings.oled,
+  };
+  showDraft(first);
+  describePreset();
+  $<HTMLSelectElement>("nt-preset").focus();
+  try {
+    await showPreview(first);
+  } catch (err) {
+    await cancelNewTank();
+    showError(String(err));
+  }
+}
+
+// Closes the setup and puts the real tank back on the canvas, untouched
+// (running as it was); the preview is freed. Nothing is saved.
+async function cancelNewTank() {
+  const stash = stashedTank;
+  if (!stash) return;
+  stashedTank = null;
+  draft = null;
+  previewKey = "";
+  closePanel();
+  stash.setRunning(stashedRunning);
+  // Re-anchor its clock: no catching up for the minutes spent in the setup.
+  stash.pause();
+  await showTank(stash, true);
+}
+
+// Makes the preview the tank: the draft's settings become the page's, and the
+// old tank (and its save) is replaced.
+async function confirmNewTank() {
+  const stash = stashedTank;
+  if (!stash || !owner || handingOver) return;
+  // Typed values count even if the preview hasn't caught up with them.
+  await previewNewTank();
+  if (stashedTank !== stash || !draft) return;
+  const d = draft;
+  stashedTank = null;
+  draft = null;
+  previewKey = "";
+  closePanel();
+  // The preview's graphics came from the stashed tank: it has none left, but
+  // free it either way.
+  stash.free();
+  update({ scale: d.scale, seed: d.seed, easyMode: d.easyMode, timeRatio: d.timeRatio, catchUp: d.catchUp, oled: d.oled });
+  // The ruler is back to the user's choice, as are the other page settings.
+  setRunning(true);
+  showCreatureCap(true);
+  updateStats();
+  if (!tank.backend() && !restoring) await recover(false);
+  kick();
+  persist("new tank", true);
+}
+
+function closePanel() {
+  if (newTankPanel.contains(document.activeElement)) newTankBtn.focus();
+  newTankPanel.hidden = true;
+  $("tools").hidden = false;
+  $("settings").hidden = !settingsWasOpen;
+  $("settings-toggle").setAttribute("aria-expanded", String(settingsWasOpen));
+  newTankBtn.setAttribute("aria-expanded", "false");
+  for (const b of menuButtons()) b.inert = false;
+}
+
+function wireNewTank() {
+  const presets = tankPresets().map((line) => line.split("\t"));
+  const select = $<HTMLSelectElement>("nt-preset");
+  setChildren(
+    select,
+    ...presets.map(([id, name, description]) => {
+      const o = document.createElement("option");
+      o.value = id;
+      o.textContent = name;
+      o.title = description;
+      return o;
+    }),
+  );
+  const retry = (err: unknown) => showError(String(err));
+  newTankBtn.addEventListener("click", () => {
+    (stashedTank ? cancelNewTank() : openNewTank()).catch(retry);
+  });
+  for (const id of ["scale", "preset", "seed", "water-level", "devices", "easy-mode", "time-ratio", "catch-up", "creature-cap", "oled"]) {
+    const el = $(`nt-${id}`);
+    el.addEventListener("input", schedulePreview);
+    // Leaving a number field tidies what was typed.
+    el.addEventListener("change", () => {
+      void previewNewTank().then(() => draft && showDraft(draft));
+    });
+  }
+  $("nt-reroll").addEventListener("click", () => {
+    ntInput("seed").value = String(randomSeed());
+    void previewNewTank();
+  });
+  $("nt-export").addEventListener("click", exportSave);
+  $("nt-create").addEventListener("click", () => void confirmNewTank().catch(retry));
+  $("nt-cancel").addEventListener("click", () => void cancelNewTank().catch(retry));
 }
 
 // --- Saves and ownership -----------------------------------------------------
@@ -520,11 +808,13 @@ function showSaved() {
 // Saves the tank to IndexedDB if this tab owns it and it changed (or
 // `force`). Returns the write's promise (true once written).
 function persist(why: string, force = false): Promise<boolean> {
-  if (!owner || epoch === null || !db || !tank) return Promise.resolve(false);
+  // While New tank is open the real tank is the stashed one, not the preview.
+  const t = stashedTank ?? tank;
+  if (!owner || epoch === null || !db || !t) return Promise.resolve(false);
   nextAutosave = performance.now() + AUTOSAVE_MS;
-  if (!force && !saveFailed && !tank.saveNeeded()) return hooks.saving;
-  const bytes = tank.save();
-  const tick = tank.tickCount();
+  if (!force && !saveFailed && !t.saveNeeded()) return hooks.saving;
+  const bytes = t.save();
+  const tick = t.tickCount();
   hooks.writes++;
   let write: Promise<void>;
   try {
@@ -649,6 +939,7 @@ async function resumeOwnership() {
 
 // Another tab owns the tank: this one shows it paused and never writes.
 function becomeViewer() {
+  cancelNewTank().catch((err) => showError(String(err)));
   owner = false;
   hiddenAt = null;
   epoch = null;
@@ -664,6 +955,7 @@ function becomeViewer() {
 // finish), so the next owner opens exactly this state.
 async function handOver() {
   // Stop simulating and editing first, so the save is the final state.
+  await cancelNewTank();
   handingOver = true;
   showOwnership();
   endGestures();
@@ -709,7 +1001,8 @@ function takeOver() {
 }
 
 function exportSave() {
-  const bytes = tank.exportSave();
+  // The real tank, also while the New tank setup shows its preview.
+  const bytes = (stashedTank ?? tank).exportSave();
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
   const a = document.createElement("a");
   // wasm-bindgen copies the bytes out of wasm memory into a fresh ArrayBuffer.
@@ -761,6 +1054,7 @@ async function loadScene(toml: string, sceneSeed: number, width: number, height:
   });
   canvas.width = width;
   canvas.height = height;
+  await cancelNewTank();
   replaceTank(WebTank.fromScript(toml, sceneSeed, width, height));
   tank.setFieldOverlay("");
   if (!tank.backend()) await attachGraphics();
@@ -1875,6 +2169,8 @@ function wireTourEnd() {
 function wireInput() {
   wireTourEnd();
   canvas.addEventListener("pointerdown", (e) => {
+    // The New tank preview isn't for editing.
+    if (stashedTank) return e.preventDefault();
     // Cancelling the press keeps the browser from moving focus, so a press
     // elsewhere ends naming by hand.
     e.preventDefault();
@@ -1883,10 +2179,12 @@ function wireInput() {
     after();
   });
   canvas.addEventListener("pointermove", (e) => {
+    if (stashedTank) return;
     handler(e).move(e);
     after();
   });
   const up = (e: PointerEvent) => {
+    if (stashedTank) return;
     handler(e).up(e);
     after();
   };
@@ -1895,6 +2193,7 @@ function wireInput() {
   canvas.addEventListener("lostpointercapture", (e) => {
     // After a normal pointerup this repeats it harmlessly; otherwise the
     // capture was taken away mid-stroke.
+    if (stashedTank) return;
     if (e.pointerType === "touch") up(e);
     else if (e.buttons === 0) {
       tank.pointerUp(PRIMARY);
@@ -1917,6 +2216,7 @@ function wireInput() {
     "wheel",
     (e) => {
       e.preventDefault();
+      if (stashedTank) return;
       const unit = e.deltaMode === 1 ? WHEEL_STEP / 3 : e.deltaMode === 2 ? WHEEL_STEP * 10 : 1;
       wheelRest += -e.deltaY * unit;
       const steps = Math.trunc(wheelRest / WHEEL_STEP);
@@ -1946,6 +2246,7 @@ function wireInput() {
     "wheel",
     (e) => {
       e.preventDefault();
+      if (stashedTank) return;
       const unit = e.deltaMode === 1 ? WHEEL_STEP / 3 : e.deltaMode === 2 ? WHEEL_STEP * 10 : 1;
       stripRest += e.deltaY * unit;
       const steps = Math.trunc(stripRest / WHEEL_STEP);
@@ -1964,7 +2265,7 @@ function wireInput() {
     kick();
   });
   const resetOrShow = () => reset().catch((err) => showError(String(err)));
-  $("reset").addEventListener("click", resetOrShow);
+  wireNewTank();
   brushInput.addEventListener("input", () => update({ radius: Number(brushInput.value) }));
   wireSettings(resetOrShow);
   $("export").addEventListener("click", exportSave);
@@ -2016,6 +2317,15 @@ function wireInput() {
   });
   document.addEventListener("keydown", (e) => {
     if (!owner) return;
+    // The New tank setup owns the keyboard: Escape leaves it, the canvas
+    // shortcuts wait.
+    if (stashedTank) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cancelNewTank().catch((err) => showError(String(err)));
+      }
+      return;
+    }
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // The page has keyboard focus, so the Konami code needs no chord.
@@ -2160,7 +2470,7 @@ function wireLifecycle() {
     } else {
       const since = hiddenAt;
       hiddenAt = null;
-      if (since !== null && tank) catchUp(tank, since);
+      if (since !== null && tank) catchUp(stashedTank ?? tank, since);
       if (!drewFirst) startStep("waiting for the first frame");
       kick();
     }
