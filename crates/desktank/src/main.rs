@@ -90,6 +90,26 @@ fn parse_time_ratio(s: &str) -> Result<f32, String> {
     }
 }
 
+/// Parses a `--latitude` in degrees north, `-90..=90`.
+fn parse_latitude(s: &str) -> Result<f64, String> {
+    let degrees: f64 = s.parse().map_err(|_| format!("{s:?} is not a number"))?;
+    if config::is_latitude(degrees) {
+        Ok(degrees)
+    } else {
+        Err(format!("{s:?} is not in -90..=90"))
+    }
+}
+
+/// Parses a `--longitude` in degrees east, `-180..=180`.
+fn parse_longitude(s: &str) -> Result<f64, String> {
+    let degrees: f64 = s.parse().map_err(|_| format!("{s:?} is not a number"))?;
+    if config::is_longitude(degrees) {
+        Ok(degrees)
+    } else {
+        Err(format!("{s:?} is not in -180..=180"))
+    }
+}
+
 #[derive(Debug, Args)]
 struct WindowArgs {
     /// Drive a scripted pour (a synthetic left drag sweeping across the
@@ -124,6 +144,17 @@ struct WindowArgs {
     /// minutes (0.1 to 100). Saved with the tank.
     #[arg(long, value_name = "RATIO", value_parser = parse_time_ratio)]
     time_ratio: Option<f32>,
+    /// Where sunrise and sunset come from: `fixed` (06:30 and 20:30) or
+    /// `location` (the sun where you are). The window has no OS location, so
+    /// `location` needs --latitude and --longitude.
+    #[arg(long, value_name = "MODE", value_enum)]
+    daylight_schedule: Option<config::DaylightMode>,
+    /// Degrees north (-90 to 90) for the sun's schedule; needs --longitude.
+    #[arg(long, value_name = "DEG", requires = "longitude", allow_negative_numbers = true, value_parser = parse_latitude)]
+    latitude: Option<f64>,
+    /// Degrees east (-180 to 180) for the sun's schedule; needs --latitude.
+    #[arg(long, value_name = "DEG", requires = "latitude", allow_negative_numbers = true, value_parser = parse_longitude)]
+    longitude: Option<f64>,
     #[command(flatten)]
     plant_sway: SwayArgs,
 }
@@ -257,6 +288,9 @@ fn main() -> ExitCode {
                 population_cap: args.creature_cap,
                 catch_up: args.catch_up,
                 time_ratio: args.time_ratio,
+                daylight_schedule: args.daylight_schedule,
+                latitude: args.latitude,
+                longitude: args.longitude,
                 plants: config::Plants {
                     sway: args.plant_sway.sway,
                     sway_on_battery: args.plant_sway.sway_on_battery,
@@ -438,6 +472,63 @@ mod tests {
             assert!(
                 Cli::try_parse_from(["desktank", "window", "--time-ratio", bad]).is_err(),
                 "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_the_daylight_settings() {
+        let daylight = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("not a window command");
+            };
+            (w.daylight_schedule, w.latitude, w.longitude)
+        };
+        assert_eq!(daylight(&[]), (None, None, None));
+        assert_eq!(
+            daylight(&["--daylight-schedule", "fixed"]),
+            (Some(config::DaylightMode::Fixed), None, None)
+        );
+        assert_eq!(
+            daylight(&[
+                "--daylight-schedule=location",
+                "--latitude",
+                "51.5",
+                "--longitude=0.0",
+                "--time",
+                "16:30",
+            ]),
+            (Some(config::DaylightMode::Location), Some(51.5), Some(0.0))
+        );
+        assert_eq!(
+            daylight(&["--latitude", "-33.9", "--longitude", "-180"]),
+            (None, Some(-33.9), Some(-180.0))
+        );
+        assert_eq!(
+            daylight(&["--latitude=90", "--longitude=180"]),
+            (None, Some(90.0), Some(180.0))
+        );
+    }
+
+    #[test]
+    fn rejects_bad_daylight_settings() {
+        let bad =
+            |args: &[&str]| Cli::try_parse_from(["desktank", "window"].iter().chain(args)).is_err();
+        assert!(bad(&["--daylight-schedule", "sunny"]));
+        assert!(bad(&["--daylight-schedule", "Location"]));
+        assert!(bad(&["--latitude", "51.5"]), "longitude is missing");
+        assert!(bad(&["--longitude", "0"]), "latitude is missing");
+        for degrees in ["90.1", "-90.1", "nan", "inf", "north", ""] {
+            assert!(
+                bad(&["--latitude", degrees, "--longitude", "0"]),
+                "{degrees:?}"
+            );
+        }
+        for degrees in ["180.1", "-180.1", "nan", "-inf", "east", ""] {
+            assert!(
+                bad(&["--latitude", "0", "--longitude", degrees]),
+                "{degrees:?}"
             );
         }
     }

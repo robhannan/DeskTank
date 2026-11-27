@@ -36,7 +36,7 @@ use super::{
     Creature, Kind, Move, ONE, REACHED, TICKS_PER_SECOND, World, Zone, centre_of, dist, steer,
     to_i64, zone,
 };
-use crate::daylight::MINUTES_PER_DAY;
+use crate::daylight::{DaylightSchedule, MINUTES_PER_DAY, PolarDaylight};
 use crate::material::MaterialId;
 use crate::plants::Part;
 use crate::rng::chunk_stream;
@@ -82,8 +82,22 @@ impl World {
         self.creatures.minute
     }
 
+    /// Sets the day's schedule, whose bedtime and wake time creatures rest
+    /// by (their own staggers added), and in a polar day none rests.
+    /// [`DaylightSchedule::FIXED`] by default. Not saved: a host sets it
+    /// again after loading, with the time of day.
+    pub fn set_daylight_schedule(&mut self, schedule: DaylightSchedule) {
+        self.creatures.schedule = schedule;
+    }
+
+    /// The schedule creatures rest by.
+    #[must_use]
+    pub fn daylight_schedule(&self) -> DaylightSchedule {
+        self.creatures.schedule
+    }
+
     /// Whether it is night for `c`: past its own bedtime and before its
-    /// own wake time.
+    /// own wake time (either may fall past midnight).
     fn night_for(&self, c: &Creature) -> bool {
         let q = self.quirks(c);
         // Below STAGGER_MINUTES.
@@ -91,8 +105,25 @@ impl World {
         let (Ok(bed), Ok(wake)) = (own(salt::BEDTIME), own(salt::WAKE)) else {
             return false;
         };
+        let s = self.creatures.schedule;
+        if s.polar == PolarDaylight::PolarDay {
+            return false;
+        }
+        let bed_at = (s.bedtime + bed) % MINUTES_PER_DAY;
+        let wake_at = (s.wake_time + wake) % MINUTES_PER_DAY;
+        // Staggers can push a short night's bedtime past its wake time;
+        // that is no rest, not rest all day.
+        let rest = (wake_at + MINUTES_PER_DAY - bed_at) % MINUTES_PER_DAY;
+        let nominal = (s.wake_time + MINUTES_PER_DAY - s.bedtime) % MINUTES_PER_DAY;
+        if rest > nominal + STAGGER_MINUTES {
+            return false;
+        }
         let m = self.creatures.minute;
-        m >= BEDTIME + bed || m < WAKE_TIME + wake
+        match bed_at.cmp(&wake_at) {
+            core::cmp::Ordering::Less => m >= bed_at && m < wake_at,
+            core::cmp::Ordering::Greater => m >= bed_at || m < wake_at,
+            core::cmp::Ordering::Equal => false,
+        }
     }
 
     /// Updates whether `c` sleeps this tick. Returns whether it is asleep

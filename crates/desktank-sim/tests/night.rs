@@ -6,7 +6,8 @@
 
 use desktank_sim::night::{BEDTIME, STAGGER_MINUTES, WAKE_TIME, WOKEN_TICKS};
 use desktank_sim::{
-    Brush, CreatureId, MaterialTable, Rect, TICKS_PER_SECOND, World, WorldConfig, cheats, save,
+    Brush, CreatureId, DaylightSchedule, MaterialTable, PolarDaylight, Rect, TICKS_PER_SECOND,
+    World, WorldConfig, cheats, save,
 };
 
 const WIDTH: usize = 200;
@@ -18,6 +19,7 @@ const LATE: u16 = BEDTIME + STAGGER_MINUTES;
 /// Late enough that every creature is past its own wake time.
 const MORNING: u16 = WAKE_TIME + STAGGER_MINUTES;
 const NOON: u16 = 12 * 60;
+const MINUTES: u16 = 24 * 60;
 
 fn world(seed: u64) -> World {
     let mut w = World::new(
@@ -351,4 +353,106 @@ fn a_hunting_predator_wakes_sleeping_prey_and_a_sleeping_one_hunts_nothing() {
         }
     }
     assert!(woke, "a predator overhead wakes the shrimp");
+}
+
+/// Whether any creature of `ids` is asleep at `minute`, under `w`'s schedule.
+fn count_asleep(w: &mut World, ids: &[CreatureId], minute: u16) -> usize {
+    w.set_time_of_day(minute);
+    w.tick();
+    ids.iter().filter(|&&id| asleep(w, id)).count()
+}
+
+fn sleepers(seed: u64) -> (World, Vec<CreatureId>) {
+    let mut w = world(seed);
+    let ids = (0..8)
+        .map(|i| add(&mut w, "neon_tetra", 20 + 20 * i, 30))
+        .collect();
+    (w, ids)
+}
+
+#[test]
+fn the_fixed_schedule_is_the_default() {
+    let (w, _) = community(1);
+    assert_eq!(w.daylight_schedule(), DaylightSchedule::FIXED);
+}
+
+#[test]
+fn sleep_follows_a_winter_schedule() {
+    // Late sunrise (08:00) and early sunset (16:00): rest from 16:30 to
+    // 07:30 plus each creature's stagger.
+    let (mut w, ids) = sleepers(5);
+    w.set_daylight_schedule(DaylightSchedule::from_sun_times(8 * 60, 16 * 60));
+    assert_eq!(w.daylight_schedule().bedtime, 16 * 60 + 30);
+    let all = ids.len();
+    // Early evening is still awake; just after the latest bedtime all are
+    // asleep (the fixed schedule would have them up until 21:00).
+    assert_eq!(count_asleep(&mut w, &ids, 16 * 60), 0);
+    assert_eq!(
+        count_asleep(&mut w, &ids, 16 * 60 + 30 + STAGGER_MINUTES),
+        all
+    );
+    assert_eq!(count_asleep(&mut w, &ids, 20 * 60), all);
+    // Still asleep at 06:00 (fixed wake time) and 07:29, awake once past
+    // the latest wake time.
+    assert_eq!(count_asleep(&mut w, &ids, 6 * 60 + STAGGER_MINUTES), all);
+    assert_eq!(count_asleep(&mut w, &ids, 7 * 60 + 29), all);
+    assert_eq!(count_asleep(&mut w, &ids, 7 * 60 + 30 + STAGGER_MINUTES), 0);
+    assert_eq!(count_asleep(&mut w, &ids, NOON), 0);
+}
+
+#[test]
+fn sleep_follows_a_schedule_that_wraps_midnight() {
+    // Rest from 01:00 to 09:00, never crossing midnight: a night-shift sun.
+    let (mut w, ids) = sleepers(5);
+    let mut s = DaylightSchedule::from_sun_times(9 * 60 + 30, 0);
+    s.bedtime = 60;
+    s.wake_time = 9 * 60 - 30;
+    w.set_daylight_schedule(s);
+    let all = ids.len();
+    assert_eq!(count_asleep(&mut w, &ids, 0), 0);
+    assert_eq!(count_asleep(&mut w, &ids, 60 + STAGGER_MINUTES), all);
+    assert_eq!(count_asleep(&mut w, &ids, 8 * 60), all);
+    assert_eq!(count_asleep(&mut w, &ids, 9 * 60 + STAGGER_MINUTES), 0);
+    assert_eq!(count_asleep(&mut w, &ids, 22 * 60), 0);
+    // And a bedtime before midnight, wake after: 23:00 to 05:00.
+    s.bedtime = 23 * 60;
+    s.wake_time = 5 * 60 - STAGGER_MINUTES;
+    w.set_daylight_schedule(s);
+    assert_eq!(count_asleep(&mut w, &ids, 23 * 60 + STAGGER_MINUTES), all);
+    assert_eq!(count_asleep(&mut w, &ids, 2 * 60), all);
+    assert_eq!(count_asleep(&mut w, &ids, 5 * 60), 0);
+    assert_eq!(count_asleep(&mut w, &ids, 12 * 60), 0);
+}
+
+#[test]
+fn a_short_night_never_means_rest_all_day() {
+    // Sunrise 00:10 and sunset 23:50: the rest window has no length, so
+    // staggers give at most an hour or so of rest around midnight.
+    let (mut w, ids) = sleepers(5);
+    w.set_daylight_schedule(DaylightSchedule::from_sun_times(10, 23 * 60 + 50));
+    for m in (2 * 60..22 * 60).step_by(30) {
+        assert_eq!(count_asleep(&mut w, &ids, m), 0, "{m}");
+    }
+}
+
+#[test]
+fn polar_day_keeps_everyone_up_and_polar_night_keeps_the_default_rest() {
+    // Tromsø.
+    let (mut w, ids) = sleepers(9);
+    let june = DaylightSchedule::solar_schedule(172, 69.65, 18.96, 120);
+    assert_eq!(june.polar, PolarDaylight::PolarDay);
+    w.set_daylight_schedule(june);
+    for m in (0..MINUTES).step_by(60) {
+        assert_eq!(count_asleep(&mut w, &ids, m), 0, "midnight sun at {m}");
+    }
+
+    let december = DaylightSchedule::solar_schedule(355, 69.65, 18.96, 60);
+    assert_eq!(december.polar, PolarDaylight::PolarNight);
+    w.set_daylight_schedule(december);
+    let all = ids.len();
+    assert_eq!(count_asleep(&mut w, &ids, LATE), all);
+    assert_eq!(count_asleep(&mut w, &ids, MIDNIGHT), all);
+    assert_eq!(count_asleep(&mut w, &ids, MORNING), 0);
+    // Noon is dark, but they are up all the same.
+    assert_eq!(count_asleep(&mut w, &ids, NOON), 0);
 }

@@ -22,7 +22,11 @@
 //! (bubbler, filter outlet) is placed once per click. `F` cycles a debug
 //! tint of the nutrient, CO₂ and light fields; `W` changes the water and
 //! `Q` shows the water quality in the title bar. `--time HH:MM` lights the
-//! tank for that time of day (default noon). Pointer moves only redraw
+//! tank for that time of day (default noon). `--daylight-schedule location`
+//! with `--latitude` and `--longitude` (or the `[daylight]` config) sets
+//! sunrise and sunset for today at that place, so `--time` shows the
+//! tank at that hour of its day; the window doesn't ask the OS where it
+//! is (`run --overlay` does). Pointer moves only redraw
 //! when the brush outline changes. Escape closes.
 //!
 //! Plants (T6b): each plant species has a slot under Plants; selected, it
@@ -72,7 +76,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context as _;
 use desktank_platform::{
-    PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, process_stats,
+    PauseReason, PowerDecision, PowerMonitor, PowerPolicy, PowerSource, local_date_time,
+    process_stats,
 };
 use desktank_render::{
     BrushPreview, Card, Gpu, GpuOptions, Inspected, Magnifier, Palette, PaletteHit, PaletteMorphs,
@@ -93,7 +98,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::InteractState;
-use crate::config::{self, CliOverrides, Config, Life};
+use crate::config::{self, CliOverrides, Config, Daylight, Life};
 use crate::ipc::{self, Reply, Request};
 use crate::persist::Persistence;
 use desktank_sim::scene;
@@ -1152,6 +1157,16 @@ fn read_config(path: &Path) -> Result<Config, config::ConfigError> {
         })
 }
 
+/// Lights the tank for the sun at the configured coordinates today, or with
+/// the fixed schedule. The window has no clock tick, so this runs on start
+/// and when the config's `[daylight]` table changes.
+fn apply_daylight(tank: &mut Tank, daylight: Daylight) {
+    tank.set_location_sync(daylight.location_sync());
+    tank.set_daylight_schedule(
+        daylight.schedule_at(local_date_time(), daylight.manual_coordinates()),
+    );
+}
+
 fn apply_life(world: &mut World, life: Life, previous: Life) {
     if let Some(ratio) = life.time_ratio
         && life.time_ratio != previous.time_ratio
@@ -1263,6 +1278,7 @@ impl ApplicationHandler<Wake> for App {
                 if let Some(minute) = self.time {
                     s.tank.set_time_of_day(minute);
                 }
+                apply_daylight(&mut s.tank, self.settings.daylight);
                 s.tank.set_sway(self.settings.plants.sway);
                 s.tank
                     .set_allow_sway_on_battery(self.settings.plants.sway_on_battery);
@@ -1322,6 +1338,9 @@ impl ApplicationHandler<Wake> for App {
                     s.tank.set_allow_sway_on_battery(new.sway_on_battery);
                 }
                 apply_life(s.tank.world_mut(), settings.life, self.settings.life);
+                if settings.daylight != self.settings.daylight {
+                    apply_daylight(&mut s.tank, settings.daylight);
+                }
             }
             self.settings = settings;
             if path.exists() {
@@ -1693,6 +1712,46 @@ fn device_hint(world: &World, id: DeviceId) -> Option<&'static str> {
 mod tests {
     use super::*;
     use desktank_sim::{DeviceKind, MaterialTable, WorldConfig};
+
+    #[test]
+    fn apply_daylight_lights_the_tank_for_the_sun_only_when_synced_with_a_place() {
+        use crate::config::DaylightMode;
+        use desktank_sim::daylight::DaylightSchedule;
+
+        let world = World::new(
+            WorldConfig {
+                width: 32,
+                height: 24,
+                seed: 3,
+                water_level: 0.8,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let mut tank = Tank::new(world, TankConfig::default());
+        let london = Daylight {
+            schedule: DaylightMode::Location,
+            latitude: Some(51.5),
+            longitude: Some(0.0),
+        };
+        apply_daylight(&mut tank, london);
+        assert!(tank.location_sync());
+        let schedule = tank.daylight_schedule();
+        assert_ne!(schedule, DaylightSchedule::FIXED);
+        assert_eq!(tank.world().daylight_schedule(), schedule);
+        // Without a place the window can't know the sun, so it stays fixed.
+        let unlocated = Daylight {
+            latitude: None,
+            longitude: None,
+            ..london
+        };
+        apply_daylight(&mut tank, unlocated);
+        assert_eq!(tank.daylight_schedule(), DaylightSchedule::FIXED);
+        apply_daylight(&mut tank, london);
+        apply_daylight(&mut tank, Daylight::default());
+        assert!(!tank.location_sync());
+        assert_eq!(tank.daylight_schedule(), DaylightSchedule::FIXED);
+    }
 
     #[test]
     fn apply_life_sets_the_time_ratio_only_when_it_changes() {
