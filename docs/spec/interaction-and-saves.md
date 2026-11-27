@@ -86,9 +86,9 @@
     all from the species data. It is drawn in the canvas on every host
     from a second region of the HUD texture, in a small CPU-built pixel
     font (`desktank_render::font`, shared with the in-tank inspect card),
-    so it needs no new pipeline and is
-    WebGL2-safe. It is built only when the species or morph selection
-    changes and costs nothing while nothing is selected.
+    so it needs no new pipeline and is WebGL2-safe. It is built only when
+    the species or morph selection changes and costs nothing while
+    nothing is selected.
     Every card is shown at one scale on a given canvas
     (`desktank_render::card_scale`), chosen from the largest card rather
     than the one being shown, so choosing another species never resizes
