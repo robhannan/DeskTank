@@ -166,6 +166,21 @@
     keys that act on it (R, Shift+R, M and I for a filter), and the web's readout line is left for messages (refusals,
     cheat results), with the inspection read out to screen readers only.
 
+    A creature of a species with needs, and every plant, also shows a
+    **Needs** section of labelled horizontal meters with trend chevrons
+    (empty is unmet, full satisfied; green, yellow, amber and red bands
+    with a bright cap so the length reads in greyscale). A plant's are its
+    **Light**, **CO₂** and **Nutrients**: how well each suits its species
+    (`World::plant_needs`, 100 at the species' optimum, 0 outside its
+    range), read from the fields over the plant's own cells; every species
+    depends on all three, so all three show. It sits beside the **Growth**
+    line, which names the factor that holds the plant back most at its
+    last update. The readings are derived from the world, so they add
+    nothing to saves; the trends come from a short history kept only while
+    the plant is inspected, and a reading that merely shimmers by a point
+    or two does not move a meter. Screen readers hear the same levels
+    (`Light 87%, comfortable`).
+
   The tray menu also has quick actions: Feed (default food), Water
   change, and Pause.
 - **Cheats** (D20): the Konami code (↑ ↑ ↓ ↓ ← → ← → B A) opens a small
@@ -277,6 +292,19 @@
   scales life only. `--time` and `capture` pin the time instead.
   The clock advances only in simulated ticks and catch-up, never while
   hidden, and requests a frame only when the tint changes.
+- **OLED mode** (`display.oled` in `config.toml`, `--oled` on `window`
+  and `capture`, a checkbox in the web's settings panel, an adb flag on
+  Android (§3.6); off by default everywhere) renders every background
+  pixel of the opaque tank as exactly sRGB 0,0,0: the water (no depth
+  darkening, grain, surface highlight or day/night tint), the air above
+  it and the letterbox, so an OLED panel switches those pixels off. The
+  depth haze fades colours to black instead of blue. Creatures, plants,
+  ground, devices, bubbles, algae and ripples draw as usual, and a
+  creature or plant lit by the day/night tint still is. The click-through
+  overlay (translucent water) ignores it. The host passes it to the
+  renderer (`Tank::set_oled`) and changing it only redraws: no pipeline
+  is rebuilt and the frame rate is unchanged. `config.toml` changes apply
+  live in `window`.
 - **Persistence.** Each tank (one per display, or one spanning tank) is
   saved to the platform data dir every 5 minutes and on exit.
   - **Envelope:** magic bytes, format version, payload length, CRC32,

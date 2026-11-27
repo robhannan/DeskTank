@@ -358,7 +358,24 @@ fn a_plant_slot_pours_its_species_and_inspect_shows_the_plant() {
     t.select(slot(&t, "tool inspect"));
     down(&mut t, PRIMARY, 21, 40);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.take_inspection(), "plant hygrophila 1 0 100 3 none 21 40");
+    let line = t.take_inspection();
+    let (head, needs) = line.rsplit_once(' ').unwrap();
+    assert_eq!(head, "plant hygrophila 1 0 100 3 none 21 40");
+    // The plant's care readings, as the card's meters show them: label,
+    // percent and level, in the card's order.
+    let id = desktank_sim::PlantId(1);
+    let readings = t.tank().world().plant_needs(id).unwrap();
+    assert_eq!(needs, super::needs_token(&readings));
+    let labels: Vec<_> = needs
+        .split(',')
+        .map(|n| n.split(':').next().unwrap())
+        .collect();
+    assert_eq!(labels, ["Light", "CO₂", "Nutrients"]);
+    for (token, r) in needs.split(',').zip(readings) {
+        let parts: Vec<_> = token.split(':').collect();
+        assert_eq!(parts[1], r.satisfaction.to_string());
+        assert_eq!(parts[2], r.level().name());
+    }
 }
 
 #[test]
@@ -964,6 +981,19 @@ fn sway_is_off_by_default_and_toggles() {
     t.set_hidden(true);
     t.set_sway(false);
     assert!(!t.sway());
+}
+
+#[test]
+fn oled_mode_is_off_by_default_and_toggles() {
+    let mut t = tank();
+    assert!(!t.oled());
+    t.set_oled(true);
+    assert!(t.oled());
+    // The frame it changes is wanted even without a GPU to draw it.
+    assert_ne!(t.frame(0.0) & FRAME_WANTED, 0);
+    assert!(!t.save_needed(), "a render setting isn't a tank edit");
+    t.set_oled(false);
+    assert!(!t.oled());
 }
 
 #[test]

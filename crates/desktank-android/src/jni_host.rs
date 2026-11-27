@@ -76,6 +76,8 @@ enum Callback {
     /// Acknowledged once the surface is dropped.
     Destroyed(SyncSender<()>),
     Touch(TouchEvent, Duration),
+    /// OLED mode on or off for the shared tank.
+    Oled(bool),
 }
 
 fn millis(time: jlong) -> Duration {
@@ -149,6 +151,9 @@ struct Host {
     settings: &'static Settings,
     touch: Touch,
     brush: Option<Brush>,
+    /// OLED mode (true black water and air), from the shim's saved flag; kept
+    /// here because it can arrive before the tank exists.
+    oled: bool,
 }
 
 /// The render thread: applies commands and draws until every sender is
@@ -193,6 +198,7 @@ impl Host {
             settings,
             touch: Touch::default(),
             brush: None,
+            oled: false,
         }
     }
 
@@ -207,6 +213,13 @@ impl Host {
             Callback::Touch(event, at) => {
                 if let Some(host) = previous.filter(|h| h.id == id && h.kind == HostKind::App) {
                     self.apply_touch(host.size, event, at);
+                }
+                return;
+            }
+            Callback::Oled(enabled) => {
+                self.oled = enabled;
+                if let Some(tank) = &mut self.tank {
+                    tank.set_oled(enabled);
                 }
                 return;
             }
@@ -365,7 +378,9 @@ impl Host {
                     Ok(sand) => self.brush = Some(Brush::new(sand)),
                     Err(e) => log::error!("touch tools unavailable: {e}"),
                 }
-                self.tank = Some(Tank::new(world, TankConfig::default()));
+                let mut tank = Tank::new(world, TankConfig::default());
+                tank.set_oled(self.oled);
+                self.tank = Some(tank);
             }
             Err(e) => log::error!("no tank: {e}"),
         }
@@ -594,6 +609,17 @@ pub extern "system" fn Java_io_github_robhannan_desktank_Native_stopped<'local>(
     id: jlong,
 ) {
     forward(&mut env, id, Callback::Lifecycle(Event::Stopped));
+}
+
+/// `Native.setOled(id, enabled)`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_robhannan_desktank_Native_setOled<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    id: jlong,
+    enabled: jboolean,
+) {
+    forward(&mut env, id, Callback::Oled(enabled));
 }
 
 /// `Native.touch(id, action, pointerId, x, y, eventTimeMs, density)`.

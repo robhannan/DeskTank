@@ -75,8 +75,8 @@ Water changes, placements, pours and creatures due on tick `t` are applied, in t
 
 ## Render tests
 
-`crates/desktank/tests/render.rs` captures each scene in `crates/desktank/tests/scenes/` at 320×180 (160×90 cells at scale 2, seed 7) and compares it with `crates/desktank/tests/reference/<scene>.png`. A scene passes when at most 0.5% of pixels differ by more than CIEDE2000 ΔE 2 (SPEC §7).
+`crates/desktank/tests/it/render.rs` captures each scene in `crates/desktank/tests/scenes/` at 320×180 (160×90 cells at scale 2, seed 7) and compares it with `crates/desktank/tests/reference/<scene>.png`. A scene passes when at most 0.5% of pixels differ by more than CIEDE2000 ΔE 2 (SPEC §7).
 
 - Linux CI renders on Mesa lavapipe (software Vulkan), macOS CI on Metal and Windows CI on WARP. With `CI` set, a missing GPU adapter fails the test; locally it is skipped with a message.
-- After a deliberate visual change, update the references and commit them: `DESKTANK_BLESS=1 cargo test -p desktank --test render`. Look at the new PNGs before committing.
+- After a deliberate visual change, update the references and commit them: `DESKTANK_BLESS=1 cargo test -p desktank --test it render::`. Look at the new PNGs before committing.
 - To add a scene, add `tests/scenes/<name>.toml`, a test calling `check("<name>")`, and bless it. `check_at("<name>", "HH:MM")` captures it lit for a time of day against `<name>_HHMM.png`; the `planted` scene (T6: cuttings, seeds and moss grown for 6 minutes; from T6b each is a plant of a species) is checked at 00:00, 06:30, 12:00 and 20:30. The `creatures` scene captures a tetra school, bottom-walking corydoras, surfacing bettas and a nerite grazing a rock after 30 s. The `climbing` scene shows nerites turned onto a rock pillar, upside down under its arm and on both panes of glass. The `invertebrates` scene shows cherry and amano shrimp grazing an algae film on an aquasoil bed and Thai micro crabs on the plants and rock. The `fish` scene shows a harlequin rasbora school, male guppies and honey gouramis coming up for flakes, and otocinclus on a rock, the glass and the bed.

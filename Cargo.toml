@@ -33,6 +33,11 @@ pedantic = { level = "warn", priority = -1 }
 # at those .o files and every incremental rebuild leaves a new set behind
 # (it had grown target/ past 13 GB).
 split-debuginfo = "packed"
+# line-tables-only: backtraces and panics keep file:line, but no variable or type
+# info, so each binary and its .dSYM are a fraction of the size (dependencies
+# are built the same way). For lldb with locals, build with full debug info:
+# `CARGO_PROFILE_DEV_DEBUG=true cargo build`.
+debug = "line-tables-only"
 
 [profile.release]
 # Small, lean binaries (SPEC §6.1: ≤ 20 MB, low idle CPU). opt-level stays at 3:

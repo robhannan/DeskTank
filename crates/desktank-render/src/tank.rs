@@ -113,6 +113,15 @@ impl Default for DayClock {
     }
 }
 
+/// How an opaque tank's background looks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Background {
+    /// Water-coloured water, sky-coloured air and a dark blue letterbox.
+    Water,
+    /// OLED mode: exactly black (see [`Tank::set_oled`]).
+    Oled,
+}
+
 /// A simulated world plus everything needed to show it. The host calls
 /// [`Tank::tick`] on its clock and [`Tank::draw`] (or [`Tank::render_to`])
 /// when the returned [`FrameRequest`] asks for a frame.
@@ -154,6 +163,8 @@ pub struct Tank {
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
     overlay_water_alpha: Option<f32>,
+    /// What an opaque tank's water, air and letterbox are drawn as.
+    background: Background,
     /// Current-rebuild counter last drawn (for surface-current ripples).
     flow_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
@@ -200,6 +211,7 @@ impl Tank {
             field_overlay: None,
             fields_drawn: 0,
             overlay_water_alpha: None,
+            background: Background::Water,
             flow_drawn: 0,
             time_of_day: daylight::NOON,
             daylight_schedule: daylight::DaylightSchedule::FIXED,
@@ -665,6 +677,30 @@ impl Tank {
         }
     }
 
+    /// Turns OLED mode on or off (off by default). On, every background pixel
+    /// of an opaque tank (water, air, the letterbox) is exactly black and the
+    /// depth haze fades to black, so only creatures, plants, ground, devices,
+    /// bubbles and ripples light pixels. It has no effect on the translucent
+    /// click-through overlay. Only the next frame changes: no pipeline is
+    /// rebuilt.
+    pub fn set_oled(&mut self, enabled: bool) {
+        let background = if enabled {
+            Background::Oled
+        } else {
+            Background::Water
+        };
+        if self.background != background {
+            self.background = background;
+            self.invalidate();
+        }
+    }
+
+    /// Whether OLED mode is on (see [`Tank::set_oled`]).
+    #[must_use]
+    pub fn oled(&self) -> bool {
+        self.background == Background::Oled
+    }
+
     /// The current overlay water opacity, if overlay rendering is enabled.
     #[must_use]
     pub fn overlay_water_alpha(&self) -> Option<f32> {
@@ -906,6 +942,7 @@ impl Tank {
         let card = self.card_layout(size);
         let inspect = self.inspect_layout(size);
         let sway_on = self.sway_active();
+        let oled = self.oled();
         let ripples = self.world.surface_ripples();
         let has_current_ripples = self.world.has_surface_current_ripples();
         let surface_ripple_threshold = if has_current_ripples {
@@ -968,6 +1005,7 @@ impl Tank {
                 magnifier: self.magnifier,
                 field: self.field_overlay,
             },
+            oled,
             self.timer.as_ref(),
         );
         if let Some(t) = &self.timer {

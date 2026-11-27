@@ -7,13 +7,13 @@
 //! one-pass capture within ΔE 2 at every pixel.
 //!
 //! Update the references deliberately with
-//! `DESKTANK_BLESS=1 cargo test -p desktank --test render`.
+//! `DESKTANK_BLESS=1 cargo test -p desktank --test it render::`.
 //!
 //! Without a GPU adapter the tests are skipped locally, but fail when `CI`
 //! or `DESKTANK_BLESS` is set: Linux CI renders on Mesa lavapipe, macOS on Metal and Windows on
 //! WARP.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

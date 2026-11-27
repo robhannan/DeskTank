@@ -718,6 +718,51 @@ test("inspecting pins a card beside what it finds; a creature's has two pages a 
   expect(errors).toEqual([]);
 });
 
+test("inspecting a plant announces how well light, CO₂ and nutrients suit it", async ({ page }) => {
+  const errors = watchErrors(page);
+  await openPaused(page);
+  const [gw, gh] = await gridSize(page);
+  const [x, y] = [Math.round(gw / 2), Math.round(gh * 0.5)];
+  const plants = () => page.evaluate(() => window.desktank.tank.plantCount());
+
+  // A strip of aquasoil along the floor for it to root in.
+  await choose(page, "Aquasoil");
+  let p = await cellPoint(page, Math.round(gw * 0.3), gh - 3);
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  p = await cellPoint(page, Math.round(gw * 0.7), gh - 3);
+  await page.mouse.move(p.x, p.y, { steps: 20 });
+  await page.mouse.up();
+  // Cuttings poured into the water sink to the bed and root: a plant. The
+  // tank is paused, so single-step it.
+  await choose(page, "Hygrophila");
+  p = await cellPoint(page, x, y);
+  await page.mouse.click(p.x, p.y);
+  await page.evaluate(() => {
+    for (let i = 0; i < 1500; i++) window.desktank.tank.step();
+  });
+  expect(await plants()).toBeGreaterThan(0);
+
+  // Inspecting the plant (a click on any of its cells) reads out its card:
+  // what holds it back, then its meters as words. ES2020 only: no replaceAll.
+  await choose(page, "Inspect");
+  const readout = page.locator("#inspect-sr");
+  let found = "";
+  for (let row = gh - 2; row > gh * 0.3 && !found.startsWith("Hygrophila"); row--) {
+    for (const dx of [0, -1, 1, -2, 2]) {
+      p = await cellPoint(page, x + dx, row);
+      await page.mouse.click(p.x, p.y);
+      found = (await readout.textContent()) ?? "";
+      if (found.startsWith("Hygrophila")) break;
+    }
+  }
+  expect(found, "a click found the plant").toMatch(/^Hygrophila #\d+ · /);
+  await expect(readout).toHaveText(
+    /^Hygrophila #\d+ · .* · health \d+% · \d+ cells · .* · Light \d+%, \w+ · CO₂ \d+%, \w+ · Nutrients \d+%, \w+ · cell \d+, \d+$/,
+  );
+  expect(errors).toEqual([]);
+});
+
 test("the palette follows the sim's category tree and navigates with the keyboard", async ({ page }) => {
   await open(page, "?backend=webgl2");
   const entries = await page.evaluate(() => window.desktank.tank.palette());
@@ -949,6 +994,7 @@ test("settings persist across reloads", async ({ page }) => {
     catchUp: false,
     sway: true,
     swayOnBattery: true,
+    oled: false,
     seed: 42,
     radius: 7,
   });
@@ -976,6 +1022,38 @@ test("settings persist across reloads", async ({ page }) => {
   await page.reload();
   await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
   expect(await page.evaluate(() => window.desktank.settings.scale)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("OLED mode draws a true black background and persists", async ({ page }) => {
+  test.slow(); // Canvas screenshots and a reload are slow on CI runners.
+  const errors = watchErrors(page);
+  await open(page, "?backend=webgl2");
+  // The share of canvas pixels that are exactly 0,0,0.
+  const blackShare = async () => {
+    const { rgba } = await decodePng(page, await page.locator("#tank").screenshot());
+    let black = 0;
+    for (let i = 0; i < rgba.length; i += 4) if (rgba[i] === 0 && rgba[i + 1] === 0 && rgba[i + 2] === 0) black++;
+    return black / (rgba.length / 4);
+  };
+  expect(await page.evaluate(() => window.desktank.tank.oled()), "off by default").toBe(false);
+  expect(await blackShare()).toBeLessThan(0.05);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("OLED mode (true black)").check();
+  expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(true);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeGreaterThan(0.5);
+
+  await page.reload();
+  await expect(page.locator("body[data-ready]")).toBeAttached({ timeout: 30_000 });
+  expect(await page.evaluate(() => window.desktank.tank.oled()), "applies to the new tank").toBe(true);
+  expect(await page.evaluate(() => window.desktank.settings.oled)).toBe(true);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeGreaterThan(0.5);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("OLED mode (true black)").uncheck();
+  expect(await page.evaluate(() => window.desktank.tank.oled())).toBe(false);
+  await expect.poll(blackShare, { timeout: 30_000 }).toBeLessThan(0.05);
   expect(errors).toEqual([]);
 });
 

@@ -27,6 +27,7 @@ pub struct Config {
     pub life: Life,
     pub overlay: Overlay,
     pub daylight: Daylight,
+    pub display: Display,
 }
 
 impl Default for Config {
@@ -38,6 +39,7 @@ impl Default for Config {
             life: Life::default(),
             overlay: Overlay::default(),
             daylight: Daylight::default(),
+            display: Display::default(),
         }
     }
 }
@@ -72,6 +74,15 @@ pub struct Life {
     pub catch_up: bool,
     /// Life and day/night clock multiplier (1 is real time).
     pub time_ratio: Option<f32>,
+}
+
+/// The `[display]` table.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Display {
+    /// OLED mode: the opaque tank's water, air and letterbox are true black
+    /// (sRGB 0,0,0). The click-through overlay ignores it.
+    pub oled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -166,6 +177,7 @@ pub struct CliOverrides {
     pub daylight_schedule: Option<DaylightMode>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    pub oled: Option<bool>,
 }
 
 pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
@@ -178,6 +190,7 @@ pub fn merge(mut config: Config, cli: CliOverrides) -> Config {
     config.daylight.schedule = cli.daylight_schedule.unwrap_or(config.daylight.schedule);
     config.daylight.latitude = cli.latitude.or(config.daylight.latitude);
     config.daylight.longitude = cli.longitude.or(config.daylight.longitude);
+    config.display.oled = cli.oled.unwrap_or(config.display.oled);
     config
 }
 
@@ -328,6 +341,8 @@ mod tests {
         assert!(!defaults.daylight.location_sync());
         assert_eq!(parse("[daylight]").unwrap().daylight, Daylight::default());
         assert_eq!(parse("[overlay]").unwrap().overlay, overlay);
+        assert_eq!(defaults.display, Display { oled: false });
+        assert_eq!(parse("[display]").unwrap().display, Display::default());
         assert_eq!(
             parse("[power]\nac_fps = 60").unwrap().power.battery_fps,
             defaults.power.battery_fps
@@ -360,6 +375,8 @@ mod tests {
             schedule = 'location'
             latitude = 51.5
             longitude = -0.12
+            [display]
+            oled = true
         ",
         )
         .unwrap();
@@ -371,6 +388,7 @@ mod tests {
                 longitude: Some(-0.12),
             }
         );
+        assert_eq!(config.display, Display { oled: true });
         assert_eq!(
             config.power,
             PowerPolicy {
@@ -416,6 +434,8 @@ mod tests {
             "[life]\nextra = 1",
             "[overlay]\nextra = 1",
             "[daylight]\nextra = 1",
+            "[display]\nextra = 1",
+            "[display]\noled = \"yes\"",
             "[daylight]\nschedule = \"sunny\"",
             "[daylight]\nschedule = \"Location\"",
         ] {
@@ -628,6 +648,35 @@ mod tests {
                 "{lon}"
             );
         }
+    }
+
+    #[test]
+    fn cli_oled_overrides_the_file() {
+        let config = parse("[display]\noled = true").unwrap();
+        assert!(config.display.oled);
+        assert!(merge(config, CliOverrides::default()).display.oled);
+        assert!(
+            !merge(
+                config,
+                CliOverrides {
+                    oled: Some(false),
+                    ..CliOverrides::default()
+                }
+            )
+            .display
+            .oled
+        );
+        assert!(
+            merge(
+                Config::default(),
+                CliOverrides {
+                    oled: Some(true),
+                    ..CliOverrides::default()
+                }
+            )
+            .display
+            .oled
+        );
     }
 
     #[test]

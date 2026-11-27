@@ -100,7 +100,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, oled: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -280,6 +280,7 @@ function loadSettings(): Settings {
     catchUp: saved.catchUp === true,
     sway: saved.sway === true,
     swayOnBattery: saved.swayOnBattery === true,
+    oled: saved.oled === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
     seed: int(saved.seed, 0, 0xffffffff, DEFAULTS.seed),
     radius: int(saved.radius, 0, 24, DEFAULTS.radius), // the tank clamps it too
@@ -310,6 +311,7 @@ function showSettings() {
   $<HTMLInputElement>("set-catch-up").checked = settings.catchUp;
   $<HTMLInputElement>("set-sway").checked = settings.sway;
   $<HTMLInputElement>("set-sway-on-battery").checked = settings.swayOnBattery;
+  $<HTMLInputElement>("set-oled").checked = settings.oled;
   $<HTMLInputElement>("set-stats").checked = settings.stats;
   seedInput.value = String(settings.seed);
   brushInput.value = String(settings.radius);
@@ -322,6 +324,7 @@ function showSettings() {
     tank.setEasyMode(settings.easyMode);
     tank.setSway(settings.sway);
     tank.setAllowSwayOnBattery(settings.swayOnBattery);
+    tank.setOled(settings.oled);
     tank.setOnBattery(onBattery);
     tank.setHidden(hidden);
     tank.setRadius(settings.radius);
@@ -1457,6 +1460,17 @@ function runName() {
   }
 }
 
+// The card's need meters as words, from the inspect line's needs token
+// (`Hunger:49:low,Social:100:comfortable`, or `-` for none): "Hunger 49%,
+// low". ES2020 only (webOS): no replaceAll.
+function needsText(needs: string | undefined): string[] {
+  if (!needs || needs === "-") return [];
+  return needs.split(",").map((need) => {
+    const [name, percent, level] = need.split(":");
+    return `${name.replace(/_/g, " ")} ${percent}%, ${level}`;
+  });
+}
+
 // A creature's card, from its inspect line's parts and its name.
 function creatureText({ parts, name }: Inspected) {
   const [species, id, over, x, y, stage, age, health, energy, sex, morph, carrying, needs] = parts;
@@ -1467,13 +1481,7 @@ function creatureText({ parts, name }: Inspected) {
   card.push(`${label(species)} #${id}`, `${stage} ${sex}`, old, `health ${health}%`, `energy ${energy}%`);
   if (morph !== "-") card.push(label(morph));
   if (carrying !== "-") card.push(`carrying, ${carrying} day${carrying === "1" ? "" : "s"} to go`);
-  // The card's need meters as words: "Hunger 49%, low".
-  if (needs && needs !== "-") {
-    for (const need of needs.split(",")) {
-      const [name, percent, level] = need.split(":");
-      card.push(`${name.replace(/_/g, " ")} ${percent}%, ${level}`);
-    }
-  }
+  card.push(...needsText(needs));
   card.push(`over ${label(over)}`, `cell ${x}, ${y}`);
   return card.join(" · ");
 }
@@ -1522,10 +1530,13 @@ function showInspection() {
     const [name, x, y] = rest;
     text = `${label(name)} · cell ${x}, ${y}`;
   } else if (kind === "plant") {
-    const [species, id, age, health, cells, limit, x, y] = rest;
+    const [species, id, age, health, cells, limit, x, y, needs] = rest;
     const days = Number(age);
     const old = days === 0 ? "under a day" : `${days} day${days === 1 ? "" : "s"}`;
-    text = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
+    // The card's light, CO₂ and nutrient meters as words, after what holds
+    // the plant back: "Light 87%, comfortable".
+    const care = needsText(needs).map((need) => ` · ${need}`).join("");
+    text = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit}${care} · cell ${x}, ${y}`;
   } else if (kind === "device") {
     // D27, DV3: flow, media load, maturity, Rinse and intake guard toggle.
     showDeviceLine(rest);
@@ -1965,6 +1976,7 @@ function wireSettings(resetTank: () => void) {
   $("set-catch-up").addEventListener("change", (e) => update({ catchUp: checkedOf(e) }));
   $("set-sway").addEventListener("change", (e) => update({ sway: checkedOf(e) }));
   $("set-sway-on-battery").addEventListener("change", (e) => update({ swayOnBattery: checkedOf(e) }));
+  $("set-oled").addEventListener("change", (e) => update({ oled: checkedOf(e) }));
   $("set-stats").addEventListener("change", (e) => {
     update({ stats: checkedOf(e) });
     updateStats();

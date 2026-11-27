@@ -385,6 +385,15 @@ over the keyguard while charging).
   (A3). Turning on network ADB there takes Wireless debugging (pairing
   with a code), and the "Stay awake" developer option stops the
   screensaver from starting; A1's README says both (PROGRESS).
+- **OLED mode** (§2.6; off by default): there is no settings screen until
+  A3 (#404), so the flag is set over adb:
+  `adb shell am start -n io.github.robhannan.desktank/.DeskTankActivity
+  --ez oled true` (`false` turns it off). The Activity stores the extra in
+  `SharedPreferences`; both it and the Dream read the flag when they
+  start and pass it over JNI (`Native.setOled`), and the render thread
+  calls `Tank::set_oled` on the shared tank, so a later `am start`
+  (`singleTask`'s `onNewIntent`) changes a running tank without a new
+  pipeline or frame-rate change. A3's settings screen replaces the adb step.
 - **Persistence**: one shared tank across the modes (D10): the same
   envelope and payload as §2.6, through `SaveStore` with the tank name
   `main` in the `tanks` subdirectory of `Context.getFilesDir()` (passed in

@@ -14,8 +14,8 @@ A missing file or omitted key uses its default. Saves apply within a second
 while the window is running. An invalid file logs an error to stderr and
 keeps the last good settings, or uses defaults at startup. Explicit
 `--sway`, `--sway-on-battery`, `--easy-mode`, `--creature-cap` and
-`--catch-up` flags take precedence. Use `--catch-up=false` to turn it off
-when the file enables it.
+`--catch-up` and `--oled` flags take precedence. Use `--catch-up=false` or
+`--oled=false` to turn one off when the file enables it.
 
 ```toml
 version = 1
@@ -47,6 +47,12 @@ catch_up = false
 tint = 0.0
 # Ask macOS to exclude the overlay from screen capture where supported.
 exclude_from_capture = true
+
+[display]
+# OLED mode: the opaque tank's water, air and letterbox are exactly black,
+# so an OLED panel switches those pixels off. Creatures, plants, ground and
+# bubbles draw as usual. The click-through overlay ignores it.
+oled = false
 ```
 
 Catch-up applies elapsed wall-clock time in one summarised step. Reopening

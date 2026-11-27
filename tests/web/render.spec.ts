@@ -1,7 +1,7 @@
 // WB1 acceptance: on WebGL2, a seeded scripted scene matches the native
 // `desktank capture` reference of the same scene within the SPEC §7
 // tolerance (≤ 0.5% of pixels over CIEDE2000 ΔE 2), as the native render
-// tests check it (crates/desktank/tests/render.rs).
+// tests check it (crates/desktank/tests/it/render.rs).
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "@playwright/test";

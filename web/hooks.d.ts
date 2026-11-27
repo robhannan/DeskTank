@@ -13,6 +13,7 @@ export interface Settings {
   catchUp: boolean;
   sway: boolean;
   swayOnBattery: boolean;
+  oled: boolean; // true black water, air and letterbox
   stats: boolean;
   seed: number;
   radius: number;

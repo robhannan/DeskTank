@@ -285,6 +285,92 @@ fn srgb_targets_show_the_same_colours() {
     }
 }
 
+/// OLED mode: water, air and the letterbox are exactly 0,0,0 (at 4x, flat 1x,
+/// linear and sRGB targets, one pass and split), the rock still draws, and the
+/// translucent click-through overlay is unchanged.
+#[test]
+fn oled_mode_draws_a_true_black_background() {
+    let materials = MaterialTable::builtin().unwrap();
+    let rock = materials.id("rock").unwrap();
+    let make = || {
+        let config = WorldConfig {
+            width: 16,
+            height: 8,
+            seed: 1,
+            water_level: 0.75,
+        };
+        let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        world.set_cell(3, 5, rock).unwrap();
+        Tank::new(world, TankConfig::default())
+    };
+    for split in [false, true] {
+        let Some(gpu) = gpu_with(GpuOptions {
+            split_grid: Some(split),
+            ..GpuOptions::default()
+        }) else {
+            return;
+        };
+        for format in [
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        ] {
+            let mut tank = make();
+            let normal = render(gpu, &mut tank, format);
+            assert!(
+                normal.chunks(4).any(|p| p[..3] != [0, 0, 0]),
+                "the normal tank has colour"
+            );
+            tank.set_oled(true);
+            assert!(tank.oled());
+            let img = render(gpu, &mut tank, format);
+            // 16×8 cells in 80×32 px: scale 4, an 8 px letterbox above and
+            // below. The rock covers pixels 20..24 × 20..24.
+            let mut lit = 0;
+            for y in 0..H {
+                for x in 0..W {
+                    let rock_px = (20..24).contains(&x) && (20..24).contains(&y);
+                    let p = px(&img, x, y);
+                    if rock_px {
+                        assert!(p != [0, 0, 0], "rock ({x},{y}) is drawn as usual");
+                        lit += 1;
+                    } else {
+                        assert_eq!(p, [0, 0, 0], "({x},{y}) split={split} {format:?}");
+                    }
+                }
+            }
+            assert_eq!(lit, 16);
+            // Turning it off again restores the colours.
+            tank.set_oled(false);
+            assert_eq!(render(gpu, &mut tank, format), normal);
+        }
+    }
+
+    let Some(gpu) = gpu() else { return };
+    // Flat cells (scale 1): one pixel per cell.
+    let mut tank = make();
+    tank.set_oled(true);
+    let img = tank.capture(gpu, (16, 8)).unwrap();
+    for (i, p) in img.chunks(4).enumerate() {
+        if i == 5 * 16 + 3 {
+            assert!(p[..3] != [0, 0, 0], "rock cell is drawn as usual");
+        } else {
+            assert_eq!(p[..3], [0, 0, 0], "cell {i}");
+        }
+    }
+
+    // The overlay's translucent water ignores the flag.
+    let mut plain = make();
+    plain.set_overlay_water_alpha(Some(0.5));
+    let want = render(gpu, &mut plain, wgpu::TextureFormat::Rgba8Unorm);
+    let mut oled = make();
+    oled.set_overlay_water_alpha(Some(0.5));
+    oled.set_oled(true);
+    assert_eq!(
+        render(gpu, &mut oled, wgpu::TextureFormat::Rgba8Unorm),
+        want
+    );
+}
+
 #[test]
 fn a_starving_plant_yellows_without_rewriting_its_cells() {
     let Some(gpu) = gpu() else { return };
@@ -1694,7 +1780,7 @@ fn px_at(img: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
 /// set.
 #[test]
 fn the_inspect_card_shows_need_meters_in_two_columns_or_one() {
-    #[path = "../src/testing.rs"]
+    #[path = "../../src/testing.rs"]
     mod testing;
 
     let Some(gpu) = gpu() else { return };
