@@ -149,6 +149,8 @@ pub struct Tank {
     /// Field version last drawn with the overlay.
     fields_drawn: u64,
     overlay_water_alpha: Option<f32>,
+    /// OLED mode: true black water, air and letterbox on opaque tanks.
+    oled: bool,
     /// Current-rebuild counter last drawn (for surface-current ripples).
     flow_drawn: u64,
     /// Local time of day, minutes after midnight (day and night).
@@ -195,6 +197,7 @@ impl Tank {
             field_overlay: None,
             fields_drawn: 0,
             overlay_water_alpha: None,
+            oled: false,
             flow_drawn: 0,
             time_of_day: daylight::NOON,
             daylight_schedule: daylight::DaylightSchedule::FIXED,
@@ -651,6 +654,25 @@ impl Tank {
         }
     }
 
+    /// Turns OLED mode on or off (off by default). On, every background pixel
+    /// of an opaque tank (water, air, the letterbox) is exactly black and the
+    /// depth haze fades to black, so only creatures, plants, ground, devices,
+    /// bubbles and ripples light pixels. It has no effect on the translucent
+    /// click-through overlay. Only the next frame changes: no pipeline is
+    /// rebuilt.
+    pub fn set_oled(&mut self, enabled: bool) {
+        if self.oled != enabled {
+            self.oled = enabled;
+            self.invalidate();
+        }
+    }
+
+    /// Whether OLED mode is on (see [`Tank::set_oled`]).
+    #[must_use]
+    pub fn oled(&self) -> bool {
+        self.oled
+    }
+
     /// The current overlay water opacity, if overlay rendering is enabled.
     #[must_use]
     pub fn overlay_water_alpha(&self) -> Option<f32> {
@@ -951,6 +973,7 @@ impl Tank {
                 magnifier: self.magnifier,
                 field: self.field_overlay,
             },
+            self.oled,
             self.timer.as_ref(),
         );
         if let Some(t) = &self.timer {

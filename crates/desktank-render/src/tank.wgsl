@@ -74,7 +74,9 @@ struct View {
     // Circular magnifier lens in target pixels: centre (xy), inner radius (z),
     // and bezel/handle pixel-art block size (w); z = 0 outside the lens pass.
     lens: vec4<f32>,
-    // Nonempty coat (x), rear or side glass (y), and front film on opaque water (z).
+    // Nonempty coat (x), rear or side glass (y), front film on opaque water (z),
+    // and OLED mode (w: 1 when the tank is opaque and its background is true
+    // black, 0 otherwise; see `oled`).
     algae: vec4<f32>,
     // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
     // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
@@ -121,6 +123,18 @@ const HAZE_MIX: f32 = 0.22;
 const HAZE_DIM: f32 = 0.1;
 // Haze colour, sRGB-encoded: a deep water blue.
 const HAZE: vec3<f32> = vec3<f32>(0.11, 0.27, 0.42);
+
+// OLED mode (opaque tanks only; the host clears it for the overlay): water,
+// air and the letterbox are exactly black, and the depth haze fades to black
+// instead of blue, so only creatures, plants, ground, devices, bubbles and
+// ripples light pixels.
+fn oled() -> bool {
+    return view.algae.w > 0.5;
+}
+
+fn haze() -> vec3<f32> {
+    return select(HAZE, vec3<f32>(0.0), oled());
+}
 
 // Ground styles stored in palette.a (palette.rs GroundStyle; renderer.rs checks them).
 const STYLE_DEFAULT: i32 = 0;
@@ -1079,6 +1093,9 @@ fn depth_factor(y: f32) -> f32 {
 // Sub-cell background water colour at `(at, quarter)` (used behind bubbles,
 // hardscape silhouettes and detritus edges).
 fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> vec3<f32> {
+    if oled() {
+        return mix(vec3<f32>(0.0), rear.rgb, rear.a);
+    }
     let mat = max(i32(round(view.plant_parts.w)), 0);
     let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
     let sub = quarter / 2;
@@ -1093,6 +1110,9 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> v
 // Sub-cell background air colour at `(at, quarter)` (used by air cells,
 // above-water device cells and HOB surface wave troughs).
 fn air_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
+    if oled() {
+        return vec3<f32>(0.0);
+    }
     let mat = max(i32(round(view.plant_parts2.w)), 0);
     let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
     let sub = quarter / 2;
@@ -1459,6 +1479,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let tinted = select(0.0, 1.0, s == STYLE_WATER || s == STYLE_FERTILISER);
         let depth = clamp((f32(at.y) - view.surface_row) / max(view.grid.y - view.surface_row, 1.0), 0.0, 1.0);
         var rgb = c.rgb * (1.0 - view.depth_dim * depth * tinted);
+        if oled() && (s == STYLE_WATER || s == STYLE_AIR) {
+            rgb = vec3<f32>(0.0);
+        }
         if s == STYLE_WATER || s == STYLE_AIR {
             rgb = surface_ripple(rgb, at, vec2<i32>(1, 1), false, s == STYLE_AIR);
         }
@@ -1481,7 +1504,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
             let h1 = hash(vec2<i32>(i32(u32(p.x) >> 1u), p.y));
             let h2 = hash(p);
             let grain = 1.0 + (f32(h1 & 7u) - 3.5) * 0.005 + (f32(h2 & 3u) - 1.5) * 0.004;
-            rgb = base * d * grain;
+            rgb = select(base * d * grain, vec3<f32>(0.0), oled());
         } else {
             // Liquid fertiliser: wispy plume variation driven by cell variant.
             let h = hash_grain(vec2<i32>(i32(u32(p.x) >> 1u), p.y), v);
@@ -1491,7 +1514,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         // Crisp water-surface highlight where water meets air. Only cells near
         // the water surface can touch air above, so skip the neighbour read
         // everywhere else in the water column.
-        if at.y > 0 && abs(f32(at.y) - view.surface_row) <= 8.0 && (!fine || quarter.y < 3) {
+        if at.y > 0 && abs(f32(at.y) - view.surface_row) <= 8.0 && (!fine || quarter.y < 3)
+            && !(oled() && style == STYLE_WATER)
+        {
             let above_at = at + vec2<i32>(0, -1);
             let above = textureLoad(cells, above_at, 0);
             if i32(round(above.r * 255.0)) != mat && effective_style(above_at, style_of(above)) == STYLE_AIR {
@@ -1954,7 +1979,7 @@ fn band_at(at: vec2<i32>) -> f32 {
 // and dimmed a little, more towards the back, unchanged at the front.
 fn depth_cue(rgb: vec3<f32>, depth: f32) -> vec3<f32> {
     let t = clamp(depth / BACK_BAND, 0.0, 1.0);
-    return mix(rgb, HAZE, HAZE_MIX * t) * (1.0 - HAZE_DIM * t);
+    return mix(rgb, haze(), HAZE_MIX * t) * (1.0 - HAZE_DIM * t);
 }
 
 fn inside(at: vec2<i32>) -> bool {

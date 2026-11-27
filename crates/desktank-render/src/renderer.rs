@@ -533,6 +533,7 @@ impl Renderer {
         overlay: Overlay,
         lens: [f32; 4],
         overlay_water_alpha: Option<f32>,
+        oled: bool,
     ) -> Vec<u8> {
         let Overlay {
             palette,
@@ -610,7 +611,7 @@ impl Renderer {
             if self.format.is_srgb() { 1.0 } else { 0.0 },
         ]
         .into_iter()
-        .chain(backdrop(overlay_water_alpha))
+        .chain(backdrop(overlay_water_alpha, oled))
         .chain(hud)
         .chain(card)
         .chain(inspect)
@@ -624,7 +625,7 @@ impl Renderer {
             f32::from(self.algae.coat_visible),
             f32::from(self.algae.rear_film_visible),
             f32::from(self.algae.front_film_visible && overlay_water_alpha.is_none()),
-            0.0,
+            f32::from(oled_applies(overlay_water_alpha, oled)),
         ])
         .chain(ripple_slots.into_iter().flatten())
         .flat_map(f32::to_le_bytes)
@@ -650,6 +651,7 @@ impl Renderer {
         ripples: &[[f32; 4]],
         surface_ripple_threshold: f32,
         overlay: Overlay,
+        oled: bool,
         timer: Option<&GpuTimer>,
     ) {
         let bytes = self.pack_view(
@@ -665,6 +667,7 @@ impl Renderer {
             overlay,
             [0.0; 4],
             overlay_water_alpha,
+            oled,
         );
         if bytes != self.view {
             gpu.queue.write_buffer(&self.view_buffer, 0, &bytes);
@@ -698,6 +701,7 @@ impl Renderer {
                 },
                 lens_info,
                 overlay_water_alpha,
+                oled,
             );
             if lens_bytes != self.lens_view {
                 gpu.queue
@@ -1387,9 +1391,20 @@ fn front_in_layers(format: wgpu::TextureFormat, split_grid: bool) -> bool {
     format.is_srgb() && !split_grid
 }
 
-/// The sRGB-encoded backdrop and the overlay water opacity (-1 for opaque mode).
-fn backdrop(overlay_water_alpha: Option<f32>) -> [f32; 4] {
-    let [r, g, b] = BACKDROP.map(|c| f32::from(c) / 255.0);
+/// Whether OLED mode (true black water, air and letterbox) takes effect: only
+/// on opaque tanks, never on the translucent click-through overlay.
+fn oled_applies(overlay_water_alpha: Option<f32>, oled: bool) -> bool {
+    oled && overlay_water_alpha.is_none()
+}
+
+/// The sRGB-encoded backdrop (black in OLED mode) and the overlay water
+/// opacity (-1 for opaque mode).
+fn backdrop(overlay_water_alpha: Option<f32>, oled: bool) -> [f32; 4] {
+    let [r, g, b] = if oled_applies(overlay_water_alpha, oled) {
+        [0.0; 3]
+    } else {
+        BACKDROP.map(|c| f32::from(c) / 255.0)
+    };
     [r, g, b, overlay_water_alpha.unwrap_or(-1.0)]
 }
 
@@ -1401,6 +1416,21 @@ fn side(n: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oled_mode_blacks_the_backdrop_only_on_opaque_tanks() {
+        assert_eq!(super::backdrop(None, true), [0.0, 0.0, 0.0, -1.0]);
+        let normal = super::backdrop(None, false);
+        assert!(normal[..3].iter().any(|&c| c > 0.0), "{normal:?}");
+        // The translucent overlay ignores OLED mode.
+        assert_eq!(super::backdrop(Some(0.5), true), {
+            let [r, g, b, _] = normal;
+            [r, g, b, 0.5]
+        });
+        assert!(super::oled_applies(None, true));
+        assert!(!super::oled_applies(Some(0.5), true));
+        assert!(!super::oled_applies(None, false));
+    }
+
     #[test]
     fn sway_lean_builds_up_through_a_jet_and_fades_above_it() {
         // One column of 6 field rows, a rightward jet in row 3 only.
