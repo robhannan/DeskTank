@@ -239,7 +239,7 @@ impl World {
                 satisfaction: match need {
                     Need::Hunger => satiety_percent(c),
                     Need::Social => c.needs.observed,
-                    Need::Shelter => PERCENT - c.needs.observed,
+                    Need::Shelter => PERCENT.saturating_sub(c.needs.observed),
                     Need::Light | Need::Co2 | Need::Nutrients => 0,
                 },
             })
@@ -293,8 +293,13 @@ impl World {
             && (mates.len() > 1 || mates.first().is_some_and(|m| m.id != c.id));
         let feasible = match c.needs.action {
             // An idle fish that has had enough of open water looks for cover
-            // rather than carry on.
-            Action::Idle => food.is_none() && !school_available && !self.tired_of_open_water(k, c),
+            // on its shelter-sample cadence rather than carrying on.
+            Action::Idle => {
+                food.is_none()
+                    && !school_available
+                    && !(self.tired_of_open_water(k, c)
+                        && (self.tick + u64::from(c.id.0)).is_multiple_of(SHELTER_SAMPLE))
+            }
             Action::Wander | Action::Cover => true,
             Action::Forage => food.is_some(),
             Action::School => school_available,
@@ -373,7 +378,8 @@ impl World {
     /// Whether a fish that wants cover (see [`World::cover_option`]) is
     /// out in the open past its tolerance.
     fn tired_of_open_water(&self, k: &Kind, c: &Creature) -> bool {
-        k.needs.is_some_and(|w| w.shelter > 0)
+        self.plant_count() > 0
+            && k.needs.is_some_and(|w| w.shelter > 0)
             && u64::from(c.needs.observed) > self.exposure_tolerance(c)
     }
 
@@ -391,7 +397,7 @@ impl World {
     fn cover_option(&self, k: &Kind, c: &Creature) -> Option<(u64, i32, i32, u8)> {
         let weights = k.needs.filter(|w| w.shelter > 0)?;
         let exposure = u64::from(c.needs.observed);
-        if exposure == 0 {
+        if exposure == 0 || self.plant_count() == 0 {
             return None;
         }
         let q = self.quirks(c);
@@ -408,7 +414,7 @@ impl World {
         // reconsiders every tick looks every half second, not every tick.
         let due = c.needs.action != Action::Idle
             || (self.tick + u64::from(c.id.0)).is_multiple_of(SHELTER_SAMPLE);
-        if self.plant_count() == 0 || !due {
+        if !due {
             return None;
         }
         let (x, y, band) = self.find_cover_within(k, c, SHELTER_SENSE)?;

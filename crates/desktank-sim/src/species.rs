@@ -1059,10 +1059,11 @@ fn validate(
         // creature saves (see the needs module) belongs to one need.
         if w.hunger == 0
             || (w.social > 0 && d.temperament != Temperament::Schooling)
+            || (d.temperament == Temperament::Schooling && w.social == 0)
             || (w.social > 0 && w.shelter > 0)
         {
             return Err(invalid(
-                "needs need a hunger weight; social only for a schooler, and not with shelter",
+                "needs need a hunger weight; social is required for and limited to schoolers, and not with shelter",
             ));
         }
     }
