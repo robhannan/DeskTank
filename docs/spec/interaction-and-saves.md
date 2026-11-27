@@ -277,6 +277,19 @@
   scales life only. `--time` and `capture` pin the time instead.
   The clock advances only in simulated ticks and catch-up, never while
   hidden, and requests a frame only when the tint changes.
+- **OLED mode** (`display.oled` in `config.toml`, `--oled` on `window`
+  and `capture`, a checkbox in the web's settings panel, an adb flag on
+  Android (§3.6); off by default everywhere) renders every background
+  pixel of the opaque tank as exactly sRGB 0,0,0: the water (no depth
+  darkening, grain, surface highlight or day/night tint), the air above
+  it and the letterbox, so an OLED panel switches those pixels off. The
+  depth haze fades colours to black instead of blue. Creatures, plants,
+  ground, devices, bubbles, algae and ripples draw as usual, and a
+  creature or plant lit by the day/night tint still is. The click-through
+  overlay (translucent water) ignores it. The host passes it to the
+  renderer (`Tank::set_oled`) and changing it only redraws: no pipeline
+  is rebuilt and the frame rate is unchanged. `config.toml` changes apply
+  live in `window`.
 - **Persistence.** Each tank (one per display, or one spanning tank) is
   saved to the platform data dir every 5 minutes and on exit.
   - **Envelope:** magic bytes, format version, payload length, CRC32,

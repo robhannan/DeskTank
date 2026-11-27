@@ -32,6 +32,8 @@ pub struct Options {
     pub field: Option<FieldOverlay>,
     /// Enable optional render-only plant sway.
     pub sway: bool,
+    /// OLED mode: true black water, air and letterbox.
+    pub oled: bool,
     /// Draw with the split grid ([`GpuOptions::split_grid`]).
     pub split_grid: bool,
     /// Output directory.
@@ -71,6 +73,7 @@ pub fn run(opts: &Options) -> anyhow::Result<()> {
     let mut tank = Tank::new(world, TankConfig::default());
     tank.set_field_overlay(opts.field);
     tank.set_sway(opts.sway);
+    tank.set_oled(opts.oled);
     if let Some(minute) = opts.time {
         tank.set_time_of_day(minute);
     }
