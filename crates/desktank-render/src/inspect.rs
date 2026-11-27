@@ -1043,7 +1043,8 @@ mod tests {
         let live = live(&w, what).unwrap();
         assert_eq!(live.title, format!("Hygrophila #{}", id.0));
         assert_eq!(live.fields[0], ("Age:", "under a day".to_owned()));
-        assert!(build(&w, what, InspectPage::Species, &live).is_some());
+        let (species, _) = build(&w, what, InspectPage::Species, &live).unwrap();
+        assert!(!species.clipped);
         let a = anchor(&w, what).unwrap();
         assert!(a[0] <= 40.0 && a[2] > 40.0, "{a:?}");
     }

@@ -81,13 +81,14 @@
     differently; for a plant, a small sprite of a mature example of it,
     drawn on the CPU from its growth form, shapes and colours in
     `desktank_render::plant_sprite`), adult size (both sexes'
-    where they differ), diet, behaviour, needs (or a plant's form and
-    needs) and description, all from the species data. It is drawn in
-    the canvas on every host from a second region of the HUD texture, in
-    a small CPU-built pixel font (`desktank_render::font`, shared with
-    the in-tank inspect card), so it needs no new pipeline and is
-    WebGL2-safe. It is built only when the species or morph selection
-    changes and costs nothing while nothing is selected.
+    where they differ), diet, behaviour, needs (or a plant's form, needs
+    and a **Roots in** row when it roots in substrate) and description,
+    all from the species data. It is drawn in the canvas on every host
+    from a second region of the HUD texture, in a small CPU-built pixel
+    font (`desktank_render::font`, shared with the in-tank inspect card),
+    so it needs no new pipeline and is WebGL2-safe. It is built only when
+    the species or morph selection changes and costs nothing while
+    nothing is selected.
     Every card is shown at one scale on a given canvas
     (`desktank_render::card_scale`), chosen from the largest card rather
     than the one being shown, so choosing another species never resizes
