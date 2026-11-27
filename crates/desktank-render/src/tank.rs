@@ -2057,6 +2057,33 @@ mod tests {
     }
 
     #[test]
+    fn a_paused_touring_tank_goes_idle_like_a_plain_paused_one() {
+        for fish in [0, 3] {
+            let mut tank = touring_tank(fish, TourSettings::default());
+            count_frames_every(&mut tank, Duration::ZERO, 5, 10);
+            // A host holding the clock (a paused owner, a viewer) pauses the
+            // tank before every tick: no step runs, so the view is still.
+            let view = tank.camera();
+            let mut frames = 0;
+            for step in 1..=300u64 {
+                let now = Duration::from_secs(5) + Duration::from_millis(step * 10);
+                tank.pause();
+                let req = tank.tick(now);
+                assert_eq!(req.sim_ticks, 0);
+                if req.redraw {
+                    tank.mark_drawn();
+                    frames += 1;
+                }
+            }
+            // The one draw owed for the change in flight is fine; a stream
+            // of identical frames is not.
+            assert!(frames <= 1, "{fish} fish: {frames} frames in 3 s paused");
+            assert!(!tank.frame_wanted(), "{fish} fish: still wants a frame");
+            assert_eq!(tank.camera(), view);
+        }
+    }
+
+    #[test]
     fn the_tour_waits_for_a_target_size_and_follows_a_resize() {
         let mut tank = settled_planted_tank();
         let guppy = tank.world().species().id("guppy").unwrap();
