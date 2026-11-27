@@ -68,6 +68,8 @@ pub struct CreatureCard {
     pub health: f32,
     /// How full its energy reserve is, 0 to 1.
     pub energy: f32,
+    /// Satisfaction of supported needs, in display order.
+    pub needs: Vec<super::NeedReading>,
     /// Its sex.
     pub female: bool,
     /// The morph it shows, if its species has more than one.
@@ -153,6 +155,7 @@ impl World {
             age_days: c.age / LIFE_DAY_TICKS,
             health: c.health(),
             energy,
+            needs: self.creature_needs(c),
             female: c.female,
             morph,
             carrying_days: (c.carrying > 0).then(|| c.carrying.div_ceil(LIFE_DAY_TICKS)),

@@ -325,6 +325,11 @@
     - each creature's swim pitch (version 18, #98). Older saves start
       with level swim poses;
     - the time ratio (version 19, #74). Older saves load at real time;
+    - the last social satisfaction reading and action commitment of each
+      creature (version 20, #433). Older saves start undecided with no
+      observed company. While away, there is no new social observation and
+      commitments expire. Hunger follows the existing away-time feeding
+      rules;
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.

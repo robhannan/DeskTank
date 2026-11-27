@@ -8,7 +8,7 @@ use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
 use crate::save::{
-    SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19,
+    SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20,
 };
 use crate::species::SpeciesId;
 
@@ -141,6 +141,19 @@ impl World {
         let mut world = Self::from_v18(s.base, materials)?;
         world.time_ratio = s.time_ratio;
         world.life_accum = s.life_accum;
+        Ok(world)
+    }
+
+    pub(crate) fn to_v20(&self) -> v20::Save {
+        v20::Save {
+            base: self.to_v19(),
+            needs: self.save_needs(),
+        }
+    }
+
+    pub(crate) fn from_v20(s: v20::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let mut world = Self::from_v19(s.base, materials)?;
+        world.load_needs(&s.needs)?;
         Ok(world)
     }
 

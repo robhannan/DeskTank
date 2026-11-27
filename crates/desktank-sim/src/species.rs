@@ -252,6 +252,8 @@ pub struct Species {
     pub air_tolerance_seconds: u32,
     /// Temperament.
     pub temperament: Temperament,
+    /// Optional weights for needs-based steering.
+    pub needs: Option<NeedWeights>,
     /// Whether it seeks cover and startles easily.
     pub shy: bool,
     /// Whether it investigates the cursor and nearby pours.
@@ -620,6 +622,16 @@ pub enum SpeciesError {
     },
 }
 
+/// Relative influence of each need on steering, in percent of its deficit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NeedWeights {
+    /// Influence of missing satiety.
+    pub hunger: u8,
+    /// Influence of missing nearby company.
+    pub social: u8,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools)] // independent species traits
@@ -638,6 +650,7 @@ struct SpeciesDef {
     #[serde(default)]
     air_tolerance_seconds: Option<u32>,
     temperament: Temperament,
+    needs: Option<NeedWeights>,
     #[serde(default)]
     shy: bool,
     #[serde(default)]
@@ -1152,6 +1165,7 @@ fn validate(
         breathes_air: d.breathes_air,
         air_tolerance_seconds: d.air_tolerance_seconds.unwrap_or(0),
         temperament: d.temperament,
+        needs: d.needs,
         shy: d.shy,
         curious: d.curious,
         skittish: d.skittish,
