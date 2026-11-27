@@ -13,6 +13,8 @@ use crate::layout::Layout;
 
 /// Size of the shader's `Post` uniform block, in bytes (three vec4s).
 const UNIFORM_BYTES: u64 = 48;
+/// [`UNIFORM_BYTES`] as an array length.
+const UNIFORM_LEN: usize = 48;
 
 /// The post pass: its pipeline and uniform, built when a camera is first
 /// set and kept for the next one.
@@ -22,7 +24,7 @@ pub(crate) struct Post {
     layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     /// Uniform bytes last written.
-    written: Vec<u8>,
+    written: Option<[u8; UNIFORM_LEN]>,
 }
 
 impl Post {
@@ -98,7 +100,7 @@ impl Post {
             pipeline,
             layout,
             uniform,
-            written: Vec::new(),
+            written: None,
         }
     }
 
@@ -118,9 +120,9 @@ impl Post {
         backdrop: [f32; 4],
     ) {
         let bytes = uniform_bytes(view, layout, size, backdrop);
-        if bytes != self.written {
+        if self.written != Some(bytes) {
             gpu.queue.write_buffer(&self.uniform, 0, &bytes);
-            self.written = bytes;
+            self.written = Some(bytes);
         }
     }
 }
@@ -129,7 +131,12 @@ impl Post {
 /// corner and source pixels per output pixel, then the inverse of those
 /// and the source size, then the backdrop.
 #[allow(clippy::cast_precision_loss)] // pixels and cells, far below 2^24
-fn uniform_bytes(view: ViewRect, layout: &Layout, size: (u32, u32), backdrop: [f32; 4]) -> Vec<u8> {
+fn uniform_bytes(
+    view: ViewRect,
+    layout: &Layout,
+    size: (u32, u32),
+    backdrop: [f32; 4],
+) -> [u8; UNIFORM_LEN] {
     let scale = layout.scale as f32;
     let step = (
         view.w * scale / size.0 as f32,
@@ -149,7 +156,11 @@ fn uniform_bytes(view: ViewRect, layout: &Layout, size: (u32, u32), backdrop: [f
         backdrop[2],
         backdrop[3],
     ];
-    floats.into_iter().flat_map(f32::to_le_bytes).collect()
+    let mut bytes = [0; UNIFORM_LEN];
+    for (chunk, f) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(floats) {
+        *chunk = f.to_le_bytes();
+    }
+    bytes
 }
 
 /// The image the tank draws into while a camera is set, and the bind group
