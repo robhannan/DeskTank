@@ -1157,6 +1157,19 @@ impl WebTank {
         self.tank.set_sway(enabled);
     }
 
+    /// Turns OLED mode on or off (off by default): true black water, air
+    /// and letterbox. Only the next frame changes; no pipeline is rebuilt.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setOled))]
+    pub fn set_oled(&mut self, enabled: bool) {
+        self.tank.set_oled(enabled);
+    }
+
+    /// Whether OLED mode is on.
+    #[must_use]
+    pub fn oled(&self) -> bool {
+        self.tank.oled()
+    }
+
     /// Whether optional plant sway is enabled.
     #[must_use]
     pub fn sway(&self) -> bool {

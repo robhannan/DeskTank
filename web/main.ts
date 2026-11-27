@@ -100,7 +100,7 @@ const LOCK = "desktank.tank.main";
 const AUTOSAVE_MS = 5 * 60 * 1000;
 const NOTICE_MS = 6000;
 const DEFAULTS: Readonly<Settings> = Object.freeze({
-  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, stats: true, seed: 1, radius: 3,
+  scale: 0, fps: "auto", field: "", avoidCursor: false, easyMode: false, catchUp: false, sway: false, swayOnBattery: false, oled: false, stats: true, seed: 1, radius: 3,
 });
 
 const params = new URLSearchParams(location.search);
@@ -280,6 +280,7 @@ function loadSettings(): Settings {
     catchUp: saved.catchUp === true,
     sway: saved.sway === true,
     swayOnBattery: saved.swayOnBattery === true,
+    oled: saved.oled === true,
     stats: typeof saved.stats === "boolean" ? saved.stats : DEFAULTS.stats,
     seed: int(saved.seed, 0, 0xffffffff, DEFAULTS.seed),
     radius: int(saved.radius, 0, 24, DEFAULTS.radius), // the tank clamps it too
@@ -310,6 +311,7 @@ function showSettings() {
   $<HTMLInputElement>("set-catch-up").checked = settings.catchUp;
   $<HTMLInputElement>("set-sway").checked = settings.sway;
   $<HTMLInputElement>("set-sway-on-battery").checked = settings.swayOnBattery;
+  $<HTMLInputElement>("set-oled").checked = settings.oled;
   $<HTMLInputElement>("set-stats").checked = settings.stats;
   seedInput.value = String(settings.seed);
   brushInput.value = String(settings.radius);
@@ -322,6 +324,7 @@ function showSettings() {
     tank.setEasyMode(settings.easyMode);
     tank.setSway(settings.sway);
     tank.setAllowSwayOnBattery(settings.swayOnBattery);
+    tank.setOled(settings.oled);
     tank.setOnBattery(onBattery);
     tank.setHidden(hidden);
     tank.setRadius(settings.radius);
@@ -1958,6 +1961,7 @@ function wireSettings(resetTank: () => void) {
   $("set-catch-up").addEventListener("change", (e) => update({ catchUp: checkedOf(e) }));
   $("set-sway").addEventListener("change", (e) => update({ sway: checkedOf(e) }));
   $("set-sway-on-battery").addEventListener("change", (e) => update({ swayOnBattery: checkedOf(e) }));
+  $("set-oled").addEventListener("change", (e) => update({ oled: checkedOf(e) }));
   $("set-stats").addEventListener("change", (e) => {
     update({ stats: checkedOf(e) });
     updateStats();

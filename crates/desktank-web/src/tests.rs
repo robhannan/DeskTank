@@ -967,6 +967,19 @@ fn sway_is_off_by_default_and_toggles() {
 }
 
 #[test]
+fn oled_mode_is_off_by_default_and_toggles() {
+    let mut t = tank();
+    assert!(!t.oled());
+    t.set_oled(true);
+    assert!(t.oled());
+    // The frame it changes is wanted even without a GPU to draw it.
+    assert_ne!(t.frame(0.0) & FRAME_WANTED, 0);
+    assert!(!t.save_needed(), "a render setting isn't a tank edit");
+    t.set_oled(false);
+    assert!(!t.oled());
+}
+
+#[test]
 fn maps_canvas_pixels_to_cells_with_letterbox() {
     let mut t = tank();
     // 512×288 holds 128×72 at scale 4 exactly.
