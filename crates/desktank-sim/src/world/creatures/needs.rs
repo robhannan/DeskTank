@@ -1,5 +1,7 @@
 //! Satisfaction describes the fish's state. Species weights and individual
 //! quirks determine how much a deficit matters when choosing what to do.
+//! A plant's care factors are read the same way ([`World::plant_needs`]),
+//! so one meter panel serves both.
 
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
@@ -13,6 +15,14 @@ pub enum Need {
     Hunger,
     /// How much company the creature has nearby.
     Social,
+    /// How well the light where a plant grows suits its species (a plant's
+    /// care factor, [`World::plant_needs`]): full at the species' optimum,
+    /// less above and below it.
+    Light,
+    /// How well the CO₂ around a plant suits its species.
+    Co2,
+    /// How well the nutrients around a plant suit its species.
+    Nutrients,
 }
 
 impl Need {
@@ -24,6 +34,9 @@ impl Need {
         match self {
             Self::Hunger => "Hunger",
             Self::Social => "Social",
+            Self::Light => "Light",
+            Self::Co2 => "CO₂",
+            Self::Nutrients => "Nutrients",
         }
     }
 }
