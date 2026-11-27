@@ -567,7 +567,7 @@ fn rosette(pic: &mut Pic, c: &Ctx, f: &RosetteForm) {
                 c,
                 x0,
                 -2,
-                height + 2,
+                (height + 2).min(30),
                 u * spread * 0.9,
                 Blade::Ribbon,
                 i,
@@ -684,7 +684,7 @@ fn pads(pic: &mut Pic, c: &Ctx, tx: i32, id: i32, blade_length: i32) {
     let stalks = 5;
     for i in 0..stalks {
         let u = unit_of(i, stalks);
-        let h = blade_length * 3 + 2 + c.roll(id * 9 + i, 6, 4) - (u.abs() * 2.0) as i32;
+        let h = (blade_length * 3 + 2 + c.roll(id * 9 + i, 6, 4) - (u.abs() * 2.0) as i32).max(1);
         let sx = |y: i32| tx + (u * 6.0 * (0.3 + 0.7 * y as f32 / h as f32)).round() as i32;
         for y in 0..h {
             pic.put(
@@ -722,7 +722,7 @@ fn pads(pic: &mut Pic, c: &Ctx, tx: i32, id: i32, blade_length: i32) {
 
 /// Floating leaves along the top line with roots hanging below.
 fn floater(pic: &mut Pic, c: &Ctx, f: &FloaterForm) {
-    let len = i32::from(f.root_length) * 2;
+    let len = (i32::from(f.root_length) * 2).clamp(4, 28);
     if c.look.leaf == LeafShape::Disc {
         let pads: [(i32, i32, i32); 4] = [(-15, 0, 12), (-4, -1, 10), (6, 0, 12), (16, -1, 10)];
         // Roots first, so the pads are in front of them.
@@ -803,12 +803,12 @@ fn epiphyte(pic: &mut Pic, c: &Ctx, f: &EpiphyteForm) {
         let x0 = (u * half as f32 * 0.8).round() as i32;
         let long = i32::from(f.leaf_length);
         if c.look.leaf == LeafShape::Pad {
-            let h = long * 2 + 2 + c.roll(i, 3, 4) - (u.abs() * 2.0) as i32;
+            let h = (long * 2 + 2 + c.roll(i, 3, 4) - (u.abs() * 2.0) as i32).clamp(8, 24);
             let drift = u * h as f32 * 0.6 * 6.0 / (lean + 6.0);
             anubias_leaf(pic, c, x0, h, drift);
         } else {
             let h = ((long as f32 * 1.5).round() as i32 - c.roll(i, 3, 4) - (u.abs() * 3.0) as i32)
-                .max(8);
+                .clamp(8, 28);
             let drift = u * h as f32 * 0.7 * 6.0 / (lean + 6.0) + u * 2.0;
             draw_blade(pic, c, x0, -2, h, drift, Blade::Sword { max: 3.0 }, i);
         }
@@ -1105,6 +1105,48 @@ mod tests {
         assert!((17..=21).contains(&w) && (17..=21).contains(&h), "{w}×{h}");
         let (w, h) = size("java_moss");
         assert!(w > 2 * h, "{w}×{h}");
+    }
+
+    #[test]
+    fn extreme_species_parameters_stay_within_bounds() {
+        let t = table();
+        let clone = |name: &str| t.get(t.id(name).unwrap()).unwrap().clone();
+
+        // Floater with maximum allowed hanging roots.
+        let mut frog = clone("frogbit");
+        if let Form::Floater(ref mut f) = frog.form {
+            f.root_length = desktank_sim::plants::MAX_HANGING_ROOT;
+        }
+        // Ribbon rosette with deep roots.
+        let mut val = clone("vallisneria");
+        if let Form::Rosette(ref mut f) = val.form {
+            f.root_depth = 20;
+        }
+        // Epiphytes with tiny and maximum leaf lengths.
+        let mut anubias_tiny = clone("anubias");
+        if let Form::Epiphyte(ref mut f) = anubias_tiny.form {
+            f.leaf_length = 1;
+        }
+        let mut anubias_huge = clone("anubias");
+        if let Form::Epiphyte(ref mut f) = anubias_huge.form {
+            f.leaf_length = desktank_sim::plants::MAX_POSITION;
+        }
+        let mut fern_huge = clone("java_fern");
+        if let Form::Epiphyte(ref mut f) = fern_huge.form {
+            f.leaf_length = desktank_sim::plants::MAX_POSITION;
+        }
+        // Carpet pad with zero blade length.
+        let mut mc_zero = clone("monte_carlo");
+        if let Form::Carpet(ref mut f) = mc_zero.form {
+            f.blade_length = 0;
+        }
+
+        for sp in [frog, val, anubias_tiny, anubias_huge, fern_huge, mc_zero] {
+            let ((w, h), px) = build(&sp);
+            assert!(w > 0 && w <= MAX_WIDTH, "{}: {w}×{h}", sp.name);
+            assert!(h > 0 && h <= MAX_HEIGHT, "{}: {w}×{h}", sp.name);
+            assert_eq!(px.len(), w * h);
+        }
     }
 
     /// Writes the sprites as PNGs to `target/shots/plant-*.png` when

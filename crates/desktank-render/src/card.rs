@@ -729,8 +729,8 @@ mod tests {
     }
 
     /// The pixels of `card` below the heading that are in `sprite`, drawn
-    /// at 1×: its opaque texels whose colour is not a text colour.
-    fn sprite_pixels_in(card: &CardImage, sprite: &plant_sprite::Sprite) -> usize {
+    /// at 1×, and how many non-UI-colour opaque texels `sprite` has.
+    fn sprite_pixels_in(card: &CardImage, sprite: &plant_sprite::Sprite) -> (usize, usize) {
         let text = [TITLE, LABEL, BODY, LATIN, BACKGROUND, FRAME];
         let colours: Vec<[u8; 3]> = sprite
             .1
@@ -739,10 +739,12 @@ mod tests {
             .map(|p| [p[0], p[1], p[2]])
             .filter(|c| !text.contains(c))
             .collect();
-        card.pixels
+        let in_card = card
+            .pixels
             .chunks(4)
             .filter(|p| colours.contains(&[p[0], p[1], p[2]]))
-            .count()
+            .count();
+        (in_card, colours.len())
     }
 
     #[test]
@@ -753,12 +755,12 @@ mod tests {
         for sp in p.iter() {
             let card = build(Card::Plant(sp.id), &m, &s, &p).unwrap();
             let sprite = plant_sprite::build(sp);
-            let opaque = sprite.1.iter().filter(|px| px[3] == 255).count();
-            // Every texel of the sprite is on the card, at 1× (text may add
-            // pixels of the same colour, never take them away).
+            let (in_card, expected) = sprite_pixels_in(&card, &sprite);
+            // Every non-UI-colour texel of the sprite is on the card, at 1×
+            // (text may add pixels of the same colour, never take them away).
             assert!(
-                sprite_pixels_in(&card, &sprite) >= opaque,
-                "{}: the sprite is not on its card",
+                in_card >= expected,
+                "{}: the sprite is not on its card ({in_card} < {expected})",
                 sp.name
             );
             // It sits within the card's width, centred under the heading.
