@@ -29,8 +29,8 @@
 //! pupils [`ALPHA_UNLIT`]; still opaque to every other test).
 
 use desktank_sim::{
-    Creature, Device, DeviceKind, DeviceKinds, LifeStage, Pane, SpeciesId, SpeciesTable,
-    TEXELS_PER_CELL, TICKS_PER_SECOND, World,
+    Creature, Device, DeviceKind, DeviceKinds, LifeStage, Pane, Part, PlantGhost, SpeciesId,
+    SpeciesTable, TEXELS_PER_CELL, TICKS_PER_SECOND, World,
 };
 
 /// Atlas width in texels; species shelves stack downwards. 512 wide keeps
@@ -47,6 +47,12 @@ pub const MAX_SPRITES: usize = desktank_sim::MAX_CREATURE_CAP
     + desktank_sim::MAX_LIVE_FOOD
     + desktank_sim::MAX_CORPSES
     + (desktank_sim::MAX_DEVICES + 1) * MAX_DEVICE_SLICES;
+/// Most cells of a whole-plant placement ghost drawn (a mature mat has a few
+/// hundred): they are one flat quad each, after every other sprite, and a
+/// larger ghost loses its last cells.
+pub const MAX_GHOST_CELLS: usize = 1024;
+/// Instance buffer capacity: [`MAX_SPRITES`] and the plant ghost's cells.
+pub const BUFFER_SPRITES: usize = MAX_SPRITES + MAX_GHOST_CELLS;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
 /// Floats per instance: cell (2), on-screen size (2), atlas origin (2),
@@ -75,6 +81,10 @@ pub const LOOK_DEAD: f32 = 2.0;
 /// A device's placement ghost (D27): drawn see-through, tinted red when
 /// it doesn't fit (the look's second float is 1).
 pub const LOOK_GHOST: f32 = 3.0;
+/// One cell of a whole-plant placement ghost: a flat quad in the colour in
+/// the instance's glow slot, see-through over everything, tinted red when
+/// the plant doesn't fit (the look's second float is 1).
+pub const LOOK_PLANT_GHOST: f32 = 4.0;
 /// The depth devices are drawn at, in bands (D21): just behind the front
 /// band, so a creature or plant there passes in front of the glass-mounted
 /// body while the rest of the tank is behind it.
@@ -279,15 +289,18 @@ impl Atlas {
     /// count.
     #[cfg(test)]
     pub fn instances(&self, world: &World, sprites: &mut Vec<Sprite>, out: &mut Vec<f32>) -> u32 {
-        self.instances_with(world, None, sprites, out)
+        self.instances_with(world, None, None, sprites, out)
     }
 
     /// [`Atlas::instances`], then slices for each device and
-    /// the placement `ghost` if any (whether it fits), drawn last.
+    /// the placement `ghost` if any (whether it fits), drawn last, then one
+    /// flat quad per cell of the whole-plant `plant_ghost` if any (up to
+    /// [`MAX_GHOST_CELLS`]), drawn after them all.
     pub fn instances_with(
         &self,
         world: &World,
         ghost: Option<(Device, bool)>,
+        plant_ghost: Option<&PlantGhost>,
         sprites: &mut Vec<Sprite>,
         out: &mut Vec<f32>,
     ) -> u32 {
@@ -377,6 +390,9 @@ impl Atlas {
         // Stable, so equal depths keep the world's order.
         sprites[ghost_count..].sort_by(|a, b| b.depth.total_cmp(&a.depth));
         sprites.rotate_left(ghost_count);
+        if let Some(g) = plant_ghost {
+            push_plant_ghost(world, g, sprites);
+        }
         for s in sprites.iter() {
             s.push(out);
         }
@@ -474,6 +490,62 @@ impl Atlas {
             glow: [0.0; 4],
             burrower: false,
         }
+    }
+}
+
+/// The cells of a whole-plant placement ghost as flat quads, each in its
+/// species' ramp for its part: shaded by where along its part it sits (the
+/// ghost's longest run of that part is the top of the ramp), nudged by the
+/// cell's colour noise so a mat or a blade patch isn't one flat tone.
+fn push_plant_ghost(world: &World, ghost: &PlantGhost, sprites: &mut Vec<Sprite>) {
+    let Some(species) = world.plant_species().get(ghost.species) else {
+        return;
+    };
+    let ramp_of = |part: Part| match part {
+        Part::Root => (0, &species.colours.root),
+        Part::Stem | Part::Runner | Part::Rhizome => (1, &species.colours.stem),
+        Part::Leaf | Part::Float => (2, &species.colours.leaf),
+    };
+    let mut longest = [1_u8; 3];
+    for c in &ghost.cells {
+        let (k, _) = ramp_of(c.part);
+        longest[k] = longest[k].max(desktank_sim::plants::plant_position(c.variant));
+    }
+    let tint = if ghost.fits { 0.0 } else { 1.0 };
+    for c in ghost.cells.iter().take(MAX_GHOST_CELLS) {
+        let (k, ramp) = ramp_of(c.part);
+        let Some(last) = ramp.len().checked_sub(1) else {
+            continue;
+        };
+        let along =
+            f32::from(desktank_sim::plants::plant_position(c.variant)) / f32::from(longest[k]);
+        // Ramp shades are few: exact in f32.
+        #[allow(clippy::cast_precision_loss)]
+        let at = along * last as f32 + (f32::from(c.variant >> 6) - 1.5) * 0.35;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )] // clamped, and a handful of shades
+        let shade = at.round().clamp(0.0, last as f32) as usize;
+        let [r, g, b] = ramp[shade].map(|v| f32::from(v) / 255.0);
+        // Cell coordinates are small: exact in f32.
+        #[allow(clippy::cast_precision_loss)]
+        let centre = (c.x as f32 + 0.5, c.y as f32 + 0.5);
+        sprites.push(Sprite {
+            centre,
+            size: (1, 1),
+            origin: (0, 0),
+            fine: (0, 0),
+            frame: (1, 1),
+            flip: false,
+            turn: 0,
+            pitch: 0,
+            look: [LOOK_PLANT_GHOST, tint],
+            depth: 0.0,
+            glow: [r, g, b, 0.0],
+            burrower: false,
+        });
     }
 }
 
@@ -1340,7 +1412,7 @@ mod tests {
         let count = atlas.instances(&w, &mut sprites, &mut out);
         assert!(count > 2);
         assert_eq!(
-            atlas.instances_with(&w, Some((ghost, false)), &mut sprites, &mut out),
+            atlas.instances_with(&w, Some((ghost, false)), None, &mut sprites, &mut out),
             count * 2
         );
         let (instances, remainder) = out.as_chunks::<INSTANCE_FLOATS>();

@@ -31,7 +31,11 @@
       wafers, frozen brine shrimp), Live (live bloodworms, live brine shrimp);
     - **Care**: root tabs, liquid fertiliser, waste, detritus;
     - **Plants**: Stem, Rosette, Carpet, Floating, Moss & epiphytes
-      (one item per plant species);
+      (one item per plant species; `P` or the "as" chips pick how it
+      starts: its propagules, or a whole **juvenile** or **mature** plant
+      with a see-through placement ghost at the pointer and the same flip
+      key (X) or button as a device, mirroring it left to right; see
+      [plants](plants.md) §2.7);
     - **Fish**, by stocking role: Schooling (neon tetra, harlequin
       rasbora, guppy), Centrepiece (angelfish, betta, flowerhorn, honey
       gourami, pea puffer), Coldwater (common and fancy goldfish),

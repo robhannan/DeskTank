@@ -99,6 +99,7 @@ impl Brush {
                 }),
         );
         tank.set_device_ghost(self.tools.ghost(tank.world()));
+        tank.set_plant_ghost(self.tools.plant_ghost(tank.world()));
         tank.set_magnifier(
             self.tools
                 .magnifier()

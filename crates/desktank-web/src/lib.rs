@@ -50,7 +50,7 @@ use desktank_sim::tools::{
 };
 use desktank_sim::{
     CreatureCard, CreatureId, DEFAULT_CREATURE_CAP, DeviceId, MAX_CREATURE_CAP, MaterialTable,
-    Mount, NeedReading, Propagule, RinseKind, Script, Species, World, WorldConfig,
+    Mount, NeedReading, PlantStart, RinseKind, Script, Species, World, WorldConfig,
     catch_up_seconds, cheats, save,
 };
 #[cfg(target_arch = "wasm32")]
@@ -313,7 +313,7 @@ impl WebTank {
     /// it; the name is the material's), `tool` (`scoop`, `glue`, `net`,
     /// `inspect`), `device` (place it; the name is its material's),
     /// `creature` (add one; the name is the species'), `live_food` (add a
-    /// pinch) or `plant` (pour the plant species named, as the propagule
+    /// pinch) or `plant` (pour the plant species named, as the start
     /// [`WebTank::set_plant_propagule`] picked for it).
     #[must_use]
     pub fn palette(&self) -> Vec<String> {
@@ -413,50 +413,59 @@ impl WebTank {
             .collect()
     }
 
-    /// The propagules the selected plant's species grows from, as names
-    /// (`seeds`, `cuttings`, `fragments`, `runners`, `buds`): the page's
-    /// propagule chips. Empty unless a plant slot is selected.
+    /// The ways the selected plant's species starts, as names: its
+    /// propagules (`seeds`, `cuttings`, `fragments`, `runners`, `buds`),
+    /// then `juvenile` and `mature` (a whole plant): the page's start
+    /// chips. Empty unless a plant slot is selected.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagules))]
     #[must_use]
     pub fn plant_propagules(&self) -> Vec<String> {
-        let world = self.tank.world();
         self.tools
-            .selected_plant()
-            .and_then(|id| world.plant_species().get(id))
-            .map_or_default(|s| s.propagules().map(|p| p.name().to_owned()).collect())
+            .plant_starts(self.tank.world())
+            .into_iter()
+            .map(|p| p.name().to_owned())
+            .collect()
     }
 
-    /// The propagule the selected plant slot pours (one of
+    /// The start the selected plant slot places (one of
     /// [`WebTank::plant_propagules`]), or `""` unless a plant slot is
     /// selected.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = plantPropagule))]
     #[must_use]
     pub fn plant_propagule(&self) -> String {
         self.tools
-            .plant_propagule(self.tank.world())
+            .plant_start(self.tank.world())
             .map_or_else(String::new, |p| p.name().to_owned())
     }
 
-    /// Picks the propagule the selected plant slot pours, by name, and
-    /// keeps it for that species; ignored (returns false) unless a plant
-    /// slot is selected and its species grows from it.
+    /// Picks the start the selected plant slot places, by name, and keeps
+    /// it for that species; ignored (returns false) unless a plant slot is
+    /// selected and its species offers it. Changing it refreshes the ghost
+    /// and whether flip is on offer.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = setPlantPropagule))]
     pub fn set_plant_propagule(&mut self, name: &str) -> bool {
-        Propagule::from_name(name)
-            .is_some_and(|p| self.tools.set_plant_propagule(self.tank.world(), p))
+        let taken = PlantStart::from_name(name)
+            .is_some_and(|p| self.tools.set_plant_start(self.tank.world(), p));
+        if taken {
+            self.sync_cursor();
+        }
+        taken
     }
 
-    /// Picks the next propagule the selected plant's species grows from
-    /// (wrapping; the `P` key) and returns its name, or `""` unless a plant
-    /// slot is selected.
+    /// Picks the next start the selected plant's species offers (wrapping;
+    /// the `P` key) and returns its name, or `""` unless a plant slot is
+    /// selected.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = nextPlantPropagule))]
     pub fn next_plant_propagule(&mut self) -> String {
-        self.tools
-            .next_plant_propagule(self.tank.world())
-            .map_or_else(String::new, |p| p.name().to_owned())
+        let name = self
+            .tools
+            .next_plant_start(self.tank.world())
+            .map_or_else(String::new, |p| p.name().to_owned());
+        self.sync_cursor();
+        name
     }
 
-    /// Takes `old`'s propagule picks (one per plant species), for a new
+    /// Takes `old`'s start picks (one per plant species), for a new
     /// tank replacing it.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = keepPlantPicks))]
     pub fn keep_plant_picks(&mut self, old: &WebTank) {
@@ -753,14 +762,16 @@ impl WebTank {
     }
 
     /// Whether the selected tool places a device that can be flipped onto the
-    /// other side glass (D27).
+    /// other side glass (D27), or a whole (juvenile or mature) plant, which
+    /// it mirrors left to right.
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = canFlipDevice))]
     #[must_use]
     pub fn can_flip_device(&self) -> bool {
         self.tools.can_flip(self.tank.world())
     }
 
-    /// Whether the next placed device is mirrored onto the other side glass.
+    /// Whether the next placed device is mirrored onto the other side glass
+    /// (or the next whole plant left to right).
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = deviceFlipped))]
     #[must_use]
     pub fn device_flipped(&self) -> bool {
@@ -1619,6 +1630,8 @@ impl WebTank {
         self.tank.set_cursor(cursor);
         let ghost = self.tools.ghost(self.tank.world());
         self.tank.set_device_ghost(ghost);
+        let plant_ghost = self.tools.plant_ghost(self.tank.world());
+        self.tank.set_plant_ghost(plant_ghost);
         let magnifier = self
             .tools
             .magnifier()
