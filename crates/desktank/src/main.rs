@@ -78,6 +78,18 @@ struct RunArgs {
     idle: bool,
 }
 
+/// Parses a `--time-ratio` in `0.1..=100` (finite).
+fn parse_time_ratio(s: &str) -> Result<f32, String> {
+    let ratio: f32 = s.parse().map_err(|_| format!("{s:?} is not a number"))?;
+    if ratio.is_finite()
+        && (desktank_sim::MIN_TIME_RATIO..=desktank_sim::MAX_TIME_RATIO).contains(&ratio)
+    {
+        Ok(ratio)
+    } else {
+        Err(format!("{s:?} is not in 0.1..=100"))
+    }
+}
+
 #[derive(Debug, Args)]
 struct WindowArgs {
     /// Drive a scripted pour (a synthetic left drag sweeping across the
@@ -108,6 +120,10 @@ struct WindowArgs {
     /// Apply elapsed time when the tank reopens or resumes (off by default).
     #[arg(long, value_name = "BOOL", num_args = 0..=1, default_missing_value = "true")]
     catch_up: Option<bool>,
+    /// Life and day/night speed: 1 is real time, 60 passes a day in 24
+    /// minutes (0.1 to 100). Saved with the tank.
+    #[arg(long, value_name = "RATIO", value_parser = parse_time_ratio)]
+    time_ratio: Option<f32>,
     #[command(flatten)]
     plant_sway: SwayArgs,
 }
@@ -240,6 +256,7 @@ fn main() -> ExitCode {
                 easy_mode: args.easy_mode,
                 population_cap: args.creature_cap,
                 catch_up: args.catch_up,
+                time_ratio: args.time_ratio,
                 plants: config::Plants {
                     sway: args.plant_sway.sway,
                     sway_on_battery: args.plant_sway.sway_on_battery,
@@ -402,6 +419,27 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "129"]).is_err());
         assert!(Cli::try_parse_from(["desktank", "window", "--creature-cap", "0"]).is_err());
+    }
+
+    #[test]
+    fn parses_the_time_ratio() {
+        let ratio = |args: &[&str]| {
+            let cli = Cli::try_parse_from(["desktank", "window"].iter().chain(args)).unwrap();
+            let Command::Window(w) = cli.command else {
+                panic!("not a window command");
+            };
+            w.time_ratio
+        };
+        assert_eq!(ratio(&[]), None);
+        assert_eq!(ratio(&["--time-ratio", "60"]), Some(60.0));
+        assert_eq!(ratio(&["--time-ratio=0.1"]), Some(0.1));
+        assert_eq!(ratio(&["--time-ratio", "100"]), Some(100.0));
+        for bad in ["0", "0.09", "-1", "100.1", "nan", "inf", "fast", ""] {
+            assert!(
+                Cli::try_parse_from(["desktank", "window", "--time-ratio", bad]).is_err(),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]

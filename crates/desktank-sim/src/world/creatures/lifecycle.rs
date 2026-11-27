@@ -68,6 +68,12 @@ const HATCH_PERCENT: u64 = 35;
 /// Elders are past this percentage of their own lifespan.
 const ELDER_PERCENT: u64 = 80;
 
+/// `value` lived at `rate` thousandths of real time: exact at 1000.
+fn scale_rate(value: u32, rate: u32) -> u32 {
+    u32::try_from(u64::from(value) * u64::from(rate) / u64::from(crate::world::LIFE_ACCUM_SCALE))
+        .unwrap_or(u32::MAX)
+}
+
 /// A creature's life stage (SPEC §2.4). Eggs aren't creatures: they are
 /// cells of the `egg` material until their clutch hatches (T9 part 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -407,8 +413,10 @@ impl World {
         let k = self.kind(c.species)?;
         let lifespan = self.lifespan_of(k, c.id);
         let energy = c.energy;
-        self.age_and_grow(c, k, lifespan, 1, redraw);
-        self.sleep_refund(k, c, energy);
+        // A tick off real time may be none or several ticks of life.
+        let ticks = self.life_ticks;
+        self.age_and_grow(c, k, lifespan, ticks, redraw);
+        self.sleep_refund(k, c, energy, ticks);
         if let Some(cause) = self.age_or_hunger_death(c, lifespan) {
             return Some(cause);
         }
@@ -417,10 +425,11 @@ impl World {
         }
         if let Some(q) = quality {
             let breathless = self.out_of_air(k, c);
+            let rate = self.life_step();
             if breathless {
-                c.stress = c.stress.saturating_add(k.air_stress);
+                c.stress = c.stress.saturating_add(scale_rate(k.air_stress, rate));
             }
-            Self::update_water_stress(c, q, 1, breathless);
+            Self::update_water_stress(c, q, 1, rate, breathless);
             if c.stress >= STRESS_LIMIT {
                 return Some(if breathless {
                     DeathCause::Suffocation
@@ -451,7 +460,7 @@ impl World {
             let full = energy.saturating_sub(ENERGY_RESERVE / 2).min(ticks);
             let half_end = energy.saturating_sub(ENERGY_RESERVE / 8).min(ticks);
             let half = half_end - full;
-            let first_half = self.tick - u64::from(ticks.saturating_sub(1))
+            let first_half = self.tick.saturating_sub(u64::from(ticks.saturating_sub(1)))
                 + u64::from(full)
                 + u64::from(c.id.0);
             let step = full + half / 2 + u32::from(half % 2 == 1 && first_half.is_multiple_of(2));
@@ -478,16 +487,26 @@ impl World {
         }
     }
 
-    pub(super) fn update_water_stress(c: &mut Creature, q: f32, seconds: u32, breathless: bool) {
+    /// `seconds` of water at quality `q`, lived at `rate` thousandths of
+    /// real time (see [`World::life_step`]; 1000 is real time).
+    pub(super) fn update_water_stress(
+        c: &mut Creature,
+        q: f32,
+        seconds: u32,
+        rate: u32,
+        breathless: bool,
+    ) {
         if q < POOR_QUALITY {
             // Thousandths of a second at quality 0, 1000 at most.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let add = ((POOR_QUALITY - q) / POOR_QUALITY * 1000.0).round() as u32;
-            c.stress = c.stress.saturating_add(add.saturating_mul(seconds));
+            c.stress = c
+                .stress
+                .saturating_add(scale_rate(add.saturating_mul(seconds), rate));
         } else if !breathless {
             c.stress = c
                 .stress
-                .saturating_sub(STRESS_RECOVERY.saturating_mul(seconds));
+                .saturating_sub(scale_rate(STRESS_RECOVERY.saturating_mul(seconds), rate));
         }
     }
 

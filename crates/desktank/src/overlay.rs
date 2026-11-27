@@ -313,7 +313,7 @@ mod macos {
                 .set_on_battery(matches!(signals.source, PowerSource::Battery { .. }));
             if now >= s.next_clock_update {
                 if let Some(minute) = local_minute() {
-                    s.tank.set_time_of_day(minute);
+                    s.tank.update_local_time(minute);
                 }
                 s.next_clock_update = now + Duration::from_mins(1);
             }
@@ -405,6 +405,11 @@ mod macos {
         tank.set_overlay_water_alpha(Some(settings.overlay.tint));
         let life = settings.life;
         let world = tank.world_mut();
+        if let Some(ratio) = life.time_ratio
+            && life.time_ratio != previous_life.time_ratio
+        {
+            world.set_time_ratio(ratio);
+        }
         if let Some(easy) = life.easy_mode
             && life.easy_mode != previous_life.easy_mode
         {
@@ -430,7 +435,7 @@ mod macos {
             let seconds = u32::try_from(elapsed)
                 .unwrap_or(u32::MAX)
                 .min(MAX_CATCH_UP_SECONDS);
-            tank.world_mut().catch_up(seconds);
+            tank.catch_up(seconds);
             tank.cells_edited();
         }
     }

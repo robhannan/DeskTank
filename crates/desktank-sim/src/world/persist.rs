@@ -7,7 +7,9 @@ use super::{CHUNK_SIZE, World, WorldConfig, variant};
 use crate::grid::{Cell, Rect};
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::PlantSpeciesId;
-use crate::save::{SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18};
+use crate::save::{
+    SaveError, runs, unrun, v1, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19,
+};
 use crate::species::SpeciesId;
 
 impl World {
@@ -119,6 +121,26 @@ impl World {
     pub(crate) fn from_v18(s: v18::Save, materials: MaterialTable) -> Result<Self, SaveError> {
         let mut world = Self::from_v17(s.base, materials)?;
         world.load_pitches(&s.pitches)?;
+        Ok(world)
+    }
+
+    pub(crate) fn to_v19(&self) -> v19::Save {
+        v19::Save {
+            base: self.to_v18(),
+            time_ratio: self.time_ratio,
+            life_accum: self.life_accum,
+        }
+    }
+
+    pub(crate) fn from_v19(s: v19::Save, materials: MaterialTable) -> Result<Self, SaveError> {
+        let ratio_ok = s.time_ratio.is_finite()
+            && (super::MIN_TIME_RATIO..=super::MAX_TIME_RATIO).contains(&s.time_ratio);
+        if !ratio_ok || s.life_accum >= super::LIFE_ACCUM_SCALE {
+            return Err(SaveError::Invalid("invalid time ratio".into()));
+        }
+        let mut world = Self::from_v18(s.base, materials)?;
+        world.time_ratio = s.time_ratio;
+        world.life_accum = s.life_accum;
         Ok(world)
     }
 

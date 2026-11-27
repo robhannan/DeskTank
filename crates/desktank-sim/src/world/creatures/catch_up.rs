@@ -3,6 +3,7 @@ use super::{
     BITE, Creature, DeathCause, ENERGY_RESERVE, FULL, Kind, STRESS_LIMIT, TICKS_PER_SECOND, World,
 };
 use crate::CatchUp;
+use crate::world::LIFE_ACCUM_SCALE;
 
 impl World {
     /// Samples water quality once, then advances the animals to each minute
@@ -22,7 +23,14 @@ impl World {
         while self.tick < end {
             let start = self.tick;
             self.tick = (start + (BREED_CHECK_TICKS - start % BREED_CHECK_TICKS)).min(end);
-            let ticks = u32::try_from(self.tick - start).unwrap_or(0);
+            let world_ticks = self.tick - start;
+            // Life ticks lived in the span at the time ratio, carrying the
+            // fraction over (exactly the span at ratio 1).
+            let rate = self.life_step();
+            let scale = u64::from(LIFE_ACCUM_SCALE);
+            let lived = world_ticks * u64::from(rate) + u64::from(self.life_accum);
+            let ticks = u32::try_from(lived / scale).unwrap_or(u32::MAX);
+            self.life_accum = u32::try_from(lived % scale).unwrap_or(0);
             let second = u64::from(TICKS_PER_SECOND);
             let seconds = u32::try_from(self.tick / second - start / second).unwrap_or(0);
             let mut list = core::mem::take(&mut self.creatures.list);
@@ -40,7 +48,7 @@ impl World {
                 }
                 let cause = self.age_or_hunger_death(c, lifespan).or_else(|| {
                     let q = quality?;
-                    Self::update_water_stress(c, q, seconds, false);
+                    Self::update_water_stress(c, q, seconds, rate, false);
                     (c.stress >= STRESS_LIMIT).then_some(DeathCause::PoorWater)
                 });
                 if let Some(cause) = cause {
@@ -70,9 +78,10 @@ impl World {
     }
 
     fn catch_up_feed(&mut self, k: &Kind, c: &mut Creature, ticks: u32, food: &[u32]) -> usize {
-        let mut remaining = u16::try_from(ticks).unwrap_or(u16::MAX);
-        if c.satiety.saturating_sub(remaining) > FULL - BITE {
-            c.satiety -= remaining;
+        let mut remaining = ticks;
+        let sat_drop = u16::try_from(remaining).unwrap_or(u16::MAX);
+        if c.satiety.saturating_sub(sat_drop) > FULL - BITE {
+            c.satiety -= sat_drop;
             return 0;
         }
         let mut eaten = 0;
@@ -81,12 +90,12 @@ impl World {
                 break;
             }
             let wait = c.satiety.saturating_sub(FULL - BITE).max(1);
-            if remaining < wait {
+            if remaining < u32::from(wait) {
                 break;
             }
             let i = i as usize;
             if self.edible_material_cell(k, i) {
-                remaining -= wait;
+                remaining -= u32::from(wait);
                 c.satiety = c.satiety.saturating_sub(wait);
                 self.eat_cell(c, i % self.width, i / self.width);
                 eaten += 1;
@@ -97,7 +106,7 @@ impl World {
         {
             loop {
                 let wait = c.satiety.saturating_sub(FULL - BITE).max(1);
-                if c.energy == ENERGY_RESERVE || remaining < wait {
+                if c.energy == ENERGY_RESERVE || remaining < u32::from(wait) {
                     break;
                 }
                 let satiety = c.satiety;
@@ -106,11 +115,13 @@ impl World {
                     c.satiety = satiety;
                     break;
                 }
-                remaining -= wait;
+                remaining -= u32::from(wait);
                 eaten += 1;
             }
         }
-        c.satiety = c.satiety.saturating_sub(remaining);
+        c.satiety = c
+            .satiety
+            .saturating_sub(u16::try_from(remaining).unwrap_or(u16::MAX));
         eaten
     }
 }

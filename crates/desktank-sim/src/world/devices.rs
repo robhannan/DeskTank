@@ -920,7 +920,7 @@ impl World {
         // Biological media colonisation: once per world second.
         if self.tick.is_multiple_of(u64::from(TICKS_PER_SECOND)) && cfg.maturity_days > 0.0 {
             #[allow(clippy::cast_precision_loss)] // LIFE_DAY_SECONDS = 600
-            let base_rate = 1.0 / (cfg.maturity_days * LIFE_DAY_SECONDS as f32);
+            let base_rate = self.time_ratio / (cfg.maturity_days * LIFE_DAY_SECONDS as f32);
             let kinds = &self.devices.kinds;
             for d in self.devices.table.values_mut() {
                 if kinds.get(d.kind).is_filter() && d.maturity < 1.0 {

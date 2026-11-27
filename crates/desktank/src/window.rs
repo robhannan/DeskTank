@@ -1153,6 +1153,11 @@ fn read_config(path: &Path) -> Result<Config, config::ConfigError> {
 }
 
 fn apply_life(world: &mut World, life: Life, previous: Life) {
+    if let Some(ratio) = life.time_ratio
+        && life.time_ratio != previous.time_ratio
+    {
+        world.set_time_ratio(ratio);
+    }
     if let Some(easy) = life.easy_mode
         && life.easy_mode != previous.easy_mode
     {
@@ -1184,7 +1189,7 @@ fn catch_up(tank: &mut Tank, since: SystemTime) {
         return;
     }
     // Catch-up advances the world tick, which persistence uses to detect changes.
-    let report = tank.world_mut().catch_up(seconds);
+    let report = tank.catch_up(seconds);
     tank.cells_edited();
     let minutes = report.seconds / 60;
     let elapsed = if minutes < 60 {
@@ -1688,6 +1693,33 @@ fn device_hint(world: &World, id: DeviceId) -> Option<&'static str> {
 mod tests {
     use super::*;
     use desktank_sim::{DeviceKind, MaterialTable, WorldConfig};
+
+    #[test]
+    fn apply_life_sets_the_time_ratio_only_when_it_changes() {
+        let mut world = World::new(
+            WorldConfig {
+                width: 32,
+                height: 24,
+                seed: 3,
+                water_level: 0.8,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let life = Life {
+            time_ratio: Some(60.0),
+            ..Life::default()
+        };
+        apply_life(&mut world, life, Life::default());
+        assert!((world.time_ratio() - 60.0).abs() < f32::EPSILON);
+        // Unchanged since the last config: a reload leaves the saved ratio.
+        world.set_time_ratio(5.0);
+        apply_life(&mut world, life, life);
+        assert!((world.time_ratio() - 5.0).abs() < f32::EPSILON);
+        // Absent from the config: the saved ratio stands.
+        apply_life(&mut world, Life::default(), life);
+        assert!((world.time_ratio() - 5.0).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn catch_up_ignores_short_gaps_and_backward_clocks() {

@@ -1580,6 +1580,7 @@ impl World {
         let mut dead = Vec::new();
         let mut breeding = self.breed_tick(&list);
         let mut died_live = Vec::new();
+        let life_ticks = self.life_ticks;
         list.retain_mut(|c| {
             if let Some(cause) = self.live(c, quality, &mut changed) {
                 match self.kind(c.species) {
@@ -1589,7 +1590,10 @@ impl World {
                 }
                 return false;
             }
-            self.breed_over(c, &mut breeding, 1, &mut changed);
+            // Breeding waits on the ticks of life that passed.
+            if life_ticks > 0 {
+                self.breed_over(c, &mut breeding, life_ticks, &mut changed);
+            }
             true
         });
         if !dead.is_empty() {
@@ -1762,6 +1766,12 @@ impl World {
         }
     }
 
+    /// Satiety lost this tick: hunger builds with the ticks of life, so it
+    /// keeps pace with the energy they burn at any time ratio.
+    fn hunger_step(&self) -> u16 {
+        u16::try_from(self.life_ticks).unwrap_or(u16::MAX)
+    }
+
     fn step_creature(&mut self, c: &mut Creature) -> bool {
         let Some(k) = self.grown_kind(c) else {
             return false;
@@ -1774,7 +1784,7 @@ impl World {
         // A burrower in the bed digs, holds or digs out, and does nothing
         // else (see `bottom`).
         if k.burrow_every > 0 && self.burrow(&k, c, c.hungry()) {
-            c.satiety = c.satiety.saturating_sub(1);
+            c.satiety = c.satiety.saturating_sub(self.hunger_step());
             c.pitch = 0;
             return (c.x, c.y) != (before.0, before.1);
         }
@@ -1786,7 +1796,7 @@ impl World {
             return self.rest_step(&k, c);
         }
         let mut rng = chunk_stream(self.seed, self.tick, CREATURE_STREAM + u64::from(c.id.0));
-        c.satiety = c.satiety.saturating_sub(1);
+        c.satiety = c.satiety.saturating_sub(self.hunger_step());
         let hungry = c.hungry();
         self.habits(&k, c, &mut rng);
         self.shift_depth(&k, c);
