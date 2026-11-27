@@ -250,8 +250,12 @@ fn swimmers_never_stall_against_plants() {
     for seed in [1, 2] {
         for (name, ticks) in longest_stalls(seed, 10) {
             eprintln!("seed {seed}: {name} longest still {ticks} ticks");
+            // A gourami that has had enough of open water hides still in
+            // the plants until it has settled (#436), which takes up to ten
+            // seconds; that is not a stall.
+            let longest = if name == "honey_gourami" { 10 } else { 5 };
             assert!(
-                ticks <= 5 * TICKS_PER_SECOND,
+                ticks <= longest * TICKS_PER_SECOND,
                 "seed {seed}: {name} sat still for {ticks} ticks"
             );
         }

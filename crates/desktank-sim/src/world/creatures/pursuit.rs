@@ -593,10 +593,21 @@ impl World {
     /// of a run of five down a stem or blade in one band (so cover by
     /// itself; scanned in rows, the first of equals), as a target centre
     /// and the band to hide in beside it.
+    pub(super) fn find_cover(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, u8)> {
+        self.find_cover_within(k, c, COVER_SENSE)
+    }
+
+    /// [`World::find_cover`] out to `sense` cells: a fish that has had
+    /// enough of open water looks further than one in a fright.
     #[allow(clippy::many_single_char_names)] // cell maths
-    fn find_cover(&self, k: &Kind, c: &Creature) -> Option<(i32, i32, u8)> {
+    pub(super) fn find_cover_within(
+        &self,
+        k: &Kind,
+        c: &Creature,
+        sense: i32,
+    ) -> Option<(i32, i32, u8)> {
         let (cx, cy) = (i64::from(c.x >> 8), i64::from(c.y >> 8));
-        let r = i64::from(COVER_SENSE);
+        let r = i64::from(sense);
         let x0 = usize::try_from((cx - r).max(0)).unwrap_or(0);
         let x1 = usize::try_from((cx + r + 1).min(to_i64(self.width))).unwrap_or(0);
         let y0 = usize::try_from((cy - r).max(0)).unwrap_or(0);

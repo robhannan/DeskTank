@@ -434,6 +434,7 @@ pub(crate) mod tests {
         for need in [
             Need::Hunger,
             Need::Social,
+            Need::Shelter,
             Need::Light,
             Need::Co2,
             Need::Nutrients,
