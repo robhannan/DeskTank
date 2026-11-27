@@ -143,6 +143,10 @@ orchestrator.
 - Add tests for new logic. Keep the simulation deterministic for a given
   seed and time step, so tests can assert on exact or tightly bounded
   results; never depend on wall-clock time or an unseeded RNG in tests.
+- Verify in the worktree's own `target/`: no extra `--target-dir` or
+  `CARGO_TARGET_DIR`, and no nested worktrees or clones under `target/` (see
+  `AGENTS.md`). Add integration tests as a `mod` in the crate's single test
+  binary (`tests/sim/main.rs`, `tests/it/main.rs`), not a new `tests/*.rs`.
 - The orchestrator verifies the integrated change before pushing:
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,

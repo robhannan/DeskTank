@@ -123,11 +123,11 @@ example) to the scratchpad and adapt it. It uses `scripts/sprite-art.ts`:
 - Show it in the real renderer: put the creature in
   `crates/desktank/tests/scenes/breeding.toml` (`sex`, `morph`,
   `carrying_days`), run
-  `DESKTANK_BLESS=1 cargo test -p desktank --test render breeding`, and
+  `DESKTANK_BLESS=1 cargo test -p desktank --test it render::breeding`, and
   crop and enlarge the creature from `breeding_x4.png` (fine frames) and
   `breeding.png` (coarse frames).
 - New sizes and shapes shift seeded runs: at the end, restore the
-  references from the base, run `cargo test -p desktank --test render`,
+  references from the base, run `cargo test -p desktank --test it render::`,
   and re-bless only the scenes that fail (blessing rewrites every image,
   and most rewrites are byte noise within tolerance). Look at each
   changed image. A sim test that fails after an
