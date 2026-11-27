@@ -1296,6 +1296,98 @@ mod tests {
         assert!(back.is_some(), "it rejoins its school");
     }
 
+    /// A tank with a honey gourami, over soil, with or without a stand of
+    /// grown plants.
+    fn gourami(planted: bool) -> (World, CreatureId) {
+        // Low enough that the plants reach into the gourami's upper water.
+        let mut w = World::new(
+            WorldConfig {
+                width: 120,
+                height: 64,
+                seed: 3,
+                water_level: 0.95,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let soil = w.materials().id("aquasoil").unwrap();
+        w.fill_rect(
+            desktank_sim::Rect {
+                x0: 0,
+                y0: 58,
+                x1: 120,
+                y1: 64,
+            },
+            soil,
+            desktank_sim::Brush::Replace,
+        )
+        .unwrap();
+        if planted {
+            let kind = w.plant_species().id("hygrophila").unwrap();
+            let from = w.plant_species().get(kind).unwrap().default_propagule();
+            for x in (30..=90).step_by(6) {
+                w.paint_plant(x, 57, 0, kind, from).unwrap();
+            }
+            for _ in 0..6 * 60 * 20 {
+                w.tick();
+            }
+        }
+        let gourami = w.species().id("honey_gourami").unwrap();
+        let id = w.add_creature(gourami, 60, 24).unwrap();
+        (w, id)
+    }
+
+    #[test]
+    fn a_solitary_gourami_shows_hunger_and_shelter_and_the_tetra_only_its_own() {
+        let (mut w, id) = gourami(false);
+        let card = live(&w, Inspected::Creature(id)).unwrap();
+        let labels: Vec<_> = card.needs.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["Hunger", "Shelter"]);
+        let readings = w.creature_needs(w.creature(id).unwrap());
+        for (bar, reading) in card.needs.iter().zip(&readings) {
+            assert_eq!(*bar, NeedBar::of(*reading));
+        }
+        // Hungry from the start; sheltered until it has been out a while.
+        assert_eq!(bars_of(&card), [0, needs::LEVELS]);
+
+        // With no cover in the tank the shelter bar only falls, and shows
+        // the decline.
+        let mut inspect = InspectCard::default();
+        inspect.set(&w, Some(Inspected::Creature(id)));
+        run(&mut w, &mut inspect, 600);
+        let shelter = bars(&inspect)[1];
+        assert!(shelter.0 < needs::LEVELS - 8, "{shelter:?}");
+        assert!(shelter.1 < 0, "falling: {shelter:?}");
+
+        // The tetra of the school tests keeps its own two.
+        let (w, [a, ..]) = school();
+        let tetra = live(&w, Inspected::Creature(a)).unwrap();
+        let labels: Vec<_> = tetra.needs.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["Hunger", "Social"]);
+    }
+
+    #[test]
+    fn plant_cover_refills_the_shelter_bar() {
+        let (mut w, id) = gourami(true);
+        let mut inspect = InspectCard::default();
+        inspect.set(&w, Some(Inspected::Creature(id)));
+        // Out in the open for a while, then hiding until it has settled.
+        let low = (0..150 * 20).find_map(|_| {
+            run(&mut w, &mut inspect, 1);
+            Some(bars(&inspect)[1]).filter(|&(fill, _)| fill < needs::LEVELS - 10)
+        });
+        assert!(low.is_some(), "it gets uneasy in the open");
+        let refilled = (0..150 * 20).find_map(|_| {
+            run(&mut w, &mut inspect, 1);
+            Some(bars(&inspect)[1]).filter(|&(fill, trend)| fill > 38 && trend > 0)
+        });
+        assert!(refilled.is_some(), "and the bar rises in cover");
+    }
+
+    fn bars_of(live: &Live) -> Vec<u8> {
+        live.needs.iter().map(|b| b.fill).collect()
+    }
+
     #[test]
     fn switching_fish_shows_the_new_individuals_values_at_once() {
         let (mut w, [a, b, third]) = school();
