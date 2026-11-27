@@ -103,6 +103,11 @@ tank off.
 
 ### 3.4 Screensaver and lock screen
 
+Every screensaver host, the built-in idle mode and the macOS lock screen
+(which is the saver) run the **camera tour** by default for burn-in
+protection (D29), with settings to turn it off and to show the tour's
+inspect card (off by default). Wallpaper and the overlay never tour.
+
 - **Windows `.scr`**: the `desktank-saver` binary, renamed to `.scr`.
   - It handles `/s` (run), `/p <HWND>` (preview in the settings dialog)
     and `/c` (configure, which opens the config). It exits on input.
@@ -356,13 +361,15 @@ over the keyguard while charging).
   runs at 1080p.
 - **Screensaver** (the Dream):
   - full screen, non-interactive (`isInteractive = false`), so any key or
-    touch ends it, as a screensaver should; no tools, inspect card or
-    cheats (D20);
+    touch ends it, as a screensaver should; no tools or cheats (D20), and
+    an inspect card only as the tour's option (D29);
   - it starts drawing on `onDreamingStarted` and stops, saves and
     releases the surface on `onDreamingStopped`;
   - to protect OLED and plasma TVs from burn-in by the static bed and
-    glass edges, the picture shifts by a few pixels every few minutes,
-    within the letterbox margin or by a crop of at most one cell;
+    glass edges, it runs the camera tour (D29, on by default): the view
+    zooms in on one creature at a time, follows it, glides to the next
+    and now and then pulls back to the whole tank, optionally with the
+    creature's inspect card stepping through its pages (off by default);
   - its `android:settingsActivity` meta-data opens the app's settings
     (A3).
 - **Choosing the screensaver**: plain Android TV and phones list the
