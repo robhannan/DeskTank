@@ -1025,6 +1025,73 @@ impl Propagule {
     }
 }
 
+/// How grown a whole plant placed in one click is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlantStage {
+    /// A young plant: about a third of its species' mature size.
+    Juvenile,
+    /// An (almost) fully grown plant.
+    Mature,
+}
+
+impl PlantStage {
+    /// Its name, as the palette spells it.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Juvenile => "juvenile",
+            Self::Mature => "mature",
+        }
+    }
+}
+
+/// What a plant slot places per click: one of the species' own propagules
+/// (seeds pour as powder, anything else is one small placed piece), or a
+/// whole [`PlantStage::Juvenile`] or [`PlantStage::Mature`] plant of any
+/// species ([`crate::World::place_plant`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlantStart {
+    /// A propagule the species grows from.
+    Propagule(Propagule),
+    /// A whole young plant.
+    Juvenile,
+    /// A whole grown plant.
+    Mature,
+}
+
+impl PlantStart {
+    /// Its name: a propagule's ([`Propagule::name`]), or `"juvenile"` or
+    /// `"mature"`.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Propagule(p) => p.name(),
+            Self::Juvenile => PlantStage::Juvenile.name(),
+            Self::Mature => PlantStage::Mature.name(),
+        }
+    }
+
+    /// The start with this name, if any.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "juvenile" => Some(Self::Juvenile),
+            "mature" => Some(Self::Mature),
+            _ => Propagule::from_name(name).map(Self::Propagule),
+        }
+    }
+
+    /// The stage of a whole plant, or `None` for a propagule.
+    #[must_use]
+    pub fn stage(self) -> Option<PlantStage> {
+        match self {
+            Self::Propagule(_) => None,
+            Self::Juvenile => Some(PlantStage::Juvenile),
+            Self::Mature => Some(PlantStage::Mature),
+        }
+    }
+}
+
 /// Error loading or validating plant species.
 #[derive(Debug, Error)]
 pub enum PlantSpeciesError {

@@ -53,8 +53,10 @@
 //! format (T8) can store it as it is; the samples and update bookkeeping
 //! can be reset on load.
 
+mod placement;
 mod raft;
 
+pub use placement::{PlantGhost, PlantGhostCell};
 pub(super) use raft::Raft;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1833,6 +1835,13 @@ impl World {
 
     /// Writes a grown cell of `part` for plant `id` at index `i`.
     fn put_part(&mut self, i: usize, part: Part, id: u16, position: u8) {
+        let noise = variant(self.seed, self.tick, i);
+        self.put_variant(i, part, id, plant_variant(noise, position));
+    }
+
+    /// Writes a cell of `part` for plant `id` at index `i` with this exact
+    /// variant byte.
+    fn put_variant(&mut self, i: usize, part: Part, id: u16, variant: u8) {
         let Some(material) = self.plants.material(part) else {
             return;
         };
@@ -1840,7 +1849,7 @@ impl World {
         self.write_coat(i, 0);
         self.cells[i] = Cell {
             material,
-            variant: plant_variant(variant(self.seed, self.tick, i), position),
+            variant,
             state: id,
         };
         self.mark_changed(x, y);

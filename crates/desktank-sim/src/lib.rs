@@ -42,7 +42,7 @@ pub use palette::{Holds, PalettePath, PalettePathError};
 pub use placeable::Placeable;
 pub use plants::{
     Factor, Limit, Part, PlantSpecies, PlantSpeciesError, PlantSpeciesId, PlantSpeciesTable,
-    Propagule,
+    PlantStage, PlantStart, Propagule,
 };
 pub use presets::{NewTankConfig, TankPreset, dimensions_cm};
 pub use script::{Player, Script, ScriptError};
@@ -59,9 +59,9 @@ pub use world::{
     MAX_CATCH_UP_SECONDS, MAX_CLUTCHES, MAX_CORPSES, MAX_CREATURE_CAP, MAX_LIVE_FOOD,
     MAX_NAME_CHARS, MAX_PLANTS, MAX_SIDE, MAX_TIME_RATIO, MAX_UPDATES_PER_TICK, MIN_TIME_RATIO,
     MUTATION_PER_MILLE, Need, NeedLevel, NeedReading, PEARL_CO2, PEARL_HEALTH, PEARL_LIGHT,
-    PEARL_MAX_PER_SECOND, PINCH, POOR_QUALITY, PREY_ENERGY, Pane, PlantId, PlantInfo,
-    RANDOM_TICK_BUDGET, REVERSION_PER_MILLE, ROT_AFTER_SECONDS, ROT_EVERY_SECONDS, RandomTickStats,
-    SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT, STRIKE_ODDS, TICKS_PER_SECOND, TINT_STEPS, Traits,
-    UPDATE_SECONDS, UnmetNeed, World, WorldConfig, WorldError, catch_up_seconds, clean_name,
-    disc_mask, night, pursuit, quarter_bit, tint_step,
+    PEARL_MAX_PER_SECOND, PINCH, POOR_QUALITY, PREY_ENERGY, Pane, PlantGhost, PlantGhostCell,
+    PlantId, PlantInfo, RANDOM_TICK_BUDGET, REVERSION_PER_MILLE, ROT_AFTER_SECONDS,
+    ROT_EVERY_SECONDS, RandomTickStats, SETTLE_TICKS, SLEEP_TICKS, STRESS_LIMIT, STRIKE_ODDS,
+    TICKS_PER_SECOND, TINT_STEPS, Traits, UPDATE_SECONDS, UnmetNeed, World, WorldConfig,
+    WorldError, catch_up_seconds, clean_name, disc_mask, night, pursuit, quarter_bit, tint_step,
 };
