@@ -39,6 +39,7 @@ mod tank;
 #[cfg(test)]
 mod testing;
 mod timer;
+mod tour;
 
 /// The wgpu version this crate is built against, for hosts that create the
 /// instance and surfaces.
@@ -55,7 +56,8 @@ pub use layout::{Layout, even_scale};
 pub use offscreen::CaptureError;
 pub use pacing::FrameRequest;
 pub use surface::{SurfaceError, TankSurface};
-pub use tank::{DrawError, SWAY_MAX_FPS, Tank, TankConfig};
+pub use tank::{DrawError, SWAY_MAX_FPS, Tank, TankConfig, TourSettings};
+pub use tour::TourCard;
 
 /// The field visualised over the tank.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
