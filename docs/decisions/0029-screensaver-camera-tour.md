@@ -42,8 +42,9 @@ time and not wall time, so tests can assert on it) chooses the view:
 the inspect card for the creature in focus, pinned to it as usual. The
 card appears once a glide has settled, steps through its pages (live,
 then species) every 12 s, and goes at the start of the next glide. In this
-mode the card never shows the **Name** row, a name prompt or name entry:
-a screensaver can't take text, and an empty prompt would only be noise.
+mode the card never shows a name prompt or name entry, since a
+screensaver can't take text: the **Name** row appears only for a creature
+that already has a name, read-only.
 This amends §3.6 ("no tools, inspect card or cheats"): the screensaver
 still takes no input, and the card shows only when the tour's card setting
 is on.

@@ -163,7 +163,8 @@
     needs only the tank (`Tank::set_inspected`), so the screensaver and
     wallpaper can draw it too. The screensaver's camera tour (D29) can
     show it for the creature in focus, stepping through the pages on a
-    timer, and then the card never shows the Name row. Nothing
+    timer, and then the card shows a name only if the creature has one,
+    never the prompt or name entry. Nothing
     else repeats what it shows: the window's title bar keeps only the
     keys that act on it (R, Shift+R, M and I for a filter), and the web's readout line is left for messages (refusals,
     cheat results), with the inspection read out to screen readers only.
