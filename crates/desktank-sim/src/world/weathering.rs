@@ -204,12 +204,14 @@ impl Weathering {
     fn facets(self, cx: i64, cy: i64, radius: f32) -> Vec<((f32, f32), f32)> {
         let h = self.hash(8, cx >> 4, cy >> 4);
         let n = 5 + usize::from(h & 1 == 1);
-        let turn = (h >> 8) as usize % 32;
+        // Reduce in u64: `as usize` first would truncate to 32 bits on wasm and
+        // change the remainder, so a stone would differ between targets.
+        let turn = usize::try_from((h >> 8) % 32).unwrap_or(0);
         (0..n)
             .map(|k| {
                 let hk = splitmix64(h ^ splitmix64(k as u64));
                 // Evenly spread directions, each nudged by up to a step.
-                let jitter = (hk >> 8) as usize % 3 + 31;
+                let jitter = usize::try_from((hk >> 8) % 3).unwrap_or(0) + 31;
                 let dir = DIRS[(turn + k * 32 / n + jitter) % 32];
                 // Sides are cut back harder than tops: taller than wide.
                 let reach = 0.5 + 0.48 * unit(hk >> 24);

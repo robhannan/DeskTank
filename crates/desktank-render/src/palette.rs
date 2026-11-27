@@ -142,6 +142,21 @@ pub fn shade(variant: u8) -> usize {
     }
 }
 
+/// Which material IDs the shader draws as a stone variety (dragon stone,
+/// Seiryu): the split grid draws those in their own pass, skipped while none
+/// shows.
+#[must_use]
+pub fn variety_stones(materials: &MaterialTable) -> [bool; SIDE] {
+    let mut out = [false; SIDE];
+    for m in materials.iter() {
+        out[usize::from(m.id.0)] = matches!(
+            GroundStyle::for_material(m),
+            GroundStyle::DragonStone | GroundStyle::Seiryu
+        );
+    }
+    out
+}
+
 /// Builds the RGBA table, row-major with rows = variants. Alpha holds the
 /// material's [`GroundStyle`] discriminant (the shader's flag; output is
 /// opaque). Rigid materials shade odd variants (glued bodies) with an amber

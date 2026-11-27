@@ -445,9 +445,14 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if need_ground {
         var bg: vec4<f32>;
         if water_behind {
-            bg = vec4<f32>(water_bg(at, quarter, fine_scale(), vec4<f32>(0.0)), water_opacity());
+            bg = vec4<f32>(water_bg(at, quarter, fine_scale()), water_opacity());
         } else {
-            bg = ground(at, ground_texel, quarter);
+            let style = style_of(ground_texel);
+            if view.scale >= 2.0 && is_stone_variety(style) {
+                bg = stone_variety(at, ground_texel, quarter, style);
+            } else {
+                bg = ground(at, ground_texel, quarter);
+            }
         }
         var under = 1.0;
         let film = ground_film(at, ground_texel, quarter, water_behind, &under);
@@ -471,6 +476,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 // draws. In opaque mode, blending in the attachment instead of before
 // grid_post and colour conversion can differ for translucent plant texels.
 
+// The split ground passes use the same source cell behind swaying plants.
+fn split_ground_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: vec2<i32>) -> vec2<i32> {
+    let src = grid_source(grid_pos, at, texel, quarter);
+    if (src.part >= 0 && !src.from_sway) || src.swayed_away {
+        let nbr = behind_cell(at, quarter);
+        if nbr.x >= 0 || src.swayed_away || overlay_enabled() {
+            return nbr;
+        }
+    }
+    return at;
+}
+
 // Pass 1: the palette, the letterbox, and the ground or water each pixel
 // shows behind any plant art (or anything, where a plant pass draws opaque).
 @fragment
@@ -490,19 +507,48 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let at = vec2<i32>(cell);
     let texel = textureLoad(cells, at, 0);
     let quarter = quarter_of(grid_pos, cell);
+    let source = split_ground_source(grid_pos, at, texel, quarter);
+    if source.x < 0 {
+        let rgb = water_bg(at, quarter, fine_scale());
+        return layer_out(grid_post(rgb, cell), water_opacity());
+    }
     var ground_texel = texel;
-    let src = grid_source(grid_pos, at, texel, quarter);
-    if (src.part >= 0 && !src.from_sway) || src.swayed_away {
-        let nbr = behind_cell(at, quarter);
-        if nbr.x >= 0 {
-            ground_texel = textureLoad(cells, nbr, 0);
-        } else if src.swayed_away || overlay_enabled() {
-            let fine = fine_scale();
-            let rgb = water_bg(at, quarter, fine, vec4<f32>(0.0));
-            return layer_out(grid_post(rgb, cell), water_opacity());
-        }
+    if any(source != at) {
+        ground_texel = textureLoad(cells, source, 0);
     }
     let bg = ground(at, ground_texel, quarter);
+    return layer_out(grid_post(bg.rgb, cell), bg.a);
+}
+
+// Draw the procedural rock varieties before the algae and plant passes.
+// Keeping their noise out of fs_ground fits Chrome 68's register limit.
+@fragment
+fn fs_stone_varieties(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) || hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    let at = vec2<i32>(cell);
+    if !inside(at) {
+        discard;
+    }
+    var texel = textureLoad(cells, at, 0);
+    var style = style_of(texel);
+    let quarter = quarter_of(grid_pos, cell);
+    // A variety can show in its own cell, or behind a plant.
+    if part_of(texel) >= 0 {
+        let source = split_ground_source(grid_pos, at, texel, quarter);
+        if source.x < 0 || all(source == at) {
+            discard;
+        }
+        texel = textureLoad(cells, source, 0);
+        style = style_of(texel);
+    }
+    if !is_stone_variety(style) {
+        discard;
+    }
+    let bg = stone_variety(at, texel, quarter, style);
     return layer_out(grid_post(bg.rgb, cell), bg.a);
 }
 
@@ -1094,9 +1140,9 @@ fn depth_factor(y: f32) -> f32 {
 
 // Sub-cell background water colour at `(at, quarter)` (used behind bubbles,
 // hardscape silhouettes and detritus edges).
-fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> vec3<f32> {
+fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
     if oled() {
-        return mix(vec3<f32>(0.0), rear.rgb, rear.a);
+        return vec3<f32>(0.0);
     }
     let mat = max(i32(round(view.plant_parts.w)), 0);
     let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
@@ -1105,8 +1151,7 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> v
     let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
     let h = hash(vec2<i32>(p.x / 2, p.y));
     let shimmer = 1.0 + (f32(h & 7u) - 3.5) * 0.006;
-    let rgb = base * depth_factor(f32(at.y) + sub_y) * shimmer;
-    return mix(rgb, rear.rgb, rear.a);
+    return base * depth_factor(f32(at.y) + sub_y) * shimmer;
 }
 
 // Sub-cell background air colour at `(at, quarter)` (used by air cells,
@@ -1286,7 +1331,7 @@ fn surface_ripple(
         if pos.y >= surf_y && pos.y < view.surface_row
             && style_at(vec2<i32>(at.x, i32(view.surface_row))) == STYLE_WATER
         {
-            let wcol = water_bg(at, quarter, fine, vec4<f32>(0.0));
+            let wcol = water_bg(at, quarter, fine);
             let dy = pos.y - surf_y;
             let crest_k = clamp(0.45 + 0.45 * best_impact - dy * 0.4, 0.25, 0.92);
             let tint = mix(crest_tint, foam_tint, clamp(best_impact * 1.1, 0.0, 1.0));
@@ -1458,7 +1503,11 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
 // The stone styles: plain rock and the varieties drawn like it (own texture,
 // shared outline and bevels).
 fn is_stone(style: i32) -> bool {
-    return style == STYLE_ROCK || style == STYLE_DRAGON_STONE || style == STYLE_SEIRYU;
+    return style == STYLE_ROCK || is_stone_variety(style);
+}
+
+fn is_stone_variety(style: i32) -> bool {
+    return style == STYLE_DRAGON_STONE || style == STYLE_SEIRYU;
 }
 
 // A stone texel's centre in cells, so a texture keeps its size at 2x and 4x.
@@ -1663,6 +1712,69 @@ fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>, at: vec2<i32>, mat: 
     return col;
 }
 
+// Crisp bevels on the exposed faces of the stone's sub-cell outline.
+fn stone_bevel(at: vec2<i32>, mat: i32, own: u32, quarter: vec2<i32>, fine: bool, shade: f32) -> f32 {
+    let sub = quarter / 2;
+    var k = shade;
+    if fine {
+        // Bevels along the outline: lit top, shadowed underside.
+        let e = rigid_edges(at, mat, own, quarter);
+        if e.x <= 2 {
+            k = k * select(1.06, 1.15, e.x == 1);
+        }
+        if e.z == 1 {
+            k = k * 1.08;
+        }
+        if e.y <= 2 {
+            k = k * select(0.92, 0.82, e.y == 1);
+        }
+        if e.w == 1 {
+            k = k * 0.88;
+        }
+    } else {
+        if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
+            k = k * 1.12;
+        }
+        if sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
+            k = k * 1.06;
+        }
+        if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
+            k = k * 0.86;
+        }
+        if sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat) {
+            k = k * 0.90;
+        }
+    }
+    return k;
+}
+
+fn stone_variety(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>, style: i32) -> vec4<f32> {
+    let mat = i32(round(t.r * 255.0));
+    let v = u32(round(t.g * 255.0));
+    let fine = fine_scale();
+    let own = outline_of(t);
+    if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
+        return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+    }
+    let base = textureLoad(palette, vec2<i32>(mat, i32(v & 1u)), 0).rgb;
+    let p = select(at * 2 + quarter / 2, at * 4 + quarter, fine);
+    let w = stone_cell(p, fine);
+    let grain = hash(p);
+    let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
+    let cell_n = (f32((v >> 2u) & 3u) - 1.5) * 0.018;
+    var stone: vec3<f32>;
+    var k: f32;
+    if style == STYLE_DRAGON_STONE {
+        stone = dragon_stone_colour(w, grain, base);
+        k = 1.0 + (f32(facet & 7u) - 3.5) * 0.012 + cell_n;
+    } else {
+        stone = seiryu_colour(w, grain, base, at, mat);
+        k = 1.0 + (f32(facet & 7u) - 3.5) * 0.018 + cell_n;
+    }
+    let rgb = clamp(stone * stone_bevel(at, mat, own, quarter, fine, k), vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(rgb, 1.0);
+}
+
 // The colour of a non-plant cell: at scale 1 a flat palette lookup with
 // whole-cell depth darkening; at scale >= 2 (2x2) and fine scales (4x4),
 // sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
@@ -1681,8 +1793,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
     let fine = fine_scale();
     let sub = quarter / 2;
     let p = select(at * 2 + sub, at * 4 + quarter, fine);
-    // ground_film draws the algae over all of this.
-    let rear = vec4<f32>(0.0);
     if flat {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
         let s = i32(round(c.a * 255.0)) & 127;
@@ -1704,6 +1814,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
     let base_texel = textureLoad(palette, vec2<i32>(mat, base_v), 0);
     let base = base_texel.rgb;
     let style = i32(round(base_texel.a * 255.0)) & 127;
+    if is_stone_variety(style) {
+        // fs_main handles these before calling ground; the split grid
+        // fills these texels in fs_stone_varieties.
+        discard;
+    }
 
     if style == STYLE_WATER || style == STYLE_FERTILISER {
         let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
@@ -1770,7 +1885,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let h = hash_grain(p, v);
         let top_row = loose_top(open_up, open_l, open_r, at, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         let r = h & 31u;
         // Multi-grain quartz palette: warm base, soft tan shadow, bright glint,
@@ -1828,7 +1943,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         let q = select(sub, quarter, fine);
         if q.y < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         // Cell-constant layout bits (glue bit dropped so gluing keeps the look).
         let cv = hash(vec2<i32>(i32(v >> 1u), 0x4b1d));
@@ -1934,7 +2049,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         var k: f32;
         if fine {
@@ -1982,14 +2097,13 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         return vec4<f32>(rgb, 1.0);
     }
 
-    if is_stone(style) {
+    if style == STYLE_ROCK {
         // Sub-cell outline: round brushes draw round stones.
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
-        // World-space texture: faceted strata and grain for plain rock, a
-        // stone-specific look for the varieties. Bevels shade it below.
+        // World-space faceted stone strata and fine mineral grain.
         let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
         let grain = hash(p);
         let cell_n = (f32((v >> 2u) & 3u) - 1.5) * 0.018;
@@ -1998,52 +2112,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if ((facet >> 4u) & 15u) == 0u && ((grain >> 3u) & 3u) == 0u {
             k = k * 0.86;
         }
-        var stone = base;
-        if style == STYLE_DRAGON_STONE {
-            stone = dragon_stone_colour(stone_cell(p, fine), grain, base);
-            k = 1.0 + (f32(facet & 7u) - 3.5) * 0.012 + cell_n;
-        } else if style == STYLE_SEIRYU {
-            stone = seiryu_colour(stone_cell(p, fine), grain, base, at, mat);
-            k = 1.0 + (f32(facet & 7u) - 3.5) * 0.018 + cell_n;
-        }
-        // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
-        if fine {
-            // Bevels along the outline: lit top, shadowed underside.
-            let e = rigid_edges(at, mat, own, quarter);
-            if e.x <= 2 {
-                k = k * select(1.06, 1.15, e.x == 1);
-            }
-            if e.z == 1 {
-                k = k * 1.08;
-            }
-            if e.y <= 2 {
-                k = k * select(0.92, 0.82, e.y == 1);
-            }
-            if e.w == 1 {
-                k = k * 0.88;
-            }
-        } else {
-            if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
-                k = k * 1.12;
-            }
-            if sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
-                k = k * 1.06;
-            }
-            if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
-                k = k * 0.86;
-            }
-            if sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat) {
-                k = k * 0.90;
-            }
-        }
-        let rgb = clamp(stone * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        let rgb = clamp(base * stone_bevel(at, mat, own, quarter, fine, k), vec3<f32>(0.0), vec3<f32>(1.0));
         return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_DRIFTWOOD {
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         // Driftwood encodes per-cell waterlogging in variant >> 1 (and glue in bit 0).
         let wood_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
@@ -2098,7 +2174,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let same_l = style_at(at + vec2<i32>(-1, 0)) == STYLE_BUBBLE;
         let same_r = style_at(at + vec2<i32>(1, 0)) == STYLE_BUBBLE;
         let isolated = !same_u && !same_d && !same_l && !same_r;
-        let bg = water_bg(at, quarter, fine, rear);
+        let bg = water_bg(at, quarter, fine);
         let wa = water_opacity();
         if isolated {
             if fine {
@@ -2172,7 +2248,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let h = hash_grain(p, v);
         // Detritus trims only under water (in air it is a resting heap).
         if water_up && select(sub.y, quarter.y, fine) < loose_top_at(at, mat, open_up, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);
         return vec4<f32>(clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
