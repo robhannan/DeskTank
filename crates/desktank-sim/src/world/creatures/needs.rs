@@ -240,6 +240,7 @@ impl World {
                     Need::Hunger => satiety_percent(c),
                     Need::Social => c.needs.observed,
                     Need::Shelter => PERCENT - c.needs.observed,
+                    Need::Light | Need::Co2 | Need::Nutrients => 0,
                 },
             })
             .collect()

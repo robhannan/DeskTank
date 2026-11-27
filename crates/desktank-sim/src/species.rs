@@ -647,6 +647,7 @@ impl NeedWeights {
             crate::Need::Hunger => true,
             crate::Need::Social => self.social > 0,
             crate::Need::Shelter => self.shelter > 0,
+            crate::Need::Light | crate::Need::Co2 | crate::Need::Nutrients => false,
         }
     }
 }
