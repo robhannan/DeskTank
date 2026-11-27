@@ -389,6 +389,51 @@ select {
   min-height: 40px;
 }
 
+/* The New tank setup: Settings' look, plus a size badge, the preset's
+   description, the overwrite warning and the Create button. */
+.new-tank { border-color: var(--accent); }
+.new-tank .nt-size {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+}
+.new-tank #nt-dimensions {
+  display: inline-block;
+  padding: 2px 8px;
+  color: var(--bg);
+  background: var(--accent);
+  border: 2px solid var(--edge);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.new-tank .nt-seed { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.new-tank .nt-warning-row {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 2px solid var(--edge);
+}
+.new-tank .nt-warning { margin: 0; flex: 1 1 18em; color: var(--accent); }
+.new-tank .nt-actions { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px 12px; }
+button.primary {
+  font-weight: 700;
+  color: var(--bg);
+  background: var(--accent);
+}
+button.primary:focus-visible { outline-color: var(--ink); }
+@media (max-width: 600px) {
+  .new-tank { gap: 10px 12px; }
+  .new-tank label { white-space: normal; }
+  .new-tank .nt-actions button { flex: 1 1 8em; min-height: 44px; }
+  .new-tank .nt-warning-row button { min-height: 44px; }
+}
+
+.tools[hidden] { display: none; }
+
 .stats[hidden] { display: none; }
 
 input[type="number"] {

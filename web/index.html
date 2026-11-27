@@ -47,7 +47,7 @@
       <button id="play" type="button">Pause</button>
       <button id="step" type="button" disabled>Step</button>
       <button id="feed" type="button">Feed</button>
-      <button id="reset" type="button">Reset</button>
+      <button id="new-tank" type="button" aria-expanded="false" aria-controls="new-tank-panel">New tank</button>
       <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings">Settings</button>
       <button id="export" type="button" title="Download the tank as a save file (opens in the desktop app with desktank import)">Export</button>
       <button id="import" type="button" title="Open a save file from Export or the desktop app (desktank export)">Import</button>
@@ -97,7 +97,39 @@
       <p class="note">Saved in this browser. A new cell scale or seed starts a new tank. The tank itself is saved in this browser too (when you leave the page, and every 5 minutes while it runs); Export keeps a copy.</p>
     </section>
 
-    <section class="controls tools" aria-label="Tools" data-owner-only>
+    <section id="new-tank-panel" class="settings new-tank" aria-label="New tank" data-owner-only hidden>
+      <p id="nt-dimensions-row" class="nt-size">Size: <output id="nt-dimensions" for="nt-scale">–</output></p>
+      <label>Cell scale
+        <select id="nt-scale">
+          <option value="0">Auto</option>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+          <option value="6">6×</option>
+          <option value="8">8×</option>
+        </select>
+      </label>
+      <label>Preset <select id="nt-preset"></select></label>
+      <p id="nt-preset-desc" class="note" aria-live="polite"></p>
+      <span class="nt-seed"><label>Seed <input id="nt-seed" type="number" min="0" max="4294967295" step="1" value="1"></label> <button id="nt-reroll" type="button">Reroll</button></span>
+      <label>Water level <input id="nt-water-level" type="range" min="50" max="100" step="1" value="96"> <output id="nt-water-level-out" for="nt-water-level">96%</output></label>
+      <label class="check"><input id="nt-devices" type="checkbox" checked> Include starter filter &amp; bubbler</label>
+      <label>Time ratio <input id="nt-time-ratio" type="number" min="0.1" max="100" step="0.1" value="1"></label>
+      <label>Creature cap <input id="nt-creature-cap" type="number" min="1" max="128" step="1" value="60"></label>
+      <label class="check"><input id="nt-easy-mode" type="checkbox"> Easy mode</label>
+      <label class="check"><input id="nt-catch-up" type="checkbox"> Catch up when away</label>
+      <label class="check"><input id="nt-oled" type="checkbox"> OLED (true black water)</label>
+      <div class="nt-warning-row">
+        <p id="nt-warning" class="nt-warning" role="note">Creating a new tank replaces your current saved tank.</p>
+        <button id="nt-export" type="button" title="Download the current tank as a save file first">Export current tank</button>
+      </div>
+      <div class="nt-actions">
+        <button id="nt-create" type="button" class="primary">Create tank</button>
+        <button id="nt-cancel" type="button">Cancel</button>
+      </div>
+    </section>
+
+    <section id="tools" class="controls tools" aria-label="Tools" data-owner-only>
       <div id="palette-box" class="palette-box">
         <div id="tabs" class="tabs" role="tablist" aria-label="Tool categories"></div>
         <div class="tab-body">

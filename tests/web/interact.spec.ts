@@ -9,6 +9,7 @@ import {
   cellCount,
   cellPoint,
   choose,
+  createNewTank,
   decodePng,
   framesDrawn,
   gridSize,
@@ -243,7 +244,7 @@ test.describe("mouse", () => {
     await expect(page.locator("#inspect")).toHaveText("Select a creature with morphs, then C picks its colour");
 
     await choose(page, "Cherry shrimp");
-    await page.getByRole("button", { name: "Reset" }).click();
+    await createNewTank(page);
     await expect(chip("Blue")).toHaveAttribute("aria-checked", "true");
     expect(errors).toEqual([]);
   });
@@ -1012,7 +1013,7 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await expect(tab("Hardscape")).toBeFocused();
   await page.keyboard.press("g");
   await expect(tab("Water")).toBeFocused();
-  await page.getByRole("button", { name: "Reset" }).click();
+  await createNewTank(page);
   await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
 
   // P picks the selected plant's next start (its propagules, then a whole
@@ -1070,6 +1071,7 @@ test("settings persist across reloads", async ({ page }) => {
     ruler: false,
     seed: 42,
     radius: 7,
+    timeRatio: 1,
   });
   expect(await page.evaluate(() => window.desktank.grid[0]), "the tank uses the saved scale").toBe(scale);
   expect(await page.evaluate(() => window.desktank.tank.fieldOverlay())).toBe("flow");

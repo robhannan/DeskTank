@@ -141,3 +141,13 @@ export async function touchscreen(page: Page) {
     },
   };
 }
+
+// Opens the New tank setup and creates the tank it previews (the defaults,
+// or whatever `setup` changes first): what the old Reset button did.
+export async function createNewTank(page: Page, setup?: () => Promise<void>) {
+  await page.getByRole("button", { name: "New tank" }).click();
+  await expect(page.locator("#new-tank-panel")).toBeVisible();
+  await setup?.();
+  await page.getByRole("button", { name: "Create tank" }).click();
+  await expect(page.locator("#new-tank-panel")).toBeHidden();
+}
