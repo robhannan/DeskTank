@@ -9,9 +9,8 @@
 // its 2018 SwiftShader, which caps a fragment shader at 4096 temporary
 // registers: the one-pass grid shader exceeds it, as the TV's driver seems
 // to, so the check catches a pass that grows past the limit. It checks that
-// the page starts and draws with no GPU error, that the depth scene (plants
-// and fish, at scale 4) and the algae film and varieties scenes (whose passes
-// SwiftShader compiles only once algae shows) match the native references like the render tests
+// the page starts and draws with no GPU error, that the depth, rock varieties,
+// and algae scenes match the native references like the render tests
 // (at most 0.5% of pixels over CIEDE2000 ΔE 2), and that the one-pass
 // shaders (?grid=single) fail with the error on screen, not a black tank.
 // Screenshots go to target/shots/chrome68-*.png.
@@ -213,6 +212,7 @@ try {
   await cdp.eval("document.getElementById('debug').style.display = 'none'");
   for (const [scene, reference] of [
     ["depth", "depth_x4"],
+    ["rock_varieties", "rock_varieties_x4"],
     ["algae_film", "algae_film_x4"],
     ["algae_varieties", "algae_varieties_x4"],
   ]) {

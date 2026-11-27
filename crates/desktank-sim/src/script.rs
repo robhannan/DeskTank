@@ -19,6 +19,7 @@
 //! x = 80             # disc centre, in cells from the top left
 //! y = 10
 //! dx = 1             # move the centre this many cells per repeat (default 0)
+//! dy = 0             # and this many rows per repeat (default 0)
 //! radius = 3         # disc radius in cells (default 2)
 //! material = "sand"  # a material name from assets/materials
 //! brush = "pour"     # "pour" fills only fluid cells, "replace" overwrites (default "pour")
@@ -221,6 +222,9 @@ pub struct Pour {
     /// Column step per repeat.
     #[serde(default)]
     pub dx: i64,
+    /// Row step per repeat.
+    #[serde(default)]
+    pub dy: i64,
     /// Disc radius in cells.
     #[serde(default = "two")]
     pub radius: u32,
@@ -498,12 +502,13 @@ impl Player<'_> {
             let Some(i) = tick.checked_sub(p.tick).filter(|&i| i < p.repeat) else {
                 continue;
             };
-            let x =
-                p.x.saturating_add(p.dx.saturating_mul(i64::try_from(i).unwrap_or(i64::MAX)));
+            let step = i64::try_from(i).unwrap_or(i64::MAX);
+            let x = p.x.saturating_add(p.dx.saturating_mul(step));
+            let y = p.y.saturating_add(p.dy.saturating_mul(step));
             // Clamped far outside any grid, so `paint`'s clipping maths can't
             // overflow; a disc there misses the grid either way.
             let far = 4 * i64::try_from(crate::MAX_SIDE).unwrap_or(i64::MAX / 8);
-            let (x, y) = (x.clamp(-far, far), p.y.clamp(-far, far));
+            let (x, y) = (x.clamp(-far, far), y.clamp(-far, far));
             if let Some(name) = &p.plant {
                 let s = world
                     .plant_species()

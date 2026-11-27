@@ -320,7 +320,7 @@ impl Tools {
     /// inspect, glue and magnify; devices the placeables whose material `world`
     /// has; the rest are the materials, plant species and creature species
     /// whose TOML names the sub-category (`palette = "…"`), each kind by
-    /// ID. Assets naming no sub-category aren't offered (the cheat-only
+    /// `palette_order`, then ID. Assets naming no sub-category aren't offered (the cheat-only
     /// species, plant tissue, air, device cells).
     #[must_use]
     pub fn palette_tree(world: &World) -> Vec<PaletteTab> {
@@ -342,11 +342,17 @@ impl Tools {
                     .filter(|p| materials.id(p.material_name()).is_some())
                     .map(|p| PaletteItem::Tool(Tool::Place(p)))
                     .collect(),
-                Holds::Materials => materials
-                    .iter()
-                    .filter(|m| m.palette == Some(path))
-                    .map(|m| PaletteItem::Material(m.id))
-                    .collect(),
+                Holds::Materials => {
+                    let mut named: Vec<_> = materials
+                        .iter()
+                        .filter(|m| m.palette == Some(path))
+                        .collect();
+                    named.sort_by_key(|m| (m.palette_order, m.id));
+                    named
+                        .into_iter()
+                        .map(|m| PaletteItem::Material(m.id))
+                        .collect()
+                }
                 Holds::Plants => world
                     .plant_species()
                     .iter()
@@ -1315,7 +1321,10 @@ mod tests {
                 "build/substrate",
                 vec!["sand", "gravel", "aquasoil", "clown_vomit_gravel"],
             ),
-            ("build/hardscape", vec!["rock", "driftwood"]),
+            (
+                "build/hardscape",
+                vec!["rock", "dragon_stone", "seiryu_stone", "driftwood"],
+            ),
             (
                 "build/devices",
                 vec![

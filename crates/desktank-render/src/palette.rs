@@ -41,12 +41,18 @@ pub enum GroundStyle {
     /// Prefab device footprint cell (D27): drawn as air above the water line
     /// and as water at or below it; the device sprite renders on top.
     Device = 12,
+    /// Dragon stone: muted khaki layered ridges, small ochre patches and dark
+    /// slots along the ridge (keeps glue tint).
+    DragonStone = 13,
+    /// Seiryu: grey roughly pitted limestone with dark streaks, soft pale faces
+    /// and tan veins (keeps glue tint).
+    Seiryu = 14,
 }
 
 impl GroundStyle {
     /// Every style with its WGSL constant name (checked by `renderer.rs`).
     #[cfg(test)]
-    pub const ALL: [(&'static str, Self); 12] = [
+    pub const ALL: [(&'static str, Self); 14] = [
         ("STYLE_DEFAULT", Self::Default),
         ("STYLE_WATER", Self::Water),
         ("STYLE_AIR", Self::Air),
@@ -59,6 +65,8 @@ impl GroundStyle {
         ("STYLE_BUBBLE", Self::Bubble),
         ("STYLE_DETRITUS", Self::Detritus),
         ("STYLE_DEVICE", Self::Device),
+        ("STYLE_DRAGON_STONE", Self::DragonStone),
+        ("STYLE_SEIRYU", Self::Seiryu),
     ];
 
     /// Picks the sub-cell style for `m`.
@@ -75,6 +83,8 @@ impl GroundStyle {
             "gravel" | "clown_vomit_gravel" => Self::Gravel,
             "aquasoil" => Self::Aquasoil,
             "rock" => Self::Rock,
+            "dragon_stone" => Self::DragonStone,
+            "seiryu_stone" => Self::Seiryu,
             "driftwood" => Self::Driftwood,
             "air_bubble" | "co2_bubble" => Self::Bubble,
             "detritus" | "dead_plant" | "waste" => Self::Detritus,
@@ -130,6 +140,21 @@ pub fn shade(variant: u8) -> usize {
         192..=239 => 2,
         _ => 3,
     }
+}
+
+/// Which material IDs the shader draws as a stone variety (dragon stone,
+/// Seiryu): the split grid draws those in their own pass, skipped while none
+/// shows.
+#[must_use]
+pub fn variety_stones(materials: &MaterialTable) -> [bool; SIDE] {
+    let mut out = [false; SIDE];
+    for m in materials.iter() {
+        out[usize::from(m.id.0)] = matches!(
+            GroundStyle::for_material(m),
+            GroundStyle::DragonStone | GroundStyle::Seiryu
+        );
+    }
+    out
 }
 
 /// Builds the RGBA table, row-major with rows = variants. Alpha holds the
@@ -308,6 +333,8 @@ mod tests {
             ("clown_vomit_gravel", GroundStyle::Gravel),
             ("aquasoil", GroundStyle::Aquasoil),
             ("rock", GroundStyle::Rock),
+            ("dragon_stone", GroundStyle::DragonStone),
+            ("seiryu_stone", GroundStyle::Seiryu),
             ("driftwood", GroundStyle::Driftwood),
             ("air_bubble", GroundStyle::Bubble),
             ("co2_bubble", GroundStyle::Bubble),

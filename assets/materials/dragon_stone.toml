@@ -1,0 +1,14 @@
+# Dragon stone (ohko): soft, earthy khaki-to-tan clay rock, pitted with
+# holes and crevices, lighter than plain rock. A rigid body (D17) that
+# topples, settles, glues and scoops like `rock`; the texture is the
+# renderer's `STYLE_DRAGON_STONE`. The ID is appended so saves load unchanged.
+id = 81
+name = "dragon_stone"
+# Where the palette offers it: a "top/sub" category path (SPEC §2.5).
+palette = "build/hardscape"
+class = "rigid"
+density = 2.2
+colour = "#a08c68"
+# Weathered outline: strokes take stepped, notched edges along one ridge
+# direction (`shape`, SPEC §2.1).
+shape = "layered"
