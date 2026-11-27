@@ -166,6 +166,21 @@
     keys that act on it (R, Shift+R, M and I for a filter), and the web's readout line is left for messages (refusals,
     cheat results), with the inspection read out to screen readers only.
 
+    A creature of a species with needs, and every plant, also shows a
+    **Needs** section of labelled horizontal meters with trend chevrons
+    (empty is unmet, full satisfied; green, yellow, amber and red bands
+    with a bright cap so the length reads in greyscale). A plant's are its
+    **Light**, **CO₂** and **Nutrients**: how well each suits its species
+    (`World::plant_needs`, 100 at the species' optimum, 0 outside its
+    range), read from the fields over the plant's own cells; every species
+    depends on all three, so all three show. It sits beside the **Growth**
+    line, which names the factor that holds the plant back most at its
+    last update. The readings are derived from the world, so they add
+    nothing to saves; the trends come from a short history kept only while
+    the plant is inspected, and a reading that merely shimmers by a point
+    or two does not move a meter. Screen readers hear the same levels
+    (`Light 87%, comfortable`).
+
   The tray menu also has quick actions: Feed (default food), Water
   change, and Pause.
 - **Cheats** (D20): the Konami code (↑ ↑ ↓ ↓ ← → ← → B A) opens a small

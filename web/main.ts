@@ -1460,6 +1460,17 @@ function runName() {
   }
 }
 
+// The card's need meters as words, from the inspect line's needs token
+// (`Hunger:49:low,Social:100:comfortable`, or `-` for none): "Hunger 49%,
+// low". ES2020 only (webOS): no replaceAll.
+function needsText(needs: string | undefined): string[] {
+  if (!needs || needs === "-") return [];
+  return needs.split(",").map((need) => {
+    const [name, percent, level] = need.split(":");
+    return `${name.replace(/_/g, " ")} ${percent}%, ${level}`;
+  });
+}
+
 // A creature's card, from its inspect line's parts and its name.
 function creatureText({ parts, name }: Inspected) {
   const [species, id, over, x, y, stage, age, health, energy, sex, morph, carrying, needs] = parts;
@@ -1470,13 +1481,7 @@ function creatureText({ parts, name }: Inspected) {
   card.push(`${label(species)} #${id}`, `${stage} ${sex}`, old, `health ${health}%`, `energy ${energy}%`);
   if (morph !== "-") card.push(label(morph));
   if (carrying !== "-") card.push(`carrying, ${carrying} day${carrying === "1" ? "" : "s"} to go`);
-  // The card's need meters as words: "Hunger 49%, low".
-  if (needs && needs !== "-") {
-    for (const need of needs.split(",")) {
-      const [name, percent, level] = need.split(":");
-      card.push(`${name.replace(/_/g, " ")} ${percent}%, ${level}`);
-    }
-  }
+  card.push(...needsText(needs));
   card.push(`over ${label(over)}`, `cell ${x}, ${y}`);
   return card.join(" · ");
 }
@@ -1525,10 +1530,13 @@ function showInspection() {
     const [name, x, y] = rest;
     text = `${label(name)} · cell ${x}, ${y}`;
   } else if (kind === "plant") {
-    const [species, id, age, health, cells, limit, x, y] = rest;
+    const [species, id, age, health, cells, limit, x, y, needs] = rest;
     const days = Number(age);
     const old = days === 0 ? "under a day" : `${days} day${days === 1 ? "" : "s"}`;
-    text = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit} · cell ${x}, ${y}`;
+    // The card's light, CO₂ and nutrient meters as words, after what holds
+    // the plant back: "Light 87%, comfortable".
+    const care = needsText(needs).map((need) => ` · ${need}`).join("");
+    text = `${label(species)} #${id} · ${old} old · health ${health}% · ${cells} cells · ${LIMITS[limit] ?? limit}${care} · cell ${x}, ${y}`;
   } else if (kind === "device") {
     // D27, DV3: flow, media load, maturity, Rinse and intake guard toggle.
     showDeviceLine(rest);
