@@ -786,7 +786,7 @@ impl Renderer {
         };
 
         self.build_camera(gpu, size);
-        let backdrop = camera_backdrop(self.format, overlay_water_alpha);
+        let backdrop = camera_backdrop(self.format, overlay_water_alpha, oled);
         if let Some(camera) = self.camera.as_mut() {
             camera.post.update(gpu, view, &layout, size, backdrop);
         }
@@ -829,6 +829,7 @@ impl Renderer {
             },
             [0.0; 4],
             overlay_water_alpha,
+            oled,
         );
         if let Some(camera) = self.camera.as_mut()
             && overlay_bytes != camera.overlay_view
@@ -1130,14 +1131,18 @@ fn begin_pass(
 
 /// What the camera's post pass shows outside the tank's image, as the
 /// target holds it (linear for an sRGB target) and premultiplied: the
-/// letterbox colour, or nothing in overlay mode, where the letterbox is
+/// letterbox colour (black in OLED mode), or nothing in overlay mode, where the letterbox is
 /// clear.
-fn camera_backdrop(format: wgpu::TextureFormat, overlay_water_alpha: Option<f32>) -> [f32; 4] {
+fn camera_backdrop(
+    format: wgpu::TextureFormat,
+    overlay_water_alpha: Option<f32>,
+    oled: bool,
+) -> [f32; 4] {
     if overlay_water_alpha.is_some() {
         return [0.0; 4];
     }
-    let [r, g, b] = BACKDROP.map(|c| {
-        let c = f32::from(c) / 255.0;
+    let [r, g, b, _] = backdrop(None, oled);
+    let [r, g, b] = [r, g, b].map(|c| {
         if format.is_srgb() {
             if c <= 0.04045 {
                 c / 12.92

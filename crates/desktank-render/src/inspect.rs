@@ -1438,7 +1438,7 @@ mod tests {
         let mut card = InspectCard::default();
         card.set(&w, Some(Inspected::Creature(a)));
         assert!(card.set_can_name(&w, true));
-        let at = card.layout(&w, target, &g, None, 0).unwrap();
+        let at = card.layout(&w, target, &g, None, None, 0).unwrap();
         let rect = card.name_rect(&at).expect("the Name row can be clicked");
         // The row is above the Needs section and inside the card.
         let [_, top, _, height] = card.name_row.unwrap();
@@ -1452,7 +1452,7 @@ mod tests {
         assert_eq!(card.page.tag(), "2/2");
         assert_ne!(card.image, live_page);
         assert!(
-            card.layout(&w, target, &g, None, 0)
+            card.layout(&w, target, &g, None, None, 0)
                 .and_then(|at| card.name_rect(&at))
                 .is_none()
         );
@@ -1480,7 +1480,7 @@ mod tests {
             for (target, scale_at_least) in [((360, 640), 1), ((1280, 720), 2)] {
                 let g = Layout::fit((320, 180), target);
                 let at = card
-                    .layout(&w, target, &g, None, 0)
+                    .layout(&w, target, &g, None, None, 0)
                     .unwrap_or_else(|| panic!("{narrow} {target:?}"));
                 assert!(at.scale >= scale_at_least, "{target:?}: {at:?}");
                 let (cw, ch) = at.size();
@@ -1490,7 +1490,7 @@ mod tests {
         // Even a 320×180 canvas (a TV safe area, an embed) fits it once.
         let g = Layout::fit((160, 90), (320, 180));
         card.set_narrow(&w, false);
-        assert!(card.layout(&w, (320, 180), &g, None, 0).is_some());
+        assert!(card.layout(&w, (320, 180), &g, None, None, 0).is_some());
     }
 
     /// Writes a tetra's live card, just after a first bite, in two columns
