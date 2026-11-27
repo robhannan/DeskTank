@@ -30,6 +30,7 @@ mod hardscape;
 mod life;
 mod persist;
 mod plants;
+mod weathering;
 
 pub use catch_up::{CatchUp, MAX_CATCH_UP_SECONDS, catch_up_seconds};
 use creatures::Creatures;
@@ -580,6 +581,15 @@ impl World {
             let hi = (c + r).min(len as i64 - 1);
             lo..=hi
         };
+        // A weathered stone's dab, whose quarters the cells below read.
+        let weathered = rigid
+            .then(|| {
+                let shape = self.materials.get(material).map(|m| m.shape);
+                let w =
+                    weathering::Weathering::new(shape.unwrap_or_default(), self.seed, material.0);
+                w.is_shaped(r).then(|| w.dab(cx, cy, r))
+            })
+            .flatten();
         let mut changed = 0;
         for y in clip(cy, self.height) {
             for x in clip(cx, self.width) {
@@ -587,18 +597,28 @@ impl World {
                 if dx * dx + dy * dy > r * r + r {
                     continue;
                 }
+                // The quarters this dab covers of the cell: the brush's disc,
+                // weathered for stones with a shape. A cell the weathering
+                // trims away entirely isn't made rigid at all.
+                let mask = match &weathered {
+                    Some(dab) => dab.mask(cx, cy, x, y),
+                    None => disc_mask(dx, dy, r),
+                };
                 let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
                     continue;
                 };
                 let i = y * self.width + x;
+                if rigid && mask == 0 {
+                    continue;
+                }
                 if self.brush_cell(x, y, material, brush, &mut body) {
                     changed += 1;
                     if rigid {
-                        self.set_mask(i, disc_mask(dx, dy, r));
+                        self.set_mask(i, mask);
                     }
                 } else if rigid && self.cells[i].material == material {
                     // Overlapping dabs of a stroke fill in each other's edges.
-                    self.add_mask(i, disc_mask(dx, dy, r));
+                    self.add_mask(i, mask);
                 }
             }
         }

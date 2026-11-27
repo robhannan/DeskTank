@@ -149,6 +149,8 @@ const STYLE_DRIFTWOOD: i32 = 8;
 const STYLE_BUBBLE: i32 = 9;
 const STYLE_DETRITUS: i32 = 11;
 const STYLE_DEVICE: i32 = 12;
+const STYLE_DRAGON_STONE: i32 = 13;
+const STYLE_SEIRYU: i32 = 14;
 
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
@@ -443,9 +445,14 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if need_ground {
         var bg: vec4<f32>;
         if water_behind {
-            bg = vec4<f32>(water_bg(at, quarter, fine_scale(), vec4<f32>(0.0)), water_opacity());
+            bg = vec4<f32>(water_bg(at, quarter, fine_scale()), water_opacity());
         } else {
-            bg = ground(at, ground_texel, quarter);
+            let style = style_of(ground_texel);
+            if view.scale >= 2.0 && is_stone_variety(style) {
+                bg = stone_variety(at, ground_texel, quarter, style);
+            } else {
+                bg = ground(at, ground_texel, quarter);
+            }
         }
         var under = 1.0;
         let film = ground_film(at, ground_texel, quarter, water_behind, &under);
@@ -469,6 +476,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 // draws. In opaque mode, blending in the attachment instead of before
 // grid_post and colour conversion can differ for translucent plant texels.
 
+// The split ground passes use the same source cell behind swaying plants.
+fn split_ground_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: vec2<i32>) -> vec2<i32> {
+    let src = grid_source(grid_pos, at, texel, quarter);
+    if (src.part >= 0 && !src.from_sway) || src.swayed_away {
+        let nbr = behind_cell(at, quarter);
+        if nbr.x >= 0 || src.swayed_away || overlay_enabled() {
+            return nbr;
+        }
+    }
+    return at;
+}
+
 // Pass 1: the palette, the letterbox, and the ground or water each pixel
 // shows behind any plant art (or anything, where a plant pass draws opaque).
 @fragment
@@ -488,19 +507,48 @@ fn fs_ground(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let at = vec2<i32>(cell);
     let texel = textureLoad(cells, at, 0);
     let quarter = quarter_of(grid_pos, cell);
+    let source = split_ground_source(grid_pos, at, texel, quarter);
+    if source.x < 0 {
+        let rgb = water_bg(at, quarter, fine_scale());
+        return layer_out(grid_post(rgb, cell), water_opacity());
+    }
     var ground_texel = texel;
-    let src = grid_source(grid_pos, at, texel, quarter);
-    if (src.part >= 0 && !src.from_sway) || src.swayed_away {
-        let nbr = behind_cell(at, quarter);
-        if nbr.x >= 0 {
-            ground_texel = textureLoad(cells, nbr, 0);
-        } else if src.swayed_away || overlay_enabled() {
-            let fine = fine_scale();
-            let rgb = water_bg(at, quarter, fine, vec4<f32>(0.0));
-            return layer_out(grid_post(rgb, cell), water_opacity());
-        }
+    if any(source != at) {
+        ground_texel = textureLoad(cells, source, 0);
     }
     let bg = ground(at, ground_texel, quarter);
+    return layer_out(grid_post(bg.rgb, cell), bg.a);
+}
+
+// Draw the procedural rock varieties before the algae and plant passes.
+// Keeping their noise out of fs_ground fits Chrome 68's register limit.
+@fragment
+fn fs_stone_varieties(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) || hud_at(pos.xy).a > 0.5 {
+        discard;
+    }
+    let grid_pos = (pos.xy - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    let at = vec2<i32>(cell);
+    if !inside(at) {
+        discard;
+    }
+    var texel = textureLoad(cells, at, 0);
+    var style = style_of(texel);
+    let quarter = quarter_of(grid_pos, cell);
+    // A variety can show in its own cell, or behind a plant.
+    if part_of(texel) >= 0 {
+        let source = split_ground_source(grid_pos, at, texel, quarter);
+        if source.x < 0 || all(source == at) {
+            discard;
+        }
+        texel = textureLoad(cells, source, 0);
+        style = style_of(texel);
+    }
+    if !is_stone_variety(style) {
+        discard;
+    }
+    let bg = stone_variety(at, texel, quarter, style);
     return layer_out(grid_post(bg.rgb, cell), bg.a);
 }
 
@@ -942,7 +990,7 @@ fn ground_film(
             } else if style == STYLE_GRAVEL || style == STYLE_AQUASOIL {
                 let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
                 shows = row >= loose_top_at(at, mat, open_up, quarter, fine);
-            } else if style == STYLE_ROCK || style == STYLE_DRIFTWOOD {
+            } else if is_stone(style) || style == STYLE_DRIFTWOOD {
                 let own = outline_of(t);
                 shows = own == 0xffffu || rigid_drawn(at, mat, own, quarter, fine);
             } else if style == STYLE_DETRITUS {
@@ -1092,9 +1140,9 @@ fn depth_factor(y: f32) -> f32 {
 
 // Sub-cell background water colour at `(at, quarter)` (used behind bubbles,
 // hardscape silhouettes and detritus edges).
-fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> vec3<f32> {
+fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool) -> vec3<f32> {
     if oled() {
-        return mix(vec3<f32>(0.0), rear.rgb, rear.a);
+        return vec3<f32>(0.0);
     }
     let mat = max(i32(round(view.plant_parts.w)), 0);
     let base = textureLoad(palette, vec2<i32>(mat, 0), 0).rgb;
@@ -1103,8 +1151,7 @@ fn water_bg(at: vec2<i32>, quarter: vec2<i32>, fine: bool, rear: vec4<f32>) -> v
     let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
     let h = hash(vec2<i32>(p.x / 2, p.y));
     let shimmer = 1.0 + (f32(h & 7u) - 3.5) * 0.006;
-    let rgb = base * depth_factor(f32(at.y) + sub_y) * shimmer;
-    return mix(rgb, rear.rgb, rear.a);
+    return base * depth_factor(f32(at.y) + sub_y) * shimmer;
 }
 
 // Sub-cell background air colour at `(at, quarter)` (used by air cells,
@@ -1284,7 +1331,7 @@ fn surface_ripple(
         if pos.y >= surf_y && pos.y < view.surface_row
             && style_at(vec2<i32>(at.x, i32(view.surface_row))) == STYLE_WATER
         {
-            let wcol = water_bg(at, quarter, fine, vec4<f32>(0.0));
+            let wcol = water_bg(at, quarter, fine);
             let dy = pos.y - surf_y;
             let crest_k = clamp(0.45 + 0.45 * best_impact - dy * 0.4, 0.25, 0.92);
             let tint = mix(crest_tint, foam_tint, clamp(best_impact * 1.1, 0.0, 1.0));
@@ -1453,6 +1500,281 @@ fn rigid_edges(at: vec2<i32>, mat: i32, own: u32, q: vec2<i32>) -> vec4<i32> {
     return vec4<i32>(up, down, left, right);
 }
 
+// The stone styles: plain rock and the varieties drawn like it (own texture,
+// shared outline and bevels).
+fn is_stone(style: i32) -> bool {
+    return style == STYLE_ROCK || is_stone_variety(style);
+}
+
+fn is_stone_variety(style: i32) -> bool {
+    return style == STYLE_DRAGON_STONE || style == STYLE_SEIRYU;
+}
+
+// A stone texel's centre in cells, so a texture keeps its size at 2x and 4x.
+fn stone_cell(p: vec2<i32>, fine: bool) -> vec2<f32> {
+    return (vec2<f32>(p) + 0.5) / select(2.0, 4.0, fine);
+}
+
+// A hashed value in [0, 1) at a lattice point.
+fn lattice(i: vec2<i32>) -> f32 {
+    return f32(hash(i) & 1023u) / 1024.0;
+}
+
+// Smooth value noise in [0, 1): one lattice step per unit of `x`.
+fn vnoise(x: vec2<f32>) -> f32 {
+    let i = vec2<i32>(floor(x));
+    let f = fract(x);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(lattice(i), lattice(i + vec2<i32>(1, 0)), u.x);
+    let b = mix(lattice(i + vec2<i32>(0, 1)), lattice(i + vec2<i32>(1, 1)), u.x);
+    return mix(a, b, u.y);
+}
+
+// Dragon stone's dominant ridge direction, in cells: strata, slots and
+// ledges all run along it, leaning a little (going up drifts right). The
+// sim's layered outline (`world/weathering.rs`) uses the same direction.
+const DRAGON_ALONG: vec2<f32> = vec2<f32>(0.287, -0.958);
+const DRAGON_ACROSS: vec2<f32> = vec2<f32>(0.958, 0.287);
+
+// One lattice of gouges for dragon stone, in ridge coordinates (`a` across,
+// `b` along): columns `wid` cells wide, each shifted along by its own
+// offset and cut into segments `seg` long, a segment holding a slot with
+// probability `dens`. A slot's size, position and length vary (some are
+// long), and its edge is wobbled. Returns the slot measure (<1 inside, big
+// when none) and the texel's place along it (1 at the screen-top end, -1 at
+// the bottom).
+fn dragon_slot(a: f32, b: f32, wid: f32, seg: f32, salt: i32, dens: f32) -> vec2<f32> {
+    let col = i32(floor(a / wid));
+    let hc = hash(vec2<i32>(col, salt));
+    let bo = b + f32(hc & 255u) / 255.0 * seg;
+    let row = i32(floor(bo / seg));
+    let h = hash(vec2<i32>(col, row) + vec2<i32>(salt * 7, salt + 3));
+    if f32(h & 255u) / 255.0 >= dens {
+        return vec2<f32>(9.0, 0.0);
+    }
+    let hw = (0.17 + f32((h >> 8u) & 7u) / 7.0 * 0.17) * wid;
+    var hl = (0.13 + f32((h >> 11u) & 7u) / 7.0 * 0.19) * seg;
+    if ((h >> 14u) & 7u) == 0u {
+        hl = hl * 1.6;
+    }
+    hl = min(hl, seg * 0.46);
+    let ca = hw + (wid - 2.0 * hw) * (f32((h >> 17u) & 15u) / 15.0);
+    let cb = hl + (seg - 2.0 * hl) * (f32((h >> 21u) & 15u) / 15.0);
+    var d = vec2<f32>((a - f32(col) * wid - ca) / hw, (bo - f32(row) * seg - cb) / hl);
+    // A ragged, tapering edge: slots pinch toward their ends.
+    d.x = d.x + (vnoise(vec2<f32>(a, b) * vec2<f32>(1.3, 0.6) + f32(salt)) - 0.5) * 0.8;
+    d.y = d.y + (vnoise(vec2<f32>(a, b) * vec2<f32>(0.7, 1.1) + f32(salt) + 31.0) - 0.5) * 0.4;
+    d.x = d.x / max(1.0 - 0.45 * d.y * d.y, 0.3);
+    return vec2<f32>(d.x * d.x + pow(abs(d.y), 2.4), d.y);
+}
+
+// Dragon stone at `w` (cells): muted khaki-grey strata, small patches of
+// desaturated ochre, and deep irregular slots clustered along the ridge
+// direction, dark inside with a lit lip above. `grain` is the texel's hash
+// and `base` the material colour.
+fn dragon_stone_colour(w: vec2<f32>, grain: u32, base: vec3<f32>) -> vec3<f32> {
+    let g = f32(grain & 255u) / 255.0 - 0.5;
+    let a = dot(w, DRAGON_ACROSS);
+    let b = dot(w, DRAGON_ALONG);
+    let warp = vnoise(vec2<f32>(a * 0.25, b * 0.12) + 71.0) * 5.0;
+    let tone = vnoise(vec2<f32>(a * 0.30, b * 0.10) + 3.1);
+    var k = 0.80 + tone * 0.34 + g * 0.06;
+    // Layered ridges: a lit crest and a dark crevice beneath, wandering.
+    let ridge = fract((a + warp) * 0.21 + vnoise(vec2<f32>(a * 0.05, b * 0.05)) * 0.6);
+    if vnoise(vec2<f32>(a * 0.16, b * 0.08) + 5.0) > 0.40 {
+        if ridge < 0.08 {
+            k = k * 0.80;
+        } else if ridge < 0.20 {
+            k = k * 1.10;
+        }
+    }
+    // Greyer, cooler khaki in the hollows, a little warmer on the lit faces,
+    // pulled toward grey overall.
+    var col = base * k * mix(vec3<f32>(0.90, 0.94, 1.0), vec3<f32>(1.03, 1.0, 0.94), tone);
+    col = mix(col, vec3<f32>(dot(col, vec3<f32>(0.30, 0.59, 0.11))), 0.20);
+    // Ochre: small, patchy and muted, streaked along the ridge, with soft
+    // broken edges.
+    let o = vnoise(vec2<f32>(a * 0.55, b * 0.14) + 29.0) * 0.65 + vnoise(vec2<f32>(a * 1.4, b * 0.40) + 3.0) * 0.35 + g * 0.06;
+    col = mix(col, col * vec3<f32>(1.10, 0.93, 0.72), smoothstep(0.64, 0.76, o) * 0.85);
+    // Slots, clustered where the density noise is high and in two sizes:
+    // the big gouges first, small pits in what is left.
+    let dens = smoothstep(0.30, 0.70, vnoise(vec2<f32>(a * 0.10, b * 0.07) + 5.0));
+    let big = dragon_slot(a, b, 3.3, 9.5, 211, dens * 0.65);
+    let small = dragon_slot(a, b, 1.7, 4.6, 57, dens * 0.40 + 0.03);
+    let slot = select(small, big, big.x < 1.8);
+    let in_big = big.x < 1.8;
+    if slot.x < 1.0 {
+        // Darkest under the top lip, lighter on the floor of the slot.
+        let floor_lit = clamp(0.5 - 0.5 * slot.y, 0.0, 1.0);
+        let depth = select(0.0, 0.10, !in_big);
+        col = base * vec3<f32>(0.80, 0.66, 0.50) * (0.34 + depth + 0.20 * floor_lit * floor_lit) * (1.0 + g * 0.3);
+    } else if slot.x < 1.7 {
+        // Lit lip above the slot, shadowed rim below it.
+        col = col * select(0.86, 1.16, slot.y > 0.0);
+    }
+    return col;
+}
+
+// A rough pit for Seiryu: a jittered lattice square of `size` cells holds one
+// with probability `rate`, its outline wobbled by a domain warp so none is a
+// neat oval, its two radii (in `rad`, scaled and varied) independent. Returns
+// the pit's ellipse measure (<1 inside, big when none) and the texel's height
+// within it (-1 top to 1 bottom).
+fn rough_pit(w: vec2<f32>, size: f32, salt: i32, rate: f32, rad: vec2<f32>) -> vec2<f32> {
+    let wp = w + (vec2<f32>(vnoise(w * 1.9 + f32(salt)), vnoise(w * 1.9 + f32(salt) + 40.0)) - 0.5) * 0.7;
+    let li = vec2<i32>(floor(wp / size));
+    let h = hash(li + vec2<i32>(salt, salt * 3 + 1));
+    if f32(h & 255u) / 255.0 >= rate {
+        return vec2<f32>(9.0, 0.0);
+    }
+    let rx = rad.x + f32((h >> 16u) & 7u) / 7.0 * (rad.y - rad.x);
+    let ry = rx * (0.7 + f32((h >> 19u) & 7u) / 7.0 * 1.4);
+    let c = vec2<f32>(rx, ry) + (vec2<f32>(size) - vec2<f32>(rx, ry) * 2.0) * vec2<f32>(f32((h >> 8u) & 15u) / 15.0, f32((h >> 12u) & 15u) / 15.0);
+    let d = (wp - vec2<f32>(li) * size - c) / vec2<f32>(rx, ry);
+    return vec2<f32>(dot(d, d), d.y);
+}
+
+// The noise whose mid-line Seiryu's veins follow.
+fn seiryu_vein(w: vec2<f32>) -> f32 {
+    return vnoise(w * 0.16 + 41.0) * 0.8 + vnoise(w * 0.45 + 8.0) * 0.2;
+}
+
+// Seiryu at `w` (cells): mid-to-dark grey limestone, roughly pitted in
+// clusters, streaked with dark crevices running down, with pale worn faces
+// that fade in softly and thin tan-rust veins.
+fn seiryu_colour(w: vec2<f32>, grain: u32, base: vec3<f32>, at: vec2<i32>, mat: i32) -> vec3<f32> {
+    let g = f32(grain & 255u) / 255.0 - 0.5;
+    // Broad faces of different brightness (a facet per few cells, sheared),
+    // cool and dark in the hollows, warmer where lit.
+    let mott = vnoise(w * vec2<f32>(0.45, 0.30) + 7.0);
+    let broad = vnoise(w * vec2<f32>(0.12, 0.07) + 19.0);
+    let face = hash(vec2<i32>(floor(vec2<f32>(w.x * 0.10 + w.y * 0.04, w.y * 0.075) + 3.0)));
+    let tone = clamp(broad * 0.65 + mott * 0.35 + (f32(face & 15u) / 15.0 - 0.5) * 0.30, 0.0, 1.0);
+    var col = base * mix(0.66, 1.34, smoothstep(0.15, 0.85, tone)) * (1.0 + g * 0.09);
+    col = col * mix(vec3<f32>(0.93, 0.97, 1.06), vec3<f32>(1.02, 1.01, 0.98), tone);
+    // Dark crevices and streaks running down, leaning a little: thin across,
+    // long along.
+    let sw = vec2<f32>(w.x - w.y * 0.10, w.y);
+    let streak = vnoise(vec2<f32>(sw.x * 1.1, sw.y * 0.10) + 17.0);
+    let reach = vnoise(vec2<f32>(sw.x * 0.40, sw.y * 0.06) + 61.0);
+    col = col * mix(1.0, 0.60, smoothstep(0.36, 0.24, streak) * smoothstep(0.38, 0.58, reach));
+    // Worn pale faces: a soft blend, broken up by the grain so the pitting
+    // still shows through, never a flat white patch.
+    let c = vnoise(w * vec2<f32>(0.20, 0.14) + 13.0) * 0.75 + vnoise(w * 0.55 + 2.0) * 0.25;
+    let pale = smoothstep(0.56, 0.84, c) * (0.80 + g * 0.5);
+    col = mix(col, vec3<f32>(0.80, 0.80, 0.77) * (0.94 + mott * 0.12), pale * 0.50);
+    // Pits in clusters, three sizes: the big first, then medium and small in
+    // what is left. Fewer on the pale faces.
+    let cluster = smoothstep(0.22, 0.72, vnoise(w * 0.13 + 9.0));
+    let calm = 1.0 - pale * 0.6;
+    let pb = rough_pit(w, 6.2, 131, 0.34 * cluster * calm, vec2<f32>(0.55, 1.2));
+    let pm = rough_pit(w, 3.1, 53, 0.50 * (0.25 + cluster) * calm, vec2<f32>(0.28, 0.62));
+    let ps = rough_pit(w, 1.9, 87, 0.50 * (0.20 + cluster) * calm, vec2<f32>(0.16, 0.32));
+    var pit = ps;
+    if pm.x < 1.8 {
+        pit = pm;
+    }
+    if pb.x < 1.8 {
+        pit = pb;
+    }
+    if pit.x < 1.0 {
+        col = col * (0.46 + 0.14 * clamp(pit.y * 0.5 + 0.5, 0.0, 1.0));
+    } else if pit.x < 1.7 {
+        col = col * select(0.92, 1.10, pit.y > 0.0);
+    }
+    // Rough grain: single dark flecks, thickest in the clusters.
+    if f32((grain >> 8u) & 255u) / 255.0 < 0.05 + 0.10 * cluster {
+        col = col * 0.80;
+    }
+    // Thin, sparse, greyish tan veins running across the faces, in some
+    // places only: the distance to two of the noise's contours from its
+    // gradient, so every vein is the same width (about a texel and a half at
+    // 2x) wherever the noise is steep or flat. They are strongest in some
+    // patches and faint elsewhere, and thin out toward the outline (none
+    // within a cell of an edge, under half strength within two), so a thin
+    // spire carries none and no vein reads as an orange edge stripe.
+    let v0 = seiryu_vein(w);
+    let grad = length(vec2<f32>(seiryu_vein(w + vec2<f32>(0.2, 0.0)) - v0, seiryu_vein(w + vec2<f32>(0.0, 0.2)) - v0)) / 0.2 + 0.001;
+    let vein_zone = 0.55 + 0.45 * smoothstep(0.20, 0.55, vnoise(w * 0.09 + 23.0));
+    if min(abs(v0 - 0.5), abs(v0 - 0.34)) / grad < 0.28 {
+        let near = same_mat(at + vec2<i32>(1, 0), mat) && same_mat(at + vec2<i32>(-1, 0), mat)
+            && same_mat(at + vec2<i32>(0, 1), mat) && same_mat(at + vec2<i32>(0, -1), mat)
+            && same_mat(at + vec2<i32>(1, 1), mat) && same_mat(at + vec2<i32>(-1, -1), mat)
+            && same_mat(at + vec2<i32>(1, -1), mat) && same_mat(at + vec2<i32>(-1, 1), mat);
+        if near {
+            let far = same_mat(at + vec2<i32>(2, 0), mat) && same_mat(at + vec2<i32>(-2, 0), mat)
+                && same_mat(at + vec2<i32>(0, 2), mat) && same_mat(at + vec2<i32>(0, -2), mat);
+            // A warm tint of the local grey, not a flat colour, so a vein
+            // stays a faint rust shift on light and dark faces alike.
+            col = mix(col, col * vec3<f32>(1.20, 1.0, 0.80), vein_zone * select(0.40, 0.85, far));
+        }
+    }
+    return col;
+}
+
+// Crisp bevels on the exposed faces of the stone's sub-cell outline.
+fn stone_bevel(at: vec2<i32>, mat: i32, own: u32, quarter: vec2<i32>, fine: bool, shade: f32) -> f32 {
+    let sub = quarter / 2;
+    var k = shade;
+    if fine {
+        // Bevels along the outline: lit top, shadowed underside.
+        let e = rigid_edges(at, mat, own, quarter);
+        if e.x <= 2 {
+            k = k * select(1.06, 1.15, e.x == 1);
+        }
+        if e.z == 1 {
+            k = k * 1.08;
+        }
+        if e.y <= 2 {
+            k = k * select(0.92, 0.82, e.y == 1);
+        }
+        if e.w == 1 {
+            k = k * 0.88;
+        }
+    } else {
+        if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
+            k = k * 1.12;
+        }
+        if sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
+            k = k * 1.06;
+        }
+        if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
+            k = k * 0.86;
+        }
+        if sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat) {
+            k = k * 0.90;
+        }
+    }
+    return k;
+}
+
+fn stone_variety(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>, style: i32) -> vec4<f32> {
+    let mat = i32(round(t.r * 255.0));
+    let v = u32(round(t.g * 255.0));
+    let fine = fine_scale();
+    let own = outline_of(t);
+    if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
+        return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
+    }
+    let base = textureLoad(palette, vec2<i32>(mat, i32(v & 1u)), 0).rgb;
+    let p = select(at * 2 + quarter / 2, at * 4 + quarter, fine);
+    let w = stone_cell(p, fine);
+    let grain = hash(p);
+    let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
+    let cell_n = (f32((v >> 2u) & 3u) - 1.5) * 0.018;
+    var stone: vec3<f32>;
+    var k: f32;
+    if style == STYLE_DRAGON_STONE {
+        stone = dragon_stone_colour(w, grain, base);
+        k = 1.0 + (f32(facet & 7u) - 3.5) * 0.012 + cell_n;
+    } else {
+        stone = seiryu_colour(w, grain, base, at, mat);
+        k = 1.0 + (f32(facet & 7u) - 3.5) * 0.018 + cell_n;
+    }
+    let rgb = clamp(stone * stone_bevel(at, mat, own, quarter, fine, k), vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(rgb, 1.0);
+}
+
 // The colour of a non-plant cell: at scale 1 a flat palette lookup with
 // whole-cell depth darkening; at scale >= 2 (2x2) and fine scales (4x4),
 // sub-cell background gradients, sand/gravel/aquasoil grains, stone/wood
@@ -1471,8 +1793,6 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
     let fine = fine_scale();
     let sub = quarter / 2;
     let p = select(at * 2 + sub, at * 4 + quarter, fine);
-    // ground_film draws the algae over all of this.
-    let rear = vec4<f32>(0.0);
     if flat {
         let c = textureLoad(palette, vec2<i32>(mat, i32(v)), 0);
         let s = i32(round(c.a * 255.0)) & 127;
@@ -1494,6 +1814,11 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
     let base_texel = textureLoad(palette, vec2<i32>(mat, base_v), 0);
     let base = base_texel.rgb;
     let style = i32(round(base_texel.a * 255.0)) & 127;
+    if is_stone_variety(style) {
+        // fs_main handles these before calling ground; the split grid
+        // fills these texels in fs_stone_varieties.
+        discard;
+    }
 
     if style == STYLE_WATER || style == STYLE_FERTILISER {
         let sub_y = select((f32(sub.y) + 0.5) * 0.5, (f32(quarter.y) + 0.5) * 0.25, fine);
@@ -1560,7 +1885,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let h = hash_grain(p, v);
         let top_row = loose_top(open_up, open_l, open_r, at, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         let r = h & 31u;
         // Multi-grain quartz palette: warm base, soft tan shadow, bright glint,
@@ -1618,7 +1943,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         let q = select(sub, quarter, fine);
         if q.y < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         // Cell-constant layout bits (glue bit dropped so gluing keeps the look).
         let cv = hash(vec2<i32>(i32(v >> 1u), 0x4b1d));
@@ -1724,7 +2049,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let open_up = is_open_fluid(at + vec2<i32>(0, -1), mat);
         let top_row = loose_top_at(at, mat, open_up, quarter, fine);
         if select(sub.y, quarter.y, fine) < top_row {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         var k: f32;
         if fine {
@@ -1776,9 +2101,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         // Sub-cell outline: round brushes draw round stones.
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
-        // World-space faceted stone strata + fine mineral grain.
+        // World-space faceted stone strata and fine mineral grain.
         let facet = hash(vec2<i32>((p.x + p.y / 2) / 3, (p.y - p.x / 4) / 3));
         let grain = hash(p);
         let cell_n = (f32((v >> 2u) & 3u) - 1.5) * 0.018;
@@ -1787,44 +2112,14 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if ((facet >> 4u) & 15u) == 0u && ((grain >> 3u) & 3u) == 0u {
             k = k * 0.86;
         }
-        // Crisp edge bevels on exposed faces (read only the neighbours this texel can touch).
-        if fine {
-            // Bevels along the outline: lit top, shadowed underside.
-            let e = rigid_edges(at, mat, own, quarter);
-            if e.x <= 2 {
-                k = k * select(1.06, 1.15, e.x == 1);
-            }
-            if e.z == 1 {
-                k = k * 1.08;
-            }
-            if e.y <= 2 {
-                k = k * select(0.92, 0.82, e.y == 1);
-            }
-            if e.w == 1 {
-                k = k * 0.88;
-            }
-        } else {
-            if sub.y == 0 && !same_mat(at + vec2<i32>(0, -1), mat) {
-                k = k * 1.12;
-            }
-            if sub.x == 0 && !same_mat(at + vec2<i32>(-1, 0), mat) {
-                k = k * 1.06;
-            }
-            if sub.y == 1 && !same_mat(at + vec2<i32>(0, 1), mat) {
-                k = k * 0.86;
-            }
-            if sub.x == 1 && !same_mat(at + vec2<i32>(1, 0), mat) {
-                k = k * 0.90;
-            }
-        }
-        let rgb = clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0));
+        let rgb = clamp(base * stone_bevel(at, mat, own, quarter, fine, k), vec3<f32>(0.0), vec3<f32>(1.0));
         return vec4<f32>(rgb, 1.0);
     }
 
     if style == STYLE_DRIFTWOOD {
         let own = outline_of(t);
         if own != 0xffffu && !rigid_drawn(at, mat, own, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         // Driftwood encodes per-cell waterlogging in variant >> 1 (and glue in bit 0).
         let wood_base = textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb;
@@ -1879,7 +2174,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let same_l = style_at(at + vec2<i32>(-1, 0)) == STYLE_BUBBLE;
         let same_r = style_at(at + vec2<i32>(1, 0)) == STYLE_BUBBLE;
         let isolated = !same_u && !same_d && !same_l && !same_r;
-        let bg = water_bg(at, quarter, fine, rear);
+        let bg = water_bg(at, quarter, fine);
         let wa = water_opacity();
         if isolated {
             if fine {
@@ -1953,7 +2248,7 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         let h = hash_grain(p, v);
         // Detritus trims only under water (in air it is a resting heap).
         if water_up && select(sub.y, quarter.y, fine) < loose_top_at(at, mat, open_up, quarter, fine) {
-            return vec4<f32>(water_bg(at, quarter, fine, rear), water_opacity());
+            return vec4<f32>(water_bg(at, quarter, fine), water_opacity());
         }
         let k = 0.84 + f32((h >> 2u) & 7u) * 0.042 + select(0.0, 0.06, open_up && sub.y == 0);
         return vec4<f32>(clamp(base * k, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
@@ -3060,7 +3355,7 @@ fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
     }
     let style = flags & 127;
     let own = outline_of(t);
-    if view.scale < 2.0 || own == 0xffffu || (style != STYLE_ROCK && style != STYLE_DRIFTWOOD) {
+    if view.scale < 2.0 || own == 0xffffu || (!is_stone(style) && style != STYLE_DRIFTWOOD) {
         return true;
     }
     let mat = i32(round(t.r * 255.0));
