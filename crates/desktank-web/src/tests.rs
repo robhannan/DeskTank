@@ -1598,3 +1598,116 @@ fn the_tour_starts_and_ends_and_a_resize_keeps_it() {
     assert!(!t.touring());
     assert!(t.tank().camera().is_none());
 }
+
+/// A New Tank with the given preset and devices, 128×72 cells.
+fn new_tank(preset: &str, include_devices: bool) -> Result<WebTank, String> {
+    WebTank::from_new_tank(
+        128,
+        72,
+        7,
+        preset,
+        0.8,
+        include_devices,
+        true,
+        12,
+        4.0,
+        512,
+        288,
+    )
+}
+
+#[test]
+fn dimensions_cm_matches_the_sim() {
+    let (w, h) = desktank_sim::dimensions_cm(640, 360);
+    assert_eq!(dimensions_cm(640, 360), [w, h]);
+    assert_eq!(dimensions_cm(0, 0), [0.0, 0.0]);
+}
+
+#[test]
+fn tank_presets_list_every_preset() {
+    let list = tank_presets();
+    assert_eq!(list.len(), TankPreset::ALL.len());
+    for (line, preset) in list.iter().zip(TankPreset::ALL) {
+        let parts: Vec<&str> = line.split('\t').collect();
+        assert_eq!(parts, [preset.id(), preset.name(), preset.description()]);
+    }
+    assert!(list.iter().any(|l| l.starts_with("empty\t")));
+    assert!(list.iter().any(|l| l.starts_with("artificial\t")));
+}
+
+#[test]
+fn new_tank_applies_the_initial_settings() {
+    for preset in ["empty", "artificial", "Artificial"] {
+        let t = new_tank(preset, true).unwrap();
+        let w = t.tank.world();
+        assert_eq!((w.width(), w.height()), (128, 72));
+        assert!(t.easy_mode());
+        assert_eq!(t.creature_cap(), 12);
+        assert!((t.time_ratio() - 4.0).abs() < f32::EPSILON);
+        assert!(!t.save_needed());
+        let surface = w.surface_row();
+        let expected = new_tank("empty", true).unwrap().tank.world().surface_row();
+        assert_eq!(surface, expected, "the water level applies to {preset}");
+        assert!(surface > 0 && surface < 72);
+    }
+}
+
+#[test]
+fn new_tank_presets_differ_and_devices_are_optional() {
+    let empty = new_tank("empty", true).unwrap();
+    assert_eq!(empty.tank.world().devices().count(), 0);
+    let with = new_tank("artificial", true).unwrap();
+    let without = new_tank("artificial", false).unwrap();
+    assert!(with.tank.world().devices().count() > 0);
+    assert_eq!(without.tank.world().devices().count(), 0);
+    assert_ne!(with.state_hash(), empty.state_hash());
+    assert_ne!(without.state_hash(), empty.state_hash());
+    // The same inputs make the same tank.
+    assert_eq!(
+        with.state_hash(),
+        new_tank("artificial", true).unwrap().state_hash()
+    );
+}
+
+#[test]
+fn new_tank_rejects_bad_input() {
+    assert!(
+        new_tank("nope", true)
+            .err()
+            .is_some_and(|e| e.contains("nope"))
+    );
+    let build =
+        |w, h, level| WebTank::from_new_tank(w, h, 0, "empty", level, true, false, 10, 1.0, 1, 1);
+    assert!(build(0, 10, 0.9).is_err());
+    assert!(build(10, MAX_GRID_SIDE + 1, 0.9).is_err());
+    assert!(build(10, 10, 1.5).is_err());
+    assert!(build(10, 10, -0.1).is_err());
+    assert!(build(10, 10, 0.9).is_ok());
+}
+
+#[test]
+fn new_tank_clamps_cap_and_time_ratio_and_saves_them() {
+    let t = WebTank::from_new_tank(128, 72, 1, "empty", 0.9, true, false, 60_000, 1e9, 512, 288)
+        .unwrap();
+    assert_eq!(t.creature_cap(), t.max_creature_cap());
+    assert!((t.time_ratio() - desktank_sim::MAX_TIME_RATIO).abs() < f32::EPSILON);
+    let back = WebTank::from_save(&t.export_save(), 512, 288).unwrap();
+    assert!((back.time_ratio() - desktank_sim::MAX_TIME_RATIO).abs() < f32::EPSILON);
+}
+
+#[test]
+fn time_ratio_is_set_clamped_and_marks_dirty() {
+    let mut t = paused();
+    assert!((t.time_ratio() - 1.0).abs() < f32::EPSILON);
+    t.set_time_ratio(1.0);
+    assert!(!t.save_needed(), "an unchanged ratio isn't an edit");
+    t.set_time_ratio(10.0);
+    assert!((t.time_ratio() - 10.0).abs() < f32::EPSILON);
+    assert!(t.save_needed());
+    t.set_time_ratio(1e9);
+    assert!((t.time_ratio() - desktank_sim::MAX_TIME_RATIO).abs() < f32::EPSILON);
+    t.set_time_ratio(0.0);
+    assert!((t.time_ratio() - desktank_sim::MIN_TIME_RATIO).abs() < f32::EPSILON);
+    t.set_time_ratio(f32::NAN);
+    assert!((t.time_ratio() - 1.0).abs() < f32::EPSILON);
+}
