@@ -78,6 +78,24 @@
     for roughly one second, with an early decision if its opportunity
     disappears and an immediate interruption on danger.
     Existing movement and feeding rules still apply.
+  - Honey gouramis weigh hunger against shelter (#436), and have no social
+    need: they don't school, and a tetra has no shelter need. Each species
+    lists only the needs that apply in its `[needs]` table (a zero or
+    missing weight leaves a need out), and Inspect shows exactly those
+    bars. Shelter is exposure turned into a need: a look for plant cover
+    every half second (the shared cover test: four plant cells within two
+    bands and two cells of the body) adds a point of exposure in open water
+    and takes five off in cover, so a fresh fish is sheltered and a fish
+    in the open for fifty seconds is wholly exposed. The bar reads 100%
+    minus the exposure. A fish in the open ignores exposure up to a
+    tolerance of its own (30 points, 70–130% by boldness) and then looks
+    for cover within 40 cells; a fish hiding in cover holds still until it
+    has settled. Hunger competes on the same scale, so a starving fish with
+    food in reach still feeds, and a fed one hides. With no cover in
+    reach, or in a tank without plants, the bar only empties and the fish
+    wanders as before. Fright, cursor avoidance and breathing air still
+    interrupt a cover commitment at once, and a fish returns to its cover
+    after a breath.
   - shoaling for shoalers: each wanders on its own and often picks a
     target near a mate of its own stage (young with young, adults with
     adults). A straggler aims near its closest such mate. Surface

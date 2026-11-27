@@ -8,6 +8,9 @@ use std::sync::OnceLock;
 use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
 use desktank_sim::{Brush, MaterialTable, World, WorldConfig};
 
+#[path = "../../src/testing.rs"]
+mod testing;
+
 const W: u32 = 80;
 const H: u32 = 32;
 
@@ -1780,9 +1783,6 @@ fn px_at(img: &[u8], width: u32, x: u32, y: u32) -> [u8; 3] {
 /// set.
 #[test]
 fn the_inspect_card_shows_need_meters_in_two_columns_or_one() {
-    #[path = "../../src/testing.rs"]
-    mod testing;
-
     let Some(gpu) = gpu() else { return };
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let materials = MaterialTable::builtin().unwrap();
@@ -2416,4 +2416,121 @@ fn tour_screenshots() {
             tank.camera()
         );
     }
+}
+
+/// A honey gourami's inspect card shows `Hunger` and `Shelter` (and no
+/// `Social`): the shelter bar falls while it is out in open water and rises
+/// again once it has gone to plant cover, and with no cover in the tank it
+/// only falls. A tetra's card keeps `Hunger` and `Social`. Writes the
+/// frames to `target/shots/second-species-needs/` when `INSPECT_SHOTS` is
+/// set.
+#[test]
+#[allow(clippy::too_many_lines)] // one tank per case
+fn a_gourami_card_shows_shelter_in_the_open_in_cover_and_without_any() {
+    let Some(gpu) = gpu() else { return };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = (1280u32, 720u32);
+    let config = WorldConfig {
+        width: 120,
+        height: 64,
+        seed: 3,
+        water_level: 0.95,
+    };
+    let tank_of = |planted: bool, species: &str, at: (i64, i64)| {
+        let mut world = World::new(config, MaterialTable::builtin().unwrap()).unwrap();
+        let soil = world.materials().id("aquasoil").unwrap();
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: 0,
+                    y0: 58,
+                    x1: 120,
+                    y1: 64,
+                },
+                soil,
+                Brush::Replace,
+            )
+            .unwrap();
+        if planted {
+            let kind = world.plant_species().id("hygrophila").unwrap();
+            let from = world.plant_species().get(kind).unwrap().default_propagule();
+            for x in (30..=90).step_by(6) {
+                world.paint_plant(x, 57, 0, kind, from).unwrap();
+            }
+            for _ in 0..6 * 60 * 20 {
+                world.tick();
+            }
+        }
+        let species = world.species().id(species).unwrap();
+        let id = world.add_creature(species, at.0, at.1).unwrap();
+        if species == world.species().id("neon_tetra").unwrap() {
+            for dx in [4, 8] {
+                world.add_creature(species, at.0 + dx, at.1).unwrap();
+            }
+        }
+        let mut tank = Tank::new(world, TankConfig::default());
+        tank.set_saver_mode(true);
+        tank.set_inspected(Some(desktank_render::Inspected::Creature(id)));
+        (tank, id)
+    };
+    let readings = |tank: &Tank, id| {
+        tank.world()
+            .creature_needs(tank.world().creature(id).unwrap())
+            .iter()
+            .map(|r| (r.need.label(), r.satisfaction))
+            .collect::<Vec<_>>()
+    };
+    let shelter = |tank: &Tank, id| readings(tank, id)[1].1;
+    let shot = |tank: &mut Tank, name: &str| {
+        let img = render_sized(gpu, tank, format, target);
+        if std::env::var_os("INSPECT_SHOTS").is_some() {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/shots/second-species-needs");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("{name}.png")), testing::png(&img, target)).unwrap();
+        }
+    };
+
+    // Plant cover in reach: it gets uneasy in the open, goes to the plants
+    // and settles there.
+    let (mut tank, id) = tank_of(true, "honey_gourami", (60, 24));
+    let labels: Vec<_> = readings(&tank, id).iter().map(|r| r.0).collect();
+    assert_eq!(labels, ["Hunger", "Shelter"]);
+    let mut unsettled = false;
+    for _ in 0..4000 {
+        tank.step();
+        if shelter(&tank, id) <= 55 {
+            unsettled = true;
+            break;
+        }
+    }
+    assert!(unsettled, "{:?}", readings(&tank, id));
+    shot(&mut tank, "honey-gourami-open-water");
+    let mut settled = false;
+    for _ in 0..4000 {
+        tank.step();
+        if shelter(&tank, id) >= 90 {
+            settled = true;
+            break;
+        }
+    }
+    assert!(settled, "{:?}", readings(&tank, id));
+    shot(&mut tank, "honey-gourami-in-cover");
+
+    // No cover in the tank: the bar only empties.
+    let (mut bare, id) = tank_of(false, "honey_gourami", (60, 24));
+    for _ in 0..60 * 20 {
+        bare.step();
+    }
+    assert!(shelter(&bare, id) <= 30, "{:?}", readings(&bare, id));
+    shot(&mut bare, "honey-gourami-no-cover");
+
+    // A schooling tetra has social contact and no shelter.
+    let (mut tetra, id) = tank_of(false, "neon_tetra", (60, 24));
+    for _ in 0..250 {
+        tetra.step();
+    }
+    let labels: Vec<_> = readings(&tetra, id).iter().map(|r| r.0).collect();
+    assert_eq!(labels, ["Hunger", "Social"]);
+    shot(&mut tetra, "neon-tetra");
 }

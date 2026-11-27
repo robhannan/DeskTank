@@ -360,7 +360,11 @@
       creature (version 20, #433). Older saves start undecided with no
       observed company. While away, there is no new social observation and
       commitments expire. Hunger follows the existing away-time feeding
-      rules;
+      rules. The observed byte holds a sheltering species' exposure instead
+      (#436; a species has one or the other), and a cover action is one more
+      commitment value, so version 20 saves load unchanged: a gourami from
+      before starts fully sheltered. A saved action or observation for a
+      need the species lacks is refused;
     - the ecosystem state.
   - **Writes are atomic**: write to a temporary file, fsync, then rename.
     The last 3 saves are kept.
