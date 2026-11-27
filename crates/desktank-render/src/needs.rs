@@ -1,6 +1,7 @@
-//! The Needs section of a creature's live inspect card (SPEC §2.5): one
-//! labelled horizontal meter per need the species supports, in the manner of
-//! the Sims Needs panel.
+//! The Needs section of a creature's or plant's live inspect card (SPEC
+//! §2.5): one labelled horizontal meter per need the species supports (a
+//! plant's are its light, CO₂ and nutrients), in the manner of the Sims
+//! Needs panel.
 //!
 //! Each need is a short label centred over an equal-width meter whose fill
 //! is how well the need is met (empty is unmet, full is satisfied) and whose
@@ -18,15 +19,16 @@
 //!
 //! The simulation keeps only each need's current satisfaction, so the
 //! trend is read here from a short history of it ([`Trends`]) that exists
-//! only while a creature is inspected.
+//! only while a creature or plant is inspected.
 
 use std::collections::VecDeque;
 
-use desktank_sim::{CreatureId, NeedLevel, NeedReading};
+use desktank_sim::{NeedLevel, NeedReading};
 
 use crate::card::{LABEL, PAD, PARA_GAP, Page};
 use crate::font;
 use crate::hud::{ICON_BG, PANEL};
+use crate::inspect::Inspected;
 
 /// The most needs a card shows; a species with more draws the first few.
 pub(crate) const MAX_NEEDS: usize = 4;
@@ -258,13 +260,13 @@ fn trend_of(delta: i16) -> i8 {
     if delta < 0 { -chevrons } else { chevrons }
 }
 
-/// A short history of the inspected creature's satisfactions, from which
-/// each need's trend is read. Empty (and free) while nothing is inspected;
-/// it starts afresh for a different creature, so a trend is never carried
-/// from one fish to the next.
+/// A short history of the inspected creature's or plant's satisfactions,
+/// from which each need's trend is read. Empty (and free) while nothing is
+/// inspected; it starts afresh for a different subject, so a trend is never
+/// carried from one fish or plant to the next.
 #[derive(Debug, Default)]
 pub(crate) struct Trends {
-    who: Option<CreatureId>,
+    who: Option<Inspected>,
     /// `(tick, satisfaction of each need)`, oldest first, within the window.
     samples: VecDeque<(u64, [u8; MAX_NEEDS])>,
 }
@@ -282,12 +284,12 @@ impl Trends {
         self.samples.clear();
     }
 
-    /// Records `readings` of creature `id` at `tick` and returns each
+    /// Records `readings` of `who` at `tick` and returns each
     /// need's trend: the change since the start of the window (steady with
     /// no history yet).
     pub(crate) fn observe(
         &mut self,
-        id: CreatureId,
+        who: Inspected,
         tick: u64,
         readings: &[NeedReading],
     ) -> [i8; MAX_NEEDS] {
@@ -299,9 +301,9 @@ impl Trends {
             .samples
             .back()
             .is_some_and(|&(t, _)| t > tick || tick - t > TREND_WINDOW);
-        if self.who != Some(id) || stale {
+        if self.who != Some(who) || stale {
             self.reset();
-            self.who = Some(id);
+            self.who = Some(who);
         }
         while self
             .samples
@@ -331,7 +333,7 @@ impl Trends {
 pub(crate) mod tests {
     use super::*;
     use crate::hud::FRAME;
-    use desktank_sim::Need;
+    use desktank_sim::{CreatureId, Need, PlantId};
 
     fn reading(need: Need, satisfaction: u8) -> NeedReading {
         NeedReading { need, satisfaction }
@@ -376,7 +378,8 @@ pub(crate) mod tests {
 
     #[test]
     fn the_history_reads_a_trend_from_the_window_and_forgets_it() {
-        let id = CreatureId(1);
+        let id = Inspected::Creature(CreatureId(1));
+        let other = Inspected::Creature(CreatureId(2));
         let mut trends = Trends::default();
         let at = |s| [reading(Need::Hunger, s), reading(Need::Social, 100)];
         // No history: steady, whatever the value.
@@ -398,12 +401,19 @@ pub(crate) mod tests {
         assert_eq!(trends.observe(id, 1115, &at(20))[0], -1);
         // Another creature starts with no history, as does a jump in time
         // in either direction.
-        assert_eq!(trends.observe(CreatureId(2), 1116, &at(100))[..2], [0, 0]);
-        assert_eq!(trends.observe(CreatureId(2), 1121, &at(0))[0], -3);
-        assert_eq!(trends.observe(CreatureId(2), 5000, &at(100))[0], 0);
-        assert_eq!(trends.observe(CreatureId(2), 4000, &at(0))[0], 0);
+        assert_eq!(trends.observe(other, 1116, &at(100))[..2], [0, 0]);
+        assert_eq!(trends.observe(other, 1121, &at(0))[0], -3);
+        assert_eq!(trends.observe(other, 5000, &at(100))[0], 0);
+        assert_eq!(trends.observe(other, 4000, &at(0))[0], 0);
         trends.reset();
-        assert_eq!(trends.observe(CreatureId(2), 4001, &at(100))[0], 0);
+        assert_eq!(trends.observe(other, 4001, &at(100))[0], 0);
+        // A plant is another subject from a creature with the same number.
+        let plant = Inspected::Plant(PlantId(2));
+        assert_eq!(trends.observe(other, 6000, &at(10))[0], 0);
+        assert_eq!(trends.observe(other, 6005, &at(60))[0], 3);
+        assert_eq!(trends.observe(plant, 6006, &at(100))[..2], [0, 0]);
+        assert_eq!(trends.observe(plant, 6011, &at(30))[0], -3);
+        assert_eq!(trends.observe(other, 6012, &at(100))[0], 0);
         // More readings than a card shows are ignored, not a panic.
         let many = [reading(Need::Hunger, 1); MAX_NEEDS + 2];
         let mut fresh = Trends::default();
@@ -421,7 +431,13 @@ pub(crate) mod tests {
         assert_eq!(two.left(0), PAD);
         assert!(two.left(1) + two.width() <= PAD + card);
         assert!(one.left(0) >= PAD && one.left(0) + one.width() <= PAD + card);
-        for need in [Need::Hunger, Need::Social] {
+        for need in [
+            Need::Hunger,
+            Need::Social,
+            Need::Light,
+            Need::Co2,
+            Need::Nutrients,
+        ] {
             assert!(font::width(need.label()) <= two.meter, "{}", need.label());
         }
     }
