@@ -154,16 +154,20 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     keeps a one-cell gap from the main stem (leaves stop short of a rising
     shoot below them); any stem reaching the top water row trails sideways
     along it up to `height`. *Stem leaves in the tank look like the info
-    pane's sprite:* leaf length falls towards the growing tip
-    (`StemForm::leaf_taper`: `leaf_length` low on the stem, shortening to
-    40% of it at `height`, never under one cell, rounded one way and the
-    next at alternate nodes so it steps in halves; fixed by the node's
-    height, so a growing stem's lower leaves keep their length), and at
-    every other node the broad shapes (lanceolate, round) grow an *upper
-    cell* over their middle cells (`StemForm::leaf_upper`; position
-    `LEAF_UPPER` (32) plus its row cell's), so the blade is two cells thick
-    where widest. A plant's pieces don't join through an upper cell and the
-    leaf above it, so cutting the stem still frees the top. Needle and
+    pane's sprite:* leaf length tapers to the tip of the plant's own stem
+    or side shoot (`StemForm::leaf_taper`): the top `internode` cells are
+    a bare stalk ending in a bud (drawn from the leaf ramp's brightest
+    shade), then a one-cell pair, lengthening in whole cells to
+    `leaf_length` at half the stem's `height` below the tip, and never
+    longer than the tier below. A leaf's growth is capped by that depth,
+    so a young stem is tapered too and its lower leaves lengthen as the
+    stem grows past them; the shader draws each blade at the length it
+    has reached. At every other node the broad shapes (lanceolate, round)
+    grow an *upper cell* over their middle cells (`StemForm::leaf_upper`;
+    position `LEAF_UPPER` (32) plus its row cell's), so the blade is two
+    cells thick where widest. A plant's pieces don't join through an upper
+    cell and the leaf above it, so cutting the stem still frees the top.
+    Needle and
     feather leaves stay a row thick.
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.

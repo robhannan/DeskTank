@@ -2474,18 +2474,6 @@ fn is_leafy(part: i32) -> bool {
     return part == PART_LEAF || part == PART_FLOAT;
 }
 
-// How many cells long the leaves at a stem node `pos` up are
-// (desktank_sim::plants::StemForm::leaf_taper): `length` at the base,
-// shortening to 40% of it at the stem's full `height`, never under one.
-fn leaf_taper(length: i32, height: i32, pos: i32) -> i32 {
-    let h = max(height, 1);
-    let p = min(pos, h);
-    // Quarter cells, rounded one way at every other node and the other at
-    // the next.
-    let quarters = 4 * length * (5 * h - 3 * p) / (5 * h);
-    return clamp((quarters + 2 + select(-1, 1, (p / 2) % 2 == 1)) / 4, 1, max(length, 1));
-}
-
 // Whether a stem leaf's blade covers row `r` at `t` (0 at its stem end, 1 at
 // its tip) along it. Rows count from the leaf's own cell row: 0 to 3 are the
 // four quarter rows of its row cells, -2 and -1 the lower two rows of an
@@ -2793,17 +2781,17 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         // each blade lightens towards its tip and its upper edge.
         let node = kin(at, vec2<i32>(-dir * p, 0), me);
         let h = select(0.5, f32(node.y) / max(sizes.x, 1.0), node.x == PART_STEM);
-        // Leaves shorten towards the stem's tip, as the sim grows them
-        // (StemForm::leaf_taper); an upper cell's stem cell is a row above
-        // its node.
-        let leaf_len = max(
-            select(
-                i32(sizes.z),
-                leaf_taper(i32(sizes.z), i32(sizes.x), node.y - select(0, 1, upper)),
-                node.x == PART_STEM,
-            ),
-            p,
-        );
+        // The leaf's length as grown, counted along its row (an upper cell's
+        // is the row cell's under it): leaves shorten towards the stem's tip,
+        // and the blade is drawn whole at whatever length it has reached.
+        var leaf_len = p;
+        for (var k = 1; k <= 4; k++) {
+            let next = kin(at + vec2<i32>(dir * k, select(0, 1, upper)), vec2<i32>(0), me);
+            if next.x != PART_LEAF || next.y != p + k {
+                break;
+            }
+            leaf_len = p + k;
+        }
         step += 1 + i32(round(h * 5.0)) + select(0, 1, top) + select(0, 1, tip && u == 1)
             + ((p - 1) * 2 + u) / 3 + select(0, 2, upper);
         let shape = shapes.x;
@@ -2917,6 +2905,7 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
     let fine = fine_scale();
     let top = sub.y == 0;
     var covered = true;
+    var bud = false;
     var step = noise_step(me);
     if part == PART_RHIZOME {
         // A creeping epiphyte rhizome hugging rock or wood: thick, slightly
@@ -3112,6 +3101,18 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                     step += select(-1, 2, quarter.x == 1) + select(0, 1, collar);
                 }
             }
+            // The top of a stem plant's stalk is a small bud of the leaf
+            // ramp's brightest shade (the sprite's), over a bare stalk.
+            if shapes.x < LEAF_RIBBON && !horiz && !up_stem {
+                let in_bud = select(top, quarter.y == 1 || (quarter.y == 0 && (quarter.x == 1 || quarter.x == 2)), fine);
+                if in_bud {
+                    covered = true;
+                    bud = true;
+                    step = RAMP - 1;
+                } else if !fine {
+                    covered = sub.x == 0;
+                }
+            }
         }
     } else {
         // Roots are subdued: the ramp's darker half, paler only towards the
@@ -3159,7 +3160,8 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             step += select(0, 1, core) - select(0, 1, free_x || free_y);
         }
     }
-    return vec2<i32>(select(0, 1, covered), step);
+    // 2: a bud, drawn from the leaf ramp.
+    return vec2<i32>(select(select(0, 1, covered), 2, covered && bud), step);
 }
 
 // A plant texel's colour from its coverage and shade (`cover`, see
@@ -3173,7 +3175,7 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
     let ramp = select(
         select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME),
         PART_LEAF,
-        part == PART_FLOAT,
+        part == PART_FLOAT || cover.x == 2,
     );
     let health = plant.r;
     if covered || view.scale < 2.0 {

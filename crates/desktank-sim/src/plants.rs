@@ -551,21 +551,23 @@ pub struct StemForm {
 pub const LEAF_UPPER: u8 = 32;
 
 impl StemForm {
-    /// How many cells long the leaves at a node `pos` cells up a stem of at
-    /// most `height` are, when the lowest are `length`: they shorten
-    /// towards the growing tip (to 40% of `length` at the full height,
-    /// never below one cell, alternating a cell between neighbouring nodes
-    /// where it falls between two lengths), as the species sprite's do. Fixed by the
-    /// node's height, so a growing stem's lower leaves keep their length.
+    /// How many cells long the leaves at a node `below_tip` cells under the
+    /// tip of its stem (or side shoot) may be, as the species sprite's are:
+    /// none on the bare top `internode` cells (the stem ends in a bud), then
+    /// one cell, lengthening in whole cells towards `leaf_length` at half the
+    /// stem's `height` below the tip and staying there. Measured from the
+    /// stem's own tip, so a young stem is tapered too and its lower leaves
+    /// lengthen as it grows past them, and monotonic: a tier is never
+    /// longer than the one below it on the same stem.
     #[must_use]
-    pub fn leaf_taper(length: u8, height: u8, pos: u8) -> u8 {
-        let (l, h) = (i64::from(length), i64::from(height.max(1)));
-        let p = i64::from(pos).min(h);
-        // In quarter cells, rounded one way at every other node and the other
-        // at the next, so the taper steps in halves, not whole cells.
-        let quarters = 4 * l * (5 * h - 3 * p) / (5 * h);
-        let n = (quarters + 2 + if (p / 2) % 2 == 1 { 1 } else { -1 }) / 4;
-        u8::try_from(n.clamp(1, l.max(1))).unwrap_or(1)
+    pub fn leaf_taper(&self, below_tip: u8) -> u8 {
+        if below_tip < self.internode {
+            return 0;
+        }
+        let length = i64::from(self.leaf_length);
+        let half = i64::from((self.height / 2).max(1));
+        let d = i64::from(below_tip).min(half);
+        u8::try_from(((2 * length * d + half) / (2 * half)).clamp(1, length.max(1))).unwrap_or(1)
     }
 
     /// Whether the leaves at the node `pos` cells up the stem are broad

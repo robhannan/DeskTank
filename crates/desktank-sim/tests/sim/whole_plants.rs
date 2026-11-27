@@ -689,28 +689,14 @@ fn clicking_places_a_whole_plant_with_a_ghost_and_a_flip() {
     assert!(!t.can_flip(&w));
 }
 
-/// Stem leaves taper: a mature hygrophila's leaves are longest low on the
-/// stem and shortest at the top, as `StemForm::leaf_taper` says, and its
-/// broad leaves grow upper cells at every other node, which don't join the
-/// leaf above them.
-#[test]
-fn a_mature_stem_plant_tapers_and_broad_leaves_have_upper_cells() {
-    let mut w = tank(3);
-    let (x, y) = spot(&w, "hygrophila");
-    let plant = place(&mut w, "hygrophila", PlantStage::Mature, x, y, false);
-    let cells = cells_of(&w, plant);
-    let sp = w.plant_species().get(species(&w, "hygrophila")).unwrap();
-    let desktank_sim::plants::Form::Stem(f) = &sp.form else {
-        panic!("hygrophila is a stem plant");
-    };
-    let leaf = id(&w, "leaf");
-    let stem = id(&w, "stem");
-    let at = |x: usize, y: usize| w.cell(x, y).unwrap();
-    // The longest leaf (row cells only) at each node row.
+/// A stem plant's leaf rows, top first, each as `(row, longest leaf length)`,
+/// and how many upper cells it has.
+fn leaf_rows(w: &World, plant: PlantId) -> (Vec<(usize, u8)>, usize) {
+    let leaf = id(w, "leaf");
     let mut longest: std::collections::BTreeMap<usize, u8> = std::collections::BTreeMap::new();
     let mut upper = 0;
-    for &(cx, cy) in &cells {
-        let c = at(cx, cy);
+    for (cx, cy) in cells_of(w, plant) {
+        let c = w.cell(cx, cy).unwrap();
         if c.material != leaf {
             continue;
         }
@@ -718,7 +704,7 @@ fn a_mature_stem_plant_tapers_and_broad_leaves_have_upper_cells() {
         if pos >= desktank_sim::plants::LEAF_UPPER {
             upper += 1;
             // Over a row cell of the same leaf.
-            let below = at(cx, cy + 1);
+            let below = w.cell(cx, cy + 1).unwrap();
             assert_eq!(below.material, leaf);
             assert_eq!(
                 desktank_sim::plants::plant_position(below.variant),
@@ -729,26 +715,57 @@ fn a_mature_stem_plant_tapers_and_broad_leaves_have_upper_cells() {
             *e = (*e).max(pos);
         }
     }
-    assert!(upper > 0, "no upper cells");
-    let rows: Vec<(usize, u8)> = longest.into_iter().collect();
-    // Rows count up from the top: the lowest leaves are the longest.
-    let (top, bottom) = (rows.first().unwrap().1, rows.last().unwrap().1);
-    assert_eq!(bottom, f.leaf_length);
-    assert!(top < bottom, "top leaves {top}, bottom {bottom}");
-    // Each node's length is what the taper gives at its stem height.
-    for &(cx, cy) in &cells {
-        let c = at(cx, cy);
-        if c.material != stem
-            || !desktank_sim::plants::plant_position(c.variant).is_multiple_of(f.internode)
-        {
-            continue;
+    (longest.into_iter().collect(), upper)
+}
+
+/// Stem leaves taper to the plant's own tip: whatever its age, the leaves
+/// are longest low on the stem, never longer than the tier below, one cell
+/// long just under a bare top, and the broad ones grow upper cells.
+#[test]
+fn stem_plants_taper_to_their_own_tip_and_broad_leaves_have_upper_cells() {
+    for stage in [PlantStage::Juvenile, PlantStage::Mature] {
+        let mut w = tank(3);
+        let (x, y) = spot(&w, "hygrophila");
+        let plant = place(&mut w, "hygrophila", stage, x, y, false);
+        let sp = w.plant_species().get(species(&w, "hygrophila")).unwrap();
+        let desktank_sim::plants::Form::Stem(f) = &sp.form else {
+            panic!("hygrophila is a stem plant");
+        };
+        let info = w.plant(plant).unwrap();
+        let (rows, upper) = leaf_rows(&w, plant);
+        assert!(upper > 0, "{stage:?}: no upper cells");
+        // Rows are top first: lengths never shrink going down.
+        for pair in rows.windows(2) {
+            assert!(pair[0].1 <= pair[1].1, "{stage:?}: {rows:?}");
         }
-        let pos = desktank_sim::plants::plant_position(c.variant);
-        if let Some(&(_, len)) = rows.iter().find(|r| r.0 == cy) {
-            assert!(
-                len <= desktank_sim::plants::StemForm::leaf_taper(f.leaf_length, f.height, pos),
-                "node {pos}: {len}"
-            );
+        assert_eq!(rows.first().unwrap().1, 1, "{stage:?}: {rows:?}");
+        assert!(
+            rows.first().unwrap().0 >= info.bounds.y0 + usize::from(f.internode),
+            "{stage:?}: the top is bare"
+        );
+        if stage == PlantStage::Mature {
+            assert_eq!(rows.last().unwrap().1, f.leaf_length, "{rows:?}");
         }
     }
+}
+
+/// A growing stem keeps tapering as it grows: its leaves stay within what
+/// their depth below the tip allows and lengthen as the tip moves up.
+#[test]
+fn a_growing_stem_tapers_and_its_lower_leaves_lengthen() {
+    let mut w = tank(3);
+    let (x, y) = spot(&w, "hygrophila");
+    let plant = place(&mut w, "hygrophila", PlantStage::Juvenile, x, y, false);
+    let before = leaf_rows(&w, plant).0;
+    run(&mut w, 20 * 60 * 5);
+    let info = w.plant(plant).unwrap();
+    let (rows, _) = leaf_rows(&w, plant);
+    assert!(rows.len() > before.len(), "it grew: {before:?} -> {rows:?}");
+    for pair in rows.windows(2) {
+        assert!(pair[0].1 <= pair[1].1, "{rows:?}");
+    }
+    let longest_before = before.iter().map(|r| r.1).max().unwrap();
+    let longest_after = rows.iter().map(|r| r.1).max().unwrap();
+    assert!(longest_after >= longest_before, "{before:?} -> {rows:?}");
+    assert!(info.size() > 0);
 }

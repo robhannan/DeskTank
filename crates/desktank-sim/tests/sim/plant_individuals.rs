@@ -216,12 +216,13 @@ fn scooping_through_a_stem_makes_a_fragment_or_dead_plant_matter_by_species() {
     run_checked(&mut w, 10 * MINUTE);
     let (h, r) = (plant_of(&w, hyg)[0], plant_of(&w, rotala)[0]);
     let dead = count(&w, "dead_plant") + count(&w, "detritus");
-    // A two-cell-wide cut across each stem, 15 cells above its base: the
-    // stem and the leaves at those rows go.
+    // A two-row cut across each plant, 15 cells above its base and wide
+    // enough to take its side shoots (they rise up to eight cells out): the
+    // stems and the leaves at those rows go.
     let water = id(&w, "water");
     for p in [h, r] {
         let (x, y) = p.base;
-        w.fill_rect(rect(x - 3, y - 16, x + 4, y - 14), water, Brush::Replace)
+        w.fill_rect(rect(x - 9, y - 16, x + 10, y - 14), water, Brush::Replace)
             .unwrap();
     }
     w.tick();

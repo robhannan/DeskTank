@@ -624,20 +624,28 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
             }
         }
     }
-    // Pairs of leaves at the nodes.
-    // Leaves shorten towards the tip (`StemForm::leaf_taper`), and broad
-    // ones are two cells thick where they are widest: a second cell over
-    // the row's, so the blade fills the internode row above its node.
-    let leaves = |pos: i64| {
-        let at = u8::try_from(pos).unwrap_or(u8::MAX);
-        let len = StemForm::leaf_taper(f.leaf_length, f.height, at);
-        (len, StemForm::leaf_upper(shape, len))
+    // Pairs of leaves at the nodes. They shorten towards the tip of their
+    // stem (`StemForm::leaf_taper`: none on its bare top, a one-cell pair
+    // under that), and broad ones are two cells thick where they are widest:
+    // a second cell over the row's, so the blade fills the internode row
+    // above its node.
+    let leaves = |b: &Builder<'_>, x: i64, y: i64, pos: i64| {
+        let mut below_tip = 0u8;
+        while below_tip < u8::MAX && b.own(x, y - i64::from(below_tip) - 1, Part::Stem) {
+            below_tip += 1;
+        }
+        let len = f.leaf_taper(below_tip);
+        (
+            len,
+            StemForm::leaf_upper(shape, len)
+                .filter(|_| f.broad_node(u8::try_from(pos).unwrap_or(u8::MAX))),
+        )
     };
     for &(x, y, pos) in &nodes {
         if !node(pos) {
             continue;
         }
-        let (len, _) = leaves(pos);
+        let (len, _) = leaves(b, x, y, pos);
         for rel in [-1i64, 1] {
             let dx = rel * b.mir;
             for k in 1..=i64::from(len) {
@@ -649,10 +657,7 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx,
         }
     }
     for &(x, y, pos) in &nodes {
-        let Some((first, last)) = leaves(pos)
-            .1
-            .filter(|_| node(pos) && f.broad_node(u8::try_from(pos).unwrap_or(u8::MAX)))
-        else {
+        let Some((first, last)) = leaves(b, x, y, pos).1.filter(|_| node(pos)) else {
             continue;
         };
         for rel in [-1i64, 1] {

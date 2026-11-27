@@ -2220,6 +2220,18 @@ impl World {
             let c = self.cells[j];
             Some(c.material) == stem_mat && c.state == id
         };
+        // How many cells of its own stem are above `(x, y)`: its depth below
+        // the tip of its stem or side shoot, that leaf lengths taper from.
+        let below_tip = |x: usize, y: usize| {
+            let mut d: u8 = 0;
+            while self
+                .at(x, y, 0, -isize::from(d) - 1)
+                .is_some_and(is_own_stem)
+            {
+                d += 1;
+            }
+            d
+        };
         let mut sites = Vec::new();
         for &i in members {
             let c = self.cells[i];
@@ -2295,9 +2307,10 @@ impl World {
                                 && self.branch_node(id, i, dx > 0, f.branching);
                             if branch {
                                 sites.push(Site::new(j, Part::Stem, pos + 1, LEAF_WEIGHT));
-                            } else if !self
-                                .at(j % self.width, j / self.width, 0, 1)
-                                .is_some_and(is_own_stem)
+                            } else if f.leaf_taper(below_tip(x, y)) > 0
+                                && !self
+                                    .at(j % self.width, j / self.width, 0, 1)
+                                    .is_some_and(is_own_stem)
                             {
                                 sites.push(Site::new(j, Part::Leaf, 1, LEAF_WEIGHT));
                             }
@@ -2316,14 +2329,19 @@ impl World {
                                     && plant_position(lc.variant) == pos - 1))
                     });
                     let dx: isize = if from_left { 1 } else { -1 };
-                    // Leaves shorten towards the tip: this one's length
-                    // follows how high up the stem its node is (a leaf whose
-                    // stem is gone keeps the full length).
+                    // Leaves shorten towards the tip: this one's length is
+                    // capped by how far below its stem's tip its node is, so
+                    // it lengthens as the stem grows (a leaf whose stem is
+                    // gone keeps the full length).
                     let node = self
                         .at(x, y, -dx * isize::from(pos), 0)
-                        .filter(|&j| is_own_stem(j))
-                        .map_or(0, |j| plant_position(self.cells[j].variant));
-                    let len = StemForm::leaf_taper(f.leaf_length, f.height, node);
+                        .filter(|&j| is_own_stem(j));
+                    let (node_pos, len) = node.map_or((0, f.leaf_length), |j| {
+                        (
+                            plant_position(self.cells[j].variant),
+                            f.leaf_taper(below_tip(j % self.width, j / self.width)),
+                        )
+                    });
                     if pos < len
                         && let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
                         && !self
@@ -2334,7 +2352,7 @@ impl World {
                     }
                     // A broad leaf's widest cells put out one above them,
                     // filling the row above the node.
-                    if f.broad_node(node)
+                    if f.broad_node(node_pos)
                         && StemForm::leaf_upper(s.look.leaf, len)
                             .is_some_and(|(first, last)| (first..=last).contains(&pos))
                         && let Some(j) = self.at(x, y, 0, -1).filter(|&j| is_water(j))

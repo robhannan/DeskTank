@@ -1224,7 +1224,7 @@ mod tests {
         let (cw, ch) = (48_i64, 64_i64);
         let bg = crate::hud::BACKGROUND;
         // Tank pixels are shown at 4x (scale 2) or 2x (scale 4): the same size.
-        let tank_shot = |name: &str, scale: u32| -> Vec<u8> {
+        let tank_shot = |name: &str, scale: u32, stage: desktank_sim::PlantStage| -> Vec<u8> {
             let m = MaterialTable::builtin().unwrap();
             let mut world = desktank_sim::World::new(
                 desktank_sim::WorldConfig {
@@ -1251,7 +1251,7 @@ mod tests {
                 .unwrap();
             let id = world.plant_species().id(name).unwrap();
             world
-                .place_plant(id, desktank_sim::PlantStage::Mature, cw / 2, 57, false)
+                .place_plant(id, stage, cw / 2, 57, false)
                 .unwrap()
                 .unwrap();
             let mut tank = crate::Tank::new(world, crate::TankConfig::default());
@@ -1310,7 +1310,15 @@ mod tests {
                     }
                 })
                 .collect();
-            let (two, four) = (tank_shot(&sp.name, 2), tank_shot(&sp.name, 4));
+            let (mature, young) = (
+                desktank_sim::PlantStage::Mature,
+                desktank_sim::PlantStage::Juvenile,
+            );
+            let (two, four) = (
+                tank_shot(&sp.name, 2, mature),
+                tank_shot(&sp.name, 4, mature),
+            );
+            let (two_j, four_j) = (tank_shot(&sp.name, 2, young), tank_shot(&sp.name, 4, young));
             let (cwu, chu) = (cw as usize, ch as usize);
             // The whole plant: sprite and tank at the same pixel size (the
             // scale-2 tank shows a texel as a pixel, as the sprite does),
@@ -1320,7 +1328,7 @@ mod tests {
             let (spr_w, spr_h) = (sw * k, sh * k);
             let tank_w = pw * 2 * k;
             let panel_h = ph * 2 * k;
-            let total_w = spr_w + gap + tank_w + gap + tank_w;
+            let total_w = spr_w + 4 * (gap + tank_w);
             let mut img: Vec<u8> = (0..total_w * panel_h)
                 .flat_map(|_| [bg[0], bg[1], bg[2], 255])
                 .collect();
@@ -1342,6 +1350,12 @@ mod tests {
                 (tank_w, panel_h),
                 (spr_w + gap + tank_w + gap, 0),
             );
+            // The same plant placed Juvenile, to show a growing one.
+            for (n, shot, c, kk) in [(2, &two_j, 2, k), (3, &four_j, 4, k / 2)] {
+                let b = up(shot, cwu * c, (x0 * c, y0 * c, pw * c, ph * c), kk);
+                let at = spr_w + n * (gap + tank_w) + gap;
+                blit(&mut img, total_w, &b, (tank_w, panel_h), (at, 0));
+            }
             write(
                 format!("{prefix}-{}.png", sp.name),
                 &img,
