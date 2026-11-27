@@ -90,15 +90,15 @@ export async function waitForFirstFrame(
   host: "App" | "Dream",
   since: string,
   timeoutMs: number,
-): Promise<{ width: number; height: number }> {
-  const frame = new RegExp(` I DeskTank\\s*: first frame (\\d+)x(\\d+)[^\\n]*, host ${host}\\)`);
+): Promise<{ width: number; height: number; camera: boolean }> {
+  const frame = new RegExp(` I DeskTank\\s*: first frame (\\d+)x(\\d+)[^\\n]*, host ${host}, camera (on|off)\\)`);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const { crash, main } = await logcat(since);
     const fatals = appFatals(crash, main);
     if (fatals.length > 0) throw new Error(`the app crashed before its first frame:\n${fatals.join("\n")}`);
     const match = frame.exec(main);
-    if (match) return { width: Number(match[1]), height: Number(match[2]) };
+    if (match) return { width: Number(match[1]), height: Number(match[2]), camera: match[3] === "on" };
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error(`no ${host} first frame within ${timeoutMs / 1000} s`);
@@ -210,4 +210,19 @@ export function tankShares(image: Image, step = 4): { water: number; sand: numbe
     }
   }
   return { water: all ? water / all : 0, sand: bottom ? sand / bottom : 0 };
+}
+
+// Sample every row so a regular stripe pattern cannot alias with the stride.
+export function tourShares(image: Image): { water: number; drawnRows: number } {
+  let drawnRows = 0;
+  const samples = Math.ceil(image.width / 4);
+  for (let y = 0; y < image.height; y++) {
+    let lit = 0;
+    for (let x = 0; x < image.width; x += 4) {
+      const offset = (y * image.width + x) * 4;
+      if (Math.max(image.rgba[offset], image.rgba[offset + 1], image.rgba[offset + 2]) > 24) lit++;
+    }
+    if (lit >= samples / 4) drawnRows++;
+  }
+  return { water: tankShares(image).water, drawnRows: drawnRows / image.height };
 }

@@ -2,7 +2,7 @@
 //! while a camera is set, and the post pass that resamples a view of it
 //! over the target (`camera.wgsl`).
 //!
-//! The image has the target's size and format, so the tank's own pipelines
+//! The image uses the target's format, so the tank's own pipelines
 //! draw into it unchanged and a pixel survives the round trip: an sRGB
 //! image reads back linear and the sRGB target encodes it again. Only a
 //! standard sampled texture and a render pass are used (WebGL2-safe).
@@ -109,17 +109,19 @@ impl Post {
     }
 
     /// Writes the uniform for showing `view` of the `layout`-placed tank
-    /// over `size` target pixels, with `backdrop` outside the image, unless
-    /// it is what is already there.
+    /// over `size` target pixels. `layout` and `source_size` describe
+    /// the offscreen image, with `backdrop` outside it. Writes only when
+    /// a uniform changes.
     pub(crate) fn update(
         &mut self,
         gpu: &Gpu,
         view: ViewRect,
         layout: &Layout,
         size: (u32, u32),
+        source_size: (u32, u32),
         backdrop: [f32; 4],
     ) {
-        let bytes = uniform_bytes(view, layout, size, backdrop);
+        let bytes = uniform_bytes(view, layout, size, source_size, backdrop);
         if self.written != Some(bytes) {
             gpu.queue.write_buffer(&self.uniform, 0, &bytes);
             self.written = Some(bytes);
@@ -135,6 +137,7 @@ fn uniform_bytes(
     view: ViewRect,
     layout: &Layout,
     size: (u32, u32),
+    source_size: (u32, u32),
     backdrop: [f32; 4],
 ) -> [u8; UNIFORM_LEN] {
     let scale = layout.scale as f32;
@@ -149,8 +152,8 @@ fn uniform_bytes(
         step.1,
         1.0 / step.0,
         1.0 / step.1,
-        size.0 as f32,
-        size.1 as f32,
+        source_size.0 as f32,
+        source_size.1 as f32,
         backdrop[0],
         backdrop[1],
         backdrop[2],
@@ -247,7 +250,7 @@ mod tests {
         let target = (2000, 1500);
         let layout = Layout::fit((320, 180), target);
         let view = ViewRect::fit(&layout, target);
-        let f = floats(&uniform_bytes(view, &layout, target, [0.0; 4]));
+        let f = floats(&uniform_bytes(view, &layout, target, target, [0.0; 4]));
         assert!(f[0].abs() < 1e-3 && f[1].abs() < 1e-3, "{f:?}");
         assert!(
             (f[2] - 1.0).abs() < 1e-6 && (f[3] - 1.0).abs() < 1e-6,
@@ -270,7 +273,7 @@ mod tests {
             w: 128.0,
             h: 72.0,
         };
-        let f = floats(&uniform_bytes(view, &layout, target, [0.0; 4]));
+        let f = floats(&uniform_bytes(view, &layout, target, target, [0.0; 4]));
         assert_eq!((f[0], f[1]), (400.0, 200.0));
         // 512 source pixels over 1280 output pixels: 2.5 output pixels each.
         assert!((f[2] - 0.4).abs() < 1e-6, "{f:?}");

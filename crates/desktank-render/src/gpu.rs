@@ -19,6 +19,8 @@ pub struct GpuOptions {
     /// elsewhere; `Some(true)` forces split and `Some(false)` forces
     /// one-pass (except DX12, where FXC miscompiles one-pass).
     pub split_grid: Option<bool>,
+    /// Render the camera source at up to two pixels per tank cell.
+    pub compact_camera: bool,
 }
 
 /// Error finding an adapter or opening a device.
@@ -46,6 +48,7 @@ pub struct Gpu {
     /// compiler there, FXC, miscompiles the one-pass grid shader (plants
     /// lose their leaves, the water stripes), but not the split passes.
     pub split_grid: bool,
+    pub(crate) compact_camera: bool,
 }
 
 impl Gpu {
@@ -95,6 +98,7 @@ impl Gpu {
             device,
             queue,
             split_grid,
+            compact_camera: options.compact_camera,
         })
     }
 

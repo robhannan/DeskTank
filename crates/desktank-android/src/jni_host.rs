@@ -338,7 +338,13 @@ impl Host {
             let gpu = match pollster::block_on(Gpu::new(
                 &instance,
                 Some(&surface),
-                GpuOptions::default(),
+                GpuOptions {
+                    // Full-size camera attachments can stall or corrupt frames
+                    // on emulated Vulkan. Two pixels per cell retain every
+                    // sprite texel and reduce the first pass on TVs.
+                    compact_camera: true,
+                    ..GpuOptions::default()
+                },
             )) {
                 Ok(gpu) => gpu,
                 Err(e) => {
@@ -478,9 +484,10 @@ impl Host {
                 Ok(true) => {
                     if let Some(created) = s.created_at.take() {
                         let (w, h) = s.surface.size();
+                        let camera = if tank.camera().is_some() { "on" } else { "off" };
                         log::info!(
                             "first frame {w}x{h} {:?} at {}x, {} ms after surfaceCreated \
-                             (the draw took {} ms, host {:?})",
+                             (the draw took {} ms, host {:?}, camera {camera})",
                             s.surface.format(),
                             tank.layout((w, h)).scale,
                             created.elapsed().as_millis(),
