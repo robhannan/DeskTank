@@ -1956,7 +1956,7 @@ mod tests {
         for narrow in [false, true] {
             card.set_narrow(&w, narrow);
             let g = Layout::fit((320, 180), (360, 640));
-            assert!(card.layout(&w, (360, 640), &g, None, 0).is_some());
+            assert!(card.layout(&w, (360, 640), &g, None, None, 0).is_some());
         }
         // A plant that is gone closes the card.
         let mut w = w;
