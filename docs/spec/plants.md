@@ -435,7 +435,14 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     sway and night folding, and tests the same coverage when a creature
     swims behind it. The view's epiphyte bounds gate the overhang, which
     occupies no simulation cells. The placement ghost previews the cellular
-    shape.
+    shape. Render-only leaves grow behind and in front of the main row:
+    redrawn from the same leaf cells, behind them shorter, duller and
+    shifted into the gaps, in front of them lower, brighter, shorter and at
+    another angle, over the base of the row and the rhizome. A plant's roll
+    picks their directions, and some Anubias leaves have none, by their cell
+    positions; sway, night folding, health tint and creatures treat them as
+    part of the plant, at a band further back or forward. The pane sprite
+    draws the same leaves. Anubias leaves overlap in a clump (spacing 2).
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. A click pours seeds or
   places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the
