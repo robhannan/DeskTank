@@ -401,6 +401,36 @@ impl Renderer {
         }
     }
 
+    /// Builds the split-grid epiphyte pipelines the first time an
+    /// epiphyte appears.
+    fn create_epiphyte_pipelines(&mut self, gpu: &Gpu) {
+        if gpu.split_grid
+            && !self.epiphyte_areas.is_empty()
+            && self.pipelines.epiphyte_sprites.is_none()
+        {
+            self.pipelines.epiphytes = Some(create_tank_pipeline(
+                &gpu.device,
+                &self.pipeline_layout,
+                &self.shader,
+                self.format,
+                "tank fs_epiphytes",
+                "fs_epiphytes",
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                &[],
+            ));
+            self.pipelines.epiphyte_sprites = Some(create_tank_pipeline(
+                &gpu.device,
+                &self.pipeline_layout,
+                &self.shader,
+                self.format,
+                "sprites fs_sprite_epiphytes",
+                "fs_sprite_epiphytes",
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                &[],
+            ));
+        }
+    }
+
     /// Copies the waiting dirty rectangles (or the whole grid) into the cell
     /// texture, and their plant and rigid cells' depth into the band texture.
     pub fn upload(&mut self, gpu: &Gpu, world: &World, dirty: &mut DirtyRects) {
@@ -437,31 +467,7 @@ impl Renderer {
                     .is_some_and(crate::plants::draws_carpet_art)
             });
             self.create_carpet_pipelines(gpu);
-            if gpu.split_grid
-                && !self.epiphyte_areas.is_empty()
-                && self.pipelines.epiphyte_sprites.is_none()
-            {
-                self.pipelines.epiphytes = Some(create_tank_pipeline(
-                    &gpu.device,
-                    &self.pipeline_layout,
-                    &self.shader,
-                    self.format,
-                    "tank fs_epiphytes",
-                    "fs_epiphytes",
-                    Some(wgpu::BlendState::ALPHA_BLENDING),
-                    &[],
-                ));
-                self.pipelines.epiphyte_sprites = Some(create_tank_pipeline(
-                    &gpu.device,
-                    &self.pipeline_layout,
-                    &self.shader,
-                    self.format,
-                    "sprites fs_sprite_epiphytes",
-                    "fs_sprite_epiphytes",
-                    Some(wgpu::BlendState::ALPHA_BLENDING),
-                    &[],
-                ));
-            }
+            self.create_epiphyte_pipelines(gpu);
         }
         let (scratch, band_scratch) = (&mut self.scratch, &mut self.band_scratch);
         let (texture, bands) = (&self.cells, &self.bands);
