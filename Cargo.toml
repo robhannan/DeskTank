@@ -40,6 +40,11 @@ split-debuginfo = "packed"
 # `CARGO_PROFILE_DEV_DEBUG=true cargo build`.
 debug = "line-tables-only"
 
+[profile.test.package.desktank-sim]
+# Long-running simulation tests and scripted render captures execute tens of
+# thousands of ticks. Keep test assertions enabled while optimizing the tick code.
+opt-level = 2
+
 [profile.release]
 # Small, lean binaries (SPEC §6.1: ≤ 20 MB, low idle CPU). opt-level stays at 3:
 # CPU per tick matters more than the last few hundred KB.

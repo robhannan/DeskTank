@@ -1,0 +1,21 @@
+name: Set up Android build
+description: Installs Java and the pinned Android NDK, and sets up Gradle.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    # The exact NDK pinned in the version catalogue, which AGP also uses.
+    - name: Install the NDK
+      shell: bash
+      run: |
+        ndk=$(sed -n 's/^ndk = "\(.*\)"$/\1/p' android/gradle/libs.versions.toml)
+        { yes || true; } | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" > /dev/null
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+
+    # Validates the committed wrapper jar against Gradle's checksums.
+    - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1

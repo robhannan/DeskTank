@@ -166,24 +166,47 @@ jobs:
       # Same build as the Pages deploy, so a broken demo fails the PR.
       - uses: ./.github/actions/build-web
 
-      # The legacy-Chromium variant for webOS 5 TVs (Chrome 68, SPEC D26)
-      # into target/site-webos/. The build fails unless scripts/check-webos.ts
-      # finds MVP-only wasm and Chrome 68 JS; the web tests then load it.
-      - name: Build webOS site (MVP wasm, Chrome 68 JS)
-        run: pnpm build:web:webos
-
       # Strict tsc over the scripts, tests and page (after the build, which
       # writes wasm-bindgen's declarations).
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
+      - name: Clippy (wasm32)
+        run: cargo clippy -p desktank-web --target wasm32-unknown-unknown --locked -- -D warnings
 
-      # Smoke test (WebGL2 and the default backend), context-loss recovery and
-      # the WebGL2 render comparison with the native reference (SPEC §7).
-      - name: Web tests
-        run: pnpm test:web
+      # The renderer must build for the web and stay within WebGL2 (SPEC §3.5).
+      - name: Clippy desktank-render (wasm32)
+        run: cargo clippy -p desktank-render --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site
+          path: target/site
+          if-no-files-found: error
+          retention-days: 14
+
+  webos:
+    name: webOS
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/build-web
+        with:
+          variant: webos
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-webos
+          path: target/site-webos
+          if-no-files-found: error
+          retention-days: 14
+
+      # Install the system libraries also needed by legacy Chromium.
+      - name: Install Chromium system dependencies
+        run: pnpm exec playwright install-deps chromium
 
       # The webOS build in a real Chromium 68 (the TV's engine, D26), whose
       # 2018 SwiftShader caps fragment shaders at 4096 temporary registers:
@@ -220,58 +243,116 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Clippy (wasm32)
-        run: cargo clippy -p desktank-web --target wasm32-unknown-unknown --locked -- -D warnings
-
-      # The renderer must build for the web and stay within WebGL2 (SPEC §3.5).
-      - name: Clippy desktank-render (wasm32)
-        run: cargo clippy -p desktank-render --target wasm32-unknown-unknown --locked -- -D warnings
-
-  # The Android host (SPEC §3.6, §7): libdesktank_android.so for every ABI
-  # with cargo-ndk, packaged into the debug APK by Gradle, then the A2 smoke
-  # test on an Android TV emulator with Tapsmith (tests/android/).
-  android:
-    name: android
-    needs: changes
-    if: needs.changes.outputs.android == 'true'
+  web-tests:
+    name: Web tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: [web, webos]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          distribution: temurin
-          java-version: "17"
+          name: site
+          path: target/site
 
-      - name: Install Rust toolchain and Android targets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site-webos
+          path: target/site-webos
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      # Installs the pnpm version from package.json's packageManager.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+
+      - name: Install pnpm dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Balance by test count across runners while retaining the single worker
+      # per runner needed for timing assertions under CPU-based SwiftShader.
+      - name: Web tests
+        run: pnpm test:web --fully-parallel --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+  # Build the release library for each ABI concurrently using Gradle's usual
+  # cargo-ndk task and the same minimum API as the app (SPEC §3.6).
+  android-libs:
+    name: Android library (${{ matrix.abi }})
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            target: aarch64-linux-android
+          - abi: armeabi-v7a
+            target: armv7-linux-androideabi
+          - abi: x86_64
+            target: x86_64-linux-android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain and Android target
         run: |
           rustup toolchain install
-          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          rustup target add ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: android-${{ matrix.abi }}
 
       - name: Install cargo-ndk
         run: cargo install --locked cargo-ndk@4.1.2
 
-      # The exact NDK pinned in the version catalogue, which AGP also uses.
-      - name: Install the NDK
-        run: |
-          ndk=$(sed -n 's/^ndk = "\(.*\)"$/\1/p' android/gradle/libs.versions.toml)
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" > /dev/null
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-android
 
       # The JNI glue only compiles for Android, so desktop clippy never sees it.
       - name: Clippy (Android)
-        run: |
-          cargo clippy -p desktank-android --target aarch64-linux-android --locked -- -D warnings
-          cargo clippy -p desktank-android --target armv7-linux-androideabi --locked -- -D warnings
+        if: matrix.abi != 'x86_64'
+        run: cargo clippy -p desktank-android --target ${{ matrix.target }} --locked -- -D warnings
 
-      # Validates the committed wrapper jar against Gradle's checksums.
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Build the Android library
+        working-directory: android
+        run: ./gradlew --no-daemon :app:cargoNdk -Pdesktank.abis=${{ matrix.abi }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-lib-${{ matrix.abi }}
+          path: android/app/build/rustJniLibs/
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: android
+    needs: android-libs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-android
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: android-lib-*
+          merge-multiple: true
+          path: android/app/build/rustJniLibs
 
       - name: Build the debug APK
         working-directory: android
-        run: ./gradlew --no-daemon assembleDebug
+        # Package the libraries built above through the existing jniLibs source set.
+        run: ./gradlew --no-daemon assembleDebug -x :app:cargoNdk
 
       - name: APK contents
         run: |
@@ -283,6 +364,8 @@ jobs:
           readelf="$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
           for abi in arm64-v8a armeabi-v7a x86_64; do
             so=android/app/build/rustJniLibs/$abi/libdesktank_android.so
+            test -s "$so"
+            unzip -Z1 "$apk" | grep -Fx "lib/$abi/libdesktank_android.so"
             echo "$so"; "$readelf" -lW "$so" | grep LOAD
           done
           for abi in arm64-v8a x86_64; do
@@ -346,7 +429,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, check, deny, web, android]
+    needs: [changes, check, deny, web, webos, web-tests, android-libs, android]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
