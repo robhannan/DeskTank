@@ -250,8 +250,12 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     `tank.wgsl`; the sim's cells, spacing, runners, swimmer passage and food
     are unchanged, and no species file changed). Each leaf cell of a grass
     or pad carpet is drawn in its own cell by `carpet_cover`, from a
-    carpet bit (32, `CARPET_FLAG`) in the species texel's shapes `w`
-    (set for any non-epiphyte species with a `grass` or `pad` leaf). *Dwarf
+    carpet bit (32, `CARPET_FLAG`) in the species texel's shapes `w`, set by
+    `draws_carpet_art` (a `grass` or `pad` leaf that isn't an epiphyte's; only
+    rosettes, carpets and epiphytes may have those shapes, and the built-ins
+    are the two carpets and anubias, which is an epiphyte); the renderer
+    makes the split grid's carpet passes for exactly the tanks with such a
+    plant. *Dwarf
     hairgrass* is a tuft of fine blades: a tall one, whose top varies from
     column to column, and a short one beside it that splays a texel out per
     cell (the sprite's fan, in a cell's width: leaving the cell after one
@@ -270,8 +274,13 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     drawn only then, at every scale, within the plants' rectangle;
     `fs_leaves` and `fs_sprite_leaves` discard them), so Chrome 68's
     SwiftShader doesn't compile their art with the other leaf shapes; the
-    old grass branch of `leaf_cover` is gone, and a tank without carpets
-    pays nothing but `fs_leaves`' one species read.
+    old grass branch of `leaf_cover` is gone. A tank without carpets makes
+    and draws no carpet pass but still pays one read of the species' shapes
+    per leaf pixel, in the carpet test of `fs_leaves`, in `fs_sprite_leaves`
+    (`other_sprite_pixel`, shared with the epiphyte test) and in the one-pass
+    `leaf_art_cover`. At scale 1 (one pixel per cell, which samples a cell's
+    quarter (2, 2)) a carpet's runner takes the root ramp and a pad cell its
+    leaf body, not the stalk's stem ramp.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.

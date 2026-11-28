@@ -424,7 +424,7 @@ impl Renderer {
             self.has_carpets = world.plants().any(|p| {
                 species
                     .get(p.species)
-                    .is_some_and(|s| matches!(s.form, desktank_sim::plants::Form::Carpet(_)))
+                    .is_some_and(crate::plants::draws_carpet_art)
             });
             self.create_carpet_pipelines(gpu);
             if gpu.split_grid

@@ -137,6 +137,17 @@ pub const EPIPHYTE: u8 = 64;
 /// Flag in the same byte for carpets with grass or pad leaves (`CARPET_FLAG`
 /// in the shader): their own split passes draw them.
 pub const CARPET: u8 = 32;
+/// Whether the shader draws `s`'s leaves with the carpet passes' art
+/// (`CARPET` in its shapes texel): grass or pad leaves that aren't an
+/// epiphyte's. Only rosettes, carpets and epiphytes may have those shapes, so
+/// this is every grass or pad rosette and carpet. The renderer makes the
+/// split grid's carpet passes for exactly the tanks with such a plant, as
+/// `fs_leaves` leaves their leaves out.
+#[must_use]
+pub fn draws_carpet_art(s: &PlantSpecies) -> bool {
+    !matches!(s.form, Form::Epiphyte(_)) && matches!(s.look.leaf, LeafShape::Grass | LeafShape::Pad)
+}
+
 /// Column of the sizes texel: stem height, root depth and leaf length in
 /// cells (blade length for the first and last of a rosette or carpet, then
 /// its leaf pad width; fronds, root length and fronds for a floater; radius
@@ -203,13 +214,7 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
             }
             // Grass tufts and pads outside epiphytes: the carpet passes draw
             // them.
-            | if matches!(s.form, Form::Carpet(_) | Form::Rosette(_))
-                && matches!(look.leaf, LeafShape::Grass | LeafShape::Pad)
-            {
-                CARPET
-            } else {
-                0
-            },
+            | if draws_carpet_art(s) { CARPET } else { 0 },
     ]);
     // A rosette's, carpet's or epiphyte's blades shade by length, as stems
     // by height.
@@ -262,6 +267,44 @@ fn resample(ramp: &[[u8; 3]]) -> [[u8; 3]; RAMP] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_grass_or_pad_species_is_a_carpet_or_an_epiphyte() {
+        let m = desktank_sim::MaterialTable::builtin().unwrap();
+        let table = PlantSpeciesTable::builtin_for(&m).unwrap();
+        let mut carpets = Vec::new();
+        for s in table.iter() {
+            if matches!(s.look.leaf, LeafShape::Grass | LeafShape::Pad) {
+                assert!(
+                    matches!(s.form, Form::Carpet(_) | Form::Epiphyte(_)),
+                    "{} has a grass or pad leaf",
+                    s.name
+                );
+                // The carpet bit is the shader's and the renderer's one test.
+                let row = species_row(s);
+                let w = row[SHAPES_COLUMN * 4 + 3];
+                assert_eq!(
+                    draws_carpet_art(s),
+                    matches!(s.form, Form::Carpet(_)),
+                    "{}",
+                    s.name
+                );
+                assert_eq!(w & CARPET != 0, draws_carpet_art(s), "{}", s.name);
+                assert_eq!(
+                    w & EPIPHYTE != 0,
+                    matches!(s.form, Form::Epiphyte(_)),
+                    "{}",
+                    s.name
+                );
+                if draws_carpet_art(s) {
+                    carpets.push(s.name.as_str());
+                }
+            } else {
+                assert!(!draws_carpet_art(s), "{}", s.name);
+            }
+        }
+        assert_eq!(carpets, ["dwarf_hairgrass", "monte_carlo"]);
+    }
 
     #[test]
     fn texel_bytes_follow_the_tint_steps() {

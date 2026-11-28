@@ -2984,7 +2984,7 @@ fn carpet_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, plant: vec4<f3
             // Pads overlap down the mat: a lit rim, a body, a dark underside
             // and a gap where the stalk shows.
             if r == 3 {
-                if c == stalk_c {
+                if c == stalk_c && view.scale >= 2.0 {
                     return vec2<i32>(3 + 4 * LAYER_BARE, 3);
                 }
                 cover = select(0, 1, (c + o) % 2 == 1);
@@ -2994,7 +2994,7 @@ fn carpet_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, plant: vec4<f3
                 step += select(select(5, 4, r == 1), 3, r == 2) + select(0, 1, r == 0);
             }
         } else {
-            if r == 1 && c == stalk_c {
+            if r == 1 && c == stalk_c && view.scale >= 2.0 {
                 return vec2<i32>(3 + 4 * LAYER_BARE, 3);
             }
             cover = select(0, 1, r == 0 || c == o);
@@ -3417,7 +3417,7 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         if (shapes.w & CARPET_FLAG) != 0 {
             // A carpet's runner is pale like its pane sprite's (the root
             // ramp, `plant_colour`), not the leaf-green stem's.
-            return vec2<i32>(select(0, 1 + 4 * LAYER_BARE, covered), 5 + step - noise_step(me));
+            return vec2<i32>(select(0, 1 + 4 * LAYER_BARE, covered || view.scale < 2.0), 5 + step - noise_step(me));
         }
     } else if part == PART_STEM {
         let shape = shapes.y;
