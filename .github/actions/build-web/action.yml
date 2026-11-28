@@ -1,5 +1,10 @@
 name: Build web demo
-description: Builds the browser demo (crates/desktank-web + web/) into target/site/ with scripts/build-web.ts. Linux runners only.
+description: Builds the browser demo for modern browsers or webOS. Linux runners only.
+
+inputs:
+  variant:
+    description: Browser target (modern or webos)
+    default: modern
 
 runs:
   using: composite
@@ -16,7 +21,8 @@ runs:
     # wasm-bindgen gets its own cache below, keyed on its version.
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
-        key: web
+        key: ${{ inputs.variant == 'webos' && 'webos' || 'web' }}
+        workspaces: ${{ inputs.variant == 'webos' && '. -> target/webos' || '. -> target' }}
         cache-bin: false
 
     # The CLI must match the crate exactly; Cargo.lock is the single source.
@@ -51,5 +57,12 @@ runs:
       run: pnpm install --frozen-lockfile
 
     - name: Build site
+      if: inputs.variant == 'modern'
       shell: bash
       run: pnpm build:web
+
+    # check-webos verifies MVP-only wasm and Chrome 68 JS as part of this build.
+    - name: Build webOS site (MVP wasm, Chrome 68 JS)
+      if: inputs.variant == 'webos'
+      shell: bash
+      run: pnpm build:web:webos
