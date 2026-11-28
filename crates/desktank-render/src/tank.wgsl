@@ -155,6 +155,7 @@ const STYLE_DETRITUS: i32 = 11;
 const STYLE_DEVICE: i32 = 12;
 const STYLE_DRAGON_STONE: i32 = 13;
 const STYLE_SEIRYU: i32 = 14;
+const STYLE_ORNAMENT: i32 = 15;
 
 // Plant parts (desktank_sim::Part).
 const PART_ROOT: i32 = 0;
@@ -1802,6 +1803,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         // Draw device footprint cells as air above the water line and water at
         // or below it; the device sprite draws on top (D27, DV5).
         mat = max(i32(round(select(view.plant_parts.w, view.plant_parts2.w, f32(at.y) < view.surface_row))), 0);
+    }
+    if raw_style == STYLE_ORNAMENT {
+        return vec4<f32>(textureLoad(palette, vec2<i32>(mat, i32(v)), 0).rgb, 1.0);
     }
     let flat = view.scale < 2.0;
     let fine = fine_scale();

@@ -47,11 +47,11 @@ pub const MAX_SPRITES: usize = desktank_sim::MAX_CREATURE_CAP
     + desktank_sim::MAX_LIVE_FOOD
     + desktank_sim::MAX_CORPSES
     + (desktank_sim::MAX_DEVICES + 1) * MAX_DEVICE_SLICES;
-/// Most cells of a whole-plant placement ghost drawn (a mature mat has a few
+/// Most cells of a whole-plant or ornament placement ghost drawn (a mature mat has a few
 /// hundred): they are one flat quad each, after every other sprite, and a
 /// larger ghost loses its last cells.
-pub const MAX_GHOST_CELLS: usize = 1024;
-/// Instance buffer capacity: [`MAX_SPRITES`] and the plant ghost's cells.
+pub const MAX_GHOST_CELLS: usize = desktank_sim::ornament::MAX_CELLS;
+/// Instance buffer capacity: [`MAX_SPRITES`] and the cell-based placement ghost.
 pub const BUFFER_SPRITES: usize = MAX_SPRITES + MAX_GHOST_CELLS;
 /// Ticks each animation frame shows for (4 frames a second).
 const TICKS_PER_FRAME: u64 = 5;
@@ -289,7 +289,7 @@ impl Atlas {
     /// count.
     #[cfg(test)]
     pub fn instances(&self, world: &World, sprites: &mut Vec<Sprite>, out: &mut Vec<f32>) -> u32 {
-        self.instances_with(world, None, None, sprites, out)
+        self.instances_with(world, None, None, None, sprites, out)
     }
 
     /// [`Atlas::instances`], then slices for each device and
@@ -301,6 +301,7 @@ impl Atlas {
         world: &World,
         ghost: Option<(Device, bool)>,
         plant_ghost: Option<&PlantGhost>,
+        ornament_ghost: Option<desktank_sim::ornament::OrnamentGhost>,
         sprites: &mut Vec<Sprite>,
         out: &mut Vec<f32>,
     ) -> u32 {
@@ -390,7 +391,9 @@ impl Atlas {
         // Stable, so equal depths keep the world's order.
         sprites[ghost_count..].sort_by(|a, b| b.depth.total_cmp(&a.depth));
         sprites.rotate_left(ghost_count);
-        if let Some(g) = plant_ghost {
+        if let Some(g) = ornament_ghost {
+            push_ornament_ghost(world, g, sprites);
+        } else if let Some(g) = plant_ghost {
             push_plant_ghost(world, g, sprites);
         }
         for s in sprites.iter() {
@@ -537,24 +540,52 @@ fn push_plant_ghost(world: &World, ghost: &PlantGhost, sprites: &mut Vec<Sprite>
             clippy::cast_precision_loss
         )] // clamped, and a handful of shades
         let shade = at.round().clamp(0.0, last as f32) as usize;
-        let [r, g, b] = ramp[shade].map(|v| f32::from(v) / 255.0);
-        // Cell coordinates are small: exact in f32.
-        #[allow(clippy::cast_precision_loss)]
-        let centre = (c.x as f32 + 0.5, c.y as f32 + 0.5);
-        sprites.push(Sprite {
-            centre,
-            size: (1, 1),
-            origin: (0, 0),
-            fine: (0, 0),
-            frame: (1, 1),
-            flip: false,
-            turn: 0,
-            pitch: 0,
-            look: [LOOK_PLANT_GHOST, tint],
-            depth: 0.0,
-            glow: [r, g, b, 0.0],
-            burrower: false,
-        });
+        sprites.push(ghost_cell(c.x, c.y, ramp[shade], tint));
+    }
+}
+
+fn push_ornament_ghost(
+    world: &World,
+    ghost: desktank_sim::ornament::OrnamentGhost,
+    sprites: &mut Vec<Sprite>,
+) {
+    let Some(art) = world
+        .materials()
+        .get(ghost.material)
+        .and_then(|m| m.ornament.as_ref())
+    else {
+        return;
+    };
+    let tint = if ghost.fits { 0.0 } else { 1.0 };
+    for (x, y, variant) in art.pixels() {
+        if let Some(colour) = art.colour(variant) {
+            sprites.push(ghost_cell(
+                ghost.origin.0 + x,
+                ghost.origin.1 + y,
+                colour,
+                tint,
+            ));
+        }
+    }
+}
+
+fn ghost_cell(x: usize, y: usize, colour: [u8; 3], tint: f32) -> Sprite {
+    let [red, green, blue] = colour.map(|v| f32::from(v) / 255.0);
+    #[allow(clippy::cast_precision_loss)] // Cell coordinates are small.
+    let centre = (x as f32 + 0.5, y as f32 + 0.5);
+    Sprite {
+        centre,
+        size: (1, 1),
+        origin: (0, 0),
+        fine: (0, 0),
+        frame: (1, 1),
+        flip: false,
+        turn: 0,
+        pitch: 0,
+        look: [LOOK_PLANT_GHOST, tint],
+        depth: 0.0,
+        glow: [red, green, blue, 0.0],
+        burrower: false,
     }
 }
 
@@ -1421,7 +1452,7 @@ mod tests {
         let count = atlas.instances(&w, &mut sprites, &mut out);
         assert!(count > 2);
         assert_eq!(
-            atlas.instances_with(&w, Some((ghost, false)), None, &mut sprites, &mut out),
+            atlas.instances_with(&w, Some((ghost, false)), None, None, &mut sprites, &mut out),
             count * 2
         );
         let (instances, remainder) = out.as_chunks::<INSTANCE_FLOATS>();

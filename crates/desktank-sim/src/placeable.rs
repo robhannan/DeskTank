@@ -1,5 +1,5 @@
-//! Placeables (`docs/spec/interaction-and-saves.md` §2.5, T5): prefab devices
-//! the palette places, one per click (D27, [`crate::device`]).
+//! Prefab devices and rigid ornaments placed from the palette, one per click
+//! (`docs/spec/interaction-and-saves.md` §2.5).
 //!
 //! - The **bubbler** (DV7) is a bed-mounted prefab air-stone diffuser: it drops
 //!   onto substrate, hardscape or the floor and emits a dense curtain of rising
@@ -25,7 +25,7 @@
 use crate::device::DeviceKind;
 use crate::{World, WorldError};
 
-/// A device the palette can place.
+/// A prefab the palette can place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Placeable {
     /// A bed-mounted air-stone diffuser bubbler: releases air bubbles.
@@ -40,23 +40,29 @@ pub enum Placeable {
     UnderGravelFilter,
     /// A modular floor plate that extends an under-gravel filter when laid edge-to-edge with it.
     UnderGravelPanel,
+    /// A loose rigid volcano with an air outlet at the crater.
+    VolcanoBubbler,
 }
 
 impl Placeable {
     /// Every placeable, in palette order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Bubbler,
         Self::InternalFilter,
         Self::SpongeFilter,
         Self::HobFilter,
         Self::UnderGravelFilter,
         Self::UnderGravelPanel,
+        Self::VolcanoBubbler,
     ];
 
     /// The material its cells are made of.
     #[must_use]
     pub fn material_name(self) -> &'static str {
-        "device"
+        match self {
+            Self::VolcanoBubbler => self.name(),
+            _ => "device",
+        }
     }
 
     /// Its name in scripts.
@@ -69,6 +75,7 @@ impl Placeable {
             Self::HobFilter => "hob_filter",
             Self::UnderGravelFilter => "under_gravel_filter",
             Self::UnderGravelPanel => "under_gravel_panel",
+            Self::VolcanoBubbler => "volcano_bubbler",
         }
     }
 
@@ -92,6 +99,7 @@ impl Placeable {
             Self::HobFilter => DeviceKind::HobFilter,
             Self::UnderGravelFilter => DeviceKind::UnderGravelFilter,
             Self::UnderGravelPanel => DeviceKind::UnderGravelPanel,
+            Self::VolcanoBubbler => return None,
         })
     }
 }
@@ -112,7 +120,7 @@ impl World {
     ///
     /// # Errors
     ///
-    /// Returns an error if the material table lacks the `device` material.
+    /// Returns an error if the material table lacks the placeable's material.
     pub fn place_flipped(
         &mut self,
         what: Placeable,
@@ -121,7 +129,11 @@ impl World {
         flip: bool,
     ) -> Result<usize, WorldError> {
         let Some(kind) = what.device() else {
-            return Ok(0);
+            let material = self
+                .materials()
+                .id(what.material_name())
+                .ok_or(WorldError::MissingMaterial(what.material_name()))?;
+            return Ok(self.add_ornament(material, x, y));
         };
         Ok(match self.add_device(kind, x, y, flip)? {
             // A telescoping device's footprint depends on where it went.

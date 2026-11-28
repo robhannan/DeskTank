@@ -13,6 +13,7 @@ pub mod field;
 mod grid;
 mod hash;
 pub mod material;
+pub mod ornament;
 pub mod palette;
 mod placeable;
 pub mod plants;

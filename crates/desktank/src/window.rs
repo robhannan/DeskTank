@@ -1149,6 +1149,8 @@ impl Running {
         self.tank.set_cursor(cursor);
         let ghost = self.tools.ghost(self.tank.world());
         self.tank.set_device_ghost(ghost);
+        self.tank
+            .set_ornament_ghost(self.tools.ornament_ghost(self.tank.world()));
         let plant_ghost = self.tools.plant_ghost(self.tank.world());
         self.tank.set_plant_ghost(plant_ghost);
         let magnifier = self

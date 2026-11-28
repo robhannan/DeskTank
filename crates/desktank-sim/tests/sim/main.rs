@@ -24,6 +24,7 @@ mod marimo_lotus;
 mod movement;
 mod names;
 mod night;
+mod ornaments;
 mod plant_appearance;
 mod plant_forms;
 mod plant_individuals;

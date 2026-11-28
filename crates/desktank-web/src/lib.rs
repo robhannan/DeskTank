@@ -378,7 +378,7 @@ impl WebTank {
 
     /// The palette, in order, as `"<kind> <name>"`: kind `material` (pour
     /// it; the name is the material's), `tool` (`scoop`, `glue`, `net`,
-    /// `inspect`), `device` (place it; the name is its material's),
+    /// `inspect`), `device` or `ornament` (place one prefab),
     /// `creature` (add one; the name is the species'), `live_food` (add a
     /// pinch) or `plant` (pour the plant species named, as the start
     /// [`WebTank::set_plant_propagule`] picked for it).
@@ -1539,7 +1539,14 @@ impl WebTank {
                 "material",
                 table.get(m).map_or_else(String::new, |m| m.name.clone()),
             ),
-            PaletteItem::Tool(Tool::Place(p)) => ("device", p.name().to_owned()),
+            PaletteItem::Tool(Tool::Place(p)) => {
+                let kind = if p.device().is_some() {
+                    "device"
+                } else {
+                    "ornament"
+                };
+                (kind, p.name().to_owned())
+            }
             PaletteItem::Tool(Tool::AddCreature(s)) => {
                 let species = self.tank.world().species().get(s);
                 (
@@ -1715,6 +1722,8 @@ impl WebTank {
         self.tank.set_cursor(cursor);
         let ghost = self.tools.ghost(self.tank.world());
         self.tank.set_device_ghost(ghost);
+        self.tank
+            .set_ornament_ghost(self.tools.ornament_ghost(self.tank.world()));
         let plant_ghost = self.tools.plant_ghost(self.tank.world());
         self.tank.set_plant_ghost(plant_ghost);
         let magnifier = self

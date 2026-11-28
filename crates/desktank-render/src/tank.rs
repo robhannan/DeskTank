@@ -186,6 +186,7 @@ pub struct Tank {
     ghost: Option<(desktank_sim::Device, bool)>,
     /// The whole-plant placement ghost, if shown.
     plant_ghost: Option<desktank_sim::PlantGhost>,
+    ornament_ghost: Option<desktank_sim::ornament::OrnamentGhost>,
     /// The magnified lens around the pointer, if shown.
     magnifier: Option<Magnifier>,
     /// The part of the grid the target shows, if not the whole tank at its
@@ -249,6 +250,7 @@ impl Tank {
             cursor: None,
             ghost: None,
             plant_ghost: None,
+            ornament_ghost: None,
             magnifier: None,
             camera: None,
             tour: None,
@@ -704,6 +706,14 @@ impl Tank {
         }
     }
 
+    /// Shows or hides the whole rigid ornament placement preview.
+    pub fn set_ornament_ghost(&mut self, ghost: Option<desktank_sim::ornament::OrnamentGhost>) {
+        if self.ornament_ghost != ghost {
+            self.ornament_ghost = ghost;
+            self.needs_frame = true;
+        }
+    }
+
     /// Shows (or hides) the ghost of the whole plant the place tool would
     /// put down: its cells, see-through, in the species' own colours and
     /// tinted red when it doesn't fit
@@ -1068,6 +1078,9 @@ impl Tank {
     /// `desktank capture`, which step world time themselves.
     pub fn step(&mut self) {
         self.world.tick();
+        if let Some(ghost) = self.ornament_ghost {
+            self.set_ornament_ghost(Some(self.world.refresh_ornament_ghost(ghost)));
+        }
         if self.clock_running() {
             let minute = self
                 .day_clock
@@ -1257,7 +1270,13 @@ impl Tank {
             return;
         };
         renderer.upload(gpu, &self.world, &mut self.dirty);
-        renderer.upload_sprites(gpu, &self.world, self.ghost, self.plant_ghost.as_ref());
+        renderer.upload_sprites(
+            gpu,
+            &self.world,
+            self.ghost,
+            self.plant_ghost.as_ref(),
+            self.ornament_ghost,
+        );
         self.creatures_drawn = Some(self.world.creatures_version());
         renderer.upload_plants(gpu, &self.world);
         self.plants_drawn = Some(self.world.plants_version());

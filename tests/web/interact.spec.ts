@@ -876,11 +876,14 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   const subs = page.locator("#subtabs").getByRole("tab");
   const tab = (name: string) => page.getByRole("tab", { name, exact: true });
   await expect(tab("Build")).toHaveAttribute("aria-selected", "true");
-  await expect(subs).toHaveText(["Substrate", "Hardscape", "Devices"]);
+  await expect(subs).toHaveText(["Substrate", "Hardscape", "Devices", "Ornaments"]);
   await expect(tab("Substrate")).toHaveAttribute("aria-selected", "true");
   const radios = page.locator("#palette").getByRole("radio");
   await expect(radios).toHaveText(["Sand", "Gravel", "Aquasoil", "Clown vomit gravel"]);
   await expect(page.getByRole("radio", { name: "Sand" })).toHaveAttribute("aria-checked", "true");
+  await tab("Ornaments").click();
+  await expect(radios).toHaveText(["Volcano bubbler"]);
+  await tab("Substrate").click();
   // Fish are split by stocking role; invertebrates into shrimp and snails;
   // amphibians are one sub-category, with no sub-tab row.
   await tab("Fish").click();
@@ -998,8 +1001,10 @@ test("the palette follows the sim's category tree and navigates with the keyboar
   await page.mouse.wheel(0, 40);
   await expect(tab("Hardscape")).toHaveAttribute("aria-selected", "true");
   await page.mouse.wheel(0, 80);
+  await expect(tab("Ornaments")).toHaveAttribute("aria-selected", "true");
+  await page.mouse.wheel(0, 40);
   await expect(tab("Water")).toHaveAttribute("aria-selected", "true");
-  await page.mouse.wheel(0, -40);
+  await page.mouse.wheel(0, -80);
   await expect(tab("Devices")).toHaveAttribute("aria-selected", "true");
   // Focus on an item follows to the new sub-tab, so the keys keep working.
   await page.getByRole("radio", { name: "Bubbler" }).focus();

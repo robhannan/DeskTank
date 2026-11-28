@@ -34,7 +34,7 @@ use crate::material::{
     driftwood_wetness,
 };
 
-use shape::{Shape, TURN};
+use shape::{Shape, TURN, to_i64};
 
 use super::persist::{rect_from_v1, rect_v1};
 use super::{DEPTH_BANDS, World, default_band};
@@ -702,6 +702,152 @@ impl World {
 }
 
 impl World {
+    pub(super) fn ornament_art(
+        &self,
+        material: MaterialId,
+    ) -> Option<&crate::ornament::OrnamentArt> {
+        self.materials.get(material)?.ornament.as_ref()
+    }
+
+    pub(super) fn check_edit_material(
+        &self,
+        material: MaterialId,
+    ) -> Result<(), crate::WorldError> {
+        self.check_material(material)?;
+        if self.ornament_art(material).is_some() {
+            return Err(crate::WorldError::OrnamentMaterial(material));
+        }
+        Ok(())
+    }
+
+    /// Placement preview centred at the pointer, clamped to the tank's edges.
+    /// A valid preview overlaps only fluid and is the exact initial body pose.
+    #[must_use]
+    pub fn ornament_placement(
+        &self,
+        material: MaterialId,
+        x: i64,
+        y: i64,
+    ) -> Option<crate::ornament::OrnamentGhost> {
+        let art = self.ornament_art(material)?;
+        let (w, h) = art.size();
+        let origin = (
+            usize::try_from(
+                x.saturating_sub(to_i64(w / 2))
+                    .clamp(0, to_i64(self.width.saturating_sub(w))),
+            )
+            .unwrap_or(0),
+            usize::try_from(
+                y.saturating_sub(to_i64(h / 2))
+                    .clamp(0, to_i64(self.height.saturating_sub(h))),
+            )
+            .unwrap_or(0),
+        );
+        Some(self.refresh_ornament_ghost(crate::ornament::OrnamentGhost {
+            material,
+            origin,
+            fits: false,
+        }))
+    }
+
+    /// Updates a stationary preview after the simulation changes its surroundings.
+    #[must_use]
+    pub fn refresh_ornament_ghost(
+        &self,
+        mut ghost: crate::ornament::OrnamentGhost,
+    ) -> crate::ornament::OrnamentGhost {
+        ghost.fits = self.ornament_art(ghost.material).is_some_and(|art| {
+            let (w, h) = art.size();
+            ghost.origin.0.saturating_add(w) <= self.width
+                && ghost.origin.1.saturating_add(h) <= self.height
+                && self.bodies.len() < usize::from(u16::MAX)
+                && art.pixels().all(|(dx, dy, _)| {
+                    let i = (ghost.origin.1 + dy) * self.width + ghost.origin.0 + dx;
+                    self.props[usize::from(self.cells[i].material.0)]
+                        .class
+                        .is_fluid()
+                })
+        });
+        ghost
+    }
+
+    pub(crate) fn add_ornament(&mut self, material: MaterialId, x: i64, y: i64) -> usize {
+        let Some(ghost) = self.ornament_placement(material, x, y).filter(|g| g.fits) else {
+            return 0;
+        };
+        let Some(art) = self.ornament_art(material) else {
+            return 0;
+        };
+        let emits = !art.bubbler_outlets.is_empty();
+        let pixels: Vec<_> = art.pixels().collect();
+        let mut group = None;
+        for &(dx, dy, variant) in &pixels {
+            let (x, y) = (ghost.origin.0 + dx, ghost.origin.1 + dy);
+            self.write_cell(x, y, material, &mut group);
+            self.cells[y * self.width + x].variant = variant;
+        }
+        if let Some(id) = group {
+            if let Some(body) = self.bodies.get_mut(&id) {
+                body.held_until = 0;
+            }
+            self.tidy(id);
+            if emits {
+                self.ornament_emitters.insert(id);
+            }
+        }
+        pixels.len()
+    }
+
+    pub(crate) fn remove_ornament_at(&mut self, x: usize, y: usize) -> Option<usize> {
+        let cell = self.cell(x, y)?;
+        self.ornament_art(cell.material)?;
+        self.remove_ornament(cell.state)
+    }
+
+    // Remove the record before erasing cells so write_cell cannot re-enter it.
+    pub(super) fn remove_ornament(&mut self, id: u16) -> Option<usize> {
+        let body = self.bodies.remove(&id)?;
+        self.ornament_emitters.remove(&id);
+        let water = self.materials.id("water")?;
+        let air = self.materials.id("air")?;
+        let mut changed = 0;
+        for i in body.cells {
+            if self.is_member(i, id, body.material) {
+                let (x, y) = (i % self.width, i / self.width);
+                let to = if y < self.surface_row { air } else { water };
+                self.write_cell(x, y, to, &mut None);
+                changed += 1;
+            }
+        }
+        Some(changed)
+    }
+
+    /// Recover each outlet's cell from the current drawn pose, using the
+    /// same centre and angle the rigid raster uses.
+    pub(super) fn ornament_bubble_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.ornament_emitters
+            .iter()
+            .filter_map(|id| {
+                let b = self.bodies.get(id)?;
+                Some((b, self.ornament_art(b.material)?))
+            })
+            .flat_map(move |(b, art)| {
+                let (cx, cy) = b.drawn_com();
+                art.bubbler_outlets.iter().filter_map(move |&[x, y]| {
+                    let (dx, dy) = shape::rotate(
+                        i64::from(x) * ONE + ONE / 2 - b.shape.com.0,
+                        i64::from(y) * ONE + ONE / 2 - b.shape.com.1,
+                        b.drawn,
+                    );
+                    let x = usize::try_from((cx + dx).div_euclid(ONE)).ok()?;
+                    let y = usize::try_from((cy + dy).div_euclid(ONE)).ok()?;
+                    (x < self.width && y < self.height).then_some((x, y))
+                })
+            })
+    }
+}
+
+impl World {
     /// The body table as saved (T8).
     pub(super) fn save_bodies(&self) -> Vec<v1::Body> {
         self.bodies
@@ -766,6 +912,7 @@ impl World {
     pub(super) fn load_bodies(&mut self, saved: Vec<v1::Body>) -> Result<(), SaveError> {
         let invalid = |what: &str, id: u16| SaveError::Invalid(format!("body {id}: {what}"));
         self.bodies.clear();
+        self.ornament_emitters.clear();
         for b in saved {
             let id = b.id;
             let material = MaterialId(b.material);
@@ -802,6 +949,12 @@ impl World {
             } else {
                 bounds_short_side(bounds)
             };
+            if self
+                .ornament_art(material)
+                .is_some_and(|art| !art.bubbler_outlets.is_empty())
+            {
+                self.ornament_emitters.insert(id);
+            }
             self.bodies.insert(
                 id,
                 Body {
@@ -860,6 +1013,92 @@ fn bounds(cells: &[usize], width: usize) -> Rect {
 mod tests {
     use super::super::{Brush, FULL_MASK, World, WorldConfig};
     use crate::MaterialTable;
+
+    #[test]
+    fn ornament_outlets_turn_with_the_raster_and_creatures_respect_its_depth() {
+        use super::{ONE, TURN};
+        let mut w = World::new(
+            WorldConfig {
+                width: 96,
+                height: 100,
+                seed: 3,
+                water_level: 1.0,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let material = w.materials().id("volcano_bubbler").unwrap();
+        assert!(w.add_ornament(material, 44, 40) > 0);
+        let (&id, b) = w.bodies.first_key_value().unwrap();
+        let (front, back) = b.bands;
+        let i = b.cells[0];
+        for band in 0..crate::DEPTH_BANDS {
+            assert_eq!(w.blocks(i, Some(band)), (front..=back).contains(&band));
+        }
+
+        let art = w.ornament_art(material).unwrap();
+        let (cx, cy) = b.drawn_com();
+        let expected: Vec<_> = art
+            .bubbler_outlets
+            .iter()
+            .map(|&[x, y]| {
+                let lx = i64::from(x) * ONE + ONE / 2 - b.shape.com.0;
+                let ly = i64::from(y) * ONE + ONE / 2 - b.shape.com.1;
+                // Clockwise quarter-turn: (local x, local y) -> (-y, x).
+                (
+                    usize::try_from((cx - ly).div_euclid(ONE)).unwrap(),
+                    usize::try_from((cy + lx).div_euclid(ONE)).unwrap(),
+                )
+            })
+            .collect();
+        let upright: Vec<_> = w.ornament_bubble_cells().collect();
+        w.bodies.get_mut(&id).unwrap().drawn = TURN / 4;
+        let turned: Vec<_> = w.ornament_bubble_cells().collect();
+        assert_ne!(turned, upright);
+        assert_eq!(turned, expected);
+    }
+
+    #[test]
+    fn settled_ornament_sleeps_until_its_support_changes() {
+        let mut w = World::new(
+            WorldConfig {
+                width: 80,
+                height: 70,
+                seed: 3,
+                water_level: 0.0,
+            },
+            MaterialTable::builtin().unwrap(),
+        )
+        .unwrap();
+        let material = w.materials().id("volcano_bubbler").unwrap();
+        let rock = w.materials().id("rock").unwrap();
+        let air = w.materials().id("air").unwrap();
+        let mut support = None;
+        for x in 20..60 {
+            (_, support) = w.paint_into(x, 62, 0, rock, Brush::Pour, support).unwrap();
+        }
+        assert!(w.set_anchored(support.unwrap(), true));
+        assert!(w.add_ornament(material, 39, 32) > 0);
+        let id = w.bodies().find(|b| b.material == material).unwrap().id.0;
+        for _ in 0..100 {
+            w.tick();
+        }
+        let b = &w.bodies[&id];
+        assert!(!b.awake);
+        let (rest_ticks, resting) = (b.still, b.bounds);
+        assert_eq!(resting.y1, 62);
+        for _ in 0..20 {
+            w.tick();
+        }
+        assert_eq!(w.bodies[&id].still, rest_ticks, "no more motion steps");
+        for x in 20..60 {
+            w.set_cell(x, 62, air).unwrap();
+        }
+        for _ in 0..35 {
+            w.tick();
+        }
+        assert_eq!(w.bodies[&id].bounds.y1, w.height());
+    }
 
     /// An outline edited in place (a scoop's carve, a stroke's dab filling
     /// an edge) reaches the body's reference shape by the next tick, so a

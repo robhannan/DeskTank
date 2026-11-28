@@ -1,0 +1,38 @@
+# Silhouette traced from the owner's photo in issue #201, from the crater rim
+# around the irregular lava flows. The flutes and basalt base are shaded
+# in the tank's cell palette. Each character is one rigid cell; '.' is clear.
+id = 83
+name = "volcano_bubbler"
+class = "rigid"
+density = 1.85
+colour = "#a75744"
+palette = "build/ornaments"
+
+[ornament]
+colours = { k = "#382527", d = "#573330", m = "#75453d", r = "#9c493a", s = "#b9614d", h = "#e08a70", t = "#efa185", o = "#292832", b = "#393844", g = "#494654", l = "#5e5968", n = "#777181" }
+# Empty cells just above the lip, in sprite coordinates. y = -1 is allowed.
+bubbler_outlets = [[11, -1], [12, -1], [13, -1], [14, -1], [15, -1]]
+sprite = [
+    "...........thssh...............",
+    "..........hkkkkht..............",
+    ".........hrrshsrs..............",
+    ".........stsrhrrs..............",
+    "........tdtsrhrrhr.............",
+    ".......sttshstrhst.............",
+    ".......hrhrtrhdhdhr............",
+    "......htrhrhrhrsrss............",
+    ".....rtrshrtrsrrrrhr...........",
+    ".....srdhmhtkhdkhrsh...........",
+    ".....rrsmmhrkhrdssmrd..........",
+    "....mrkmrkrmkrmkmmkrdk.........",
+    "...brmgrmbsmbrkbrrorrbm........",
+    "...rrbgsggrmbmrorrbgrbbr.......",
+    "..grgblrgbrggrlobrobsgolmb.....",
+    ".ggnbbngbgllbgnoblbbggbblgo....",
+    ".blgblnlblnbgggbollbglloglobg..",
+    "olglblnbggnbgglbonggbllbblgbon.",
+    "gnnbllnggnnggnllbllgblngggngggl",
+    "lllbgnlggnggolggollgbglbbonggon",
+    ".nbglnlgblgbbglgbgnlgoggb...lb.",
+    "......lbgllg..nbobl............",
+]

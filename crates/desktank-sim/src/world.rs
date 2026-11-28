@@ -4,7 +4,7 @@
 mod bodies;
 
 use core::mem;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rand_core::Rng as _;
 use rand_pcg::Pcg32;
@@ -120,6 +120,9 @@ pub enum WorldError {
     /// The material table lacks a material the world needs.
     #[error("material table has no {0:?} material")]
     MissingMaterial(&'static str),
+    /// Ornament material is only written by whole-prefab placement.
+    #[error("ornament material {0:?} requires whole placement")]
+    OrnamentMaterial(MaterialId),
     /// The material ID isn't in the table.
     #[error("unknown material id {}", .0.0)]
     UnknownMaterial(MaterialId),
@@ -252,6 +255,8 @@ pub struct World {
     bodies: BTreeMap<u16, Body>,
     /// Next body id to try (ids are 1..=65535).
     next_body: u16,
+    /// Active air emitters derived from the saved body table.
+    ornament_emitters: BTreeSet<u16>,
     /// Random ticks, devices and fields (T5).
     life: Life,
     /// Species and creatures (T7).
@@ -380,6 +385,7 @@ impl World {
             last_change_tick: 0,
             bodies: BTreeMap::new(),
             next_body: 1,
+            ornament_emitters: BTreeSet::new(),
             life,
             creatures,
             plants,
@@ -517,9 +523,9 @@ impl World {
     /// # Errors
     ///
     /// Returns an error if the cell is outside the grid or the material is
-    /// unknown.
+    /// unknown or reserved for whole-ornament placement.
     pub fn set_cell(&mut self, x: usize, y: usize, material: MaterialId) -> Result<(), WorldError> {
-        self.check_material(material)?;
+        self.check_edit_material(material)?;
         if x >= self.width || y >= self.height {
             return Err(WorldError::OutOfBounds { x, y });
         }
@@ -538,7 +544,7 @@ impl World {
     ///
     /// # Errors
     ///
-    /// Returns an error if the material is unknown.
+    /// Returns an error if the material is unknown or reserved for whole placement.
     pub fn paint(
         &mut self,
         cx: i64,
@@ -562,7 +568,7 @@ impl World {
     ///
     /// # Errors
     ///
-    /// Returns an error if the material is unknown.
+    /// Returns an error if the material is unknown or reserved for whole placement.
     pub fn paint_into(
         &mut self,
         cx: i64,
@@ -572,7 +578,7 @@ impl World {
         brush: Brush,
         body: Option<BodyId>,
     ) -> Result<(usize, Option<BodyId>), WorldError> {
-        self.check_material(material)?;
+        self.check_edit_material(material)?;
         let rigid = self.props[usize::from(material.0)].class == MovementClass::Rigid;
         let mut body = body.map(|b| b.0).filter(|_| rigid);
         if let Some(id) = body {
@@ -811,7 +817,12 @@ impl World {
         let i = y * self.width + x;
         let old = self.cells[i];
         self.masks.remove(&i);
-        if self.props[usize::from(old.material.0)].class == MovementClass::Rigid {
+        let removes_ornament = self.props[usize::from(old.material.0)].class
+            == MovementClass::Rigid
+            && self.ornament_art(old.material).is_some();
+        if self.props[usize::from(old.material.0)].class == MovementClass::Rigid
+            && !removes_ornament
+        {
             self.body_removed(old.state);
         }
         if self.plants.part(old.material).is_some() {
@@ -846,6 +857,9 @@ impl World {
         self.write_coat(i, 0);
         self.cells[i] = cell;
         self.mark_changed(x, y);
+        if removes_ornament {
+            self.remove_ornament(old.state);
+        }
         // A device's cell takes the whole device with it (D27).
         self.device_cell_removed(old.material, old.state);
     }

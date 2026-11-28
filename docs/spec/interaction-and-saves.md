@@ -25,7 +25,8 @@
     - **Build**: Substrate (sand, gravel, aquasoil, clown vomit gravel),
       Hardscape (rock, driftwood), Devices (bubbler, internal filter: a see-through
       placement ghost at the pointer and a flip key (X) or button for the
-      other glass; see [devices](devices.md));
+      other glass; see [devices](devices.md)), Ornaments (volcano bubbler,
+      placed whole with a preview under the pointer and removed whole by the scoop);
     - **Water**: water, air bubbles, CO₂ bubbles;
     - **Food**: Fish food (flakes, pellets, frozen bloodworms, algae
       wafers, frozen brine shrimp), Live (live bloodworms, live brine shrimp);
