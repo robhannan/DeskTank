@@ -2802,13 +2802,13 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                     }
                 }
             } else {
-                // The petiole: a plain bronze stalk, lit on its left.
+                // The petiole: a plain bronze stalk, darker on its right.
                 covered = true;
-                step = 3 + select(0, 1, sub.x == 0);
+                step = 3 - select(0, 1, sub.x == 1);
                 if fine {
                     // Two quarters wide, lit on its left.
                     covered = quarter.x == 1 || quarter.x == 2;
-                    step += select(0, 1, quarter.x == 1);
+                    step -= select(0, 1, quarter.x == 2);
                 }
             }
         }

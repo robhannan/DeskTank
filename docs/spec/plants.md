@@ -210,6 +210,25 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     from `spacing` on climbs back up to root its child where water is
     above, then stops. A plant at its mature size still grows its runners.
     `[growth] root_feeder` makes only roots and runners sample nutrients.
+    *Rosette blades in the tank look like the info pane's sprite* (render
+    only, `tank.wgsl`; the sim's one-cell blades are unchanged, so swimmers
+    pass and food falls as before): a `sword` or `ribbon` blade is drawn
+    as a swept profile as wide as three cells, from the leaf's path, in the
+    water cells beside it (`wing_source`: a water pixel next to a blade cell
+    draws that blade's texel, with its quarter unclamped; sway moves the wing
+    with the blade, the sprite passes hide behind it, and tanks without
+    rosettes pay nothing, since the view's flag bit is off). A sword (amazon
+    sword, cryptocoryne) is a short petiole flaring into a lanceolate blade
+    widest at about half its length (`3.2 + 0.07 * blade_length` quarters
+    each side at most, so a crypt's 12-cell leaf is two cells broad and an
+    amazon sword's three), with a pale midrib, lateral veins every third
+    cell, a darker rim and a pointed tip; a blade under 20 cells has a
+    crinkled margin (crypt's). It narrows at night. A ribbon (vallisneria)
+    is a strap two texels wide that meanders more towards its tip, with a
+    broader, paler face where it twists. A tiger lotus's petioles are plain
+    bronze stalks a cell wide, darker on their right, its pads as before with fewer maroon
+    flecks at quarter-cell scale. Grass and pad blades (carpets) are
+    unchanged.
   - **Carpet:** low tufts; runners creep through the top substrate layer
     and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a
     rosette with a one-cell crown and blades of at most 3 cells; each tuft
@@ -367,7 +386,7 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     *T6d part 3:* night folding is render-only in `tank.wgsl`, driven by
     the existing darkness uniform (`view.daylight.w`, 0 by day to 1 at
     midnight): stem leaves tuck inward toward their stem and fold upward
-    as darkness rises, broad rosette/epiphyte blades and pads narrow, and
+    as darkness rises, broad rosette (sword) blades, epiphyte blades and pads narrow, and
     leaves dim slightly, with zero daytime cost or chunk wakes. Pearling
     runs in `visit_plant_cell` on submerged leaf cells with water above
     when `health >= 0.8` (`PEARL_HEALTH`), `light >= 0.65` (`PEARL_LIGHT`)
@@ -375,7 +394,7 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     hard tank-wide cap of 4 bubbles/s (`PEARL_MAX_PER_SECOND`: at most 1
     bubble every 5 ticks, needing no extra saved state). Optional sway
     is render-only (`view.target_size.zw` holds the world-time phase and
-    enable flag, keeping the 160-byte `View` uniform unchanged), gently
+    flags (bit 0 sway on, bit 1 rosette blades present), keeping the 160-byte `View` uniform unchanged), gently
     displacing leaves and upper stems (`pos >= 4`, keeping roots, runners,
     rhizomes, floaters, crowns and mats anchored) in a smooth wave across
     water cells and matching sprite occlusion (`hidden_by_plant`). The
