@@ -155,12 +155,39 @@ impl Ctx {
 /// The picture being drawn.
 struct Pic {
     px: Vec<Option<Rgb>>,
+    tone: Tone,
+}
+
+/// How the pixels put next are shaded: leaves drawn behind a plant's main
+/// row are duller and darker, those in front slightly brighter (as the
+/// tank's render-only back and front epiphyte leaves are).
+#[derive(Clone, Copy, PartialEq)]
+enum Tone {
+    Normal,
+    Behind,
+    Front,
+}
+
+impl Tone {
+    fn shade(self, c: Rgb) -> Rgb {
+        let v = c.map(f32::from);
+        let out = match self {
+            Self::Normal => return c,
+            Self::Behind => {
+                let l = luma(v);
+                v.map(|x| (x + (l - x) * 0.35) * 0.8)
+            }
+            Self::Front => v.map(|x| x * 1.07),
+        };
+        out.map(|x| x.round().clamp(0.0, 255.0) as u8)
+    }
 }
 
 impl Pic {
     fn new() -> Self {
         Self {
             px: vec![None; (W * H) as usize],
+            tone: Tone::Normal,
         }
     }
 
@@ -171,7 +198,7 @@ impl Pic {
 
     fn put(&mut self, x: i32, y: i32, c: Rgb) {
         if let Some(i) = Self::index(x, y) {
-            self.px[i] = Some(c);
+            self.px[i] = Some(self.tone.shade(c));
         }
     }
 
@@ -863,25 +890,60 @@ fn disc(pic: &mut Pic, c: &Ctx, cx: i32, y: i32, w: i32) {
 
 // ----------------------------------------------------------- epiphytes
 
-/// A creeping rhizome with rootlets under it and leaves along it.
+/// A creeping rhizome with rootlets under it and leaves along it. Behind
+/// the row stand shorter, duller leaves between its leaves, and in front of
+/// its base a few short leaves at another angle.
 fn epiphyte(pic: &mut Pic, c: &Ctx, f: &EpiphyteForm) {
     let half = (i32::from(f.rhizome_length) * 3 / 2 / 2).max(4);
     let thick = c.look.stem == StemShape::Thick;
-    // The leaves first, so the rhizome is in front of their stalks.
-    let leaves = if c.look.leaf == LeafShape::Pad { 4 } else { 5 };
+    let pad = c.look.leaf == LeafShape::Pad;
+    let leaves = if pad { 4 } else { 5 };
     let lean = f32::from(f.lean);
-    for i in 0..leaves {
+    let long = i32::from(f.leaf_length);
+    // Anubias leaves overlap in a clump, wider than its short rhizome.
+    let spread = if pad { half.max(7) } else { half };
+    // Which way the extra leaves lean, as the tank's roll per plant.
+    let roll = if c.roll(0, 9, 2) == 0 { 1 } else { -1 };
+    // A leaf's place on the rhizome, its height and the drift of its tip.
+    let leaf = |i: i32| {
         let u = unit_of(i, leaves);
-        let x0 = (u * half as f32 * 0.8).round() as i32;
-        let long = i32::from(f.leaf_length);
-        if c.look.leaf == LeafShape::Pad {
+        let x0 = (u * spread as f32 * 0.8).round() as i32;
+        if pad {
             let h = (long * 2 + 2 + c.roll(i, 3, 4) - (u.abs() * 2.0) as i32).clamp(8, 24);
-            let drift = u * h as f32 * 0.6 * 6.0 / (lean + 6.0);
-            anubias_leaf(pic, c, x0, h, drift);
+            (x0, h, u * h as f32 * 0.6 * 6.0 / (lean + 6.0))
         } else {
             let h = ((long as f32 * 1.5).round() as i32 - c.roll(i, 3, 4) - (u.abs() * 3.0) as i32)
                 .clamp(8, 28);
-            let drift = u * h as f32 * 0.7 * 6.0 / (lean + 6.0) + u * 2.0;
+            (x0, h, u * h as f32 * 0.7 * 6.0 / (lean + 6.0) + u * 2.0)
+        }
+    };
+    // The leaves behind first, then the main ones, so the rhizome is in
+    // front of their stalks.
+    pic.tone = Tone::Behind;
+    for i in 0..leaves {
+        let (x0, h, drift) = leaf(i);
+        let x0 = x0 + roll * 3;
+        if pad {
+            anubias_leaf(pic, c, x0, h - 1, drift, 0.88, false);
+        } else {
+            draw_blade(
+                pic,
+                c,
+                x0,
+                -2,
+                h * 85 / 100,
+                drift,
+                Blade::Sword { max: 3.0 },
+                i + 9,
+            );
+        }
+    }
+    pic.tone = Tone::Normal;
+    for i in 0..leaves {
+        let (x0, h, drift) = leaf(i);
+        if pad {
+            anubias_leaf(pic, c, x0, h, drift, 1.0, true);
+        } else {
             draw_blade(pic, c, x0, -2, h, drift, Blade::Sword { max: 3.0 }, i);
         }
     }
@@ -906,24 +968,55 @@ fn epiphyte(pic: &mut Pic, c: &Ctx, f: &EpiphyteForm) {
             );
         }
     }
+    // The leaves in front, over the base of the row and the rhizome.
+    pic.tone = Tone::Front;
+    for i in 0..leaves {
+        let (x0, h, drift) = leaf(i);
+        if pad {
+            if c.roll(i, 12, 2) == 1 {
+                let x = x0 - roll * 2;
+                anubias_oval(pic, c, x, -6, 0.8);
+            }
+        } else {
+            let x = x0 - roll * 2;
+            draw_blade(
+                pic,
+                c,
+                x,
+                -1,
+                h * 55 / 100,
+                drift * 0.5 - roll as f32 * 2.0,
+                Blade::Sword { max: 3.0 },
+                i + 19,
+            );
+        }
+    }
+    pic.tone = Tone::Normal;
 }
 
 /// An anubias leaf: a stalk to a broad, waxy, rounded blade with a pointed
 /// tip and a midrib.
-fn anubias_leaf(pic: &mut Pic, c: &Ctx, x0: i32, h: i32, drift: f32) {
-    let (rx, ry) = (4.8_f32, 4.2_f32);
-    let stalk = h - 8;
+fn anubias_leaf(pic: &mut Pic, c: &Ctx, x0: i32, h: i32, drift: f32, scale: f32, stalk: bool) {
+    let stalk_len = h - 8;
     let mut tip = x0;
-    for k in 0..stalk {
-        let t = k as f32 / stalk as f32;
+    for k in 0..stalk_len {
+        let t = k as f32 / stalk_len as f32;
         tip = x0 + (drift * t.powf(1.3)).round() as i32;
-        pic.put(tip, -2 - k, pick(&c.stem, 0.3 + 0.5 * t));
+        if stalk {
+            pic.put(tip, -2 - k, pick(&c.stem, 0.3 + 0.5 * t));
+        }
     }
-    let cy = -2 - stalk - 4;
-    for dy in -5..=4 {
-        for dx in -5..=5 {
+    anubias_oval(pic, c, tip, -2 - stalk_len - 4, scale);
+}
+
+/// The blade of an anubias leaf centred on `(cx, cy)`.
+fn anubias_oval(pic: &mut Pic, c: &Ctx, cx: i32, cy: i32, scale: f32) {
+    let (rx, ry) = (4.8_f32 * scale, 4.2_f32 * scale);
+    let (wide, tall) = (rx.ceil() as i32, ry.ceil() as i32);
+    for dy in -tall..tall {
+        for dx in -wide..=wide {
             let d = (dx as f32 / rx).powi(2) + ((dy as f32 + 0.5) / ry).powi(2);
-            let pointed = dy == -5 && dx == 0;
+            let pointed = dy == -tall && dx == 0;
             if d <= 1.0 || pointed {
                 let mut t = 0.55 - 0.3 * (dy as f32 / ry) - 0.1 * (dx as f32 / rx);
                 if d > 0.65 {
@@ -932,7 +1025,7 @@ fn anubias_leaf(pic: &mut Pic, c: &Ctx, x0: i32, h: i32, drift: f32) {
                 if dx == 0 {
                     t += 0.2;
                 }
-                pic.put(tip + dx, cy + dy, pick(&c.leaf, t));
+                pic.put(cx + dx, cy + dy, pick(&c.leaf, t));
             }
         }
     }
@@ -1152,6 +1245,13 @@ mod tests {
             allowed.extend(&sp.colours.stem);
             allowed.extend(&sp.colours.leaf);
             allowed.extend(tinted_leaf(sp).unwrap_or_default());
+            // Epiphyte leaves behind and in front are those, shaded.
+            if matches!(sp.form, Form::Epiphyte(_)) {
+                let plain: Vec<Rgb> = allowed.iter().copied().collect();
+                for tone in [Tone::Behind, Tone::Front] {
+                    allowed.extend(plain.iter().map(|&c| tone.shade(c)));
+                }
+            }
             let mut used: HashSet<Rgb> = HashSet::new();
             for p in px.iter().filter(|p| p[3] == 255) {
                 let rgb = [p[0], p[1], p[2]];
@@ -1235,6 +1335,33 @@ mod tests {
             assert!(w > 0 && w <= MAX_WIDTH, "{}: {w}×{h}", sp.name);
             assert!(h > 0 && h <= MAX_HEIGHT, "{}: {w}×{h}", sp.name);
             assert_eq!(px.len(), w * h);
+        }
+    }
+
+    #[test]
+    fn epiphytes_draw_leaves_behind_and_in_front_of_their_row() {
+        let t = table();
+        for name in ["java_fern", "anubias"] {
+            let sp = t.get(t.id(name).unwrap()).unwrap();
+            let (_, px) = build(sp);
+            let drawn: HashSet<Rgb> = px
+                .iter()
+                .filter(|p| p[3] == 255)
+                .map(|p| [p[0], p[1], p[2]])
+                .collect();
+            let leaf = &sp.colours.leaf;
+            for tone in [Tone::Behind, Tone::Front] {
+                assert!(
+                    leaf.iter()
+                        .any(|&c| tone.shade(c) != c && drawn.contains(&tone.shade(c))),
+                    "{name} draws no leaves {}",
+                    if tone == Tone::Behind {
+                        "behind"
+                    } else {
+                        "in front"
+                    }
+                );
+            }
         }
     }
 
