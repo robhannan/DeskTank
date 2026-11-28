@@ -1,0 +1,100 @@
+# Grown epiphytes among other plants: anubias on glued rock and java fern on
+# glued driftwood, their leaves reaching rotala, cryptocoryne and a carpet
+# standing beside them (another species' leaves are never painted over), and
+# snails on the wood and the rock behind the front leaves.
+ticks = 60600
+
+[world]
+water_level = 0.62
+
+[[pour]]
+repeat = 42
+x = 0
+y = 96
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+# Rock on the left for anubias.
+[[pour]]
+repeat = 4
+x = 18
+y = 74
+dx = 5
+radius = 6
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 24
+y = 64
+radius = 0
+plant = "anubias"
+
+# Driftwood on the right for java fern.
+[[pour]]
+repeat = 5
+x = 92
+y = 70
+dx = 5
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 102
+y = 60
+radius = 0
+plant = "java_fern"
+
+# Neighbours whose leaves the epiphyte blades touch.
+[[pour]]
+x = 91
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 113
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 44
+y = 20
+radius = 0
+plant = "cryptocoryne"
+
+[[pour]]
+x = 78
+y = 20
+radius = 0
+plant = "monte_carlo"
+
+[[creature]]
+tick = 59999
+species = "nerite"
+x = 92
+y = 66
+count = 8
+dx = 3
+
+[[creature]]
+tick = 59999
+species = "ramshorn_snail"
+x = 21
+y = 70
+count = 3
+dx = 3
+
+[[creature]]
+tick = 59999
+species = "neon_tetra"
+x = 96
+y = 66
+count = 12
+dx = 2

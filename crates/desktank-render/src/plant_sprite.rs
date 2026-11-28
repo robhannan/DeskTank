@@ -1245,11 +1245,10 @@ mod tests {
             allowed.extend(&sp.colours.stem);
             allowed.extend(&sp.colours.leaf);
             allowed.extend(tinted_leaf(sp).unwrap_or_default());
-            // Epiphyte leaves behind and in front are those, shaded.
+            // Epiphyte leaves behind and in front are leaf colours, shaded.
             if matches!(sp.form, Form::Epiphyte(_)) {
-                let plain: Vec<Rgb> = allowed.iter().copied().collect();
                 for tone in [Tone::Behind, Tone::Front] {
-                    allowed.extend(plain.iter().map(|&c| tone.shade(c)));
+                    allowed.extend(sp.colours.leaf.iter().map(|&c| tone.shade(c)));
                 }
             }
             let mut used: HashSet<Rgb> = HashSet::new();

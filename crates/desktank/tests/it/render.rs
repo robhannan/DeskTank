@@ -256,6 +256,19 @@ fn plant_epiphytes_mature_scene_matches_reference() {
     );
 }
 
+/// The grown epiphytes among other plants (rotala, cryptocoryne, a carpet)
+/// and snails: their blades never paint over another species' leaves, and
+/// the split grid draws the scene exactly as one pass does.
+#[test]
+fn plant_epiphytes_mixed_scene_matches_reference() {
+    check_named(
+        "plant_epiphytes_mixed",
+        "plant_epiphytes_mixed_x4",
+        None,
+        SIZE_X4,
+    );
+}
+
 /// Issue #45: tiger lotus (mottled leaf pads on petioles of differing
 /// lengths, the longest floating on the surface) and marimo balls resting
 /// on the bed, grown for 25 minutes.
@@ -399,6 +412,12 @@ fn split_grid_matches_one_pass_with_sway_and_overlays() {
             &["--sway", "--field", "light"][..],
         ),
         ("plant_epiphytes", SIZE_X4, Some("00:00"), &["--sway"][..]),
+        (
+            "plant_epiphytes_mixed",
+            SIZE_X4,
+            Some("00:00"),
+            &["--sway", "--field", "light"][..],
+        ),
     ] {
         let name = format!("{scene}_sway");
         let Some(one_pass) = capture(scene, &name, time, size, extra) else {

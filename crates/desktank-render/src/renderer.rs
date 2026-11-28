@@ -57,8 +57,13 @@ pub struct Overlay {
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (288 base + 16 ripple vec4s).
-const VIEW_BYTES: u64 = 288 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (272 base, the
+/// epiphyte boxes and 16 ripple vec4s).
+const VIEW_BYTES: u64 =
+    272 + (EPIPHYTE_BOXES as u64) * 16 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// How many boxes the shader tests a pixel against for epiphyte art: the
+/// bounds of the epiphyte plants, merged down to this many.
+const EPIPHYTE_BOXES: usize = 4;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -113,8 +118,9 @@ pub struct Renderer {
     /// column, which can move without its leaf cells changing.
     plant_bases: BTreeMap<u16, (usize, usize)>,
     bases_version: Option<u64>,
-    /// Bounds of the epiphyte cells, updated when the grid changes.
-    epiphyte_area: desktank_sim::Rect,
+    /// Bounds of the epiphyte plants, merged into at most `EPIPHYTE_BOXES`
+    /// boxes, updated when the grid changes.
+    epiphyte_areas: Vec<desktank_sim::Rect>,
     /// The material palette, built once.
     palette: wgpu::Texture,
     /// Ramps, shapes and sizes per plant species, built once.
@@ -259,7 +265,7 @@ impl Renderer {
             algae,
             plant_bases: BTreeMap::new(),
             bases_version: None,
-            epiphyte_area: desktank_sim::Rect::EMPTY,
+            epiphyte_areas: Vec::new(),
             palette,
             species,
             hud,
@@ -370,17 +376,21 @@ impl Renderer {
             let stones = &self.variety_stones;
             self.stone_varieties_visible = cells.iter().any(|c| stones[usize::from(c.material.0)]);
             let species = world.plant_species();
-            self.epiphyte_area = world
-                .plants()
-                .filter(|p| {
-                    species
-                        .get(p.species)
-                        .is_some_and(|s| s.form.epiphyte().is_some())
-                })
-                .map(|p| p.bounds)
-                .fold(desktank_sim::Rect::EMPTY, desktank_sim::Rect::union);
+            self.epiphyte_areas = merge_boxes(
+                world
+                    .plants()
+                    .filter(|p| {
+                        species
+                            .get(p.species)
+                            .is_some_and(|s| s.form.epiphyte().is_some())
+                    })
+                    .map(|p| p.bounds)
+                    .filter(|b| !b.is_empty())
+                    .collect(),
+                EPIPHYTE_BOXES,
+            );
             if gpu.split_grid
-                && !self.epiphyte_area.is_empty()
+                && !self.epiphyte_areas.is_empty()
                 && self.pipelines.epiphyte_sprites.is_none()
             {
                 self.pipelines.epiphytes = Some(create_tank_pipeline(
@@ -729,18 +739,16 @@ impl Renderer {
             phase,
             f32::from(u8::from(sway_on) + 2 * u8::from(self.wide_blades)),
         ];
-        let b = self.epiphyte_area;
-        let epiphyte_area = if b.is_empty() {
-            [0.0; 4]
-        } else {
-            let margin = PLANT_MARGIN as f32;
-            [
+        let margin = PLANT_MARGIN as f32;
+        let mut epiphyte_boxes = [[0.0_f32; 4]; EPIPHYTE_BOXES];
+        for (slot, b) in epiphyte_boxes.iter_mut().zip(&self.epiphyte_areas) {
+            *slot = [
                 b.x0 as f32 - margin,
                 b.y0 as f32 - margin,
                 b.x1 as f32 + margin,
                 b.y1 as f32 + margin,
-            ]
-        };
+            ];
+        }
         let mut ripple_slots = [[0.0_f32; 4]; desktank_sim::MAX_DEVICES];
         for (slot, &r) in ripple_slots.iter_mut().zip(ripples.iter()) {
             *slot = r;
@@ -774,7 +782,7 @@ impl Renderer {
         ])
         .chain(ruler)
         .chain(ripple_slots.into_iter().flatten())
-        .chain(epiphyte_area)
+        .chain(epiphyte_boxes.into_iter().flatten())
         .flat_map(f32::to_le_bytes)
         .collect()
     }
@@ -1194,7 +1202,7 @@ impl Renderer {
         if let Some(p) = pipelines
             .epiphytes
             .as_ref()
-            .filter(|_| scale >= 2 && !self.epiphyte_area.is_empty())
+            .filter(|_| scale >= 2 && !self.epiphyte_areas.is_empty())
         {
             let scissor = match plants {
                 PlantPasses::Within(None) => None,
@@ -1217,7 +1225,7 @@ impl Renderer {
             let epiphytes = pipelines
                 .epiphyte_sprites
                 .iter()
-                .filter(|_| scale >= 2 && !self.epiphyte_area.is_empty());
+                .filter(|_| scale >= 2 && !self.epiphyte_areas.is_empty());
             for p in pipelines.sprites.iter().chain(epiphytes) {
                 pass.set_pipeline(p);
                 pass.draw(0..6, 0..self.sprite_count);
@@ -1803,6 +1811,27 @@ const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_stems", "fs_leaves"];
 /// the pixels over one kind of plant part.
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
 const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
+/// `boxes` merged until at most `limit` remain, each time joining the pair
+/// whose bounding box adds the fewest cells.
+fn merge_boxes(mut boxes: Vec<desktank_sim::Rect>, limit: usize) -> Vec<desktank_sim::Rect> {
+    while boxes.len() > limit.max(1) {
+        let mut best = (usize::MAX, 0, 1);
+        for i in 0..boxes.len() {
+            for j in i + 1..boxes.len() {
+                let join = boxes[i].union(boxes[j]).area();
+                let cost = join.saturating_sub(boxes[i].area() + boxes[j].area());
+                if cost < best.0 {
+                    best = (cost, i, j);
+                }
+            }
+        }
+        let (_, i, j) = best;
+        let other = boxes.swap_remove(j);
+        boxes[i] = boxes[i].union(other);
+    }
+    boxes
+}
+
 /// Grid passes use a full-screen triangle, sprite passes instanced quads.
 #[allow(clippy::too_many_arguments)] // the pipeline's shared state and entry point
 fn create_tank_pipeline(
@@ -1993,6 +2022,25 @@ fn side(n: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use super::merge_boxes;
+    use desktank_sim::Rect;
+
+    #[test]
+    fn epiphyte_boxes_merge_the_closest_pairs_first() {
+        let r = |x0, x1| Rect {
+            x0,
+            y0: 0,
+            x1,
+            y1: 10,
+        };
+        let boxes = vec![r(0, 10), r(100, 110), r(12, 20), r(300, 310), r(105, 115)];
+        let merged = merge_boxes(boxes.clone(), 3);
+        assert_eq!(merged.len(), 3);
+        assert!(merged.contains(&r(0, 20)) && merged.contains(&r(100, 115)));
+        assert_eq!(merge_boxes(boxes.clone(), 8), boxes);
+        assert_eq!(merge_boxes(boxes, 1), vec![r(0, 310)]);
+    }
+
     #[test]
     fn oled_mode_blacks_the_backdrop_only_on_opaque_tanks() {
         assert_eq!(super::backdrop(None, true), [0.0, 0.0, 0.0, -1.0]);
