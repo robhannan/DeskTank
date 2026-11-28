@@ -918,7 +918,6 @@ fn gen_epiphyte(b: &mut Builder<'_>, f: &EpiphyteForm, frac: f64, (bx, by): (i64
     }
     // Leaves rising from every `spacing`th cell, leaning away from the base.
     let length = scaled(i64::from(f.leaf_length), frac).min(i64::from(f.leaf_length));
-    let lean = i64::from(f.lean).max(3);
     for (x0, y0, pos0) in rhizome {
         if (pos0 - 1) % i64::from(f.spacing.max(1)) != 0 || !b.put(x0, y0 - 1, Part::Leaf, 1) {
             continue;
@@ -926,7 +925,7 @@ fn gen_epiphyte(b: &mut Builder<'_>, f: &EpiphyteForm, frac: f64, (bx, by): (i64
         let (mut x, mut y, mut pos) = (x0, y0 - 1, 1i64);
         while pos < length {
             let dir = (x - bx).signum();
-            let step_out = f.lean > 0 && dir != 0 && pos >= 2 && (pos - 2) % lean == 0;
+            let step_out = f.blade_steps_out(pos as u8, x.abs_diff(bx));
             let (dx, dy) = if step_out { (dir, 0) } else { (0, -1) };
             if !b.put(x + dx, y + dy, Part::Leaf, pos + 1) {
                 break;

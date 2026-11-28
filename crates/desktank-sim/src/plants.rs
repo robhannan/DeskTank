@@ -416,6 +416,19 @@ pub struct EpiphyteForm {
     pub lean: u8,
 }
 
+impl EpiphyteForm {
+    /// Near the base leaves stand upright. Farther out, take an extra
+    /// sideways step between the usual ones so the leaves fan apart.
+    pub(crate) fn blade_steps_out(&self, position: u8, offset: u64) -> bool {
+        if self.lean == 0 || offset == 0 || position < 2 {
+            return false;
+        }
+        let cadence = self.lean.max(3);
+        let phase = (position - 2) % cadence;
+        phase == 0 || (offset >= 2 * u64::from(self.spacing) && phase == cadence / 2)
+    }
+}
+
 /// Most floating leaves one floater spreads to.
 pub const MAX_FRONDS: u8 = 8;
 /// Longest root a floater hangs, in cells.

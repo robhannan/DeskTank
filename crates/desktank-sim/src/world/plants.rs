@@ -3010,11 +3010,7 @@ impl World {
                         core::cmp::Ordering::Equal => 0,
                         core::cmp::Ordering::Greater => 1,
                     };
-                    let lean = usize::from(f.lean).max(3);
-                    let out = f.lean > 0
-                        && dir != 0
-                        && pos >= 2
-                        && usize::from(pos - 2).is_multiple_of(lean);
+                    let out = f.blade_steps_out(pos, x.abs_diff(bx) as u64);
                     let (dx, dy) = if out { (dir, 0) } else { (0, -1) };
                     if let Some(j) = self.at(x, y, dx, dy).filter(|&j| is_water(j)) {
                         sites.push(Site::new(j, Part::Leaf, pos + 1, BLADE_WEIGHT));

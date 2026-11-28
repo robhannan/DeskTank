@@ -12,8 +12,8 @@ propagation = ["fragments"]
 
 [epiphyte]
 on = ["rock", "dragon_stone", "seiryu_stone", "driftwood"]
-rhizome_length = 14
-spacing = 2
+rhizome_length = 13
+spacing = 3
 leaf_length = 5
 lean = 4
 
