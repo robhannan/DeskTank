@@ -2601,9 +2601,17 @@ fn stem_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band:
 // opacity where covered), without the colour work, which costs Chromium 68's
 // SwiftShader registers the sprite passes need.
 fn texel_hides(plant: vec4<f32>, cover: vec2<i32>) -> bool {
-    let health = plant.r;
-    let opacity = select(mix(MIN_OPACITY, 1.0, health / FADE_AT), 1.0, health >= FADE_AT);
-    return (cover.x != 0 || view.scale < 2.0) && opacity > 0.5;
+    return (cover.x != 0 || view.scale < 2.0) && plant_opacity(plant.r) > 0.5;
+}
+
+// `texel_hides` for the plant art `art` (epiphyte art brings its own cover).
+fn art_hides(art: PlantArt) -> bool {
+    let src = art.src;
+    let plant = plant_of(src.texel);
+    if is_leafy(src.part) {
+        return texel_hides(plant, leaf_art_cover(art, plant));
+    }
+    return texel_hides(plant, stem_cover(src.at, src.texel, src.part, src.quarter, plant));
 }
 
 fn plant_hides(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> bool {
@@ -2970,7 +2978,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 let c = select(-1.0, 0.0, fine) + shift;
                 let dx = select(f32((quarter.x >> 1u) * 2) - 1.0, f32(quarter.x) - 1.5, fine);
                 let along = i32(round(f32(pos) / max(sizes.x, 1.0) * 3.0));
-                return vec2<i32>(select(0, 3, abs(dx - c) < 1.01), 1 + along + select(0, 1, dx < c));
+                return vec2<i32>(select(0, 3 + 4 * LAYER_BARE, abs(dx - c) < 1.01), 1 + along + select(0, 1, dx < c));
             }
         } else if shape == LEAF_SWORD {
             // A narrow stalk, then a broad blade with a pale midrib (the
@@ -3594,6 +3602,8 @@ const EPIPHYTE: i32 = 64;
 // ramp kind (1 blade, 3 petiole): `kind + 4 * layer`.
 const LAYER_BACK: i32 = 1;
 const LAYER_FRONT: i32 = 2;
+// A rosette lotus's petiole: a plain bronze stalk, left out of the colouration.
+const LAYER_BARE: i32 = 3;
 
 fn epiphyte_shape(shapes: vec4<i32>) -> bool {
     return (shapes.w & EPIPHYTE) != 0 && (shapes.x == LEAF_PAD || shapes.x == LEAF_SWORD);
@@ -3869,7 +3879,7 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
         // A stem plant's upper and newest leaves, and its bud, lean towards
         // the species' colouration colour (the sprite's tip ramp) even
         // before the light colours the plant.
-        var amount = select(plant.g, 0.0, cover.x == 3);
+        var amount = select(plant.g, 0.0, cover.x == 3 + 4 * LAYER_BARE);
         if ramp == PART_LEAF && part != PART_FLOAT
             && textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0 < f32(LEAF_RIBBON) - 0.5 {
             amount = max(amount, TIP_TINT * clamp((f32(shade) - 3.0) / 4.0, 0.0, 1.0));
