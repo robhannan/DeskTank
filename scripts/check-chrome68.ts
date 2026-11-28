@@ -204,7 +204,7 @@ try {
   const error = await cdp.eval<string>(statusText);
   if (error) throw new Error(`the page shows an error: ${error}`);
 
-  // 2. The depth scene and the algae scenes match the native captures.
+  // 2. The depth, hardscape and plant scenes match the native captures.
   // The algae passes draw only while algae shows, so SwiftShader compiles
   // them (and can run out of memory) only then; the varieties scene draws
   // every look from the baked atlas.
@@ -215,6 +215,7 @@ try {
     ["rock_varieties", "rock_varieties_x4"],
     ["algae_film", "algae_film_x4"],
     ["algae_varieties", "algae_varieties_x4"],
+    ["plant_epiphytes", "plant_epiphytes_x4"],
   ]) {
     const toml = readFileSync(path.join(root, "crates", "desktank", "tests", "scenes", `${scene}.toml`), "utf8");
     await cdp.eval(`window.desktank.loadScene(${JSON.stringify(toml)}, 7, 640, 360)`);
