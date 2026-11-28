@@ -128,8 +128,12 @@ pub const RAMP: usize = 8;
 /// texel, rounded up. Row 0 (no species id) and rows of missing ids repeat
 /// the default species.
 pub const SPECIES_WIDTH: usize = 32;
-/// Column of the shapes texel: leaf, stem and root shape discriminants.
+/// Column of the shapes texel: leaf, stem and root shapes, then arrangement
+/// and the epiphyte flag.
 pub const SHAPES_COLUMN: usize = 3 * RAMP;
+/// Flag in the shapes texel's arrangement byte for epiphyte leaf profiles
+/// (bit 128 is the rosette flag, `ROSETTE_FLAG` in the shader).
+pub const EPIPHYTE: u8 = 64;
 /// Column of the sizes texel: stem height, root depth and leaf length in
 /// cells (blade length for the first and last of a rosette or carpet, then
 /// its leaf pad width; fronds, root length and fronds for a floater; radius
@@ -186,12 +190,13 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
         look.stem as u8,
         look.root as u8,
         // A rosette's arrangement is unused; its top bit tells the shader to
-        // draw its sword and ribbon blades broad (`ROSETTE_FLAG`).
+        // draw its sword and ribbon blades broad (`ROSETTE_FLAG`). An
+        // epiphyte's `EPIPHYTE` bit selects its own blade art.
         look.arrangement as u8
-            | if matches!(s.form, Form::Rosette(_)) {
-                0x80
-            } else {
-                0
+            | match s.form {
+                Form::Rosette(_) => 0x80,
+                Form::Epiphyte(_) => EPIPHYTE,
+                _ => 0,
             },
     ]);
     // A rosette's, carpet's or epiphyte's blades shade by length, as stems
@@ -368,6 +373,9 @@ mod tests {
         );
         let hygro = usize::from(table.id("hygrophila").unwrap().0);
         assert_eq!(texel(hygro, COLOUR_COLUMN)[3], 0);
+        let fern = usize::from(table.id("java_fern").unwrap().0);
+        assert_ne!(texel(fern, SHAPES_COLUMN)[3] & EPIPHYTE, 0);
+        assert_eq!(texel(hygro, SHAPES_COLUMN)[3] & EPIPHYTE, 0);
         // Rows without a species repeat the default.
         let default = usize::from(table.default_species().unwrap().id.0);
         let at = |r: usize| &image[r * SPECIES_WIDTH * 4..(r + 1) * SPECIES_WIDTH * 4];
@@ -395,6 +403,7 @@ mod tests {
             ("SHAPES_COLUMN", SHAPES_COLUMN),
             ("SIZES_COLUMN", SIZES_COLUMN),
             ("COLOUR_COLUMN", COLOUR_COLUMN),
+            ("EPIPHYTE", usize::from(EPIPHYTE)),
         ] {
             let line = format!("const {name}: i32 = {value};");
             assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");

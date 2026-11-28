@@ -1394,7 +1394,7 @@ mod tests {
                 let (w, h) = (cols * scale, rows * scale);
                 let pixels = tank.capture(&gpu, (w as u32, h as u32)).unwrap();
                 let k = zoom * 2 / scale;
-                for (i, pixel) in pixels.chunks_exact(4).enumerate() {
+                for (i, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
                     stamp(
                         (panel + 1) * (panel_w + gap) + i % w * k,
                         i / w * k,

@@ -86,6 +86,8 @@ struct View {
     // Active HOB waterfall spillway ripple zones (MAX_DEVICES = 16):
     // (x0, x1_exclusive, spillway_y, flow_strength); w <= 0 terminates the list.
     ripples: array<vec4<f32>, 16>,
+    // Bounds of the epiphyte cells, with room for blade edges and sway.
+    epiphyte_area: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> view: View;
@@ -283,6 +285,13 @@ struct GridSource {
     quarter: vec2<i32>,
     from_sway: bool,
     swayed_away: bool,
+};
+
+// A selected plant texel. Epiphytes compute cover while choosing which
+// blade is visible; other plants calculate it in their regular shape code.
+struct PlantArt {
+    src: GridSource,
+    cover: vec2<i32>,
 };
 
 // The HUD pixel at `pos` if the species card, the palette or the inspect
@@ -484,10 +493,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var need_ground = true;
     var plant_rgb = vec3<f32>(0.0);
     var plant_alpha = 0.0;
-    let src = grid_source(grid_pos, at, texel, quarter);
+    let art = epiphyte_art(grid_pos, grid_source(grid_pos, at, texel, quarter));
+    let src = art.src;
     if src.part >= 0 {
         let band = band_at(src.at);
-        let pt = plant_texel(src.at, src.texel, src.part, src.quarter, band);
+        let pt = plant_texel(art, band);
         if pt.a >= 0.999 {
             rgb = pt.rgb;
             need_ground = false;
@@ -672,12 +682,13 @@ fn fs_leaves(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if outside_lens(pos.xy) {
         discard;
     }
-    let src = plant_source(pos.xy);
+    let art = leaf_art(pos.xy);
+    let src = art.src;
     if src.part < 0 || !is_leafy(src.part) {
         discard;
     }
     let band = band_at(src.at);
-    return plant_pass_colour(pos.xy, src, leaf_texel(src.at, src.texel, src.part, src.quarter, band), band);
+    return plant_pass_colour(pos.xy, src, leaf_texel(art, band), band);
 }
 
 @fragment
@@ -696,17 +707,31 @@ fn fs_stems(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 // The plant art the grid shows at pixel `pos`, as fs_main finds it; part -1
 // where there is none (or the palette or letterbox is there).
 fn plant_source(pos: vec2<f32>) -> GridSource {
-    let none = GridSource(vec2<i32>(0), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
     if hud_at(pos).a > 0.5 {
-        return none;
+        return no_plant_source();
     }
-    let grid_pos = (pos - view.offset) / view.scale;
+    return grid_plant_source((pos - view.offset) / view.scale);
+}
+
+fn no_plant_source() -> GridSource {
+    return GridSource(vec2<i32>(-1), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
+}
+
+fn grid_plant_source(grid_pos: vec2<f32>) -> GridSource {
     let cell = floor(grid_pos);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
-        return none;
+        return no_plant_source();
     }
     let at = vec2<i32>(cell);
     return grid_source(grid_pos, at, textureLoad(cells, at, 0), quarter_of(grid_pos, cell));
+}
+
+fn leaf_art(pos: vec2<f32>) -> PlantArt {
+    let src = plant_source(pos);
+    if src.at.x < 0 {
+        return PlantArt(src, vec2<i32>(-1, 0));
+    }
+    return epiphyte_art((pos - view.offset) / view.scale, src);
 }
 
 // Plant texel `pt` from `src` as the plant passes blend it: opaque where
@@ -2477,7 +2502,8 @@ fn stem_leaf_cell(me: vec4<f32>, part: i32) -> bool {
     if part == PART_LEAF && (shapes.x == LEAF_RIBBON || shapes.x == LEAF_LOTUS) {
         return true;
     }
-    return shapes.x < LEAF_RIBBON && shapes.y < STEM_FUZZ;
+    return (shapes.x < LEAF_RIBBON && shapes.y < STEM_FUZZ)
+        || (part == PART_LEAF && (shapes.w & EPIPHYTE) != 0);
 }
 
 // The first non-plant neighbour on `quarter`'s side (across, then above or
@@ -2512,22 +2538,28 @@ fn fine_scale() -> bool {
 // behind. Scale 1 fills every texel. Alpha is 1 where the texel is
 // covered, 0 where it shows what is behind (fs_sprite draws a creature
 // there even when the plant cell is in front of it).
-fn plant_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
-    let plant = plant_of(me);
-    var cover: vec2<i32>;
-    if is_leafy(part) {
-        cover = leaf_cover(at, me, part, quarter, plant);
-    } else {
-        cover = stem_cover(at, me, part, quarter, plant);
+fn plant_texel(art: PlantArt, band: f32) -> vec4<f32> {
+    let src = art.src;
+    if is_leafy(src.part) {
+        return leaf_texel(art, band);
     }
-    return plant_colour(plant, part, cover, band);
+    return stem_texel(src.at, src.texel, src.part, src.quarter, band);
 }
 
 // The split grid's plant passes draw leafy and other parts separately, each
 // reaching only its own shape code (fs_leaves, fs_stems).
-fn leaf_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
-    let plant = plant_of(me);
-    return plant_colour(plant, part, leaf_cover(at, me, part, quarter, plant), band);
+fn leaf_texel(art: PlantArt, band: f32) -> vec4<f32> {
+    let src = art.src;
+    let plant = plant_of(src.texel);
+    return plant_colour(plant, src.part, leaf_art_cover(art, plant), band);
+}
+
+fn leaf_art_cover(art: PlantArt, plant: vec4<f32>) -> vec2<i32> {
+    if art.cover.x >= 0 {
+        return art.cover;
+    }
+    let src = art.src;
+    return leaf_cover(src.at, src.texel, src.part, src.quarter, plant);
 }
 
 fn stem_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
@@ -3177,25 +3209,25 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
     var bud = false;
     var step = noise_step(me);
     if part == PART_RHIZOME {
-        // A creeping epiphyte rhizome hugging rock or wood: thick, slightly
-        // rounded along its run, darker underneath, with tiny gripping
-        // rootlets at 4x.
+        // A creeping rhizome hugging rock or wood, stout for Anubias
+        // and slender for Java fern. Its small grips stay in shadow.
         let up = kin(at, vec2<i32>(0, -1), me).x >= 0;
         let down = kin(at, vec2<i32>(0, 1), me).x == PART_RHIZOME;
         let left = kin(at, vec2<i32>(-1, 0), me).x == PART_RHIZOME;
         let right = kin(at, vec2<i32>(1, 0), me).x == PART_RHIZOME;
         let end_l = !left && !up && !down;
         let end_r = !right && !up && !down;
-        covered = !(top && ((end_l && sub.x == 0) || (end_r && sub.x == 1)));
-        step += 2 + select(-1, 1, top) + select(0, 1, up);
+        let thick = shapes.y == STEM_THICK;
+        let end = (end_l && sub.x == 0) || (end_r && sub.x == 1);
+        covered = (top || thick || down) && !(end && top && thick);
+        step = 2 + i32(top) + i32(up);
         if fine {
-            let rootlet = !down && ((hash(at) & 1u) == 0u) && quarter.y == 3
-                && (quarter.x == 1 || quarter.x == 2);
-            let body = (quarter.y >= 1 && quarter.y <= 2)
+            let rootlet = !down && ((hash(at) & 3u) == 0u) && quarter.y == 3 && quarter.x == 1;
+            let body = (quarter.y >= 1 && quarter.y <= select(2, 3, thick))
                 || (up && quarter.y == 0 && (quarter.x == 1 || quarter.x == 2))
                 || (down && quarter.y == 3 && (quarter.x == 1 || quarter.x == 2));
             covered = body || rootlet;
-            step += select(0, 1, quarter.y == 1) - select(0, 2, rootlet);
+            step += i32(quarter.y == 1) - select(0, 3, rootlet);
         }
     } else if part == PART_RUNNER {
         // A stolon along the top of its cell, joining runner cells above or
@@ -3524,8 +3556,148 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
     return vec2<i32>(select(select(0, 1, covered), 2, covered && bud), step);
 }
 
+const EPIPHYTE: i32 = 64;
+
+fn epiphyte_shape(shapes: vec4<i32>) -> bool {
+    return (shapes.w & EPIPHYTE) != 0 && (shapes.x == LEAF_PAD || shapes.x == LEAF_SWORD);
+}
+
+fn in_epiphyte_area(grid_pos: vec2<f32>) -> bool {
+    return view.scale >= 2.0
+        && all(grid_pos >= view.epiphyte_area.xy) && all(grid_pos < view.epiphyte_area.zw);
+}
+
+// A leaf cell's predecessor and successor form a chord across it. Drawing
+// a profile along that chord joins the upright runs through sideways steps.
+// Quarters outside 0..3 belong to water beside the blade.
+fn epiphyte_cover(
+    at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32, length: f32,
+) -> vec2<i32> {
+    let pixel = select(
+        vec2<f32>(quarter >> vec2<u32>(1)) * 0.5 + 0.25,
+        (vec2<f32>(quarter) + 0.5) * 0.25,
+        fine_scale(),
+    ) - vec2<f32>(0.43, 0.5);
+    let pos = position_of(me);
+    let previous = vec2<i32>(PART_LEAF, pos - 1);
+    let following = vec2<i32>(PART_LEAF, pos + 1);
+    let up = kin(at, vec2<i32>(0, -1), me);
+    let left = kin(at, vec2<i32>(-1, 0), me);
+    let right = kin(at, vec2<i32>(1, 0), me);
+    let tip = !(all(up == following) || all(left == following) || all(right == following));
+    let night = view.daylight.w;
+    if shape == LEAF_PAD && tip && pos > 1 {
+        // A waxy oval with a small point, light along its rib and darker
+        // around the edge. Short, newly grown blades are smaller.
+        let young = mix(0.55, 1.0, min(f32(pos) / max(length, 1.0), 1.0));
+        let tilt = f32(i32(all(left == previous)) - i32(all(right == previous))) * 0.24;
+        let oval = vec2<f32>(pixel.x - 0.07 + tilt * pixel.y, pixel.y + 0.48)
+            / (vec2<f32>(1.97 * (1.0 - 0.43 * night), 1.60) * young);
+        let edge = dot(oval, oval);
+        let point = oval.y < -0.85 && oval.y > -1.03 && abs(oval.x) < 0.15;
+        let rib = abs(oval.x + 0.04) < 0.15;
+        let step = 5 - i32(round(oval.y * 1.4 + oval.x * 0.6))
+            - select(0, 2, edge > 0.66) + select(0, 2, rib);
+        return vec2<i32>(i32(edge <= 1.0 || point), step);
+    }
+
+    let entry = vec2<f32>(f32(i32(all(right == previous)) - i32(all(left == previous))), 0.0);
+    let exit = vec2<f32>(f32(i32(all(right == following)) - i32(all(left == following))), 0.0);
+    let start = select(vec2<f32>(0.0, 0.5), entry * 0.5, entry.x != 0.0);
+    let end = select(vec2<f32>(0.0, -0.5), exit * 0.5, exit.x != 0.0);
+    let chord = end - start;
+    let along = clamp(dot(pixel - start, chord) / max(dot(chord, chord), 0.25), 0.0, 1.0);
+    let off = pixel - mix(start, end, along);
+    let distance = dot(off, off);
+    let petiole = shape == LEAF_PAD || pos <= 2;
+    if petiole {
+        return vec2<i32>(select(0, 3, distance < 0.28 * 0.28), 3 + i32(off.x <= 0.0));
+    }
+
+    // Java fern: a lanceolate sweep, sharpened at a growing tip, with a
+    // pale rib, fine lateral veins and a shadow on the far edge.
+    let t = clamp((f32(pos) + along - 2.5) / max(length - 2.0, 1.0), 0.0, 1.0);
+    let lance = sin(3.1415927 * t);
+    var half = max(0.24, lance * 0.93 * (1.0 - 0.45 * night));
+    if tip {
+        half = mix(half, 0.08, along);
+    }
+    let rib = distance < 0.22 * 0.22;
+    let rim = distance > half * half * 0.62;
+    let vein = !rim && pos % 3 == 0 && quarter.y % 3 == 0;
+    let step = 2 + i32(round(t * 3.0)) + i32(off.x <= 0.0)
+        + select(0, 2, rib) - select(0, 1, rim) + select(0, 1, vein);
+    return vec2<i32>(i32(distance <= half * half), step);
+}
+
+// Find blade texels over the leaf itself or nearby water. Either blade
+// can reach a horizontal neighbour. Anubias ovals can also reach two
+// cells across or above and one below their leaf tip.
+fn epiphyte_art(grid_pos: vec2<f32>, src: GridSource) -> PlantArt {
+    var art = PlantArt(src, vec2<i32>(-1, 0));
+    if (src.part >= 0 && src.part != PART_LEAF) || !in_epiphyte_area(grid_pos) {
+        return art;
+    }
+    let overhang = src.part < 0;
+    if overhang && !src.swayed_away && !is_water(vec2<i32>(floor(grid_pos))) {
+        return art;
+    }
+    var g = grid_pos;
+    if overhang && (i32(view.target_size.w) & 1) != 0 {
+        g.x -= sway_dx(grid_pos);
+    }
+    let cell = vec2<i32>(floor(g));
+    let side = select(-1, 1, fract(g.x) >= 0.5);
+    // A uniform loop with no early exits keeps per-pixel blade selection
+    // intact on Chrome 68's SwiftShader.
+    for (var i = 0; i < 16; i++) {
+        // The zero offset is only for leaf cells, the rest for wings.
+        if art.cover.x < 0 && (i == 0) != overhang {
+            var blade = src;
+            if overhang {
+                blade = epiphyte_neighbour(g, cell, side, i, src.swayed_away);
+            }
+            if blade.part == PART_LEAF {
+                let species = i32(round(plant_of(blade.texel).a * 255.0));
+                let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
+                let d = blade.at - cell;
+                let fern_reach = !overhang || (d.y == 0 && abs(d.x) <= 1);
+                if epiphyte_shape(shapes) && (fern_reach || shapes.x == LEAF_PAD) {
+                    let size = round(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0).z * 255.0);
+                    let cover = epiphyte_cover(blade.at, blade.texel, blade.quarter, shapes.x, size);
+                    if !overhang || cover.x != 0 {
+                        art = PlantArt(blade, cover);
+                    }
+                }
+            }
+        }
+    }
+    return art;
+}
+
+fn epiphyte_neighbour(g: vec2<f32>, cell: vec2<i32>, side: i32, i: i32, sway_away: bool) -> GridSource {
+    let row = i / 4;
+    let col = i % 4;
+    // Check the current row, then one below, one above and two below.
+    let dy = select(row, -1, row == 2) - i32(row == 3);
+    // Within each row, check the centre, both neighbours and then two
+    // cells towards the nearer side of the pixel.
+    let dx = select(0, select(select(2 * side, -side, col == 2), side, col == 1), col > 0);
+    let at = cell + vec2<i32>(dx, dy);
+    if !inside(at) || (dy == 2 && fract(g.y) < 0.375) {
+        return no_plant_source();
+    }
+    let t = textureLoad(cells, at, 0);
+    if round(t.r * 255.0) != view.plant_parts.z {
+        return no_plant_source();
+    }
+    let q = vec2<i32>(floor((g - vec2<f32>(at)) * 4.0));
+    return GridSource(at, t, PART_LEAF, q, !sway_away, sway_away);
+}
+
 // A plant texel's colour from its coverage and shade (`cover`, see
-// leaf_cover), or alpha 0 where uncovered.
+// leaf_cover), or alpha 0 where uncovered. Cover 2 uses the leaf ramp for
+// a bud, and cover 3 uses the stem ramp for an epiphyte petiole.
 fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec4<f32> {
     let species = i32(round(plant.a * 255.0));
     let covered = cover.x != 0;
@@ -3565,10 +3737,13 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
             );
             rgb = rgb * dim;
         }
-        let opacity = select(mix(MIN_OPACITY, 1.0, health / FADE_AT), 1.0, health >= FADE_AT);
-        return vec4<f32>(rgb, opacity);
+        return vec4<f32>(rgb, plant_opacity(health));
     }
     return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+}
+
+fn plant_opacity(health: f32) -> f32 {
+    return select(mix(MIN_OPACITY, 1.0, health / FADE_AT), 1.0, health >= FADE_AT);
 }
 
 // What shows through a plant cell's empty or translucent texel where the
@@ -3792,7 +3967,8 @@ fn sprite_texel(v: SpriteOut) -> vec2<f32> {
 // fragment behind it is dropped. Texels the plant's shape leaves open, and
 // plant cells level with or behind the creature, don't hide it.
 fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
-    let src = plant_source(pos);
+    let art = leaf_art(pos);
+    let src = art.src;
     if src.part < 0 {
         return false;
     }
@@ -3800,13 +3976,22 @@ fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
     return band + 0.5 < depth && plant_hides(src.at, src.texel, src.part, src.quarter);
 }
 
-// hidden_by_plant for the split sprite passes, which reach only their own
-// part's shape code: fs_sprite_leaves draws the pixels that show a leafy
-// part or no plant, fs_sprite_stems those that show another part. The split
-// is by pixel, not by sprite, so every sprite at a pixel draws in the same
-// pass and their back-to-front order holds.
-fn hidden_by_leaf(pos: vec2<f32>, depth: f32) -> bool {
-    let src = plant_source(pos);
+// Assign each pixel that might show epiphyte art to its own split sprite
+// pass, so Chrome 68 doesn't compile both sets of leaf shapes into one
+// sprite shader. Every sprite (including ghosts) uses the same partition.
+fn epiphyte_sprite_pixel(grid_pos: vec2<f32>, src: GridSource) -> bool {
+    if src.at.x < 0 || !in_epiphyte_area(grid_pos) {
+        return false;
+    }
+    if src.part == PART_LEAF {
+        let species = i32(round(plant_of(src.texel).a * 255.0));
+        let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
+        return epiphyte_shape(shapes);
+    }
+    return src.part < 0 && (src.swayed_away || is_water(vec2<i32>(floor(grid_pos))));
+}
+
+fn hidden_by_leaf(src: GridSource, depth: f32) -> bool {
     if src.part < 0 {
         return false;
     }
@@ -3943,9 +4128,34 @@ fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
     if sprite_skipped(v, p) {
         discard;
     }
-    // The split grid draws the front film in its own pass.
+    let grid_pos = (v.pos.xy - view.offset) / view.scale;
+    let src = grid_plant_source(grid_pos);
+    if epiphyte_sprite_pixel(grid_pos, src) {
+        discard;
+    }
     // A plant ghost's cells show over the plants they stand among.
-    let c = sprite_colour(v, p, v.look.x < 3.5 && hidden_by_leaf(v.pos.xy, v.depth));
+    let c = sprite_colour(v, p, v.look.x < 3.5 && hidden_by_leaf(src, v.depth));
+    return vec4<f32>(out(c.rgb).rgb, c.a);
+}
+
+@fragment
+fn fs_sprite_epiphytes(v: SpriteOut) -> @location(0) vec4<f32> {
+    let p = sprite_texel(v);
+    if sprite_skipped(v, p) {
+        discard;
+    }
+    let grid_pos = (v.pos.xy - view.offset) / view.scale;
+    let src = grid_plant_source(grid_pos);
+    if !epiphyte_sprite_pixel(grid_pos, src) {
+        discard;
+    }
+    var hidden = false;
+    if v.look.x < 3.5 {
+        let art = epiphyte_art(grid_pos, src);
+        hidden = art.cover.x > 0 && band_at(art.src.at) + 0.5 < v.depth
+            && plant_opacity(plant_of(art.src.texel).r) > 0.5;
+    }
+    let c = sprite_colour(v, p, hidden);
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 

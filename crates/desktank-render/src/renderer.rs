@@ -57,8 +57,8 @@ pub struct Overlay {
 /// Darkening of water at the floor relative to the surface.
 const DEPTH_DIM: f32 = 0.5;
 
-/// Size of the `View` uniform block in `tank.wgsl`, in bytes (272 base + 16 ripple vec4s).
-const VIEW_BYTES: u64 = 272 + (desktank_sim::MAX_DEVICES as u64) * 16;
+/// Size of the `View` uniform block in `tank.wgsl`, in bytes (288 base + 16 ripple vec4s).
+const VIEW_BYTES: u64 = 288 + (desktank_sim::MAX_DEVICES as u64) * 16;
 /// Bytes per sprite instance.
 const INSTANCE_BYTES: u64 = (sprites::INSTANCE_FLOATS * 4) as u64;
 
@@ -113,6 +113,8 @@ pub struct Renderer {
     /// column, which can move without its leaf cells changing.
     plant_bases: BTreeMap<u16, (usize, usize)>,
     bases_version: Option<u64>,
+    /// Bounds of the epiphyte cells, updated when the grid changes.
+    epiphyte_area: desktank_sim::Rect,
     /// The material palette, built once.
     palette: wgpu::Texture,
     /// Ramps, shapes and sizes per plant species, built once.
@@ -257,6 +259,7 @@ impl Renderer {
             algae,
             plant_bases: BTreeMap::new(),
             bases_version: None,
+            epiphyte_area: desktank_sim::Rect::EMPTY,
             palette,
             species,
             hud,
@@ -366,6 +369,31 @@ impl Renderer {
             // Cells changed: look for variety stones again (stops at the first).
             let stones = &self.variety_stones;
             self.stone_varieties_visible = cells.iter().any(|c| stones[usize::from(c.material.0)]);
+            let species = world.plant_species();
+            self.epiphyte_area = world
+                .plants()
+                .filter(|p| {
+                    species
+                        .get(p.species)
+                        .is_some_and(|s| s.form.epiphyte().is_some())
+                })
+                .map(|p| p.bounds)
+                .fold(desktank_sim::Rect::EMPTY, desktank_sim::Rect::union);
+            if gpu.split_grid
+                && !self.epiphyte_area.is_empty()
+                && self.pipelines.epiphyte_sprites.is_none()
+            {
+                self.pipelines.epiphyte_sprites = Some(create_tank_pipeline(
+                    &gpu.device,
+                    &self.pipeline_layout,
+                    &self.shader,
+                    self.format,
+                    "sprites fs_sprite_epiphytes",
+                    "fs_sprite_epiphytes",
+                    Some(wgpu::BlendState::ALPHA_BLENDING),
+                    &[],
+                ));
+            }
         }
         let (scratch, band_scratch) = (&mut self.scratch, &mut self.band_scratch);
         let (texture, bands) = (&self.cells, &self.bands);
@@ -691,6 +719,18 @@ impl Renderer {
             phase,
             f32::from(u8::from(sway_on) + 2 * u8::from(self.wide_blades)),
         ];
+        let b = self.epiphyte_area;
+        let epiphyte_area = if b.is_empty() {
+            [0.0; 4]
+        } else {
+            let margin = PLANT_MARGIN as f32;
+            [
+                b.x0 as f32 - margin,
+                b.y0 as f32 - margin,
+                b.x1 as f32 + margin,
+                b.y1 as f32 + margin,
+            ]
+        };
         let mut ripple_slots = [[0.0_f32; 4]; desktank_sim::MAX_DEVICES];
         for (slot, &r) in ripple_slots.iter_mut().zip(ripples.iter()) {
             *slot = r;
@@ -724,6 +764,7 @@ impl Renderer {
         ])
         .chain(ruler)
         .chain(ripple_slots.into_iter().flatten())
+        .chain(epiphyte_area)
         .flat_map(f32::to_le_bytes)
         .collect()
     }
@@ -1142,7 +1183,11 @@ impl Renderer {
         }
         if self.sprite_count > 0 {
             pass.set_vertex_buffer(0, self.instances.slice(..));
-            for p in &pipelines.sprites {
+            let epiphytes = pipelines
+                .epiphyte_sprites
+                .iter()
+                .filter(|_| scale >= 2 && !self.epiphyte_area.is_empty());
+            for p in pipelines.sprites.iter().chain(epiphytes) {
                 pass.set_pipeline(p);
                 pass.draw(0..6, 0..self.sprite_count);
             }
@@ -1701,6 +1746,8 @@ struct Pipelines {
     /// only while a coat or a rear or side film shows.
     ground_film: Option<wgpu::RenderPipeline>,
     sprites: Vec<wgpu::RenderPipeline>,
+    /// The split grid's epiphyte occlusion pass, created on first use.
+    epiphyte_sprites: Option<wgpu::RenderPipeline>,
 }
 
 /// `fs_ground_film` blends the algae's colour and keeps the ground's alpha.
@@ -1722,10 +1769,65 @@ const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
 /// the pixels over one kind of plant part.
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
 const SPLIT_SPRITE_ENTRIES: &[&str] = &["fs_sprite_leaves", "fs_sprite_stems"];
+/// Grid passes use a full-screen triangle, sprite passes instanced quads.
+#[allow(clippy::too_many_arguments)] // the pipeline's shared state and entry point
+fn create_tank_pipeline(
+    d: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    label: &str,
+    entry: &str,
+    blend: Option<wgpu::BlendState>,
+    constants: &[(&str, f64)],
+) -> wgpu::RenderPipeline {
+    // Per instance: top-left cell, size, atlas origin, mirror and turn,
+    // frame size, look and fine atlas origin (vec2 each), then depth and
+    // the night glow and pitch rotation with upright body size (vec4s).
+    let attributes = wgpu::vertex_attr_array![
+        0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2,
+        4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32,
+        8 => Float32x4, 9 => Float32x4
+    ];
+    let instances = [Some(wgpu::VertexBufferLayout {
+        array_stride: INSTANCE_BYTES,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &attributes,
+    })];
+    let sprite = entry.starts_with("fs_sprite");
+    d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(if sprite { "vs_sprite" } else { "vs_main" }),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: if sprite { &instances } else { &[] },
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(entry),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// The grid and sprite pipelines, plus the lens frame, front film and ruler
 /// pipelines, drawing into `format`, one pass each or split ([`Gpu::split_grid`]),
 /// and the shader and layout they were built from.
-#[allow(clippy::too_many_lines)] // one pipeline per pass, built from one shader module
 fn create_pipelines(
     gpu: &Gpu,
     bind_layout: &wgpu::BindGroupLayout,
@@ -1746,51 +1848,17 @@ fn create_pipelines(
         bind_group_layouts: &[Some(bind_layout)],
         immediate_size: 0,
     });
-    // Per instance: top-left cell, size, atlas origin, mirror and turn,
-    // frame size, look and fine atlas origin (vec2 each), then depth and
-    // the night glow and pitch rotation with upright body size (vec4s).
-    let attributes = wgpu::vertex_attr_array![
-        0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2,
-        4 => Float32x2, 5 => Float32x2, 6 => Float32x2, 7 => Float32,
-        8 => Float32x4, 9 => Float32x4
-    ];
-    let instances = [Some(wgpu::VertexBufferLayout {
-        array_stride: INSTANCE_BYTES,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &attributes,
-    })];
-    // The grid is a full-screen triangle (`vs_main`, no buffers); sprites
-    // are instanced quads (`vs_sprite`).
     let pipeline = |label: &str, entry: &str, blend, constants: &[(&str, f64)]| {
-        let sprite = entry.starts_with("fs_sprite");
-        d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some(if sprite { "vs_sprite" } else { "vs_main" }),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: if sprite { &instances } else { &[] },
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants,
-                    ..Default::default()
-                },
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        })
+        create_tank_pipeline(
+            d,
+            &pipeline_layout,
+            &shader,
+            format,
+            label,
+            entry,
+            blend,
+            constants,
+        )
     };
     let (grid_entries, sprite_entries) = if gpu.split_grid {
         (SPLIT_GRID_ENTRIES, SPLIT_SPRITE_ENTRIES)
@@ -1830,6 +1898,7 @@ fn create_pipelines(
                 pipeline(&format!("sprites {entry}"), entry, blend, &constants)
             })
             .collect(),
+        epiphyte_sprites: None,
     };
     let lens_frame = pipeline(
         "lens frame",
