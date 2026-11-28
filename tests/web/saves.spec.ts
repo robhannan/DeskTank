@@ -172,10 +172,8 @@ test("a second tab is read-only until it takes over, within 1 s and without losi
   const b = await context.newPage();
   errors.push(...watchErrors(b));
   await open(b, "?backend=webgl2");
-  // Its first shader compile is done before Take over is timed. The WebGL2
-  // backend's compile takes about five seconds in headless Chromium now
-  // (4.3 s when the plants were plain; see #494), so give it room.
-  await expect.poll(() => framesDrawn(b), { timeout: 20_000 }).toBeGreaterThan(0);
+  // Its first shader compile is done before Take over is timed.
+  await expect.poll(() => framesDrawn(b)).toBeGreaterThan(0);
   expect(await owner(b)).toBe(false);
   await expect(b.getByText("open in another tab")).toBeVisible();
   await expect(b.getByRole("button", { name: "Take over" })).toBeVisible();
@@ -249,7 +247,7 @@ test("Take over steals the lock from an owner that doesn't answer", async ({ con
   const b = await context.newPage();
   errors.push(...watchErrors(b));
   await open(b, "?backend=webgl2");
-  await expect.poll(() => framesDrawn(b), { timeout: 20_000 }).toBeGreaterThan(0);
+  await expect.poll(() => framesDrawn(b)).toBeGreaterThan(0);
   expect(await owner(b)).toBe(false);
   await b.getByRole("button", { name: "Take over" }).click();
   await expect.poll(() => owner(b), { timeout: 3000 }).toBe(true);

@@ -2575,31 +2575,6 @@ fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
     return blade_shape(shape, a, t, f32(r), 0.5);
 }
 
-// How many cells of its own stem lie above `start` (up a side shoot's slope
-// too, never up the main stem beside it): its depth below the stem's tip.
-fn depth_below_tip(start: vec2<i32>, half: i32, me: vec4<f32>) -> i32 {
-    var at = start;
-    var d = 0;
-    for (var k = 0; k < 32; k++) {
-        if d >= half {
-            break;
-        }
-        var step_to = vec2<i32>(0, 0);
-        if kin(at, vec2<i32>(0, -1), me).x == PART_STEM {
-            step_to = vec2<i32>(0, -1);
-        } else if kin(at, vec2<i32>(-1, -1), me).x == PART_STEM && kin(at, vec2<i32>(-1, 0), me).x != PART_STEM {
-            step_to = vec2<i32>(-1, -1);
-        } else if kin(at, vec2<i32>(1, -1), me).x == PART_STEM && kin(at, vec2<i32>(1, 0), me).x != PART_STEM {
-            step_to = vec2<i32>(1, -1);
-        } else {
-            break;
-        }
-        at += step_to;
-        d += 1;
-    }
-    return d;
-}
-
 // Whether a leafy part's texel is covered (x: 1 or 0) and its ramp shade
 // before clamping (y), from the species' leaf shape.
 fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
@@ -2897,10 +2872,19 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             // though the cells step: the outer cell is a texel short.
             var tipw = 2;
             if p == leaf_len {
-                let node_at = at + vec2<i32>(-dir * p, select(0, 1, upper));
+                // The outer cell is a full cell only once the stem reaches
+                // `dstar` cells above the node (see `StemForm::leaf_taper`:
+                // the leaf's reach in texels is round(2 L d / half) at depth d
+                // below the tip, to `half` the stem's height): one cell to
+                // look at, up the column. (A leaning shoot's column bends, so
+                // its first nodes read a texel short; a bare leaf block with no
+                // positions is a full cell.)
                 let half = max(i32(sizes.x) / 2, 1);
-                let reach = (4 * i32(sizes.z) * min(depth_below_tip(node_at, half, me), half) + half) / (2 * half);
-                tipw = clamp(reach - 2 * (leaf_len - 1) - select(0, 1, turned), 1, 2);
+                let l = max(i32(sizes.z), 1);
+                let dstar = (2 * half * (2 * leaf_len + select(0, 1, turned)) - half + 4 * l - 1) / (4 * l);
+                let node_at = at + vec2<i32>(-dir * p, select(0, 1, upper));
+                let full = dstar <= half && kin(node_at + vec2<i32>(0, -dstar), vec2<i32>(0), me).x == PART_STEM;
+                tipw = select(1, 2, full || leaf_len < 1);
             }
             let coarse = !fine;
             let cell_w = select(2, 4, fine);

@@ -284,7 +284,12 @@ modes; it is a "window mode" in a page.
     plant parts in two blended passes, and the sprites in two passes split
     by the plant part under each pixel, each shader reaching only its own
     code. It draws the same picture (the render tests check every scene
-    both ways). Its canvas is non-sRGB, which WebGL2 presents with a blit
+    both ways). The two plant passes shade only the rectangle round the
+    plants (their bounds, plus a margin for swaying leaves), and are skipped
+    with no plants: they discard everywhere else, but on a software GPU even
+    that cost 15 ms of a 105 ms 1280×720 frame, and the first draw of each
+    program compiled its shader (about 0.8 s more than before the stem leaves
+    grew; #494). Its canvas is non-sRGB, which WebGL2 presents with a blit
     rather than wgpu's sRGB present shader (which draws nothing on that
     SwiftShader). `?grid=split|single` and `?srgb=1|0` override both on
     any build, and a GPU error (such as a rejected shader) is shown on

@@ -418,10 +418,11 @@ mod tests {
         assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");
     }
 
-    /// The shader reads a stem's leaves and depth with bounded loops
-    /// (`depth_below_tip` takes up to 32 steps and a leaf's length is counted
-    /// to four cells past the one it is in): every shipped stem species stays
-    /// within them, so what the sim grows and what the shader draws agree.
+    /// The shader counts a stem leaf's length along its row to four cells past
+    /// the one it is in, and reads the leaf taper's `half` (a stem's half
+    /// height) and `leaf_length` as 8-bit sizes: every shipped stem species
+    /// stays within them, so what the sim grows and what the shader draws
+    /// agree.
     #[test]
     fn shipped_stem_species_fit_the_shaders_loops() {
         let m = desktank_sim::MaterialTable::builtin().unwrap();
