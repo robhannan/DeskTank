@@ -107,6 +107,10 @@ fn tone((x, y): (usize, usize), key: u8, castle: bool, volcano: bool, edge: bool
     shade + variation
 }
 
+pub fn has_image(texels: &[[f32; 4]], material: usize) -> bool {
+    texels[WIDTH * WIDTH + material][3] > 0.0
+}
+
 pub fn bytes(texels: &[[f32; 4]]) -> Vec<u8> {
     texels
         .iter()

@@ -112,6 +112,8 @@ fn topple_and_reload(ornament: Placeable) {
     );
     let mut restored =
         save::decode(&save::encode(&world), MaterialTable::builtin().unwrap()).unwrap();
+    assert_eq!(world.ornament_poses().count(), 1);
+    assert!(restored.ornament_poses().eq(world.ornament_poses()));
     for _ in 0..260 {
         world.tick();
         restored.tick();

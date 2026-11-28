@@ -196,11 +196,7 @@ impl Renderer {
         let cells = create_grid_texture(d, "cells", grid, wgpu::TextureFormat::Rgba8Unorm);
         let bands = create_grid_texture(d, "depth bands", grid, wgpu::TextureFormat::R8Unorm);
         let palette = create_palette(gpu, world);
-        let ornament_art = create_ornament_art(gpu, world);
-        let mut ornament_materials = [false; palette::SIDE];
-        for material in world.materials().iter() {
-            ornament_materials[usize::from(material.id.0)] = material.ornament.is_some();
-        }
+        let (ornament_art, ornament_materials) = create_ornament_art(gpu, world);
         let plant_tints = PlantTints::default();
         let plants = create_plants(gpu, &plant_tints);
         let species = create_species(gpu, world);
@@ -416,9 +412,9 @@ impl Renderer {
             y1: world.height(),
         };
         let cells = world.cells();
+        self.upload_ornament_poses(gpu, world);
         if !dirty.is_empty() {
             // Cells changed: look for variety stones again (stops at the first).
-            self.upload_ornament_poses(gpu, world);
             let stones = &self.variety_stones;
             self.stone_varieties_visible = cells.iter().any(|c| stones[usize::from(c.material.0)]);
             let species = world.plant_species();
@@ -527,6 +523,12 @@ impl Renderer {
     }
 
     fn upload_ornament_poses(&mut self, gpu: &Gpu, world: &World) {
+        if world
+            .ornament_poses()
+            .eq(self.ornament_poses.iter().map(|(&id, &pose)| (id, pose)))
+        {
+            return;
+        }
         let next: BTreeMap<_, _> = world.ornament_poses().collect();
         let update = |id: u16, pose| {
             let [x, y] = id.to_le_bytes().map(usize::from);
@@ -1601,7 +1603,7 @@ fn create_grid_texture(
     })
 }
 
-fn create_ornament_art(gpu: &Gpu, world: &World) -> wgpu::Texture {
+fn create_ornament_art(gpu: &Gpu, world: &World) -> (wgpu::Texture, [bool; palette::SIDE]) {
     let d = &gpu.device;
     let art = ornaments::bake(world, d.limits().max_texture_dimension_2d as usize);
     let art_height = art.len() / ornaments::WIDTH;
@@ -1623,7 +1625,8 @@ fn create_ornament_art(gpu: &Gpu, world: &World) -> wgpu::Texture {
         &ornaments::bytes(&art),
         ornaments::TEXEL_BYTES,
     );
-    ornament_art
+    let materials = std::array::from_fn(|id| ornaments::has_image(&art, id));
+    (ornament_art, materials)
 }
 
 /// The palette texture for `world`'s materials, sRGB-encoded.

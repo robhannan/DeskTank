@@ -255,6 +255,8 @@ pub struct World {
     bodies: BTreeMap<u16, Body>,
     /// Next body id to try (ids are 1..=65535).
     next_body: u16,
+    /// Ornament bodies whose drawn poses can be sampled by the renderer.
+    ornament_ids: BTreeSet<u16>,
     /// Active air emitters derived from the saved body table.
     ornament_emitters: BTreeSet<u16>,
     /// Random ticks, devices and fields (T5).
@@ -385,6 +387,7 @@ impl World {
             last_change_tick: 0,
             bodies: BTreeMap::new(),
             next_body: 1,
+            ornament_ids: BTreeSet::new(),
             ornament_emitters: BTreeSet::new(),
             life,
             creatures,

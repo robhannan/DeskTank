@@ -791,6 +791,7 @@ impl World {
                 body.held_until = 0;
             }
             self.tidy(id);
+            self.ornament_ids.insert(id);
             if emits {
                 self.ornament_emitters.insert(id);
             }
@@ -807,6 +808,7 @@ impl World {
     // Remove the record before erasing cells so write_cell cannot re-enter it.
     pub(super) fn remove_ornament(&mut self, id: u16) -> Option<usize> {
         let body = self.bodies.remove(&id)?;
+        self.ornament_ids.remove(&id);
         self.ornament_emitters.remove(&id);
         let water = self.materials.id("water")?;
         let air = self.materials.id("air")?;
@@ -826,7 +828,8 @@ impl World {
     /// rest-pose artwork. Each pose holds the local origin of world (0, 0)
     /// in cells, followed by the cosine and sine of the drawn angle.
     pub fn ornament_poses(&self) -> impl Iterator<Item = (u16, [f32; 4])> + '_ {
-        self.bodies.iter().filter_map(|(&id, b)| {
+        self.ornament_ids.iter().filter_map(|&id| {
+            let b = self.bodies.get(&id)?;
             let art = self.ornament_art(b.material)?;
             if b.pending != Pending::None || b.shape.size() != art.size() {
                 return None;
@@ -943,6 +946,7 @@ impl World {
     pub(super) fn load_bodies(&mut self, saved: Vec<v1::Body>) -> Result<(), SaveError> {
         let invalid = |what: &str, id: u16| SaveError::Invalid(format!("body {id}: {what}"));
         self.bodies.clear();
+        self.ornament_ids.clear();
         self.ornament_emitters.clear();
         for b in saved {
             let id = b.id;
@@ -980,11 +984,11 @@ impl World {
             } else {
                 bounds_short_side(bounds)
             };
-            if self
-                .ornament_art(material)
-                .is_some_and(|art| !art.bubbler_outlets.is_empty())
-            {
-                self.ornament_emitters.insert(id);
+            if let Some(art) = self.ornament_art(material) {
+                if !art.bubbler_outlets.is_empty() {
+                    self.ornament_emitters.insert(id);
+                }
+                self.ornament_ids.insert(id);
             }
             self.bodies.insert(
                 id,

@@ -1997,6 +1997,9 @@ fn ground(at: vec2<i32>, t: vec4<f32>, quarter: vec2<i32>) -> vec4<f32> {
         if fine_scale() {
             let art = ornament_face(at, t, quarter);
             if art.a == 0.0 {
+                if f32(at.y) < view.surface_row {
+                    return vec4<f32>(air_bg(at, quarter, true), ground_opacity(STYLE_AIR));
+                }
                 return vec4<f32>(water_bg(at, quarter, true), water_opacity());
             }
             if art.a > 0.0 {

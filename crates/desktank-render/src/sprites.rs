@@ -563,8 +563,8 @@ fn push_ornament_ghost(
         if let Some(colour) = art.colour(variant) {
             let mut sprite = ghost_cell(ghost.origin.0 + x, ghost.origin.1 + y, colour, tint);
             sprite.origin = (x, y);
-            sprite.fine = (x, y);
             sprite.look[0] = LOOK_ORNAMENT_GHOST;
+            // Ghosts draw over the scene; this instance field selects their artwork.
             sprite.depth = f32::from(ghost.material.0);
             sprites.push(sprite);
         }
