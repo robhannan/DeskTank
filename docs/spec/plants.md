@@ -221,8 +221,9 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     a wing is taken from the nearer blade only, so where two blades stand a
     cell apart a pixel the nearer one's profile doesn't reach stays water).
     Only a rosette's swords are drawn this way (its species texel's shapes
-    `w` carries a rosette bit): an epiphyte's sword (java fern) keeps its
-    own narrow art and its night folding. A sword (amazon
+    `w` carries a rosette bit, 128, `ROSETTE_FLAG`): an epiphyte's sword
+    (java fern, whose texel carries the epiphyte bit, 64) is drawn by the
+    epiphyte blades below. A sword (amazon
     sword, cryptocoryne) is a short petiole flaring into a lanceolate blade
     widest at about half its length (`3.2 + 0.07 * blade_length` quarters
     each side at most, so a crypt's 12-cell leaf is two cells broad and an
@@ -443,6 +444,13 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     positions; sway, night folding, health tint and creatures treat them as
     part of the plant, at a band further back or forward. The pane sprite
     draws the same leaves. Anubias leaves overlap in a clump (spacing 2).
+    The epiphyte bit (`EPIPHYTE`, 64, in the species texel's shapes `w`
+    beside the rosette's 128) routes a species' `sword` and `pad` leaves
+    to a split pass (`fs_epiphytes`, with its own sprite pass, both created
+    on first use) at scale 2 and up; the other leaf passes skip those
+    pixels. At scale 1 java fern and anubias are drawn by the ordinary leaf
+    shapes, where only the shade matters, so the quarter-cell sword art
+    there is gone: it was reachable only by epiphytes.
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. A click pours seeds or
   places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the

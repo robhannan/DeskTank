@@ -2981,8 +2981,10 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 return vec2<i32>(select(0, 3 + 4 * LAYER_BARE, abs(dx - c) < 1.01), 1 + along + select(0, 1, dx < c));
             }
         } else if shape == LEAF_SWORD {
-            // A narrow stalk, then a broad blade with a pale midrib (the
-            // left texel), tapering to a point.
+            // Java fern at the single-pixel scales, where only the shade
+            // matters (the epiphyte pass draws it from scale 2 up, a rosette's
+            // sword is `wide_blade_cover`): a narrow stalk, then a broad blade
+            // with a pale midrib, tapering to a point.
             if pos <= 2 && !tip {
                 covered = sub.x == 0;
                 step -= 1;
@@ -2991,26 +2993,6 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             } else {
                 step += select(-1, 1, sub.x == 0);
             }
-            if fine {
-                if pos <= 2 && !tip {
-                    // A slender petiole, paler on its left.
-                    covered = quarter.x == 1 || quarter.x == 2;
-                    step += select(0, 1, quarter.x == 1);
-                } else {
-                    // A pale midrib (second column), lateral veins rising
-                    // to the edge every third cell, a dark rim, a blade
-                    // that flares from the petiole and a pointed tip.
-                    let rib = quarter.x == 1;
-                    let vein = pos % 3 == 0 && quarter.x >= 2 && quarter.x + quarter.y == 4;
-                    let flare = pos == 3 && quarter.y == 3;
-                    let edge = quarter.x == 0 || quarter.x == 3;
-                    let narrow = tip && quarter.y < 2 && edge;
-                    let point = tip && quarter.y == 0 && quarter.x == 2;
-                    covered = !narrow && !point && (!flare || rib || quarter.x == 2);
-                    step = step - select(0, 1, tip) + select(0, 2, rib) + select(0, 2, vein)
-                        - select(0, 1, quarter.x == 3) + select(0, 1, quarter.x == 0);
-                }
-            }
         }
         // Night folding on carpet and epiphyte blades (T6d; a rosette's sword
         // narrows in wide_blade_cover): broad blades and pads tuck narrower at
@@ -3018,9 +3000,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         let night = view.daylight.w;
         if night > 0.01 {
             if fine {
-                if shape == LEAF_SWORD && night >= 0.6 && pos > 2 && (quarter.x == 0 || quarter.x == 3) {
-                    covered = false;
-                } else if shape == LEAF_PAD && night >= 0.6 && tip && (quarter.x == 3 || quarter.y == 3) {
+                if shape == LEAF_PAD && night >= 0.6 && tip && (quarter.x == 3 || quarter.y == 3) {
                     covered = false;
                 } else if shape == LEAF_GRASS && night >= 0.75 && quarter.x == 3 {
                     covered = false;
