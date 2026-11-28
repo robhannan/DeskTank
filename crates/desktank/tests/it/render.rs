@@ -244,6 +244,18 @@ fn plant_epiphytes_scene_matches_reference() {
     check_named("plant_epiphytes", "plant_epiphytes_x4", None, SIZE_X4);
 }
 
+/// Grown anubias and java fern with their leaves in front of and behind the
+/// main row (the scene above grows them for too short a time), and fish.
+#[test]
+fn plant_epiphytes_mature_scene_matches_reference() {
+    check_named(
+        "plant_epiphytes_mature",
+        "plant_epiphytes_mature_x4",
+        None,
+        SIZE_X4,
+    );
+}
+
 /// Issue #45: tiger lotus (mottled leaf pads on petioles of differing
 /// lengths, the longest floating on the surface) and marimo balls resting
 /// on the bed, grown for 25 minutes.

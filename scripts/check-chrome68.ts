@@ -216,6 +216,7 @@ try {
     ["algae_film", "algae_film_x4"],
     ["algae_varieties", "algae_varieties_x4"],
     ["plant_epiphytes", "plant_epiphytes_x4"],
+    ["plant_epiphytes_mature", "plant_epiphytes_mature_x4"],
   ]) {
     const toml = readFileSync(path.join(root, "crates", "desktank", "tests", "scenes", `${scene}.toml`), "utf8");
     await cdp.eval(`window.desktank.loadScene(${JSON.stringify(toml)}, 7, 640, 360)`);

@@ -18,6 +18,7 @@ for (const { scene, reference, scale } of [
   { scene: "algae_film", reference: "algae_film_x4", scale: 4 },
   { scene: "algae_varieties", reference: "algae_varieties_x4", scale: 4 },
   { scene: "plant_epiphytes", reference: "plant_epiphytes_x4", scale: 4 },
+  { scene: "plant_epiphytes_mature", reference: "plant_epiphytes_mature_x4", scale: 4 },
 ]) {
   test(`${scene} scene on WebGL2 matches the native capture`, async ({ page }) => {
     const errors = watchErrors(page);
