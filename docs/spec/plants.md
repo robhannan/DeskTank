@@ -284,8 +284,9 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     `on`, `rhizome_length` (1–32), `spacing` (rhizome cells between
     leaves), `leaf_length` and `lean`. A fragment touching `on` roots as a
     `rhizome` cell (id 80, counted with stems); the rhizome creeps as a
-    single strand over cells touching `on` and puts up upright blade leaves
-    (`pad` for anubias, id 15; `sword` for java fern, id 16). `[mat]` gains
+    single strand over cells touching `on`. The leaves (`pad` for anubias,
+    id 15, and `sword` for java fern, id 16) lean outward, with extra
+    sideways steps on the outer blades. `[mat]` gains
     `layers` (1–4; java moss 1, christmas moss 3), storing each cell's
     layer in its variant position; outer layers stay while touching a
     nearer layer. Both epiphytes and mats stay on the grid and are **torn
@@ -426,6 +427,15 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     preferences in `localStorage`. Sway remains disabled in screensaver
     mode, while hidden, or when the tank has no plants. The host's power
     and visibility policies still govern the tank's pacing and pauses.
+  - **Epiphyte blades.** Java fern has long lanceolate blades with a pale
+    midrib and faint lateral veins. Anubias has broad, shaded ovals on
+    short petioles. Both show their rhizome against the rock or wood, with
+    small shaded grips. The renderer uses the species ramps and extends
+    blade texels into nearby water at scale 2 and up. The leaf art follows
+    sway and night folding, and tests the same coverage when a creature
+    swims behind it. The view's epiphyte bounds gate the overhang, which
+    occupies no simulation cells. The placement ghost previews the cellular
+    shape.
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. A click pours seeds or
   places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the
