@@ -383,6 +383,16 @@ impl Renderer {
                 && !self.epiphyte_area.is_empty()
                 && self.pipelines.epiphyte_sprites.is_none()
             {
+                self.pipelines.epiphytes = Some(create_tank_pipeline(
+                    &gpu.device,
+                    &self.pipeline_layout,
+                    &self.shader,
+                    self.format,
+                    "tank fs_epiphytes",
+                    "fs_epiphytes",
+                    Some(wgpu::BlendState::ALPHA_BLENDING),
+                    &[],
+                ));
                 self.pipelines.epiphyte_sprites = Some(create_tank_pipeline(
                     &gpu.device,
                     &self.pipeline_layout,
@@ -1181,6 +1191,27 @@ impl Renderer {
                 }
             }
         }
+        if let Some(p) = pipelines
+            .epiphytes
+            .as_ref()
+            .filter(|_| scale >= 2 && !self.epiphyte_area.is_empty())
+        {
+            let scissor = match plants {
+                PlantPasses::Within(None) => None,
+                PlantPasses::Within(Some(r)) => Some(Some(r)),
+                PlantPasses::Everywhere => Some(None),
+            };
+            if let Some(scissor) = scissor {
+                if let Some(r) = scissor {
+                    pass.set_scissor_rect(r.x, r.y, r.w, r.h);
+                }
+                pass.set_pipeline(p);
+                pass.draw(0..3, 0..1);
+                if let Some(r) = scissor {
+                    pass.set_scissor_rect(0, 0, r.target.0, r.target.1);
+                }
+            }
+        }
         if self.sprite_count > 0 {
             pass.set_vertex_buffer(0, self.instances.slice(..));
             let epiphytes = pipelines
@@ -1746,7 +1777,10 @@ struct Pipelines {
     /// only while a coat or a rear or side film shows.
     ground_film: Option<wgpu::RenderPipeline>,
     sprites: Vec<wgpu::RenderPipeline>,
-    /// The split grid's epiphyte occlusion pass, created on first use.
+    /// The split grid's epiphyte blades (`fs_epiphytes`), drawn over the
+    /// plant passes, and their occlusion of sprites; each is created on
+    /// first use.
+    epiphytes: Option<wgpu::RenderPipeline>,
     epiphyte_sprites: Option<wgpu::RenderPipeline>,
 }
 
@@ -1764,7 +1798,7 @@ const FILM_BLEND: wgpu::BlendState = wgpu::BlendState {
 /// `fs_ground` and then the plant passes, which blend over it (`fs_stone_varieties`
 /// and `fs_ground_film` draw between them while they have something to draw).
 const GRID_ENTRIES: &[&str] = &["fs_main"];
-const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_leaves", "fs_stems"];
+const SPLIT_GRID_ENTRIES: &[&str] = &["fs_ground", "fs_stems", "fs_leaves"];
 /// The sprites' fragment entry points likewise; the split ones each draw
 /// the pixels over one kind of plant part.
 const SPRITE_ENTRIES: &[&str] = &["fs_sprite"];
@@ -1898,6 +1932,7 @@ fn create_pipelines(
                 pipeline(&format!("sprites {entry}"), entry, blend, &constants)
             })
             .collect(),
+        epiphytes: None,
         epiphyte_sprites: None,
     };
     let lens_frame = pipeline(
