@@ -45,7 +45,7 @@ impl Graphics {
     /// tries WebGPU and falls back to WebGL2 if there is no adapter or the
     /// device request fails. `split_grid` draws with smaller shaders in more
     /// passes (`Some(true)` forces split, `Some(false)` forces one-pass,
-    /// `None` auto-selects split on software adapters; see
+    /// `None` selects split on WebGPU and software WebGL2 adapters; see
     /// `GpuOptions::split_grid`); `srgb` false (or an active split grid)
     /// picks a non-sRGB canvas format, which WebGL2 presents with a blit
     /// instead of a shader pass (see `TankSurface::with_srgb`).
@@ -86,6 +86,13 @@ impl Graphics {
     #[must_use]
     pub fn backend(&self) -> String {
         self.backend.name().to_owned()
+    }
+
+    /// Whether the active adapter draws the grid in multiple passes.
+    #[wasm_bindgen(js_name = splitGrid)]
+    #[must_use]
+    pub fn split_grid(&self) -> bool {
+        self.gpu.split_grid
     }
 
     /// The adapter's name, for the stats line.
@@ -136,6 +143,12 @@ async fn open_with(
         // hands out, so a failed WebGPU attempt must not touch the canvas or
         // the WebGL2 fallback couldn't use it.
         Backend::WebGpu => {
+            // Dawn's Metal compiler can terminate while compiling the
+            // single-pass tank shader. Default to the smaller split pipelines.
+            let options = GpuOptions {
+                split_grid: options.split_grid.or(Some(true)),
+                ..options
+            };
             let gpu = Gpu::new(&instance, None, options)
                 .await
                 .map_err(|e| e.to_string())?;
