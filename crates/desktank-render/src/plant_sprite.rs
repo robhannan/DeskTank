@@ -1579,35 +1579,19 @@ mod tests {
             for _ in 0..carpet_ticks {
                 world.tick();
             }
-            if std::env::var_os("CARPET_DUMP").is_some() {
-                for y in bed - 8..bed + 2 {
-                    let line: String = (0..cols)
-                        .map(|x| {
-                            let c = world.cell(x, y).unwrap();
-                            let n = world
-                                .materials()
-                                .get(c.material)
-                                .map_or('?', |m| m.name.chars().next().unwrap_or('?'));
-                            n
-                        })
-                        .collect();
-                    eprintln!("{name} {y:2} {line}");
-                }
-            }
             let mut tank = crate::Tank::new(world, crate::TankConfig::default());
             tank.set_time_of_day(12 * 60);
             // The pane's baseline is the substrate's top.
             let ((sw, sh), sprite) = build(species.get(id).unwrap());
             let mut image = blank(width, panel_h);
-            let mut stamp =
-                |image: &mut Vec<u8>, x: usize, y: usize, scale: usize, pixel: &[u8]| {
-                    for dy in 0..scale {
-                        for dx in 0..scale {
-                            let i = ((y + dy) * width + x + dx) * 4;
-                            image[i..i + 4].copy_from_slice(pixel);
-                        }
+            let stamp = |image: &mut Vec<u8>, x: usize, y: usize, scale: usize, pixel: &[u8]| {
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let i = ((y + dy) * width + x + dx) * 4;
+                        image[i..i + 4].copy_from_slice(pixel);
                     }
-                };
+                }
+            };
             let top = (bed * 2 * zoom).saturating_sub((sh - 4) * zoom);
             for (i, pixel) in sprite.iter().enumerate().filter(|(_, p)| p[3] == 255) {
                 stamp(

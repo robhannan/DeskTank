@@ -241,12 +241,37 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     cell and the one it steps to share a row, and the drawn blade runs
     diagonally across that pair, a texel a texel-row, instead of jogging a
     cell (`lean_shift`: four neighbour reads, no loops). Its pads are as before with fewer maroon
-    flecks at quarter-cell scale. Grass and pad blades (carpets) are
-    unchanged.
+    flecks at quarter-cell scale.
   - **Carpet:** low tufts; runners creep through the top substrate layer
     and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a
     rosette with a one-cell crown and blades of at most 3 cells; each tuft
     is its own plant.
+    *Carpets in the tank look like the info pane's sprite* (render only,
+    `tank.wgsl`; the sim's cells, spacing, runners, swimmer passage and food
+    are unchanged, and no species file changed). Each leaf cell of a grass
+    or pad carpet is drawn in its own cell by `carpet_cover`, from a
+    carpet bit (32, `CARPET_FLAG`) in the species texel's shapes `w`
+    (set for any non-epiphyte species with a `grass` or `pad` leaf). *Dwarf
+    hairgrass* is a tuft of fine blades: a tall one, whose top varies from
+    column to column, and a short one beside it that splays a texel out per
+    cell (the sprite's fan, in a cell's width: leaving the cell after one
+    or two cells), dark at the base and pale at the tips, with a darker
+    base texel where the tuft meets the crown, and the splayed blades fold
+    at night. *Monte Carlo* is a low mat of round pads: each leaf cell is
+    a pad lit on top, a body, a dark underside and a thin stalk (drawn from
+    the stem's ramp, so the colouration leaves it dark), the cells
+    alternating sides so the pads overlap down the mat, and the top cell a
+    rounded, lit crown that tucks narrower at night. At scale 2 a cell is
+    two texels square, at scale 4 four. A carpet's **runner** is a thin pale
+    line like the sprite's, drawn from the root ramp (not the stem's
+    green), and the shadow under it is the root ramp's darkest shade too.
+    The split grid draws carpet leaves in their own passes (`fs_carpets`
+    and `fs_sprite_carpets`, created when a tank first has a carpet and
+    drawn only then, at every scale, within the plants' rectangle;
+    `fs_leaves` and `fs_sprite_leaves` discard them), so Chrome 68's
+    SwiftShader doesn't compile their art with the other leaf shapes; the
+    old grass branch of `leaf_cover` is gone, and a tank without carpets
+    pays nothing but `fs_leaves`' one species read.
   - **Floater:** leaves in the top water row under the air band, with
     roots hanging `root_length` cells; buds new plants alongside, drifts
     with the current and shades what is below it through the light field.

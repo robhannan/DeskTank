@@ -364,6 +364,34 @@ impl Renderer {
         self.algae.upload(gpu, world, &mut self.scratch);
     }
 
+    /// Makes the split grid's carpet passes the first time a tank has a
+    /// carpet.
+    fn create_carpet_pipelines(&mut self, gpu: &Gpu) {
+        if !(gpu.split_grid && self.has_carpets && self.pipelines.carpet_sprites.is_none()) {
+            return;
+        }
+        for (label, entry, sprites) in [
+            ("tank fs_carpets", "fs_carpets", false),
+            ("sprites fs_sprite_carpets", "fs_sprite_carpets", true),
+        ] {
+            let pipeline = Some(create_tank_pipeline(
+                &gpu.device,
+                &self.pipeline_layout,
+                &self.shader,
+                self.format,
+                label,
+                entry,
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                &[],
+            ));
+            if sprites {
+                self.pipelines.carpet_sprites = pipeline;
+            } else {
+                self.pipelines.carpets = pipeline;
+            }
+        }
+    }
+
     /// Copies the waiting dirty rectangles (or the whole grid) into the cell
     /// texture, and their plant and rigid cells' depth into the band texture.
     pub fn upload(&mut self, gpu: &Gpu, world: &World, dirty: &mut DirtyRects) {
@@ -398,28 +426,7 @@ impl Renderer {
                     .get(p.species)
                     .is_some_and(|s| matches!(s.form, desktank_sim::plants::Form::Carpet(_)))
             });
-            if gpu.split_grid && self.has_carpets && self.pipelines.carpet_sprites.is_none() {
-                self.pipelines.carpets = Some(create_tank_pipeline(
-                    &gpu.device,
-                    &self.pipeline_layout,
-                    &self.shader,
-                    self.format,
-                    "tank fs_carpets",
-                    "fs_carpets",
-                    Some(wgpu::BlendState::ALPHA_BLENDING),
-                    &[],
-                ));
-                self.pipelines.carpet_sprites = Some(create_tank_pipeline(
-                    &gpu.device,
-                    &self.pipeline_layout,
-                    &self.shader,
-                    self.format,
-                    "sprites fs_sprite_carpets",
-                    "fs_sprite_carpets",
-                    Some(wgpu::BlendState::ALPHA_BLENDING),
-                    &[],
-                ));
-            }
+            self.create_carpet_pipelines(gpu);
             if gpu.split_grid
                 && !self.epiphyte_areas.is_empty()
                 && self.pipelines.epiphyte_sprites.is_none()

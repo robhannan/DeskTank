@@ -3016,7 +3016,7 @@ fn carpet_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, plant: vec4<f3
     let base = pos == 1 && r >= n - 2 && (c == cc || c == cl);
     let t = f32(hq) / (len * f32(n));
     let end = tip && r == top;
-    let step = 1 + i32(round(5.0 * t)) + noise + select(0, 1, end) - select(0, 1, splay && !body)
+    let step = 2 + i32(round(5.0 * t)) + noise + select(0, 1, end) - select(0, 1, splay && !body)
         - select(0, 2, base && !body);
     return vec2<i32>(select(0, 1, body || splay || base), step);
 }
