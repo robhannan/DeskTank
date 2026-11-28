@@ -434,7 +434,7 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     small shaded grips. The renderer uses the species ramps and extends
     blade texels into nearby water at scale 2 and up. The leaf art follows
     sway and night folding, and tests the same coverage when a creature
-    swims behind it. The view's epiphyte bounds gate the overhang, which
+    swims behind it. The view's epiphyte bounds (the epiphyte plants' bounds merged into at most four boxes, so far-apart plants leave the water between them alone) gate the overhang, which
     occupies no simulation cells. The placement ghost previews the cellular
     shape. Render-only leaves grow behind and in front of the main row:
     redrawn from the same leaf cells, behind them shorter, duller and
@@ -451,6 +451,10 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     pixels. At scale 1 java fern and anubias are drawn by the ordinary leaf
     shapes, where only the shade matters, so the quarter-cell sword art
     there is gone: it was reachable only by epiphytes.
+    Blades never paint over another species' leaves (a rotala stem touching
+    a java fern keeps its own pixels), and a creature behind a front leaf is
+    hidden over the rhizome as elsewhere, in both the one-pass and the split
+    grid.
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. A click pours seeds or
   places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the
