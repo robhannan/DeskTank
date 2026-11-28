@@ -1286,7 +1286,7 @@ mod tests {
     }
 
     /// Writes, when `STEM_SHOTS` or `ROSETTE_SHOTS` names a prefix (`before`,
-    /// `after`), one PNG per stem (or rosette) species to
+    /// `after`; `SHOTS_MINUTE=0` draws at midnight), one PNG per stem (or rosette) species to
     /// `target/shots/stem-before-after/` (`rosette-before-after/`): its pane
     /// sprite, then the same species placed Mature in a tank at scale 2 and
     /// at scale 4 (quarter-cell art), all enlarged to the sprite's pixels,
@@ -1396,7 +1396,12 @@ mod tests {
                 );
             }
             let mut tank = crate::Tank::new(world, crate::TankConfig::default());
-            tank.set_time_of_day(12 * 60);
+            // `SHOTS_MINUTE`: the minute of the day to draw at (noon by default).
+            let minute = std::env::var("SHOTS_MINUTE")
+                .ok()
+                .and_then(|m| m.parse().ok())
+                .unwrap_or(12 * 60);
+            tank.set_time_of_day(minute);
             tank.step();
             (
                 tank.capture(&gpu, (cw as u32 * scale, ch as u32 * scale))

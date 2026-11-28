@@ -386,9 +386,13 @@ impl Renderer {
             .reduce(desktank_sim::Rect::union);
         let species = world.plant_species();
         self.wide_blades = world.plants().any(|p| {
-            species
-                .get(p.species)
-                .is_some_and(|s| matches!(s.form, desktank_sim::plants::Form::Rosette(_)))
+            species.get(p.species).is_some_and(|s| {
+                use desktank_sim::plants::{Form, LeafShape};
+                // Only sword and ribbon rosettes draw wings (a lotus's
+                // petioles stay in their own cells).
+                matches!(s.form, Form::Rosette(_))
+                    && matches!(s.look.leaf, LeafShape::Sword | LeafShape::Ribbon)
+            })
         });
         if self.bases_version != Some(world.plants_version()) {
             self.bases_version = Some(world.plants_version());
