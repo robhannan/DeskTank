@@ -117,6 +117,10 @@ pub(super) struct Shape {
 }
 
 impl Shape {
+    pub(super) fn size(&self) -> (usize, usize) {
+        (self.w, self.h)
+    }
+
     /// Shorter bitmap dimension in cells, before the shape is turned.
     pub(super) fn short_side(&self) -> usize {
         self.w.min(self.h)

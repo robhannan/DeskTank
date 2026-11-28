@@ -42,11 +42,15 @@ pub enum Placeable {
     UnderGravelPanel,
     /// A loose rigid volcano with an air outlet at the crater.
     VolcanoBubbler,
+    /// A loose rigid castle in realistic stone colours.
+    StoneCastle,
+    /// The same loose rigid castle in fantasy pastels.
+    PastelCastle,
 }
 
 impl Placeable {
     /// Every placeable, in palette order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Bubbler,
         Self::InternalFilter,
         Self::SpongeFilter,
@@ -54,13 +58,15 @@ impl Placeable {
         Self::UnderGravelFilter,
         Self::UnderGravelPanel,
         Self::VolcanoBubbler,
+        Self::StoneCastle,
+        Self::PastelCastle,
     ];
 
     /// The material its cells are made of.
     #[must_use]
     pub fn material_name(self) -> &'static str {
         match self {
-            Self::VolcanoBubbler => self.name(),
+            Self::VolcanoBubbler | Self::StoneCastle | Self::PastelCastle => self.name(),
             _ => "device",
         }
     }
@@ -76,6 +82,8 @@ impl Placeable {
             Self::UnderGravelFilter => "under_gravel_filter",
             Self::UnderGravelPanel => "under_gravel_panel",
             Self::VolcanoBubbler => "volcano_bubbler",
+            Self::StoneCastle => "stone_castle",
+            Self::PastelCastle => "pastel_castle",
         }
     }
 
@@ -99,7 +107,7 @@ impl Placeable {
             Self::HobFilter => DeviceKind::HobFilter,
             Self::UnderGravelFilter => DeviceKind::UnderGravelFilter,
             Self::UnderGravelPanel => DeviceKind::UnderGravelPanel,
-            Self::VolcanoBubbler => return None,
+            Self::VolcanoBubbler | Self::StoneCastle | Self::PastelCastle => return None,
         })
     }
 }

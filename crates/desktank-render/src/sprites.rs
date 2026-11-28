@@ -85,6 +85,8 @@ pub const LOOK_GHOST: f32 = 3.0;
 /// the instance's glow slot, see-through over everything, tinted red when
 /// the plant doesn't fit (the look's second float is 1).
 pub const LOOK_PLANT_GHOST: f32 = 4.0;
+/// One cell of an ornament ghost, with the local cell in the frame origin.
+const LOOK_ORNAMENT_GHOST: f32 = 5.0;
 /// The depth devices are drawn at, in bands (D21): just behind the front
 /// band, so a creature or plant there passes in front of the glass-mounted
 /// body while the rest of the tank is behind it.
@@ -559,12 +561,12 @@ fn push_ornament_ghost(
     let tint = if ghost.fits { 0.0 } else { 1.0 };
     for (x, y, variant) in art.pixels() {
         if let Some(colour) = art.colour(variant) {
-            sprites.push(ghost_cell(
-                ghost.origin.0 + x,
-                ghost.origin.1 + y,
-                colour,
-                tint,
-            ));
+            let mut sprite = ghost_cell(ghost.origin.0 + x, ghost.origin.1 + y, colour, tint);
+            sprite.origin = (x, y);
+            sprite.look[0] = LOOK_ORNAMENT_GHOST;
+            // Ghosts draw over the scene; this instance field selects their artwork.
+            sprite.depth = f32::from(ghost.material.0);
+            sprites.push(sprite);
         }
     }
 }

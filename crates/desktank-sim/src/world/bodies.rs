@@ -791,6 +791,7 @@ impl World {
                 body.held_until = 0;
             }
             self.tidy(id);
+            self.ornament_ids.insert(id);
             if emits {
                 self.ornament_emitters.insert(id);
             }
@@ -807,6 +808,7 @@ impl World {
     // Remove the record before erasing cells so write_cell cannot re-enter it.
     pub(super) fn remove_ornament(&mut self, id: u16) -> Option<usize> {
         let body = self.bodies.remove(&id)?;
+        self.ornament_ids.remove(&id);
         self.ornament_emitters.remove(&id);
         let water = self.materials.id("water")?;
         let air = self.materials.id("air")?;
@@ -820,6 +822,38 @@ impl World {
             }
         }
         Some(changed)
+    }
+
+    /// Inverse drawn poses of intact ornament bodies for sampling their
+    /// rest-pose artwork. Each pose holds the local origin of world (0, 0)
+    /// in cells, followed by the cosine and sine of the drawn angle.
+    pub fn ornament_poses(&self) -> impl Iterator<Item = (u16, [f32; 4])> + '_ {
+        self.ornament_ids.iter().filter_map(|&id| {
+            let b = self.bodies.get(&id)?;
+            let art = self.ornament_art(b.material)?;
+            if b.pending != Pending::None || b.shape.size() != art.size() {
+                return None;
+            }
+            let (cx, cy) = b.drawn_com();
+            #[allow(clippy::cast_precision_loss)] // Bounded grid positions and fixed-point basis.
+            let (x, y, local_x, local_y, cos, sin) = (
+                cx as f32 / 256.0,
+                cy as f32 / 256.0,
+                b.shape.com.0 as f32 / 256.0,
+                b.shape.com.1 as f32 / 256.0,
+                shape::cos(b.drawn) as f32 / 65_536.0,
+                shape::sin(b.drawn) as f32 / 65_536.0,
+            );
+            Some((
+                id,
+                [
+                    local_x - x * cos - y * sin,
+                    local_y + x * sin - y * cos,
+                    cos,
+                    sin,
+                ],
+            ))
+        })
     }
 
     /// Recover each outlet's cell from the current drawn pose, using the
@@ -912,6 +946,7 @@ impl World {
     pub(super) fn load_bodies(&mut self, saved: Vec<v1::Body>) -> Result<(), SaveError> {
         let invalid = |what: &str, id: u16| SaveError::Invalid(format!("body {id}: {what}"));
         self.bodies.clear();
+        self.ornament_ids.clear();
         self.ornament_emitters.clear();
         for b in saved {
             let id = b.id;
@@ -949,11 +984,11 @@ impl World {
             } else {
                 bounds_short_side(bounds)
             };
-            if self
-                .ornament_art(material)
-                .is_some_and(|art| !art.bubbler_outlets.is_empty())
-            {
-                self.ornament_emitters.insert(id);
+            if let Some(art) = self.ornament_art(material) {
+                if !art.bubbler_outlets.is_empty() {
+                    self.ornament_emitters.insert(id);
+                }
+                self.ornament_ids.insert(id);
             }
             self.bodies.insert(
                 id,
@@ -1059,7 +1094,48 @@ mod tests {
     }
 
     #[test]
+    fn ornament_pose_maps_a_drawn_quarter_back_to_its_rest_texel() {
+        use super::{ONE, TURN, shape};
+        let mut world =
+            World::new(WorldConfig::default(), MaterialTable::builtin().unwrap()).unwrap();
+        let material = world.materials().id("stone_castle").unwrap();
+        assert!(world.add_ornament(material, 44, 40) > 0);
+        let id = *world.bodies.first_key_value().unwrap().0;
+        // A quarter-texel centre at the main roof. Move the body and sample
+        // the same artwork after an oblique rotation and a full quarter turn.
+        let (qx, qy) = (17 * 4 + 2, 0);
+        let (local_x, local_y) = ((2 * qx + 1) * ONE / 8, (2 * qy + 1) * ONE / 8);
+        for drawn in [0, 13 * TURN / 256, TURN / 4] {
+            let body = world.bodies.get_mut(&id).unwrap();
+            body.drawn = drawn;
+            body.anchor.0 += 4;
+            body.anchor.1 += 2;
+            let (cx, cy) = body.drawn_com();
+            let (dx, dy) = shape::rotate(
+                local_x - body.shape.com.0,
+                local_y - body.shape.com.1,
+                drawn,
+            );
+            #[allow(clippy::cast_precision_loss)]
+            let (x, y) = ((cx + dx) as f32 / 256.0, (cy + dy) as f32 / 256.0);
+            let (found, [tx, ty, cos, sin]) = world.ornament_poses().next().unwrap();
+            assert_eq!(found, id);
+            #[allow(clippy::cast_precision_loss)]
+            {
+                assert!(((tx + x * cos + y * sin) * 4.0 - (qx as f32 + 0.5)).abs() < 0.03);
+                assert!(((ty - x * sin + y * cos) * 4.0 - (qy as f32 + 0.5)).abs() < 0.03);
+            }
+        }
+    }
+
+    #[test]
     fn settled_ornament_sleeps_until_its_support_changes() {
+        for name in ["volcano_bubbler", "stone_castle", "pastel_castle"] {
+            ornament_sleeps_on_support(name);
+        }
+    }
+
+    fn ornament_sleeps_on_support(name: &str) {
         let mut w = World::new(
             WorldConfig {
                 width: 80,
@@ -1070,7 +1146,7 @@ mod tests {
             MaterialTable::builtin().unwrap(),
         )
         .unwrap();
-        let material = w.materials().id("volcano_bubbler").unwrap();
+        let material = w.materials().id(name).unwrap();
         let rock = w.materials().id("rock").unwrap();
         let air = w.materials().id("air").unwrap();
         let mut support = None;
@@ -1084,7 +1160,15 @@ mod tests {
             w.tick();
         }
         let b = &w.bodies[&id];
-        assert!(!b.awake);
+        assert!(!b.awake, "{name} has settled");
+        let (front, back) = b.bands;
+        assert!(back - front + 1 < crate::DEPTH_BANDS);
+        for band in 0..crate::DEPTH_BANDS {
+            assert_eq!(
+                w.blocks(b.cells[0], Some(band)),
+                (front..=back).contains(&band)
+            );
+        }
         let (rest_ticks, resting) = (b.still, b.bounds);
         assert_eq!(resting.y1, 62);
         for _ in 0..20 {

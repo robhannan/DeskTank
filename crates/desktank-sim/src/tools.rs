@@ -1498,7 +1498,14 @@ mod tests {
                     "Place(UnderGravelPanel)",
                 ],
             ),
-            ("build/ornaments", vec!["Place(VolcanoBubbler)"]),
+            (
+                "build/ornaments",
+                vec![
+                    "Place(VolcanoBubbler)",
+                    "Place(StoneCastle)",
+                    "Place(PastelCastle)",
+                ],
+            ),
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
             (
                 "food/fish",

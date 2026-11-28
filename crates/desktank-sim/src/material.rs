@@ -270,6 +270,14 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/dragon_stone.toml"),
     include_str!("../../../assets/materials/seiryu_stone.toml"),
     include_str!("../../../assets/ornaments/volcano_bubbler.toml"),
+    concat!(
+        include_str!("../../../assets/ornaments/stone_castle.toml"),
+        include_str!("../../../assets/ornaments/castle_sprite.toml"),
+    ),
+    concat!(
+        include_str!("../../../assets/ornaments/pastel_castle.toml"),
+        include_str!("../../../assets/ornaments/castle_sprite.toml"),
+    ),
 ];
 
 /// All materials, ordered by ID.

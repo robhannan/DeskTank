@@ -286,7 +286,12 @@ with a tight `[ornament]` sprite, colour key and optional
 `bubbler_outlets` in local cell coordinates. Opaque pixels carry their
 colours through rigid-body rotation and save/load. The volcano's outlets
 follow the drawn crater and use the DV7 bubbler's emission rate and rising
-bubble behaviour. Saves store ornaments in the existing body and cell records.
+bubble behaviour. The stone and pastel castles share a traced sprite with
+open arches and use separate colour palettes. Fine detail draws their placed
+art and previews on the quarter-cell grid, with stepped silhouettes, roof
+courses, masonry and arch trim, or lava highlights and basalt facets.
+The placed artwork follows the rigid body's drawn pose. Saves store
+ornaments in the existing body and cell records.
 
 The v1 palette (D2), by where the palette offers it (§2.5; materials
 without a `palette` path, such as air, propagules, eggs and dead plant

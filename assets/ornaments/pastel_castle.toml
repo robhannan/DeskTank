@@ -1,0 +1,10 @@
+id = 85
+name = "pastel_castle"
+class = "rigid"
+density = 1.85
+colour = "#d8a9c4"
+palette = "build/ornaments"
+
+[ornament]
+# Rose and cream masonry, lilac roofs, a mauve plinth and mint shoots.
+colours = { k = "#675270", d = "#916c91", m = "#b386a9", s = "#dcb2ca", h = "#f9dcd7", b = "#7764a2", r = "#a18cc4", t = "#c5b2df", o = "#665b85", g = "#857299", l = "#ab92b3", n = "#c6b0ca", f = "#bfe9ca", v = "#88c4ac" }
