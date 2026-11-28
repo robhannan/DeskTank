@@ -616,7 +616,7 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
     t.pointer_up(PRIMARY);
     assert_eq!(
         t.take_inspection(),
-        "creature neon_tetra 1 water 60 40 adult 180 100 100 male - - Hunger:0:critical,Social:0:critical "
+        "creature neon_tetra 1 water 60 40 adult 180 100 100 male - - Hunger:75:comfortable,Social:75:comfortable "
     );
     // Naming it is kept (cleaned) and marks the tank for saving.
     let _ = t.save();
@@ -630,7 +630,7 @@ fn creatures_are_added_inspected_netted_and_lifted_out() {
     assert_eq!(t.creature_name(9), None);
     down(&mut t, PRIMARY, 60, 40);
     t.pointer_up(PRIMARY);
-    assert!(t.take_inspection().ends_with(",Social:0:critical Big Blue"));
+    assert!(t.take_inspection().ends_with(" Big Blue"));
     // The net carries it; let go in the water it stays, above it it's out.
     t.select(slot(&t, "tool net"));
     down(&mut t, PRIMARY, 60, 40);
@@ -723,7 +723,7 @@ fn inspecting_pins_a_two_page_card_that_clicks_turn() {
     assert_eq!(t.inspect_page(), 2);
     assert_eq!(
         t.take_inspection(),
-        "creature neon_tetra 1 water 30 20 adult 180 100 100 male - - Hunger:0:critical,Social:0:critical "
+        "creature neon_tetra 1 water 30 20 adult 180 100 100 male - - Hunger:75:comfortable,Social:75:comfortable "
     );
     t.pointer_down(PRIMARY, x, y);
     t.pointer_up(PRIMARY);

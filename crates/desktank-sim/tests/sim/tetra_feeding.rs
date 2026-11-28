@@ -39,7 +39,13 @@ fn school(seed: u64) -> (World, Vec<CreatureId>) {
                 .unwrap()
         })
         .collect();
-    for _ in 0..WARMUP {
+    // Begin the repeated feeding trials with a hungry school.
+    world.set_time_ratio(desktank_sim::MAX_TIME_RATIO);
+    for _ in 0..18 {
+        world.tick();
+    }
+    world.set_time_ratio(1.0);
+    for _ in 18..WARMUP {
         world.tick();
     }
     (world, ids)

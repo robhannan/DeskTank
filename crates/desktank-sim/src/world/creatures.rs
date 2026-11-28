@@ -133,8 +133,8 @@ const FULL: u16 = 120 * TICKS_PER_SECOND as u16;
 const BITE: u16 = 30 * TICKS_PER_SECOND as u16;
 /// A hungry creature looks for closer food every this many ticks.
 const SEARCH_EVERY: u64 = 10;
-/// Slower surface-leaf searches after giving up on food near the waterline.
-const FLOAT_RETRY_EVERY: u64 = 5 * TICKS_PER_SECOND as u64;
+/// Slower searches for food behind obstacles after giving up on a meal.
+const FOOD_RETRY_EVERY: u64 = 5 * TICKS_PER_SECOND as u64;
 /// How far a creature notices food, in cells.
 const FOOD_SENSE: i64 = 160;
 /// How far from where it is asked for a creature is added, in cells.
@@ -168,6 +168,8 @@ pub const BAND_REACH: u8 = 1;
 /// gave up on is skipped too, so a fish blocked from a patch of food (a
 /// leaf mat behind rock) doesn't flip between neighbouring cells of it.
 const IGNORE_REACH: i64 = 2;
+/// Nearby resting food may lie on the same solid obstacle.
+const SOLID_IGNORE_REACH: i64 = 4;
 /// Depth change per tick, in 1/256 band: a band in 4 ticks (0.2 s).
 const DEPTH_SPEED: i32 = ONE / 4;
 /// Ticks a creature holds still shifting band past a plant before it gives
@@ -1049,7 +1051,7 @@ impl World {
             dodging: 0,
             stray: 0,
             retarget: 0,
-            satiety: 0,
+            satiety: FULL - BITE,
             food: None,
             ignore: None,
             facing_left: self.creatures.next_id % 2 == 1,
@@ -1075,7 +1077,7 @@ impl World {
             asleep: false,
             woken: 0,
             pane: Pane::Off,
-            needs: needs::State::default(),
+            needs: needs::State::at_spawn(base.needs),
         };
         let k = self.grown_kind(&probe).unwrap_or(base);
         let (fx, fy) = (centre_of(x), centre_of(y));
@@ -1892,16 +1894,31 @@ impl World {
     }
 
     fn blocked_steering(&self, k: &Kind, c: &mut Creature, rng: &mut Pcg32) {
+        let mut retreat = false;
         if k.needs.is_none() || c.needs.action == needs::Action::Forage {
             if let Some(food) = c.food.take() {
                 c.ignore = Some(food);
+                retreat = open_water(k.zone)
+                    && to_i64(food as usize / self.width) < i64::from(c.y >> 8)
+                    && self.food_on_hardscape(food, Some(c.band()));
+                if retreat {
+                    c.needs.interrupt();
+                }
             }
             self.pursuit_blocked(k, c);
         }
         self.pick_target(k, c, rng);
-        // A schooler that can't reach its school strays on its new target
-        // for a while, out of whatever pocket holds it.
-        if k.schooling && (k.needs.is_none() || c.needs.action == needs::Action::School) {
+        // Draw a short, downward escape from the underside before returning
+        // to the normal swim target. Keep the target inside the tank.
+        if retreat && self.fits(k, c.turn, c.x, c.y + ONE, c.band()) {
+            let floor = centre_of(to_i64(self.height) - i64::from(k.h / 2) - 1);
+            c.ty = c.ty.max((c.y + 16 * ONE).min(floor));
+            c.tx = c.tx.clamp(c.x - 16 * ONE, c.x + 16 * ONE);
+        }
+        // Schoolers wander on their new target for a while after an
+        // obstacle cuts them off from the school or their meal.
+        if k.schooling && (retreat || k.needs.is_none() || c.needs.action == needs::Action::School)
+        {
             c.stray = u16::try_from(c.retarget).unwrap_or(0);
         }
     }
@@ -1944,7 +1961,14 @@ impl World {
 
         // Move, sliding along whatever blocks one axis; a plant in the way
         // sends it to another band.
-        let mut moved = self.try_move(k, c);
+        let foraging = open_water(k.zone)
+            && !flipping
+            && c.fear == 0
+            && c.food.is_some_and(|i| {
+                self.food_on_hardscape(i, Some(c.band()))
+                    && target == self.food_steering_target(k, c, i)
+            });
+        let mut moved = self.try_move_with_slide(k, c, foraging);
         if moved == Move::Dodging {
             c.dodging += 1;
             // A dodge that doesn't clear the plant in time is given up.
@@ -2070,6 +2094,10 @@ impl World {
     /// it can shift to, it holds still and heads for that band instead (see
     /// the module docs).
     fn try_move(&self, k: &Kind, c: &mut Creature) -> Move {
+        self.try_move_with_slide(k, c, false)
+    }
+
+    fn try_move_with_slide(&self, k: &Kind, c: &mut Creature, foraging: bool) -> Move {
         if (c.vx, c.vy) == (0, 0) {
             return Move::Moved;
         }
@@ -2085,8 +2113,13 @@ impl World {
             c.y -= ONE;
             return Move::Moved;
         }
+        let (vx, vy) = (c.vx.abs(), c.vy.abs());
         for (dx, dy) in [(c.vx, c.vy), (c.vx, 0), (0, c.vy)] {
-            if (dx, dy) == (0, 0) {
+            // A tiny slide across the direction of a meal can pin a fish
+            // under an overhang. Keep slides that make substantial progress.
+            if (dx, dy) == (0, 0)
+                || (foraging && ((dx == 0 && 4 * vy < vx) || (dy == 0 && 4 * vx < vy)))
+            {
                 continue;
             }
             if self.fits(k, c.turn, c.x + dx, c.y + dy, band) {
@@ -2375,8 +2408,9 @@ impl World {
         true
     }
 
-    /// The nearest food cell `c` eats within [`FOOD_SENSE`], skipping those
-    /// within [`IGNORE_REACH`] of the one it gave up on.
+    /// The nearest food cell `c` eats within [`FOOD_SENSE`], skipping the
+    /// patch around the last cell it gave up on.
+    #[allow(clippy::too_many_lines)] // chunk and per-cell search are one scan
     #[allow(clippy::many_single_char_names)] // cell maths
     fn nearest_food(&self, k: &Kind, c: &Creature) -> Option<u32> {
         let (cx, cy) = (i64::from(c.x >> 8), i64::from(c.y >> 8));
@@ -2386,10 +2420,18 @@ impl World {
         // cells of the same mat. Give it a stretch of wandering or following
         // loose food between leaf retries. Use the remembered row since a
         // floating leaf may have moved off the ignored cell.
-        let skip_float = c.food.is_none()
+        let between_retries = c.food.is_none()
+            && c.ignore.is_some()
+            && !(self.tick + u64::from(c.id.0)).is_multiple_of(FOOD_RETRY_EVERY);
+        let skip_float = between_retries
             && c.ignore
-                .is_some_and(|i| i as usize / self.width <= self.surface_row + 1)
-            && !(self.tick + u64::from(c.id.0)).is_multiple_of(FLOAT_RETRY_EVERY);
+                .is_some_and(|i| i as usize / self.width <= self.surface_row + 1);
+        let blocked_by_hardscape = c.ignore.is_some_and(|i| self.food_on_hardscape(i, None));
+        let ignore_reach = if blocked_by_hardscape {
+            SOLID_IGNORE_REACH
+        } else {
+            IGNORE_REACH
+        };
         let ignored = c.ignore.map(|i| {
             (
                 to_i64(i as usize % self.width),
@@ -2434,23 +2476,52 @@ impl World {
                     to_i64(i as usize / self.width),
                 );
                 if ignored.is_some_and(|(ix, iy)| {
-                    (fx - ix).abs() <= IGNORE_REACH && (fy - iy).abs() <= IGNORE_REACH
-                }) {
-                    continue;
-                }
-                if skip_float && self.is_floating_leaf(i) {
-                    continue;
-                }
-                if !near_home(k, c, fx) {
+                    (fx - ix).abs() <= ignore_reach && (fy - iy).abs() <= ignore_reach
+                }) || (skip_float && self.is_floating_leaf(i))
+                    || !near_home(k, c, fx)
+                {
                     continue;
                 }
                 let d = (fx - cx).pow(2) + (fy - cy).pow(2);
-                if d <= sense2 && best.is_none_or(|(bd, bi)| d < bd || (d == bd && i < bi)) {
-                    best = Some((d, i));
+                if d > sense2 || best.is_some_and(|(bd, bi)| (d, i) >= (bd, bi)) {
+                    continue;
                 }
+                if blocked_by_hardscape
+                    && open_water(k.zone)
+                    && fy < cy
+                    && self.food_on_hardscape(i, Some(c.band()))
+                    && (between_retries || self.solid_between((cx, cy), (fx, fy), c.band()))
+                {
+                    continue;
+                }
+                best = Some((d, i));
             }
         }
         best.map(|(_, i)| i)
+    }
+
+    fn food_on_hardscape(&self, food: u32, band: Option<u8>) -> bool {
+        let support = food as usize + self.width;
+        support < self.cells.len() && self.is_rigid(support) && self.blocks(support, band)
+    }
+
+    /// Check the direct approach on a retry. Widely spaced flakes can rest
+    /// on the same ledge, so distance from the last flake alone is insufficient.
+    /// Only solid obstructions count here; swimmers still try depth routes
+    /// through plant cover.
+    fn solid_between(&self, from: (i64, i64), to: (i64, i64), band: u8) -> bool {
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let steps = dx.abs().max(dy.abs());
+        (1..steps).any(|step| {
+            // Coordinates stay between the fish and the target inside the tank.
+            let x = usize::try_from((from.0 * steps + dx * step + steps / 2) / steps);
+            let y = usize::try_from((from.1 * steps + dy * step + steps / 2) / steps);
+            let (Ok(x), Ok(y)) = (x, y) else {
+                return false;
+            };
+            let index = y * self.width + x;
+            self.plants.part(self.cells[index].material).is_none() && self.blocks(index, Some(band))
+        })
     }
 
     /// A new wander target, giving a shy creature up to three draws for cover.
@@ -4127,6 +4198,79 @@ mod tests {
     }
 
     #[test]
+    fn swimmers_leave_an_overhang_even_with_widely_spaced_food_on_top() {
+        for name in ["neon_tetra", "guppy"] {
+            let mut w = World::new(
+                WorldConfig {
+                    width: 144,
+                    height: 144,
+                    seed: 1,
+                    water_level: 0.95,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            let rock = w.materials().id("rock").unwrap();
+            let worm = w.materials().id("bloodworm").unwrap();
+            let ledge = Rect {
+                x0: 20,
+                y0: 10,
+                x1: 124,
+                y1: 42,
+            };
+            w.fill_rect(ledge, rock, crate::Brush::Replace).unwrap();
+            assert!(w.set_anchored(w.body_at(70, 25).unwrap(), true));
+            let food_cells = [69, 72, 84];
+            for x in food_cells {
+                w.set_cell(x, 9, worm).unwrap();
+            }
+            let [near, adjacent, _] = food_cells.map(|x| u32::try_from(9 * w.width + x).unwrap());
+            let kind = w.species().id(name).unwrap();
+            let ids: Vec<_> = (69..72)
+                .map(|x| w.add_creature(kind, x, 48).unwrap())
+                .collect();
+            for &id in &ids {
+                let k = w.grown_kind(w.creature(id).unwrap()).unwrap();
+                let c = w.creature_mut(id).unwrap();
+                c.y = 42 * ONE + k.h * ONE / 2;
+                c.satiety = 0;
+                c.vx = 8;
+                c.food = Some(near);
+            }
+            for _ in 0..70 {
+                w.tick();
+            }
+            for &id in &ids {
+                let c = w.creature(id).unwrap();
+                assert!(
+                    c.ignore == Some(near) || c.ignore == Some(adjacent),
+                    "{name}: {c:?}"
+                );
+                assert!(c.food.is_none(), "{name}: {c:?}");
+                assert!(
+                    c.y > 46 * ONE || (c.x - 70 * ONE).abs() > 8 * ONE,
+                    "{name}: {c:?}"
+                );
+            }
+
+            let mut loaded =
+                crate::save::decode(&crate::save::encode(&w), w.materials().clone()).unwrap();
+            for _ in 0..330 {
+                w.tick();
+                loaded.tick();
+            }
+            assert_eq!(w.state_hash(), loaded.state_hash());
+            for id in ids {
+                let c = w.creature(id).unwrap();
+                assert!(w.in_zone(c), "{name}: {c:?}");
+                if name == "neon_tetra" {
+                    assert_eq!(c.needs.action, needs::Action::School, "{c:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn blocked_surface_food_does_not_crowd_out_loose_food_before_retry() {
         let mut w = World::new(
             WorldConfig {
@@ -4160,7 +4304,7 @@ mod tests {
         assert_eq!(w.cells[loose as usize].material, flake);
 
         c.food = None;
-        w.tick = FLOAT_RETRY_EVERY - u64::from(id.0);
+        w.tick = FOOD_RETRY_EVERY - u64::from(id.0);
         w.choose_food(&k, &mut c, true);
         assert_eq!(c.food, Some(nearest));
     }

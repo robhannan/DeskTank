@@ -544,7 +544,12 @@ impl World {
         (c.tx, if k.zone == Zone::Bottom { c.y } else { c.ty }, speed)
     }
 
-    fn food_steering_target(&self, k: &Kind, c: &Creature, index: u32) -> (i32, i32, i32) {
+    pub(super) fn food_steering_target(
+        &self,
+        k: &Kind,
+        c: &Creature,
+        index: u32,
+    ) -> (i32, i32, i32) {
         let (x, mut y) = self.food_centre(index);
         if k.zone != Zone::Bottom && self.is_floating_leaf(index) {
             // Bite from below, where a body can reach a surface leaf.

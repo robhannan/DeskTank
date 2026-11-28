@@ -1452,24 +1452,28 @@ mod tests {
         let (mut w, [a, ..]) = school();
         let mut card = InspectCard::default();
         card.set(&w, Some(Inspected::Creature(a)));
-        // A hungry tetra among companions: empty feeding bar, full social
-        // (it takes a moment to look around), both long steady.
+        // Let the tetra settle with its companions and make room for a bite.
         let at = |card: &InspectCard, i: usize| bars(card)[i];
         run(&mut w, &mut card, 250);
-        assert_eq!(bars(&card), [(0, 0), (needs::LEVELS, 0)]);
+        let (before, trend) = at(&card, 0);
+        assert_eq!(trend, 0);
+        assert_eq!(at(&card, 1), (needs::LEVELS, 0));
         let food = w.materials().id("flake_food").unwrap();
         let (x, y) = w.creature(a).unwrap().centre();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         w.set_cell(x as usize, y as usize, food).unwrap();
         run(&mut w, &mut card, 3);
         let (fill, trend) = at(&card, 0);
-        assert!(fill > 0, "eating raised the bar");
+        assert!(
+            fill > before,
+            "eating raised the bar from {before} to {fill}"
+        );
         assert!(trend > 0, "and it is improving: {trend}");
         assert_eq!(at(&card, 1), (50, 0), "the other need did not move");
         assert_eq!(
             card.live.as_ref().unwrap().needs[0].level,
-            desktank_sim::NeedLevel::Critical,
-            "a first bite is still critically unmet"
+            desktank_sim::NeedLevel::Comfortable,
+            "a bite restores comfortable Hunger"
         );
         // Five seconds on it is steady again, only slowly falling.
         run(&mut w, &mut card, 110);
@@ -1540,8 +1544,8 @@ mod tests {
         for (bar, reading) in card.needs.iter().zip(&readings) {
             assert_eq!(*bar, NeedBar::of(*reading));
         }
-        // Hungry from the start; sheltered until it has been out a while.
-        assert_eq!(bars_of(&card), [0, needs::LEVELS]);
+        // Hunger starts comfortable and Shelter starts full.
+        assert_eq!(bars_of(&card), [38, needs::LEVELS]);
 
         // With no cover in the tank the shelter bar only falls, and shows
         // the decline.

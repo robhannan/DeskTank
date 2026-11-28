@@ -113,7 +113,11 @@ fn lodged_food_eaten(seed: u64, plant: &str, limit: u32) -> Result<f64, String> 
     for (x, y) in [(10, 30), (110, 30), (10, 55), (110, 55)] {
         w.add_creature(tetra, x, y).unwrap();
     }
-    for t in 0..limit {
+    // Give the fish an appetite for four bites as they start searching.
+    w.set_time_ratio(desktank_sim::MAX_TIME_RATIO);
+    run(&mut w, 18);
+    w.set_time_ratio(1.0);
+    for t in 18..limit {
         if !stuck
             .iter()
             .any(|&(x, y)| w.cell(x, y).unwrap().material == worm)
