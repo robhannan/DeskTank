@@ -2458,6 +2458,15 @@ fn stem_leaf_cell(me: vec4<f32>, part: i32) -> bool {
     }
     let species = i32(round(plant_of(me).a * 255.0));
     let shapes = vec2<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).xy * 255.0));
+    // So do a ribbon's straps and a lotus's petioles, thin lines between
+    // which the water shows.
+    if part == PART_LEAF && shapes.x == LEAF_RIBBON {
+        return true;
+    }
+    if part == PART_LEAF && shapes.x == LEAF_LOTUS {
+        let sizes = textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0);
+        return f32(position_of(me)) < sizes.x * 255.0 + 0.5;
+    }
     return shapes.x < LEAF_RIBBON && shapes.y < STEM_FUZZ;
 }
 
@@ -2622,14 +2631,52 @@ fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
     return blade_shape(shape, a, t, f32(r), 0.5);
 }
 
+// How far a blade's path is shifted sideways at this texel (in quarters of a
+// cell, positive to the right) where the sim steps it a cell sideways: the
+// step cell (the one whose next is beside it, not above it) and the cell it
+// steps to share one row, and the blade's path runs diagonally across the
+// pair, a texel a texel-row, instead of jogging a whole cell. Cells whose
+// next (or previous) cell is beside them but past `limit` (a petiole's tip
+// and the pad it spreads) don't step. Four cell reads, O(1).
+fn lean_shift(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, limit: i32) -> f32 {
+    let pos = position_of(me);
+    let up = kin(at, vec2<i32>(0, -1), me);
+    let down = kin(at, vec2<i32>(0, 1), me);
+    let left = kin(at, vec2<i32>(-1, 0), me);
+    let right = kin(at, vec2<i32>(1, 0), me);
+    let leaves_r = right.x == PART_LEAF && right.y == pos + 1 && pos < limit;
+    let leaves_l = left.x == PART_LEAF && left.y == pos + 1 && pos < limit;
+    let from_l = left.x == PART_LEAF && left.y == pos - 1 && pos <= limit;
+    let from_r = right.x == PART_LEAF && right.y == pos - 1 && pos <= limit;
+    let rises = up.x == PART_LEAF && up.y == pos + 1;
+    let rose = down.x == PART_LEAF && down.y == pos - 1;
+    // Texel rows up from the cell's bottom, plus one, in quarters.
+    let fine = fine_scale();
+    let climb = f32(select(2 - quarter.y / 2, 4 - quarter.y, fine)) * select(2.0, 1.0, fine);
+    if leaves_r && !rises {
+        return climb;
+    }
+    if leaves_l && !rises {
+        return -climb;
+    }
+    if from_l && !rose {
+        return climb - 4.0;
+    }
+    if from_r && !rose {
+        return 4.0 - climb;
+    }
+    return 0.0;
+}
+
 // A sword or ribbon blade's texel (cover x: 1 or 0, shade y), drawn as a
 // swept profile across the cell and a cell either side of it
 // (`wing_source`): `quarter.x` is below 0 or above 3 for a wing texel. The
-// profile is measured from the cell's centre in quarters (`dx`): a sword is
-// a petiole flaring to a broad lanceolate blade with a pale midrib, lateral
-// veins and a darker rim, pointed at its tip; a ribbon is a two-texel strap
-// that meanders more towards its tip and shows a broader, paler face where
-// it twists.
+// profile is measured from the cell's centre in quarters (`dx`), shifted
+// along a diagonal where the blade steps a cell sideways (`lean_shift`): a
+// sword is a petiole flaring to a broad lanceolate blade with a pale midrib,
+// lateral veins and a darker rim, pointed at its tip; a ribbon is a straight
+// strap two quarters wide (a texel at scale 2), paler on its left, that
+// arcs sideways only near its tip.
 fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32, len: f32) -> vec2<i32> {
     let fine = fine_scale();
     let pos = position_of(me);
@@ -2650,11 +2697,11 @@ fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32
         px = 1.0;
         row = f32(quarter.y) / 3.0;
     }
+    dx -= lean_shift(at, me, quarter, 255);
     let night = view.daylight.w;
     let noise = noise_step(me);
     let phase = f32(hash(vec2<i32>(at.x, i32(round(me.b * 255.0)))) & 255u) * (6.2831853 / 255.0);
     var half = 1.01;
-    var centre = 0.0;
     var step = 1;
     if shape == LEAF_SWORD {
         let hmax = clamp(3.2 + 0.07 * len, 3.6, 5.6) * (1.0 - 0.4 * night);
@@ -2687,21 +2734,25 @@ fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32
             + select(0, 1, tip);
         return vec2<i32>(1, step);
     }
-    // Ribbon.
-    let amp = 0.4 + 1.6 * t * t;
-    centre = amp * sin(f32(pos) * 0.55 + phase);
-    let twist = sin(f32(pos) * 0.9 + phase * 1.7) > 0.55 && t > 0.1 && !tip;
-    half = select(2.0, 2.7, twist);
-    if tip {
-        half = 1.01;
+    // Ribbon: straight, left of the cell's centre at scale 2 (so a texel
+    // covers exactly its width) and centred at scale 4; over its last
+    // quarter it arcs away from a blade beside it (or by chance), a little
+    // further each row.
+    let ahead = (f32(pos) + 1.0 - row) / max(len, 1.0);
+    let bend_t = clamp((ahead - 0.78) / 0.22, 0.0, 1.0);
+    var side = select(-1.0, 1.0, (hash(vec2<i32>(i32(round(me.b * 255.0)), 5)) & 1u) == 0u);
+    if right.x >= 0 && left.x < 0 {
+        side = -1.0;
+    } else if left.x >= 0 && right.x < 0 {
+        side = 1.0;
     }
+    let centre = select(-1.0, 0.0, fine) + side * 2.5 * bend_t * bend_t;
     let d = dx - centre;
     if abs(d) >= half {
         return vec2<i32>(0, 0);
     }
     step = 1 + i32(round(t * 3.5)) + noise;
-    let edge = abs(d) > half - px - 0.01;
-    step += select(0, 1, d < 0.0) - select(0, 1, edge && !tip) + select(0, 1, twist) + select(0, 1, tip);
+    step += select(0, 1, d < 0.01 && !(fine && d > 0.0)) + select(0, 1, tip);
     return vec2<i32>(1, step);
 }
 
@@ -2802,14 +2853,14 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                     }
                 }
             } else {
-                // The petiole: a plain bronze stalk, darker on its right.
-                covered = true;
-                step = 3 - select(0, 1, sub.x == 1);
-                if fine {
-                    // Two quarters wide, lit on its left.
-                    covered = quarter.x == 1 || quarter.x == 2;
-                    step -= select(0, 1, quarter.x == 2);
-                }
+                // The petiole: a thin bronze stalk (a texel at scale 2, two
+                // quarters at scale 4, drawn from the stem ramp so the
+                // colouration leaves it brown), shifted along a diagonal
+                // where it steps a cell sideways (`lean_shift`).
+                let c = select(-1.0, 0.0, fine) + lean_shift(at, me, quarter, len);
+                let dx = select(f32((quarter.x >> 1u) * 2) - 1.0, f32(quarter.x) - 1.5, fine);
+                let along = i32(round(f32(pos) / max(sizes.x, 1.0) * 3.0));
+                return vec2<i32>(select(0, 3, abs(dx - c) < 1.01), 1 + along + select(0, 1, dx < c));
             }
         }
         // Night folding on carpet and epiphyte blades (T6d; a sword narrows in
@@ -3396,8 +3447,10 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
     let step = cover.y;
     // Runners and rhizomes are drawn from the stem's ramp, floating leaves
     // from the leaf's.
+    // A lotus petiole (cover 3) is a bare bronze stalk, drawn from the stem's
+    // ramp and left out of the colouration.
     let ramp = select(
-        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME),
+        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME || cover.x == 3),
         PART_LEAF,
         part == PART_FLOAT || cover.x == 2,
     );
@@ -3408,7 +3461,7 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
         // A stem plant's upper and newest leaves, and its bud, lean towards
         // the species' colouration colour (the sprite's tip ramp) even
         // before the light colours the plant.
-        var amount = plant.g;
+        var amount = select(plant.g, 0.0, cover.x == 3);
         if ramp == PART_LEAF && part != PART_FLOAT
             && textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0 < f32(LEAF_RIBBON) - 0.5 {
             amount = max(amount, TIP_TINT * clamp((f32(shade) - 3.0) / 4.0, 0.0, 1.0));
