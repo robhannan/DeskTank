@@ -167,7 +167,10 @@ impl World {
                 }
                 let i = uy * self.width + ux;
                 let cut = within(dx, dy, 64 * (r * r + r) + 16);
-                if cut == 0 || !self.is_rigid(i) {
+                if cut == 0
+                    || !self.is_rigid(i)
+                    || self.ornament_art(self.cells[i].material).is_some()
+                {
                     continue;
                 }
                 let m = self.masks.get(&i).copied().unwrap_or(FULL_MASK) & !cut;

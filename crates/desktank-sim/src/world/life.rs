@@ -1262,7 +1262,7 @@ impl World {
             self.life.batch = batch;
         }
         // Air-driven prefab devices (DV4 sponge filter, later DV7 prefab bubbler).
-        if !self.devices.is_empty() {
+        if !self.devices.is_empty() || !self.ornament_emitters.is_empty() {
             let floor = self.life.eco.filtration.clog_floor;
             let mut outlets = mem::take(&mut self.life.bubble_outlets);
             outlets.clear();
@@ -1274,11 +1274,22 @@ impl World {
                 let p = f64::from(art.bubble_rate * d.flow_factor_with(floor))
                     / f64::from(super::TICKS_PER_SECOND);
                 for (bx, by) in d.bubble_outlets(art) {
-                    outlets.push((bx, by, p));
+                    if let Some(y) = by.checked_sub(1) {
+                        outlets.push((bx, y, p));
+                    }
                 }
             }
+            if !self.ornament_emitters.is_empty() {
+                let rate = self
+                    .devices
+                    .kinds()
+                    .get(crate::DeviceKind::Bubbler)
+                    .bubble_rate;
+                let p = f64::from(rate) / f64::from(super::TICKS_PER_SECOND);
+                outlets.extend(self.ornament_bubble_cells().map(|(x, y)| (x, y, p)));
+            }
             for &(x, y, p) in &outlets {
-                self.emit_bubble_above(x, y, p, emits, water);
+                self.emit_bubble_at(x, y, p, emits, water);
             }
             self.life.bubble_outlets = outlets;
         }
@@ -1294,15 +1305,18 @@ impl World {
         emits: MaterialId,
         water: MaterialId,
     ) {
-        let Some(above) = self.at(x, y, 0, -1) else {
-            return;
-        };
-        if self.cells[above].material != water || !self.life.chance(p) {
+        if let Some(y) = y.checked_sub(1) {
+            self.emit_bubble_at(x, y, p, emits, water);
+        }
+    }
+
+    fn emit_bubble_at(&mut self, x: usize, y: usize, p: f64, emits: MaterialId, water: MaterialId) {
+        if self.cell(x, y).is_none_or(|c| c.material != water) || !self.life.chance(p) {
             return;
         }
-        self.write_cell(x, y - 1, emits, &mut None);
+        self.write_cell(x, y, emits, &mut None);
         if let Some(air) = self.life.air
-            && let Some(top) = (0..y - 1)
+            && let Some(top) = (0..y)
                 .rev()
                 .find(|&ty| self.cells[ty * self.width + x].material == air)
         {

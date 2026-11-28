@@ -277,6 +277,17 @@ placed and removed whole. All powders fall
 one cell per tick, so "sinks fast" bloodworms differ by density and repose,
 not speed.
 
+Build › Ornaments places a loose rigid prefab centred on the pointer. The
+preview uses its exact starting footprint and turns red if an occupied cell
+would overlap it. The placed ornament has the same collision, finite depth,
+settling and sleep rules as hardscape. Scooping any occupied cell removes the
+whole body. Ornaments use a rigid material definition in `assets/ornaments/`
+with a tight `[ornament]` sprite, colour key and optional
+`bubbler_outlets` in local cell coordinates. Opaque pixels carry their
+colours through rigid-body rotation and save/load. The volcano's outlets
+follow the drawn crater and use the DV7 bubbler's emission rate and rising
+bubble behaviour. Saves store ornaments in the existing body and cell records.
+
 The v1 palette (D2), by where the palette offers it (§2.5; materials
 without a `palette` path, such as air, propagules, eggs and dead plant
 matter, aren't offered):

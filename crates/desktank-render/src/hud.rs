@@ -658,7 +658,12 @@ fn slot_pixel(
                     .filter(|p| p[3] > 0)
                     .map_or(ICON_BG, |p| [p[0], p[1], p[2]]);
             }
-            ICON_BG
+            materials
+                .id(p.material_name())
+                .and_then(|id| materials.get(id))
+                .and_then(|m| m.ornament.as_ref())
+                .and_then(|art| art.icon_pixel(x as usize, y as usize))
+                .unwrap_or(ICON_BG)
         }
         PaletteItem::Tool(t) => {
             let icon = match t {

@@ -6,8 +6,7 @@
 //! `palette = "fish/schooling"` in a species, plant or material TOML. A top
 //! category with a single sub-category is named on its own
 //! (`palette = "water"`). Assets without a `palette` key aren't offered.
-//! The tools and devices sub-categories are filled from code
-//! ([`crate::tools::Tool`], [`crate::Placeable::ALL`]); the rest from the
+//! Tools and devices are filled from code. Other sub-categories use the
 //! assets naming them ([`crate::tools::Tools::palette_tree`]).
 
 use thiserror::Error;
@@ -20,6 +19,8 @@ pub enum Holds {
     Tools,
     /// Placeable devices (filled from code).
     Devices,
+    /// Whole rigid ornaments.
+    Ornaments,
     /// Pourable materials.
     Materials,
     /// Plant species, one item each.
@@ -34,6 +35,7 @@ impl Holds {
         match self {
             Self::Tools => "tools",
             Self::Devices => "devices",
+            Self::Ornaments => "ornaments",
             Self::Materials => "materials",
             Self::Plants => "plants",
             Self::Creatures => "creatures",
@@ -75,6 +77,7 @@ const TREE: &[TopDef] = &[
             sub("substrate", "Substrate", Holds::Materials),
             sub("hardscape", "Hardscape", Holds::Materials),
             sub("devices", "Devices", Holds::Devices),
+            sub("ornaments", "Ornaments", Holds::Ornaments),
         ],
     },
     TopDef {

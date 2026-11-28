@@ -440,11 +440,13 @@ impl Renderer {
         world: &World,
         ghost: Option<(desktank_sim::Device, bool)>,
         plant_ghost: Option<&desktank_sim::PlantGhost>,
+        ornament_ghost: Option<desktank_sim::ornament::OrnamentGhost>,
     ) {
         self.sprite_count = self.atlas.instances_with(
             world,
             ghost,
             plant_ghost,
+            ornament_ghost,
             &mut self.sprite_scratch,
             &mut self.instance_scratch,
         );

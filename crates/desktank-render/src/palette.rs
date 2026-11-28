@@ -47,12 +47,14 @@ pub enum GroundStyle {
     /// Seiryu: grey roughly pitted limestone with dark streaks, soft pale faces
     /// and tan veins (keeps glue tint).
     Seiryu = 14,
+    /// Rigid prefab artwork: use the authored colour for every variant.
+    Ornament = 15,
 }
 
 impl GroundStyle {
     /// Every style with its WGSL constant name (checked by `renderer.rs`).
     #[cfg(test)]
-    pub const ALL: [(&'static str, Self); 14] = [
+    pub const ALL: [(&'static str, Self); 15] = [
         ("STYLE_DEFAULT", Self::Default),
         ("STYLE_WATER", Self::Water),
         ("STYLE_AIR", Self::Air),
@@ -67,6 +69,7 @@ impl GroundStyle {
         ("STYLE_DEVICE", Self::Device),
         ("STYLE_DRAGON_STONE", Self::DragonStone),
         ("STYLE_SEIRYU", Self::Seiryu),
+        ("STYLE_ORNAMENT", Self::Ornament),
     ];
 
     /// Picks the sub-cell style for `m`.
@@ -88,6 +91,7 @@ impl GroundStyle {
             "driftwood" => Self::Driftwood,
             "air_bubble" | "co2_bubble" => Self::Bubble,
             "detritus" | "dead_plant" | "waste" => Self::Detritus,
+            _ if m.ornament.is_some() => Self::Ornament,
             _ if m.class == MovementClass::Liquid && m.density >= DEPTH_TINT_DENSITY => Self::Water,
             _ => Self::Default,
         }
@@ -178,6 +182,10 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
         let (d, w) = (usize::from(device.0), usize::from(water.0));
         columns[d] = columns[w];
     }
+    let ornaments: Vec<_> = materials
+        .iter()
+        .filter_map(|m| Some((m.id, m.ornament.as_ref()?)))
+        .collect();
     let mut out = vec![0; SIDE * SIDE * 4];
     let neon_gravel = materials.id("clown_vomit_gravel");
     for (variant, row) in out.as_chunks_mut::<{ SIDE * 4 }>().0.iter_mut().enumerate() {
@@ -200,6 +208,13 @@ pub fn build(materials: &MaterialTable) -> Vec<u8> {
             // The high bit marks rigid materials for sprite occlusion.
             let flag = styles[material] as u8 | (u8::from(rigid[material]) << 7);
             px.copy_from_slice(&[r, g, b, flag]);
+        }
+        for &(id, art) in &ornaments {
+            #[allow(clippy::cast_possible_truncation)] // variant < 256
+            if let Some(rgb) = art.colour(variant as u8) {
+                let offset = usize::from(id.0) * 4;
+                row[offset..offset + 3].copy_from_slice(&if glued { glue(rgb) } else { rgb });
+            }
         }
         if let Some(id) = neon_gravel {
             // A powder cell carries its variant with it as it falls and slides.

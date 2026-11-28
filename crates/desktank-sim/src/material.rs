@@ -153,12 +153,13 @@ pub struct Material {
     pub colour: [u8; 3],
     /// Rigid materials: how a brush stroke's outline is weathered.
     pub shape: OutlineShape,
-    /// The palette sub-category it is poured from, or `None` if it isn't
-    /// offered for pouring (air, the tissue plants grow, device cells).
+    /// The palette sub-category it is poured or placed from, if offered.
     pub palette: Option<PalettePath>,
     /// Where it sits within its palette sub-category: lower first, and
     /// materials of equal order by ID.
     pub palette_order: u8,
+    /// Prefab art when this material is placed as a whole rigid ornament.
+    pub ornament: Option<crate::ornament::OrnamentArt>,
 }
 
 /// Error loading or validating materials.
@@ -228,6 +229,7 @@ struct MaterialDef {
     palette: Option<String>,
     #[serde(default)]
     palette_order: u8,
+    ornament: Option<crate::ornament::OrnamentDef>,
 }
 
 /// The palette embedded in the binary (SPEC T1, T5, T6). Our own values.
@@ -267,6 +269,7 @@ const BUILTIN: &[&str] = &[
     include_str!("../../../assets/materials/algae.toml"),
     include_str!("../../../assets/materials/dragon_stone.toml"),
     include_str!("../../../assets/materials/seiryu_stone.toml"),
+    include_str!("../../../assets/ornaments/volcano_bubbler.toml"),
 ];
 
 /// All materials, ordered by ID.
@@ -409,15 +412,7 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
     if d.shape != OutlineShape::Round && d.class != MovementClass::Rigid {
         return Err(invalid("shape only applies to rigid"));
     }
-    let palette = d
-        .palette
-        .as_deref()
-        .map(|p| PalettePath::parse(p, Holds::Materials))
-        .transpose()
-        .map_err(|source| MaterialError::Palette {
-            name: d.name.clone(),
-            source,
-        })?;
+    let (palette, ornament) = validate_palette(d)?;
     Ok(Material {
         id: MaterialId(d.id),
         name: d.name.clone(),
@@ -434,7 +429,40 @@ fn validate(d: &MaterialDef, all: &[MaterialDef]) -> Result<Material, MaterialEr
         shape: d.shape,
         palette,
         palette_order: d.palette_order,
+        ornament,
     })
+}
+
+fn validate_palette(
+    d: &MaterialDef,
+) -> Result<(Option<PalettePath>, Option<crate::ornament::OrnamentArt>), MaterialError> {
+    let ornament = if let Some(art) = &d.ornament {
+        Some(
+            art.validate()
+                .filter(|_| d.class == MovementClass::Rigid)
+                .ok_or_else(|| MaterialError::Invalid {
+                    name: d.name.clone(),
+                    reason: "ornaments require rigid material and valid artwork and outlets",
+                })?,
+        )
+    } else {
+        None
+    };
+    let holds = if ornament.is_some() {
+        Holds::Ornaments
+    } else {
+        Holds::Materials
+    };
+    let palette = d
+        .palette
+        .as_deref()
+        .map(|p| PalettePath::parse(p, holds))
+        .transpose()
+        .map_err(|source| MaterialError::Palette {
+            name: d.name.clone(),
+            source,
+        })?;
+    Ok((palette, ornament))
 }
 
 pub(crate) fn parse_colour(s: &str) -> Option<[u8; 3]> {

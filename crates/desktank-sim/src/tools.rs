@@ -334,6 +334,20 @@ impl Tools {
         Some(world.device_placement(kind, x, y, self.flip))
     }
 
+    /// The whole rigid ornament a click would put down at the pointer.
+    #[must_use]
+    pub fn ornament_ghost(&self, world: &World) -> Option<crate::ornament::OrnamentGhost> {
+        let Tool::Place(p) = self.tool else {
+            return None;
+        };
+        if p.device().is_some() {
+            return None;
+        }
+        let material = world.materials().id(p.material_name())?;
+        let (x, y) = self.pointer?;
+        world.ornament_placement(material, x, y)
+    }
+
     /// The palette for `world` as a tree: the top categories in
     /// [`PalettePath::all`] order, each with its non-empty sub-categories
     /// (top categories with none are left out). Tools are scoop, net,
@@ -357,9 +371,18 @@ impl Tools {
                 ]
                 .map(PaletteItem::Tool)
                 .to_vec(),
-                Holds::Devices => Placeable::ALL
+                Holds::Devices | Holds::Ornaments => Placeable::ALL
                     .into_iter()
-                    .filter(|p| materials.id(p.material_name()).is_some())
+                    .filter(|p| match p.device() {
+                        Some(_) => {
+                            path.holds() == Holds::Devices
+                                && materials.id(p.material_name()).is_some()
+                        }
+                        None => materials
+                            .id(p.material_name())
+                            .and_then(|id| materials.get(id))
+                            .is_some_and(|m| m.palette == Some(path)),
+                    })
                     .map(|p| PaletteItem::Tool(Tool::Place(p)))
                     .collect(),
                 Holds::Materials => {
@@ -1071,6 +1094,10 @@ fn scoop(world: &mut World, c: (i64, i64), radius: u32) -> usize {
             let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
                 continue;
             };
+            if let Some(count) = world.remove_ornament_at(x, y) {
+                changed += count;
+                continue;
+            }
             let to = if y < surface { air } else { water };
             if world.cell(x, y).is_some_and(|cell| cell.material != to)
                 && world.set_cell(x, y, to).is_ok()
@@ -1380,7 +1407,10 @@ mod tests {
     fn palette_selects_tools_and_materials() {
         let w = world();
         let items = Tools::palette(&w);
-        let pourable = w.materials().iter().filter(|m| m.palette.is_some());
+        let pourable = w
+            .materials()
+            .iter()
+            .filter(|m| m.palette.is_some_and(|p| p.holds() == Holds::Materials));
         let offered = w.species().iter().filter(|s| s.palette.is_some()).count();
         assert_eq!(
             items.len(),
@@ -1468,6 +1498,7 @@ mod tests {
                     "Place(UnderGravelPanel)",
                 ],
             ),
+            ("build/ornaments", vec!["Place(VolcanoBubbler)"]),
             ("water", vec!["water", "air_bubble", "co2_bubble"]),
             (
                 "food/fish",

@@ -83,13 +83,23 @@ fn palette_matches_the_sim() {
     assert_eq!(palette.len(), Tools::palette(t.tank().world()).len());
     for m in t.tank().world().materials().iter() {
         let listed = palette.contains(&format!("material {}", m.name));
-        assert_eq!(listed, m.palette.is_some(), "{}", m.name);
+        assert_eq!(
+            listed,
+            m.palette.is_some() && m.ornament.is_none(),
+            "{}",
+            m.name
+        );
     }
     for tool in ["scoop", "glue", "net", "inspect", "magnify"] {
         assert!(palette.contains(&format!("tool {tool}")), "{tool}");
     }
     for p in desktank_sim::Placeable::ALL {
-        assert!(palette.contains(&format!("device {}", p.name())));
+        let kind = if p.device().is_some() {
+            "device"
+        } else {
+            "ornament"
+        };
+        assert!(palette.contains(&format!("{kind} {}", p.name())));
     }
     let colours = t.palette_colours();
     assert_eq!(colours.len(), palette.len());
@@ -132,6 +142,10 @@ fn palette_categories_follow_the_sim() {
     assert_eq!(cat("material sand"), "build/substrate\tBuild\tSubstrate");
     assert_eq!(cat("tool net"), "tools\tTools\tTools");
     assert_eq!(cat("device bubbler"), "build/devices\tBuild\tDevices");
+    assert_eq!(
+        cat("ornament volcano_bubbler"),
+        "build/ornaments\tBuild\tOrnaments"
+    );
     assert_eq!(
         cat("device under_gravel_panel"),
         "build/devices\tBuild\tDevices"
@@ -539,6 +553,36 @@ fn devices_are_placed_once_per_click() {
     );
     assert_eq!(t.tank().world().devices().count(), 1);
     assert_eq!(t.material_count("unobtainium"), 0);
+}
+
+#[test]
+fn volcano_places_once_and_secondary_click_scoops_the_whole_ornament() {
+    let mut t = paused();
+    t.select(slot(&t, "ornament volcano_bubbler"));
+    drag(&mut t, 60, 33);
+    let ghost = t.tools.ornament_ghost(t.tank().world()).unwrap();
+    assert!(ghost.fits);
+    let placed = down(&mut t, PRIMARY, 60, 33);
+    assert!(placed > 100);
+    drag(&mut t, 90, 20);
+    t.pointer_up(PRIMARY);
+    assert_eq!(t.material_count("volcano_bubbler"), placed);
+    assert_eq!(t.tank().world().bodies().count(), 1);
+    let art = t
+        .tank()
+        .world()
+        .materials()
+        .get(ghost.material)
+        .unwrap()
+        .ornament
+        .as_ref()
+        .unwrap();
+    let (x, y, _) = art.pixels().next().unwrap();
+    let x = i32::try_from(ghost.origin.0 + x).unwrap();
+    let y = i32::try_from(ghost.origin.1 + y).unwrap();
+    assert_eq!(down(&mut t, SECONDARY, x, y), placed);
+    t.pointer_up(SECONDARY);
+    assert_eq!(t.material_count("volcano_bubbler"), 0);
 }
 
 #[test]
