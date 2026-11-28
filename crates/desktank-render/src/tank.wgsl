@@ -4397,8 +4397,27 @@ fn hidden_by_stem(src: GridSource, depth: f32) -> bool {
 }
 
 // A sprite in front of the body's first occupied band is visible. Test the
-// same outline as ground(), including a partial cell's exposed corners.
+// same outline as ground(), including a partial cell's exposed corners, and
+// an ornament's fine art.
 fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
+    if !hidden_by_rigid_cell(pos, depth) {
+        return false;
+    }
+    if !fine_scale() {
+        return true;
+    }
+    let grid_pos = (pos - view.offset) / view.scale;
+    let cell = floor(grid_pos);
+    let at = vec2<i32>(cell);
+    let t = textureLoad(cells, at, 0);
+    if (material_flags(t) & 127) != STYLE_ORNAMENT {
+        return true;
+    }
+    return ornament_face(at, t, quarter_of(grid_pos, cell)).a != 0.0;
+}
+
+// `hidden_by_rigid` with an ornament's cells whole.
+fn hidden_by_rigid_cell(pos: vec2<f32>, depth: f32) -> bool {
     let grid_pos = (pos - view.offset) / view.scale;
     let cell = floor(grid_pos);
     if any(cell < vec2<f32>(0.0)) || any(cell >= view.grid) {
@@ -4415,9 +4434,6 @@ fn hidden_by_rigid(pos: vec2<f32>, depth: f32) -> bool {
         return false;
     }
     let style = flags & 127;
-    if style == STYLE_ORNAMENT && fine_scale() {
-        return ornament_face(at, t, quarter_of(grid_pos, cell)).a != 0.0;
-    }
     let own = outline_of(t);
     if view.scale < 2.0 || own == 0xffffu || (!is_stone(style) && style != STYLE_DRIFTWOOD) {
         return true;
@@ -4522,7 +4538,7 @@ fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
         discard;
     }
     // A plant ghost's cells show over the plants they stand among.
-    let c = sprite_colour(v, p, v.look.x < 3.5 && hidden_by_leaf(src, v.depth));
+    let c = sprite_colour_without_art(v, p, v.look.x < 3.5 && hidden_by_leaf(src, v.depth));
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
@@ -4544,7 +4560,7 @@ fn fs_sprite_carpets(v: SpriteOut) -> @location(0) vec4<f32> {
         hidden = band_at(src.at) + 0.5 < v.depth
             && texel_hides(plant, carpet_cover(src.at, src.texel, src.quarter, plant));
     }
-    let c = sprite_colour(v, p, hidden);
+    let c = sprite_colour_without_art(v, p, hidden);
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
@@ -4576,7 +4592,7 @@ fn fs_sprite_epiphytes(v: SpriteOut) -> @location(0) vec4<f32> {
                 && plant_opacity(plant.r) > 0.5;
         }
     }
-    let c = sprite_colour(v, p, hidden);
+    let c = sprite_colour_without_art(v, p, hidden);
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
@@ -4591,7 +4607,7 @@ fn fs_sprite_stems(v: SpriteOut) -> @location(0) vec4<f32> {
     if epiphyte_rhizome_pixel(src) {
         discard;
     }
-    let c = sprite_colour(v, p, hidden_by_stem(src, v.depth));
+    let c = sprite_colour_without_art(v, p, hidden_by_stem(src, v.depth));
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
@@ -4617,26 +4633,51 @@ fn sprite_skipped(v: SpriteOut, p: vec2<f32>) -> bool {
 // plant covers it, before the front film and encoding (straight alpha).
 fn sprite_colour(v: SpriteOut, p: vec2<f32>, hidden: bool) -> vec4<f32> {
     if v.look.x > 3.5 {
-        // Placement ghosts are see-through over everything and red where
-        // they don't fit. The glow slot carries the original cell colour.
-        var rgb = v.glow.rgb;
-        if v.look.x > 4.5 && fine_scale() {
-            let quarter = vec2<i32>(clamp(floor(v.local * 4.0 / v.frame.zw), vec2<f32>(0.0), vec2<f32>(3.0)));
-            let art = ornament_sample(i32(v.depth), vec2<i32>(v.frame.xy) * 4 + quarter);
-            if art.a == 0.0 {
-                discard;
-            }
-            if art.a > 0.0 {
-                rgb = art.rgb;
-            }
-        }
-        let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
-        return vec4<f32>(min(rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint, 0.55);
+        return cell_ghost(v, ornament_ghost_rgb(v));
     }
+    return sprite_texel_colour(v, p, hidden || (v.look.x < 2.5 && hidden_by_rigid(v.pos.xy, v.depth)));
+}
+
+// `sprite_colour` without the fine ornament art, for the passes that draw
+// sprites over plant pixels: Chromium 68's SwiftShader has no registers left
+// there for it (notes: web-and-webos). Only plant pixels over an ornament or
+// its ghost lose the art.
+fn sprite_colour_without_art(v: SpriteOut, p: vec2<f32>, hidden: bool) -> vec4<f32> {
+    if v.look.x > 3.5 {
+        return cell_ghost(v, v.glow.rgb);
+    }
+    return sprite_texel_colour(v, p, hidden || (v.look.x < 2.5 && hidden_by_rigid_cell(v.pos.xy, v.depth)));
+}
+
+// One cell of a placement ghost: see-through over everything and red where
+// it doesn't fit.
+fn cell_ghost(v: SpriteOut, rgb: vec3<f32>) -> vec4<f32> {
+    let tint = select(vec3<f32>(1.0), vec3<f32>(1.0, 0.35, 0.3), v.look.y > 0.5);
+    return vec4<f32>(min(rgb * 1.4 + 0.08, vec3<f32>(1.0)) * tint, 0.55);
+}
+
+// A ghost cell's colour: the glow slot carries the cell's palette colour, and
+// an ornament's ghost at fine scales shows (and is cut to) its art.
+fn ornament_ghost_rgb(v: SpriteOut) -> vec3<f32> {
+    if v.look.x > 4.5 && fine_scale() {
+        let quarter = vec2<i32>(clamp(floor(v.local * 4.0 / v.frame.zw), vec2<f32>(0.0), vec2<f32>(3.0)));
+        let art = ornament_sample(i32(v.depth), vec2<i32>(v.frame.xy) * 4 + quarter);
+        if art.a == 0.0 {
+            discard;
+        }
+        if art.a > 0.0 {
+            return art.rgb;
+        }
+    }
+    return v.glow.rgb;
+}
+
+// A creature's or device's colour, `covered` if a plant or rigid body is in
+// front of it.
+fn sprite_texel_colour(v: SpriteOut, p: vec2<f32>, covered: bool) -> vec4<f32> {
     let texel = vec2<i32>(v.frame.xy + p);
     let t = frame_texel(v.frame, p);
     let k = v.glow.w;
-    let covered = hidden || (v.look.x < 2.5 && hidden_by_rigid(v.pos.xy, v.depth));
     if t.a < 0.5 {
         // Only a glowing creature at night draws past its texels: the halo.
         if k <= 0.0 || covered {
