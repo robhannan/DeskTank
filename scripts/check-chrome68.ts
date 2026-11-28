@@ -218,6 +218,8 @@ try {
     ["plant_epiphytes", "plant_epiphytes_x4"],
     ["plant_epiphytes_mature", "plant_epiphytes_mature_x4"],
     ["plant_epiphytes_mixed", "plant_epiphytes_mixed_x4"],
+    ["plant_carpets", "plant_carpets_x4"],
+    ["plant_carpets_mixed", "plant_carpets_mixed_x4"],
   ]) {
     const toml = readFileSync(path.join(root, "crates", "desktank", "tests", "scenes", `${scene}.toml`), "utf8");
     await cdp.eval(`window.desktank.loadScene(${JSON.stringify(toml)}, 7, 640, 360)`);

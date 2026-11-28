@@ -1489,6 +1489,191 @@ mod tests {
         write("contact", &sheet, panel_h * 2 + gap);
     }
 
+    /// `CARPET_SHOTS=before` (or `after`) captures, per carpet species, the
+    /// pane sprite and a mature carpet patch (three plantings a spacing
+    /// apart) at tank scales 2 and 4, a contact sheet of both species, and
+    /// close-ups of the patch at scale 4.
+    #[test]
+    fn writes_carpet_before_after_on_request() {
+        use desktank_sim::{Brush, PlantStage, Rect, World, WorldConfig};
+
+        let Ok(prefix) = std::env::var("CARPET_SHOTS") else {
+            return;
+        };
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let gpu = pollster::block_on(crate::Gpu::new(
+            &instance,
+            None,
+            crate::GpuOptions::default(),
+        ))
+        .expect("GPU for carpet shots");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/carpet-before-after");
+        std::fs::create_dir_all(&dir).unwrap();
+        let species = table();
+        let (cols, rows, bed) = (48_usize, 16_usize, 11_usize);
+        let (zoom, gap) = (4, 12);
+        let (panel_w, panel_h) = (cols * 2 * zoom, rows * 2 * zoom);
+        let width = panel_w * 3 + gap * 2;
+        let bg = crate::hud::BACKGROUND;
+        let blank = |width: usize, height: usize| {
+            (0..width * height)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect::<Vec<_>>()
+        };
+        let write = |name: &str, data: &[u8], width: usize, height: usize| {
+            std::fs::write(
+                dir.join(format!("{prefix}-{name}.png")),
+                crate::testing::png(
+                    data,
+                    (
+                        u32::try_from(width).unwrap(),
+                        u32::try_from(height).unwrap(),
+                    ),
+                ),
+            )
+            .unwrap();
+        };
+        let names = ["dwarf_hairgrass", "monte_carlo"];
+        let carpet_ticks: usize = std::env::var("CARPET_TICKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9000);
+        let mut sheet = blank(width, panel_h * names.len() + gap);
+        for (row, name) in names.into_iter().enumerate() {
+            let mut world = World::new(
+                WorldConfig {
+                    width: cols,
+                    height: rows,
+                    seed: 7,
+                    water_level: 1.0,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            let soil = world.materials().id("aquasoil").unwrap();
+            world
+                .fill_rect(
+                    Rect {
+                        x0: 0,
+                        y0: bed,
+                        x1: cols,
+                        y1: rows,
+                    },
+                    soil,
+                    Brush::Replace,
+                )
+                .unwrap();
+            let id = species.id(name).unwrap();
+            for dx in [-10_i64, 0, 10] {
+                let _ = world.place_plant(
+                    id,
+                    PlantStage::Mature,
+                    (cols / 2) as i64 + dx,
+                    bed as i64 - 1,
+                    false,
+                );
+            }
+            // Runners carpet the bed between the plantings.
+            for _ in 0..carpet_ticks {
+                world.tick();
+            }
+            let mut tank = crate::Tank::new(world, crate::TankConfig::default());
+            tank.set_time_of_day(12 * 60);
+            // The pane's baseline is the substrate's top.
+            let ((sw, sh), sprite) = build(species.get(id).unwrap());
+            let mut image = blank(width, panel_h);
+            let stamp = |image: &mut Vec<u8>, x: usize, y: usize, scale: usize, pixel: &[u8]| {
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let i = ((y + dy) * width + x + dx) * 4;
+                        image[i..i + 4].copy_from_slice(pixel);
+                    }
+                }
+            };
+            let top = (bed * 2 * zoom).saturating_sub((sh - 4) * zoom);
+            for (i, pixel) in sprite.iter().enumerate().filter(|(_, p)| p[3] == 255) {
+                stamp(
+                    &mut image,
+                    (panel_w - sw * zoom) / 2 + i % sw * zoom,
+                    top + i / sw * zoom,
+                    zoom,
+                    pixel,
+                );
+            }
+            let mut close = Vec::new();
+            for (panel, scale) in [2, 4].into_iter().enumerate() {
+                let (w, h) = (cols * scale, rows * scale);
+                let pixels = tank.capture(&gpu, (w as u32, h as u32)).unwrap();
+                let k = zoom * 2 / scale;
+                for (i, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
+                    stamp(
+                        &mut image,
+                        (panel + 1) * (panel_w + gap) + i % w * k,
+                        i / w * k,
+                        k,
+                        pixel,
+                    );
+                }
+                if scale == 4 {
+                    close = pixels;
+                }
+            }
+            write(name, &image, width, panel_h);
+            let begin = row * (panel_h + gap) * width * 4;
+            sheet[begin..begin + image.len()].copy_from_slice(&image);
+            // The pane sprite alone, enlarged 12 times.
+            let mut big = blank(sw * 12, sh * 12);
+            for (i, pixel) in sprite.iter().enumerate().filter(|(_, p)| p[3] == 255) {
+                for dy in 0..12 {
+                    for dx in 0..12 {
+                        let o = ((i / sw * 12 + dy) * sw * 12 + i % sw * 12 + dx) * 4;
+                        big[o..o + 4].copy_from_slice(pixel);
+                    }
+                }
+            }
+            std::fs::write(
+                dir.join(format!("{prefix}-{name}-sprite.png")),
+                crate::testing::png(
+                    &big,
+                    (
+                        u32::try_from(sw * 12).unwrap(),
+                        u32::try_from(sh * 12).unwrap(),
+                    ),
+                ),
+            )
+            .unwrap();
+            // The middle of the patch at scale 4, enlarged 12 times.
+            let (cw, ch, cz) = (24 * 4, (rows - 4) * 4, 12);
+            let (x0, y0) = ((cols - 24) * 2, 4 * 4);
+            let mut big = blank(cw * cz, ch * cz);
+            for y in 0..ch {
+                for x in 0..cw {
+                    let i = ((y0 + y) * cols * 4 + x0 + x) * 4;
+                    for dy in 0..cz {
+                        for dx in 0..cz {
+                            let o = ((y * cz + dy) * cw * cz + x * cz + dx) * 4;
+                            big[o..o + 4].copy_from_slice(&close[i..i + 4]);
+                        }
+                    }
+                }
+            }
+            std::fs::write(
+                dir.join(format!("{prefix}-{name}-close.png")),
+                crate::testing::png(
+                    &big,
+                    (
+                        u32::try_from(cw * cz).unwrap(),
+                        u32::try_from(ch * cz).unwrap(),
+                    ),
+                ),
+            )
+            .unwrap();
+        }
+        write("contact", &sheet, width, panel_h * names.len() + gap);
+    }
+
     /// Writes the sprites as PNGs to `target/shots/plant-*.png` when
     /// `CARD_SHOTS` is set, enlarged eight times on the card's background.
     #[test]

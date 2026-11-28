@@ -208,6 +208,9 @@ const LEAF_FEATHER: i32 = 3;
 // epiphyte's, java fern's, keep their own art). Ribbons are always the thin
 // strap.
 const ROSETTE_FLAG: i32 = 128;
+// Set in a carpet species' shapes texel's w: its grass tufts and pads draw
+// their own art (`carpet_cover`).
+const CARPET_FLAG: i32 = 32;
 const LEAF_RIBBON: i32 = 4;
 const LEAF_SWORD: i32 = 5;
 const LEAF_GRASS: i32 = 6;
@@ -714,11 +717,31 @@ fn fs_leaves(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         discard;
     }
     let src = plant_source(pos.xy);
-    if src.part < 0 || !is_leafy(src.part) || epiphyte_grid_pixel((pos.xy - view.offset) / view.scale, src) {
+    if src.part < 0 || !is_leafy(src.part) || carpet_leaf(src)
+        || epiphyte_grid_pixel((pos.xy - view.offset) / view.scale, src) {
         discard;
     }
     let band = band_at(src.at);
-    return plant_pass_colour(pos.xy, src, leaf_texel(PlantArt(src, vec2<i32>(-1, 0)), band), band);
+    return plant_pass_colour(pos.xy, src, plain_leaf_texel(src, band), band);
+}
+
+// Pass 4 (also only with carpets): their blades and pads, which fs_leaves
+// leaves out. A carpet leaf is drawn in its own cell, so this is the
+// one-pass grid's art for those pixels.
+@fragment
+fn fs_carpets(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    if outside_lens(pos.xy) {
+        discard;
+    }
+    let src = plant_source(pos.xy);
+    if !carpet_leaf(src) {
+        discard;
+    }
+    let band = band_at(src.at);
+    let plant = plant_of(src.texel);
+    return plant_pass_colour(
+        pos.xy, src, plant_colour(plant, PART_LEAF, carpet_cover(src.at, src.texel, src.quarter, plant), band), band,
+    );
 }
 
 // Pass 4, only with epiphytes: their blades over everything the plant
@@ -2622,7 +2645,28 @@ fn leaf_art_cover(art: PlantArt, plant: vec4<f32>) -> vec2<i32> {
         return art.cover;
     }
     let src = art.src;
+    if src.part == PART_LEAF && carpet_species(plant) {
+        return carpet_cover(src.at, src.texel, src.quarter, plant);
+    }
     return leaf_cover(src.at, src.texel, src.part, src.quarter, plant);
+}
+
+// A carpet leaf's art is drawn by its own split passes (`fs_carpets`,
+// `fs_sprite_carpets`), so Chrome 68's SwiftShader doesn't compile it with
+// the other leaf shapes.
+fn carpet_species(plant: vec4<f32>) -> bool {
+    let species = i32(round(plant.a * 255.0));
+    return (i32(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).a * 255.0)) & CARPET_FLAG) != 0;
+}
+
+fn carpet_leaf(src: GridSource) -> bool {
+    return src.part == PART_LEAF && carpet_species(plant_of(src.texel));
+}
+
+// Leaves without the carpets' art (the split grid's `fs_leaves`).
+fn plain_leaf_texel(src: GridSource, band: f32) -> vec4<f32> {
+    let plant = plant_of(src.texel);
+    return plant_colour(plant, src.part, leaf_cover(src.at, src.texel, src.part, src.quarter, plant), band);
 }
 
 fn stem_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
@@ -2891,6 +2935,96 @@ fn wide_blade_cover(
     return vec2<i32>(1, step);
 }
 
+// A carpet leaf cell's texel (cover x: 1 or 0, shade y), from the pane
+// sprite's look. Grass is a tuft of fine blades: a tall one, and a short one
+// beside it that leans a texel out per cell, dark at the base and pale at the
+// tips. Pads are a low mat of round leaves, lit on top and shaded beneath,
+// on thin stalks. A cell is `n` texels square (2 at scale 2, 4 at scale 4):
+// `c` and `r` are the texel's column and row from the top, `hq` its height
+// in texels above the crown.
+fn carpet_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
+    let species = i32(round(plant.a * 255.0));
+    let pad = i32(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0)) == LEAF_PAD;
+    let len = max(textureLoad(plant_species, vec2<i32>(SIZES_COLUMN, species), 0).z * 255.0, 1.0);
+    let pos = position_of(me);
+    let fine = fine_scale();
+    let noise = noise_step(me);
+    // The blade's tip: no cell of the plant follows it up or beside.
+    let next = pos + 1;
+    let up = kin(at, vec2<i32>(0, -1), me);
+    let left = kin(at, vec2<i32>(-1, 0), me);
+    let right = kin(at, vec2<i32>(1, 0), me);
+    let tip = !((up.x == PART_LEAF && up.y == next) || (left.x == PART_LEAF && left.y == next)
+        || (right.x == PART_LEAF && right.y == next));
+    let n = select(2, 4, fine);
+    let c = select(quarter.x / 2, quarter.x, fine);
+    let r = select(quarter.y / 2, quarter.y, fine);
+    let h = hash(vec2<i32>(at.x, 17));
+    let a = i32(h & 1u);
+    let night = view.daylight.w;
+    if pad {
+        // The mat's cells alternate sides: a pad over a stalk.
+        let o = a;
+        let stalk_c = select(1 - o, 1 + o, fine);
+        var cover = 0;
+        var step = noise;
+        if tip {
+            // The leaf's crown: lit, rounded, dark beneath.
+            let lit = r == 0;
+            if fine {
+                cover = select(0, 1, (lit && c >= 1 && c <= 2) || r == 1 || r == 2);
+                if r == 3 && c == stalk_c {
+                    return vec2<i32>(3 + 4 * LAYER_BARE, 2);
+                }
+                step += select(select(4, 6, r == 1), 7, lit) + select(0, 1, r == 1 && c == 1 + o);
+            } else {
+                cover = 1;
+                step += select(4, 7, lit);
+            }
+            if night >= 0.6 && c == n - 1 {
+                cover = 0;
+            }
+        } else if fine {
+            // Pads overlap down the mat: a lit rim, a body, a dark underside
+            // and a gap where the stalk shows.
+            if r == 3 {
+                if c == stalk_c && view.scale >= 2.0 {
+                    return vec2<i32>(3 + 4 * LAYER_BARE, 3);
+                }
+                cover = select(0, 1, (c + o) % 2 == 1);
+                step += 2;
+            } else {
+                cover = select(0, 1, r >= 1 || (c >= 1 + o - 1 && c <= o + 2));
+                step += select(select(5, 4, r == 1), 3, r == 2) + select(0, 1, r == 0);
+            }
+        } else {
+            if r == 1 && c == stalk_c && view.scale >= 2.0 {
+                return vec2<i32>(3 + 4 * LAYER_BARE, 3);
+            }
+            cover = select(0, 1, r == 0 || c == o);
+            step += select(2, 5, r == 0);
+        }
+        return vec2<i32>(cover, step);
+    }
+    // Grass: a tall blade at `cc` and a short one at `cl`, which leans one
+    // texel further out each cell (and leaves the cell after one or two).
+    let cc = a + (n - 2) / 2;
+    let cl = n - 1 - cc;
+    let dir = select(-1, 1, cl > cc);
+    let hq = pos * n + (n - 1 - r);
+    let lean = cl + dir * max((hq - n) / n, 0);
+    // The tall blade's top varies from column to column.
+    let top = select(0, i32((h >> 2u) & 3u) % n, tip);
+    let body = c == cc && r >= top;
+    let splay = c == lean && night < 0.75 && (!tip || r > top);
+    let base = pos == 1 && r >= n - 2 && (c == cc || c == cl);
+    let t = f32(hq) / (len * f32(n));
+    let end = tip && r == top;
+    let step = 2 + i32(round(5.0 * t)) + noise + select(0, 1, end) - select(0, 1, splay && !body)
+        - select(0, 2, base && !body);
+    return vec2<i32>(select(0, 1, body || splay || base), step);
+}
+
 // Whether a leafy part's texel is covered (x: 1 or 0) and its ramp shade
 // before clamping (y), from the species' leaf shape.
 fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
@@ -2926,17 +3060,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         if broad {
             return wide_blade_cover(at, me, quarter, shape, sizes.z, tip, shift, vec2<i32>(left.x, right.x));
         }
-        if shape == LEAF_GRASS {
-            // One texel wide, the tip a texel lighter.
-            covered = sub.x == 0;
-            step += select(0, 1, tip);
-            if fine {
-                // A hair-thin blade with a shorter, darker one beside it.
-                let second = quarter.x == 3 && (!tip || quarter.y >= 2);
-                covered = quarter.x == 1 || second;
-                step -= select(0, 2, second);
-            }
-        } else if shape == LEAF_PAD {
+        if shape == LEAF_PAD {
             // A short stalk to a round pad, its lower rim darker.
             if tip {
                 covered = true;
@@ -3027,8 +3151,6 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
         if night > 0.01 {
             if fine {
                 if shape == LEAF_PAD && night >= 0.6 && tip && (quarter.x == 3 || quarter.y == 3) {
-                    covered = false;
-                } else if shape == LEAF_GRASS && night >= 0.75 && quarter.x == 3 {
                     covered = false;
                 }
             } else {
@@ -3295,6 +3417,11 @@ fn stem_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             let hair = !down && (hash(at) & 3u) == 0u && quarter.x == 2 && quarter.y == 2;
             covered = quarter.y <= 1 || (quarter.x == 1 && down) || hair;
             step += select(0, 1, quarter.y == 0) - select(0, 2, hair);
+        }
+        if (shapes.w & CARPET_FLAG) != 0 {
+            // A carpet's runner is pale like its pane sprite's (the root
+            // ramp, `plant_colour`), not the leaf-green stem's.
+            return vec2<i32>(select(0, 1 + 4 * LAYER_BARE, covered || view.scale < 2.0), 5 + step - noise_step(me));
         }
     } else if part == PART_STEM {
         let shape = shapes.y;
@@ -3889,7 +4016,11 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
     let kind = cover.x & 3;
     let layer = cover.x >> 2u;
     let ramp = select(
-        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME || kind == 3),
+        select(
+            select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME || kind == 3),
+            PART_ROOT,
+            cover.x == 1 + 4 * LAYER_BARE,
+        ),
         PART_LEAF,
         part == PART_FLOAT || kind == 2,
     );
@@ -3939,8 +4070,11 @@ fn plant_opacity(health: f32) -> f32 {
 fn plant_shadow_of(me: vec4<f32>, part: i32, band: f32) -> vec3<f32> {
     let plant = textureLoad(plant_tints, vec2<i32>(round(me.ba * 255.0)), 0);
     let species = i32(round(plant.a * 255.0));
+    // A carpet's runner is drawn from the root ramp (`stem_cover`).
+    let carpet_runner = part == PART_RUNNER
+        && (i32(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).a * 255.0)) & CARPET_FLAG) != 0;
     let ramp = select(
-        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME),
+        select(select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME), PART_ROOT, carpet_runner),
         PART_LEAF,
         part == PART_FLOAT,
     );
@@ -4179,6 +4313,17 @@ fn epiphyte_sprite_pixel(grid_pos: vec2<f32>, src: GridSource) -> bool {
     return src.part < 0 && (src.swayed_away || is_water(vec2<i32>(floor(grid_pos))));
 }
 
+// `epiphyte_sprite_pixel` or `carpet_leaf`, from one read of the species'
+// shapes (`fs_sprite_leaves` is close to Chrome 68's register limit).
+fn other_sprite_pixel(grid_pos: vec2<f32>, src: GridSource) -> bool {
+    if src.part == PART_LEAF {
+        let species = i32(round(plant_of(src.texel).a * 255.0));
+        let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
+        return (shapes.w & CARPET_FLAG) != 0 || (in_epiphyte_area(grid_pos) && epiphyte_shape(shapes));
+    }
+    return epiphyte_sprite_pixel(grid_pos, src);
+}
+
 // The grid pixels the epiphyte pass draws: the sprite pixels, and the
 // rhizome, which front leaves overlap.
 fn epiphyte_grid_pixel(grid_pos: vec2<f32>, src: GridSource) -> bool {
@@ -4331,11 +4476,33 @@ fn fs_sprite_leaves(v: SpriteOut) -> @location(0) vec4<f32> {
     }
     let grid_pos = (v.pos.xy - view.offset) / view.scale;
     let src = grid_plant_source(grid_pos);
-    if epiphyte_sprite_pixel(grid_pos, src) {
+    if other_sprite_pixel(grid_pos, src) {
         discard;
     }
     // A plant ghost's cells show over the plants they stand among.
     let c = sprite_colour(v, p, v.look.x < 3.5 && hidden_by_leaf(src, v.depth));
+    return vec4<f32>(out(c.rgb).rgb, c.a);
+}
+
+// Sprites over the carpets' pixels, hidden by their blades and pads
+// (`fs_sprite_leaves` leaves them out).
+@fragment
+fn fs_sprite_carpets(v: SpriteOut) -> @location(0) vec4<f32> {
+    let p = sprite_texel(v);
+    if sprite_skipped(v, p) {
+        discard;
+    }
+    let src = grid_plant_source((v.pos.xy - view.offset) / view.scale);
+    if !carpet_leaf(src) {
+        discard;
+    }
+    var hidden = false;
+    if v.look.x < 3.5 {
+        let plant = plant_of(src.texel);
+        hidden = band_at(src.at) + 0.5 < v.depth
+            && texel_hides(plant, carpet_cover(src.at, src.texel, src.quarter, plant));
+    }
+    let c = sprite_colour(v, p, hidden);
     return vec4<f32>(out(c.rgb).rgb, c.a);
 }
 
