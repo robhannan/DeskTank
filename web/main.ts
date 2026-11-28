@@ -115,9 +115,8 @@ const build = document.documentElement.dataset.build ?? "";
 // build (a 1080p webOS 5 TV reports 2, which would draw a 4K canvas on its
 // small GPU), else the display's own.
 const dprCap = ((v) => (v > 0 ? v : build === "webos" ? 1 : Infinity))(Number(params.get("dpr")));
-// Draw the grid in more passes with smaller shaders (?grid=split or
-// ?grid=single, else split on the webOS build): Chrome 68's SwiftShader, and
-// it seems the TV's driver, can't compile the one-pass shaders.
+// Override the backend default (?grid=split or ?grid=single). The webOS
+// build defaults to split even on hardware WebGL2.
 const splitGrid: boolean | undefined = params.has("grid")
   ? params.get("grid") === "split"
   : build === "webos"
@@ -396,7 +395,8 @@ function showGpuError() {
   gpuErrorShown = true;
   const brief = err.split("\n").slice(0, 6).join("\n");
   note(`GPU error: ${brief}`);
-  showError(`DeskTank's GPU renderer failed${splitGrid ? "" : " (try ?grid=split)"}:\n${brief}`);
+  const usingSplit = splitGrid ?? backend === "webgpu";
+  showError(`DeskTank's GPU renderer failed${usingSplit ? "" : " (try ?grid=split)"}:\n${brief}`);
 }
 
 // Element.replaceChildren is Chrome 86+; the webOS build runs on Chrome 68.
