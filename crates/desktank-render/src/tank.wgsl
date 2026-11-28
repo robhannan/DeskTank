@@ -314,32 +314,29 @@ fn quarter_of(g: vec2<f32>, cell: vec2<f32>) -> vec2<i32> {
 
 // Rosette blades (sword and ribbon) are broader than their one-cell path: a
 // water pixel beside a blade cell draws that blade's wing, so a blade's
-// texels reach a cell either side of its own. The source is the blade cell
-// with its quarter unclamped (below 0 left of it, above 3 right of it).
-// Only the nearer side is tried, so this costs two cell reads, and none
-// where no rosette is in the tank.
-fn wing_source(g: vec2<f32>, swaying: bool) -> GridSource {
-    let none = GridSource(vec2<i32>(0), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
+// texels reach a cell either side of its own. The result is that blade cell
+// (xy) and the texel's quarter in it (zw, with z unclamped: below 0 left of
+// the cell, above 3 right of it), or w = -1 for none. The nearer side is
+// tried first, then the other: two cell reads, and none where no rosette is
+// in the tank. (A vec4, not a GridSource: it keeps SwiftShader's registers
+// down.)
+fn wing_source(g: vec2<f32>) -> vec4<i32> {
     let cell = vec2<i32>(floor(g));
     let right = fract(g.x) >= 0.5;
     for (var i = 0; i < 2; i++) {
-        let d = select(-1, 1, right == (i == 0));
-        let nb = cell + vec2<i32>(d, 0);
-        if !inside(nb) {
-            continue;
-        }
-        let t = textureLoad(cells, nb, 0);
-        if round(t.r * 255.0) != view.plant_parts.z {
-            continue;
-        }
-        let species = i32(round(plant_of(t).a * 255.0));
-        let shape = i32(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0));
-        if shape == LEAF_SWORD || shape == LEAF_RIBBON {
-            let q = vec2<i32>(i32(floor((g.x - f32(nb.x)) * 4.0)), clamp(i32(floor((g.y - f32(nb.y)) * 4.0)), 0, 3));
-            return GridSource(nb, t, PART_LEAF, q, !swaying, false);
+        let nb = cell + vec2<i32>(select(-1, 1, right == (i == 0)), 0);
+        if inside(nb) {
+            let t = textureLoad(cells, nb, 0);
+            if round(t.r * 255.0) == view.plant_parts.z {
+                let shape = textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, i32(round(plant_of(t).a * 255.0))), 0).x * 255.0;
+                if abs(shape - 4.5) < 1.0 {
+                    let q = (g - vec2<f32>(nb)) * 4.0;
+                    return vec4<i32>(nb, i32(floor(q.x)), clamp(i32(floor(q.y)), 0, 3));
+                }
+            }
         }
     }
-    return none;
+    return vec4<i32>(0, 0, 0, -1);
 }
 
 fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: vec2<i32>) -> GridSource {
@@ -348,7 +345,12 @@ fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: ve
     let sway_on = (i32(view.target_size.w + 0.5) & 1) != 0;
     let wings = view.target_size.w > 1.5 && view.scale >= 2.0;
     let self_sways = sway_on && part >= 0 && is_swaying_part(part, texel);
-    let water = wings && part < 0 && effective_style(at, style_of(texel)) == STYLE_WATER;
+    let water = part < 0 && effective_style(at, style_of(texel)) == STYLE_WATER;
+    // Whether to look for a blade's wing, and where (one call: every call
+    // site costs Chromium 68's SwiftShader its own registers).
+    var want_wing = false;
+    var wing_at = grid_pos;
+    var wing_sways = false;
     if sway_on && (part < 0 || self_sways) {
         let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
         let s_cell = floor(s_grid);
@@ -361,25 +363,26 @@ fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: ve
             s_part = part_of(s_texel);
             s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
         }
-        if s_sways && (self_sways || effective_style(at, style_of(texel)) == STYLE_WATER) {
+        if s_sways && (self_sways || water) {
             src = GridSource(s_at, s_texel, s_part, quarter_of(s_grid, s_cell), !self_sways, false);
         } else {
-            // No blade in the swayed cell: perhaps the wing of one beside it.
-            var wing = GridSource(vec2<i32>(0), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
-            if wings && s_part < 0 && (water || self_sways) {
-                wing = wing_source(s_grid, self_sways);
-            }
-            if wing.part >= 0 {
-                src = wing;
-            } else if self_sways {
+            // No blade in the swayed cell: perhaps the wing of one beside it,
+            // else (for a blade swayed away) what is behind.
+            want_wing = wings && s_part < 0 && (water || self_sways);
+            wing_at = s_grid;
+            wing_sways = self_sways;
+            if self_sways {
                 src.part = -1;
                 src.swayed_away = true;
             }
         }
-    } else if water {
-        src = wing_source(grid_pos, false);
-        if src.part < 0 {
-            src = GridSource(at, texel, part, quarter, false, false);
+    } else if wings && water {
+        want_wing = true;
+    }
+    if want_wing {
+        let wing = wing_source(wing_at);
+        if wing.w >= 0 {
+            src = GridSource(wing.xy, textureLoad(cells, wing.xy, 0), PART_LEAF, wing.zw, !wing_sways, false);
         }
     }
     return src;
@@ -2637,35 +2640,34 @@ fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
 // steps to share one row, and the blade's path runs diagonally across the
 // pair, a texel a texel-row, instead of jogging a whole cell. Cells whose
 // next (or previous) cell is beside them but past `limit` (a petiole's tip
-// and the pad it spreads) don't step. Four cell reads, O(1).
-fn lean_shift(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, limit: i32) -> f32 {
-    let pos = position_of(me);
-    let up = kin(at, vec2<i32>(0, -1), me);
-    let down = kin(at, vec2<i32>(0, 1), me);
-    let left = kin(at, vec2<i32>(-1, 0), me);
-    let right = kin(at, vec2<i32>(1, 0), me);
-    let leaves_r = right.x == PART_LEAF && right.y == pos + 1 && pos < limit;
-    let leaves_l = left.x == PART_LEAF && left.y == pos + 1 && pos < limit;
-    let from_l = left.x == PART_LEAF && left.y == pos - 1 && pos <= limit;
-    let from_r = right.x == PART_LEAF && right.y == pos - 1 && pos <= limit;
+// and the pad it spreads) don't step. `up`, `down`, `left` and `right` are
+// the cell's `kin` neighbours (read once by the caller: every call site
+// costs Chromium 68's SwiftShader its own registers).
+fn lean_shift(
+    pos: i32,
+    quarter: vec2<i32>,
+    limit: i32,
+    up: vec2<i32>,
+    down: vec2<i32>,
+    left: vec2<i32>,
+    right: vec2<i32>,
+) -> f32 {
     let rises = up.x == PART_LEAF && up.y == pos + 1;
     let rose = down.x == PART_LEAF && down.y == pos - 1;
     // Texel rows up from the cell's bottom, plus one, in quarters.
     let fine = fine_scale();
     let climb = f32(select(2 - quarter.y / 2, 4 - quarter.y, fine)) * select(2.0, 1.0, fine);
-    if leaves_r && !rises {
-        return climb;
+    var shift = 0.0;
+    if right.x == PART_LEAF && right.y == pos + 1 && pos < limit && !rises {
+        shift = climb;
+    } else if left.x == PART_LEAF && left.y == pos + 1 && pos < limit && !rises {
+        shift = -climb;
+    } else if left.x == PART_LEAF && left.y == pos - 1 && pos <= limit && !rose {
+        shift = climb - 4.0;
+    } else if right.x == PART_LEAF && right.y == pos - 1 && pos <= limit && !rose {
+        shift = 4.0 - climb;
     }
-    if leaves_l && !rises {
-        return -climb;
-    }
-    if from_l && !rose {
-        return climb - 4.0;
-    }
-    if from_r && !rose {
-        return 4.0 - climb;
-    }
-    return 0.0;
+    return shift;
 }
 
 // A sword or ribbon blade's texel (cover x: 1 or 0, shade y), drawn as a
@@ -2677,16 +2679,19 @@ fn lean_shift(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, limit: i32) -> f
 // lateral veins and a darker rim, pointed at its tip; a ribbon is a straight
 // strap two quarters wide (a texel at scale 2), paler on its left, that
 // arcs sideways only near its tip.
-fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32, len: f32) -> vec2<i32> {
+fn wide_blade_cover(
+    at: vec2<i32>,
+    me: vec4<f32>,
+    quarter: vec2<i32>,
+    shape: i32,
+    len: f32,
+    tip: bool,
+    shift: f32,
+    beside: vec2<i32>,
+) -> vec2<i32> {
     let fine = fine_scale();
     let pos = position_of(me);
     let t = clamp(f32(pos) / max(len, 1.0), 0.0, 1.0);
-    let up = kin(at, vec2<i32>(0, -1), me);
-    let left = kin(at, vec2<i32>(-1, 0), me);
-    let right = kin(at, vec2<i32>(1, 0), me);
-    let next = pos + 1;
-    let tip = !((up.x == PART_LEAF && up.y == next) || (left.x == PART_LEAF && left.y == next)
-        || (right.x == PART_LEAF && right.y == next));
     // The texel's centre across the cell (quarters from the cell's centre),
     // the width of a texel, and how far down the cell it is (0 top, 1 bottom).
     var dx = f32((quarter.x >> 1u) * 2) - 1.0;
@@ -2697,7 +2702,7 @@ fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32
         px = 1.0;
         row = f32(quarter.y) / 3.0;
     }
-    dx -= lean_shift(at, me, quarter, 255);
+    dx -= shift;
     let night = view.daylight.w;
     let noise = noise_step(me);
     let phase = f32(hash(vec2<i32>(at.x, i32(round(me.b * 255.0)))) & 255u) * (6.2831853 / 255.0);
@@ -2741,9 +2746,9 @@ fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32
     let ahead = (f32(pos) + 1.0 - row) / max(len, 1.0);
     let bend_t = clamp((ahead - 0.78) / 0.22, 0.0, 1.0);
     var side = select(-1.0, 1.0, (hash(vec2<i32>(i32(round(me.b * 255.0)), 5)) & 1u) == 0u);
-    if right.x >= 0 && left.x < 0 {
+    if beside.y >= 0 && beside.x < 0 {
         side = -1.0;
-    } else if left.x >= 0 && right.x < 0 {
+    } else if beside.x >= 0 && beside.y < 0 {
         side = 1.0;
     }
     let centre = select(-1.0, 0.0, fine) + side * 2.5 * bend_t * bend_t;
@@ -2779,8 +2784,15 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             || (right.x == PART_LEAF && right.y == next));
         step += 1 + i32(round(f32(pos) / max(sizes.z, 1.0) * 4.0)) + select(0, 1, top);
         let shape = shapes.x;
+        // Where a sword, ribbon or lotus petiole steps a cell sideways (the
+        // petiole's length is `sizes.x`; one shared call).
+        let down = kin(at, vec2<i32>(0, 1), me);
+        var shift = 0.0;
+        if shape == LEAF_SWORD || shape == LEAF_RIBBON || shape == LEAF_LOTUS {
+            shift = lean_shift(pos, quarter, select(255, i32(sizes.x), shape == LEAF_LOTUS), up, down, left, right);
+        }
         if shape == LEAF_SWORD || shape == LEAF_RIBBON {
-            return wide_blade_cover(at, me, quarter, shape, sizes.z);
+            return wide_blade_cover(at, me, quarter, shape, sizes.z, tip, shift, vec2<i32>(left.x, right.x));
         }
         if shape == LEAF_GRASS {
             // One texel wide, the tip a texel lighter.
@@ -2831,7 +2843,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 let open_l = left.x < 0;
                 let open_r = right.x < 0;
                 let open_u = up.x < 0;
-                let open_d = kin(at, vec2<i32>(0, 1), me).x < 0;
+                let open_d = down.x < 0;
                 let blotch = (hash(at * 2 + sub) & 7u) < 2u || (hash(at) & 7u) == 0u;
                 let corner = (top && open_u) || (!top && open_d && !upper);
                 covered = !(corner && ((open_l && sub.x == 0) || (open_r && sub.x == 1)));
@@ -2857,7 +2869,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 // quarters at scale 4, drawn from the stem ramp so the
                 // colouration leaves it brown), shifted along a diagonal
                 // where it steps a cell sideways (`lean_shift`).
-                let c = select(-1.0, 0.0, fine) + lean_shift(at, me, quarter, len);
+                let c = select(-1.0, 0.0, fine) + shift;
                 let dx = select(f32((quarter.x >> 1u) * 2) - 1.0, f32(quarter.x) - 1.5, fine);
                 let along = i32(round(f32(pos) / max(sizes.x, 1.0) * 3.0));
                 return vec2<i32>(select(0, 3, abs(dx - c) < 1.01), 1 + along + select(0, 1, dx < c));
