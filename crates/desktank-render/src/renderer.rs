@@ -144,6 +144,9 @@ pub struct Renderer {
     /// The rectangle of cells covering every plant (none: no plants), so the
     /// split grid's plant passes only draw where a plant is.
     plant_area: Option<desktank_sim::Rect>,
+    /// Whether any plant is a rosette, whose broad blades the shader draws
+    /// into the water cells beside them (`grid_source`'s wings).
+    wide_blades: bool,
     /// Uniform bytes last written.
     view: Vec<u8>,
     /// Uniform bytes last written for the magnifier pass.
@@ -171,6 +174,7 @@ struct CameraGpu {
 
 impl Renderer {
     /// Resources for `world`'s grid, drawing into `format` targets.
+    #[allow(clippy::too_many_lines)] // one field at a time
     pub fn new(gpu: &Gpu, world: &World, format: wgpu::TextureFormat) -> Self {
         let d = &gpu.device;
         let grid = (side(world.width()), side(world.height()));
@@ -267,6 +271,7 @@ impl Renderer {
             variety_stones: palette::variety_stones(world.materials()),
             stone_varieties_visible: false,
             plant_area: None,
+            wide_blades: false,
             view: Vec::new(),
             lens_view: Vec::new(),
             scratch: Vec::new(),
@@ -379,6 +384,12 @@ impl Renderer {
             .map(|p| p.bounds)
             .filter(|b| !b.is_empty())
             .reduce(desktank_sim::Rect::union);
+        let species = world.plant_species();
+        self.wide_blades = world.plants().any(|p| {
+            species
+                .get(p.species)
+                .is_some_and(|s| matches!(s.form, desktank_sim::plants::Form::Rosette(_)))
+        });
         if self.bases_version != Some(world.plants_version()) {
             self.bases_version = Some(world.plants_version());
             for p in world.plants() {
@@ -669,11 +680,12 @@ impl Renderer {
         let cursor = cursor.map_or([0.0; 4], |c| {
             [c.cell.0 as f32, c.cell.1 as f32, c.radius as f32, 1.0]
         });
+        // Sway enabled (bit 0) and rosette blades present (bit 1).
         let target_info = [
             size.0 as f32,
             size.1 as f32,
             phase,
-            if sway_on { 1.0 } else { 0.0 },
+            f32::from(u8::from(sway_on) + 2 * u8::from(self.wide_blades)),
         ];
         let mut ripple_slots = [[0.0_f32; 4]; desktank_sim::MAX_DEVICES];
         for (slot, &r) in ripple_slots.iter_mut().zip(ripples.iter()) {

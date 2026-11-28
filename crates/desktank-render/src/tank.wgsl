@@ -62,8 +62,9 @@ struct View {
     // Day and night: a colour multiplier for the tank (rgb; 1 by day), and
     // how dark it is (w: 0 by day, 1 at night) for glowing creatures.
     daylight: vec4<f32>,
-    // Target size in pixels (xy), sway phase in seconds (z), and sway
-    // enabled (w: 1 when active, 0 when off).
+    // Target size in pixels (xy), sway phase in seconds (z), and flags (w:
+    // bit 0 when sway is active, bit 1 when any rosette's broad blades are
+    // drawn, see `wing_source`).
     target_size: vec4<f32>,
     // Material ids of the plant parts root (x), stem (y) and leaf (z), and
     // of water (w); -1 if missing.
@@ -311,11 +312,43 @@ fn quarter_of(g: vec2<f32>, cell: vec2<f32>) -> vec2<i32> {
     return clamp(vec2<i32>(floor((g - cell) * 4.0)), vec2<i32>(0), vec2<i32>(3));
 }
 
+// Rosette blades (sword and ribbon) are broader than their one-cell path: a
+// water pixel beside a blade cell draws that blade's wing, so a blade's
+// texels reach a cell either side of its own. The source is the blade cell
+// with its quarter unclamped (below 0 left of it, above 3 right of it).
+// Only the nearer side is tried, so this costs two cell reads, and none
+// where no rosette is in the tank.
+fn wing_source(g: vec2<f32>, swaying: bool) -> GridSource {
+    let none = GridSource(vec2<i32>(0), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
+    let cell = vec2<i32>(floor(g));
+    let right = fract(g.x) >= 0.5;
+    for (var i = 0; i < 2; i++) {
+        let d = select(-1, 1, right == (i == 0));
+        let nb = cell + vec2<i32>(d, 0);
+        if !inside(nb) {
+            continue;
+        }
+        let t = textureLoad(cells, nb, 0);
+        if round(t.r * 255.0) != view.plant_parts.z {
+            continue;
+        }
+        let species = i32(round(plant_of(t).a * 255.0));
+        let shape = i32(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0));
+        if shape == LEAF_SWORD || shape == LEAF_RIBBON {
+            let q = vec2<i32>(i32(floor((g.x - f32(nb.x)) * 4.0)), clamp(i32(floor((g.y - f32(nb.y)) * 4.0)), 0, 3));
+            return GridSource(nb, t, PART_LEAF, q, !swaying, false);
+        }
+    }
+    return none;
+}
+
 fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: vec2<i32>) -> GridSource {
     let part = part_of(texel);
     var src = GridSource(at, texel, part, quarter, false, false);
-    let sway_on = view.target_size.w > 0.5;
+    let sway_on = (i32(view.target_size.w + 0.5) & 1) != 0;
+    let wings = view.target_size.w > 1.5 && view.scale >= 2.0;
     let self_sways = sway_on && part >= 0 && is_swaying_part(part, texel);
+    let water = wings && part < 0 && effective_style(at, style_of(texel)) == STYLE_WATER;
     if sway_on && (part < 0 || self_sways) {
         let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
         let s_cell = floor(s_grid);
@@ -330,9 +363,23 @@ fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: ve
         }
         if s_sways && (self_sways || effective_style(at, style_of(texel)) == STYLE_WATER) {
             src = GridSource(s_at, s_texel, s_part, quarter_of(s_grid, s_cell), !self_sways, false);
-        } else if self_sways {
-            src.part = -1;
-            src.swayed_away = true;
+        } else {
+            // No blade in the swayed cell: perhaps the wing of one beside it.
+            var wing = GridSource(vec2<i32>(0), vec4<f32>(0.0), -1, vec2<i32>(0), false, false);
+            if wings && s_part < 0 && (water || self_sways) {
+                wing = wing_source(s_grid, self_sways);
+            }
+            if wing.part >= 0 {
+                src = wing;
+            } else if self_sways {
+                src.part = -1;
+                src.swayed_away = true;
+            }
+        }
+    } else if water {
+        src = wing_source(grid_pos, false);
+        if src.part < 0 {
+            src = GridSource(at, texel, part, quarter, false, false);
         }
     }
     return src;
@@ -2575,6 +2622,89 @@ fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
     return blade_shape(shape, a, t, f32(r), 0.5);
 }
 
+// A sword or ribbon blade's texel (cover x: 1 or 0, shade y), drawn as a
+// swept profile across the cell and a cell either side of it
+// (`wing_source`): `quarter.x` is below 0 or above 3 for a wing texel. The
+// profile is measured from the cell's centre in quarters (`dx`): a sword is
+// a petiole flaring to a broad lanceolate blade with a pale midrib, lateral
+// veins and a darker rim, pointed at its tip; a ribbon is a two-texel strap
+// that meanders more towards its tip and shows a broader, paler face where
+// it twists.
+fn wide_blade_cover(at: vec2<i32>, me: vec4<f32>, quarter: vec2<i32>, shape: i32, len: f32) -> vec2<i32> {
+    let fine = fine_scale();
+    let pos = position_of(me);
+    let t = clamp(f32(pos) / max(len, 1.0), 0.0, 1.0);
+    let up = kin(at, vec2<i32>(0, -1), me);
+    let left = kin(at, vec2<i32>(-1, 0), me);
+    let right = kin(at, vec2<i32>(1, 0), me);
+    let next = pos + 1;
+    let tip = !((up.x == PART_LEAF && up.y == next) || (left.x == PART_LEAF && left.y == next)
+        || (right.x == PART_LEAF && right.y == next));
+    // The texel's centre across the cell (quarters from the cell's centre),
+    // the width of a texel, and how far down the cell it is (0 top, 1 bottom).
+    var dx = f32((quarter.x >> 1u) * 2) - 1.0;
+    var px = 2.0;
+    var row = f32(quarter.y / 2);
+    if fine {
+        dx = f32(quarter.x) - 1.5;
+        px = 1.0;
+        row = f32(quarter.y) / 3.0;
+    }
+    let night = view.daylight.w;
+    let noise = noise_step(me);
+    let phase = f32(hash(vec2<i32>(at.x, i32(round(me.b * 255.0)))) & 255u) * (6.2831853 / 255.0);
+    var half = 1.01;
+    var centre = 0.0;
+    var step = 1;
+    if shape == LEAF_SWORD {
+        let hmax = clamp(3.2 + 0.07 * len, 3.6, 5.6) * (1.0 - 0.4 * night);
+        let s = clamp((t - 0.14) / 0.86, 0.0, 1.0);
+        let lance = pow(max(sin(3.1415927 * pow(s, 0.8)), 0.0), 0.8);
+        if pos > 2 {
+            half = max(hmax * lance, 1.01);
+            if len < 20.0 {
+                // A crinkled margin.
+                half = max(half + 0.7 * sin(f32(pos) * 2.0 + phase), 1.01);
+            }
+        }
+        if tip {
+            if row < 0.5 {
+                // A point: only the texel left of the midrib.
+                half = 0.0;
+            } else {
+                half = min(half, 2.1);
+            }
+        }
+        let covered = (tip && row < 0.5 && dx < 0.0 && dx > -px - 0.01) || abs(dx) < half;
+        if !covered {
+            return vec2<i32>(0, 0);
+        }
+        step = 1 + i32(round(t * 3.0)) + noise;
+        let rim = abs(dx) > half - px - 0.01 && half > 2.5;
+        let rib = dx < 0.0 && dx > -px - 0.01 && pos > 2;
+        let vein = pos % 3 == 0 && abs(dx) > px + 0.01 && (row < 0.5) == (abs(dx) > 3.5 * px);
+        step += select(0, 1, dx < 0.0) - select(0, 1, rim) + select(0, 2, rib) + select(0, 1, vein && !rib)
+            + select(0, 1, tip);
+        return vec2<i32>(1, step);
+    }
+    // Ribbon.
+    let amp = 0.4 + 1.6 * t * t;
+    centre = amp * sin(f32(pos) * 0.55 + phase);
+    let twist = sin(f32(pos) * 0.9 + phase * 1.7) > 0.55 && t > 0.1 && !tip;
+    half = select(2.0, 2.7, twist);
+    if tip {
+        half = 1.01;
+    }
+    let d = dx - centre;
+    if abs(d) >= half {
+        return vec2<i32>(0, 0);
+    }
+    step = 1 + i32(round(t * 3.5)) + noise;
+    let edge = abs(d) > half - px - 0.01;
+    step += select(0, 1, d < 0.0) - select(0, 1, edge && !tip) + select(0, 1, twist) + select(0, 1, tip);
+    return vec2<i32>(1, step);
+}
+
 // Whether a leafy part's texel is covered (x: 1 or 0) and its ramp shade
 // before clamping (y), from the species' leaf shape.
 fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
@@ -2598,6 +2728,9 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             || (right.x == PART_LEAF && right.y == next));
         step += 1 + i32(round(f32(pos) / max(sizes.z, 1.0) * 4.0)) + select(0, 1, top);
         let shape = shapes.x;
+        if shape == LEAF_SWORD || shape == LEAF_RIBBON {
+            return wide_blade_cover(at, me, quarter, shape, sizes.z);
+        }
         if shape == LEAF_GRASS {
             // One texel wide, the tip a texel lighter.
             covered = sub.x == 0;
@@ -2658,97 +2791,39 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 }
                 if fine {
                     // Quarter detail: rounded ends, a lit rim along the
-                    // top, a dark rim under the lower row, and maroon
-                    // flecks two quarters across.
+                    // top and a dark rim under the lower row.
                     let end = (open_l && (quarter.x == 0)) || (open_r && (quarter.x == 3));
                     let rim_u = open_u && quarter.y == 0;
                     let rim_d = open_d && quarter.y == 3;
                     covered = !(end && (rim_u || rim_d));
-                    let fleck = (hash(at * 4 + quarter / 2 * 2) & 7u) < 2u;
                     step = 5 + select(0, 2, rim_u) - select(0, 2, rim_d) + noise_step(me);
-                    if blotch || fleck {
+                    if blotch {
                         step = 1 + i32(rim_u) + i32(hash(at) >> 9u) % 2;
                     }
                 }
             } else {
-                // The petiole: a bronze stalk one texel wide.
-                covered = sub.x == 0;
-                step = 3 + noise_step(me);
+                // The petiole: a plain bronze stalk, lit on its left.
+                covered = true;
+                step = 3 + select(0, 1, sub.x == 0);
                 if fine {
                     // Two quarters wide, lit on its left.
                     covered = quarter.x == 1 || quarter.x == 2;
                     step += select(0, 1, quarter.x == 1);
                 }
             }
-        } else if shape == LEAF_SWORD {
-            // A narrow stalk, then a broad blade with a pale midrib (the
-            // left texel), tapering to a point.
-            if pos <= 2 && !tip {
-                covered = sub.x == 0;
-                step -= 1;
-            } else if tip {
-                covered = !top || sub.x == 0;
-            } else {
-                step += select(-1, 1, sub.x == 0);
-            }
-            if fine {
-                if pos <= 2 && !tip {
-                    // A slender petiole, paler on its left.
-                    covered = quarter.x == 1 || quarter.x == 2;
-                    step += select(0, 1, quarter.x == 1);
-                } else {
-                    // A pale midrib (second column), lateral veins rising
-                    // to the edge every third cell, a dark rim, a blade
-                    // that flares from the petiole and a pointed tip.
-                    let rib = quarter.x == 1;
-                    let vein = pos % 3 == 0 && quarter.x >= 2 && quarter.x + quarter.y == 4;
-                    let flare = pos == 3 && quarter.y == 3;
-                    let edge = quarter.x == 0 || quarter.x == 3;
-                    let narrow = tip && quarter.y < 2 && edge;
-                    let point = tip && quarter.y == 0 && quarter.x == 2;
-                    covered = !narrow && !point && (!flare || rib || quarter.x == 2);
-                    step = step - select(0, 1, tip) + select(0, 2, rib) + select(0, 2, vein)
-                        - select(0, 1, quarter.x == 3) + select(0, 1, quarter.x == 0);
-                }
-            }
-        } else {
-            // Ribbon: a strap one texel wide that twists every four cells,
-            // crossing to the other side where it shows its full face.
-            let side = (pos / 4) % 2;
-            let face = pos % 4 == 0 && !top && !tip;
-            covered = sub.x == side || face;
-            step += select(0, 1, face) - select(0, 1, sub.x == 1);
-            if fine {
-                // A strap two quarters wide, lit along one edge, that
-                // slides across the cell where it twists, showing its
-                // broader, paler face mid-twist.
-                let twist = pos % 4 == 0 && pos > 0 && !tip;
-                let after = side * 2;
-                let before = 2 - after;
-                let left_edge = select(after, before + (after - before) * (3 - quarter.y) / 3, twist);
-                let wide = twist && (quarter.y == 1 || quarter.y == 2);
-                let width = select(1, 2, wide);
-                covered = quarter.x >= left_edge && quarter.x <= left_edge + width;
-                step = step - select(0, 1, face) + select(0, 1, wide)
-                    + select(-1, 1, quarter.x == left_edge);
-            }
         }
-        // Night folding on rosette, carpet and epiphyte blades (T6d): broad
-        // blades and pads tuck narrower at night (view.daylight.w: 0 day, 1 night).
+        // Night folding on carpet and epiphyte blades (T6d; a sword narrows in
+        // wide_blade_cover): pads tuck narrower at night (view.daylight.w: 0 day, 1 night).
         let night = view.daylight.w;
         if night > 0.01 {
             if fine {
-                if shape == LEAF_SWORD && night >= 0.6 && pos > 2 && (quarter.x == 0 || quarter.x == 3) {
-                    covered = false;
-                } else if shape == LEAF_PAD && night >= 0.6 && tip && (quarter.x == 3 || quarter.y == 3) {
+                if shape == LEAF_PAD && night >= 0.6 && tip && (quarter.x == 3 || quarter.y == 3) {
                     covered = false;
                 } else if shape == LEAF_GRASS && night >= 0.75 && quarter.x == 3 {
                     covered = false;
                 }
             } else {
-                if shape == LEAF_SWORD && night >= 0.75 && pos > 2 && sub.x == 1 {
-                    covered = false;
-                } else if shape == LEAF_PAD && night >= 0.75 && tip && sub.x == 1 && !top {
+                if shape == LEAF_PAD && night >= 0.75 && tip && sub.x == 1 && !top {
                     covered = false;
                 }
             }
