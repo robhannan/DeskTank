@@ -7,20 +7,30 @@ declare global {
   }
 }
 
-// Use Chromium's full browser and enable SwiftShader WebGPU on Linux CI.
+const softwareGpu = process.platform === "linux";
+const renderTimeout = softwareGpu ? 30_000 : 15_000;
+
+// Use SwiftShader for ANGLE and Vulkan on Linux so Chromium can back the
+// WebGPU canvas swapchain on GPU-less runners (Chromium issue 575926500).
 test.use({
   channel: "chromium",
   launchOptions: {
     args: [
       "--enable-unsafe-swiftshader",
       "--enable-unsafe-webgpu",
-      ...(process.platform === "linux" ? ["--use-webgpu-adapter=swiftshader"] : []),
+      ...(softwareGpu ? ["--use-angle=swiftshader", "--use-vulkan=swiftshader", "--enable-features=Vulkan"] : []),
     ],
   },
 });
 
-test("WebGPU starts with the split grid and presents the tank", async ({ page }) => {
+test("WebGPU starts with the split grid and presents the tank", async ({ page }, testInfo) => {
   const errors = watchErrors(page);
+  // Chromium reports swapchain failures as device-loss warnings.
+  page.on("console", (message) => {
+    if (message.type() === "warning" && message.text().includes("desktank: GPU device lost")) {
+      errors.push(message.text());
+    }
+  });
   await page.addInitScript(() => {
     window.gridPipelines = [];
     // Record the entry points while letting the browser compile the pipelines.
@@ -36,16 +46,24 @@ test("WebGPU starts with the split grid and presents the tank", async ({ page })
       return createPipeline.call(this, descriptor);
     };
   });
-  await open(page, "?backend=webgpu");
-  expect(await page.evaluate(() => window.desktank.backend)).toBe("webgpu");
-  expect(await page.evaluate(() => window.gridPipelines)).toEqual(["fs_ground"]);
-  await expect.poll(() => framesDrawn(page)).toBeGreaterThan(0);
-  // framesDrawn counts submissions. Check that the canvas presents water.
-  const box = await boxOf(page.locator("#tank"));
-  const clip = { x: Math.floor(box.x + box.width / 2), y: Math.floor(box.y + box.height / 2), width: 1, height: 1 };
-  await expect.poll(async () => {
-    const { rgba } = await decodePng(page, await page.screenshot({ clip }));
-    return rgba[2] - rgba[0];
-  }, { message: "the middle of the tank shows blue water", timeout: 15_000 }).toBeGreaterThan(15);
-  expect(errors).toEqual([]);
+  try {
+    await open(page, "?backend=webgpu");
+    expect(await page.evaluate(() => window.desktank.backend)).toBe("webgpu");
+    await expect.poll(() => framesDrawn(page), { timeout: renderTimeout }).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.gridPipelines)).toEqual(["fs_ground"]);
+    // framesDrawn counts submissions. SwiftShader still has to compile and
+    // execute that work before Chromium can present the blue water.
+    const box = await boxOf(page.locator("#tank"));
+    const clip = { x: Math.floor(box.x + box.width / 2), y: Math.floor(box.y + box.height / 2), width: 1, height: 1 };
+    await expect(async () => {
+      const { rgba } = await decodePng(page, await page.screenshot({ clip }));
+      expect(rgba[2] - rgba[0], `tank centre should show blue water (RGBA ${rgba.join(", ")})`).toBeGreaterThan(15);
+    }).toPass({ timeout: renderTimeout });
+    expect(errors).toEqual([]);
+  } catch (error) {
+    if (errors.length > 0) {
+      await testInfo.attach("browser errors", { body: errors.join("\n"), contentType: "text/plain" });
+    }
+    throw error;
+  }
 });
