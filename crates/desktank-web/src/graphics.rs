@@ -88,6 +88,13 @@ impl Graphics {
         self.backend.name().to_owned()
     }
 
+    /// Whether the active adapter draws the grid in multiple passes.
+    #[wasm_bindgen(js_name = splitGrid)]
+    #[must_use]
+    pub fn split_grid(&self) -> bool {
+        self.gpu.split_grid
+    }
+
     /// The adapter's name, for the stats line.
     #[wasm_bindgen(js_name = adapterName)]
     #[must_use]

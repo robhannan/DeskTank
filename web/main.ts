@@ -116,7 +116,7 @@ const build = document.documentElement.dataset.build ?? "";
 // small GPU), else the display's own.
 const dprCap = ((v) => (v > 0 ? v : build === "webos" ? 1 : Infinity))(Number(params.get("dpr")));
 // Override the backend default (?grid=split or ?grid=single). The webOS
-// build defaults to split even on hardware WebGL2.
+// build forces split because Chrome 68's SwiftShader limits shader registers.
 const splitGrid: boolean | undefined = params.has("grid")
   ? params.get("grid") === "split"
   : build === "webos"
@@ -184,6 +184,7 @@ let places: Place[] = [];
 let openTab: string | undefined; // the palette tab shown
 let openSub: string | undefined; // and its sub-category's path
 let backend = "";
+let usingSplit = false;
 let adapter = "";
 let rafId = 0;
 let timerId = 0;
@@ -395,7 +396,6 @@ function showGpuError() {
   gpuErrorShown = true;
   const brief = err.split("\n").slice(0, 6).join("\n");
   note(`GPU error: ${brief}`);
-  const usingSplit = splitGrid ?? backend === "webgpu";
   showError(`DeskTank's GPU renderer failed${usingSplit ? "" : " (try ?grid=split)"}:\n${brief}`);
 }
 
@@ -469,6 +469,7 @@ async function attachGraphics(): Promise<boolean> {
       gpuErrorShown = false;
       backend = g.backend();
       adapter = g.adapterName();
+      usingSplit = g.splitGrid();
       tank.attach(g);
       canvas.dataset.backend = backend;
       return true;
@@ -2560,7 +2561,7 @@ async function main() {
     const look = `${splitGrid ? ", split grid" : ""}${srgbCanvas ? "" : ", non-sRGB"}`;
     startStep(`opening graphics (${wantBackend}${look}, canvas ${canvas.width}×${canvas.height} px)`);
     await attachGraphics();
-    note(`graphics: ${backend}, ${adapter}`);
+    note(`graphics: ${backend}, ${adapter}, ${usingSplit ? "split" : "single"} grid`);
   } catch (err) {
     endSteps(`error: ${err}`);
     showError(`Couldn't start the GPU renderer: ${err}`);
