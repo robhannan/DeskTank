@@ -1,0 +1,34 @@
+# Cell trace from the owner’s reference on #202. Both castle materials use
+# this bitmap so the rooflines, openings and collision footprint match.
+# Each character is one rigid cell; a dot is open water.
+# The 28-cell height leaves one depth band open behind or in front of the body.
+sprite = [
+    ".................t.................",
+    "................trb................",
+    "...............trrrb...............",
+    "..............trrtbbr......t.......",
+    ".......t.......rrrbb.t.....tb......",
+    ".......tr...t..dmmkd.tb...trr......",
+    "......ttb..trb.dsskdtrr...ttbb.....",
+    "......trbstrrrbmmddtrtbb.ttrbr.....",
+    "......rrbb.hssmmsdndhssm..rrbb.....",
+    "......mdmd.ssmdmsdkdssmd..mmdd.....",
+    "......mdmd.hsmdsskmdhsmds.mmdd.....",
+    "......ddmdmmdmdhmhhmmdmdsdmddd.....",
+    "......sdkdsmdsdmmmmmmdvgkdhsdk.....",
+    "......skmdmdmmdddddddmmddddskm.....",
+    "..hh.hhhddhdhmdsdksddhmdmsssss.ss..",
+    "..hhmhhhmhhmdddskmskmdddssssssdvs..",
+    "..msdhhhmhhsdkddkddksvgdssdsssmkk..",
+    "..mdmmdmmdmskmdkhhksskmdkddkdkkdk..",
+    "..hfhmdmhdvsdhdmhhmsvdhfkdmkdkkmkv.",
+    ".vdmfdmmdmgdmmdmshsfdvmdvdkddkddv.v",
+    "..vfmvmsdksddmdhm.mvdvsfsdkmnknnfvf",
+    "..vfvvfskmdsdkdh...svfvvskmdmdkgfvf",
+    "..gvfvsdssdskmdh...mgfvvgkmdm..kgvv",
+    "..mgvgdmmdmmdmds...mgvvgkddkd...gg.",
+    ".lsggsdsmdshdsds...dggvgkndk....gd.",
+    "lgllgnlnnnlnlndlggoonlllnlgglllglgn",
+    "onlglogloggloooggggggngonglngnonogg",
+    "..nggonggglgggonllllgglgogolggoggo.",
+]

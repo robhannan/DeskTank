@@ -1,0 +1,10 @@
+id = 84
+name = "stone_castle"
+class = "rigid"
+density = 1.85
+colour = "#887e70"
+palette = "build/ornaments"
+
+[ornament]
+# Stone, slate roof, rock plinth and vegetation, in that order.
+colours = { k = "#2b292c", d = "#403b3c", m = "#625950", s = "#8b8073", h = "#ada08a", b = "#343848", r = "#515563", t = "#767a86", o = "#33313a", g = "#514e56", l = "#68636b", n = "#807b80", f = "#899c61", v = "#617842" }

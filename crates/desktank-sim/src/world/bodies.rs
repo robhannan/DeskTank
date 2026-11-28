@@ -1060,6 +1060,12 @@ mod tests {
 
     #[test]
     fn settled_ornament_sleeps_until_its_support_changes() {
+        for name in ["volcano_bubbler", "stone_castle", "pastel_castle"] {
+            ornament_sleeps_on_support(name);
+        }
+    }
+
+    fn ornament_sleeps_on_support(name: &str) {
         let mut w = World::new(
             WorldConfig {
                 width: 80,
@@ -1070,7 +1076,7 @@ mod tests {
             MaterialTable::builtin().unwrap(),
         )
         .unwrap();
-        let material = w.materials().id("volcano_bubbler").unwrap();
+        let material = w.materials().id(name).unwrap();
         let rock = w.materials().id("rock").unwrap();
         let air = w.materials().id("air").unwrap();
         let mut support = None;
@@ -1084,7 +1090,15 @@ mod tests {
             w.tick();
         }
         let b = &w.bodies[&id];
-        assert!(!b.awake);
+        assert!(!b.awake, "{name} has settled");
+        let (front, back) = b.bands;
+        assert!(back - front + 1 < crate::DEPTH_BANDS);
+        for band in 0..crate::DEPTH_BANDS {
+            assert_eq!(
+                w.blocks(b.cells[0], Some(band)),
+                (front..=back).contains(&band)
+            );
+        }
         let (rest_ticks, resting) = (b.still, b.bounds);
         assert_eq!(resting.y1, 62);
         for _ in 0..20 {

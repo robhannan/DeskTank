@@ -556,9 +556,15 @@ fn devices_are_placed_once_per_click() {
 }
 
 #[test]
-fn volcano_places_once_and_secondary_click_scoops_the_whole_ornament() {
+fn ornaments_place_once_and_secondary_click_scoops_the_whole_ornament() {
+    for name in ["volcano_bubbler", "stone_castle", "pastel_castle"] {
+        place_and_scoop_ornament(name);
+    }
+}
+
+fn place_and_scoop_ornament(name: &str) {
     let mut t = paused();
-    t.select(slot(&t, "ornament volcano_bubbler"));
+    t.select(slot(&t, &format!("ornament {name}")));
     drag(&mut t, 60, 33);
     let ghost = t.tools.ornament_ghost(t.tank().world()).unwrap();
     assert!(ghost.fits);
@@ -566,7 +572,7 @@ fn volcano_places_once_and_secondary_click_scoops_the_whole_ornament() {
     assert!(placed > 100);
     drag(&mut t, 90, 20);
     t.pointer_up(PRIMARY);
-    assert_eq!(t.material_count("volcano_bubbler"), placed);
+    assert_eq!(t.material_count(name), placed);
     assert_eq!(t.tank().world().bodies().count(), 1);
     let art = t
         .tank()
@@ -582,7 +588,7 @@ fn volcano_places_once_and_secondary_click_scoops_the_whole_ornament() {
     let y = i32::try_from(ghost.origin.1 + y).unwrap();
     assert_eq!(down(&mut t, SECONDARY, x, y), placed);
     t.pointer_up(SECONDARY);
-    assert_eq!(t.material_count("volcano_bubbler"), 0);
+    assert_eq!(t.material_count(name), 0);
 }
 
 #[test]

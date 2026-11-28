@@ -58,7 +58,7 @@ x = 20             # footprint centre, in cells from the top left
 y = 60
 device = "bubbler" # "bubbler" (drops onto what is below) or "internal_filter" (on the
                    # nearer side glass at this height, D27; "filter_outlet" names it too)
-                   # "volcano_bubbler" places a loose rigid ornament at (x, y)
+                   # "volcano_bubbler", "stone_castle" and "pastel_castle" place loose rigid ornaments
 
 [[water_change]]   # any number of these
 tick = 36000       # tick to change the water on (`World::water_change`)
