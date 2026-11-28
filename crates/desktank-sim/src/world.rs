@@ -518,7 +518,8 @@ impl World {
     /// Sets one cell to `material` (fresh state, deterministic colour
     /// noise) and wakes its chunk and any neighbour within reach. A rigid
     /// material makes a new one-cell body; a cell already of that rigid
-    /// material is left as it is (in its body).
+    /// material is left as it is (in its body). Replacing any occupied cell
+    /// of an ornament removes the whole ornament.
     ///
     /// # Errors
     ///
@@ -643,7 +644,8 @@ impl World {
 
     /// Fills a rectangle (clipped to the grid). Returns how many cells
     /// changed. Rigid cells it writes form one new body, and plant part
-    /// cells one new plant of the default species.
+    /// cells one new plant of the default species. Replacing any occupied
+    /// ornament cell removes its whole ornament.
     ///
     /// # Errors
     ///
