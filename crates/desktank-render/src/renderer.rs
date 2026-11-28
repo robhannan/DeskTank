@@ -121,6 +121,9 @@ pub struct Renderer {
     /// Bounds of the epiphyte plants, merged into at most `EPIPHYTE_BOXES`
     /// boxes, updated when the grid changes.
     epiphyte_areas: Vec<desktank_sim::Rect>,
+    /// Whether any carpet plant is in the tank (the split grid's carpet
+    /// passes draw only then).
+    has_carpets: bool,
     /// The material palette, built once.
     palette: wgpu::Texture,
     /// Ramps, shapes and sizes per plant species, built once.
@@ -266,6 +269,7 @@ impl Renderer {
             plant_bases: BTreeMap::new(),
             bases_version: None,
             epiphyte_areas: Vec::new(),
+            has_carpets: false,
             palette,
             species,
             hud,
@@ -389,6 +393,33 @@ impl Renderer {
                     .collect(),
                 EPIPHYTE_BOXES,
             );
+            self.has_carpets = world.plants().any(|p| {
+                species
+                    .get(p.species)
+                    .is_some_and(|s| matches!(s.form, desktank_sim::plants::Form::Carpet(_)))
+            });
+            if gpu.split_grid && self.has_carpets && self.pipelines.carpet_sprites.is_none() {
+                self.pipelines.carpets = Some(create_tank_pipeline(
+                    &gpu.device,
+                    &self.pipeline_layout,
+                    &self.shader,
+                    self.format,
+                    "tank fs_carpets",
+                    "fs_carpets",
+                    Some(wgpu::BlendState::ALPHA_BLENDING),
+                    &[],
+                ));
+                self.pipelines.carpet_sprites = Some(create_tank_pipeline(
+                    &gpu.device,
+                    &self.pipeline_layout,
+                    &self.shader,
+                    self.format,
+                    "sprites fs_sprite_carpets",
+                    "fs_sprite_carpets",
+                    Some(wgpu::BlendState::ALPHA_BLENDING),
+                    &[],
+                ));
+            }
             if gpu.split_grid
                 && !self.epiphyte_areas.is_empty()
                 && self.pipelines.epiphyte_sprites.is_none()
@@ -1199,10 +1230,15 @@ impl Renderer {
                 }
             }
         }
-        if let Some(p) = pipelines
-            .epiphytes
-            .as_ref()
-            .filter(|_| scale >= 2 && !self.epiphyte_areas.is_empty())
+        for p in [
+            pipelines.carpets.as_ref().filter(|_| self.has_carpets),
+            pipelines
+                .epiphytes
+                .as_ref()
+                .filter(|_| scale >= 2 && !self.epiphyte_areas.is_empty()),
+        ]
+        .into_iter()
+        .flatten()
         {
             let scissor = match plants {
                 PlantPasses::Within(None) => None,
@@ -1226,7 +1262,8 @@ impl Renderer {
                 .epiphyte_sprites
                 .iter()
                 .filter(|_| scale >= 2 && !self.epiphyte_areas.is_empty());
-            for p in pipelines.sprites.iter().chain(epiphytes) {
+            let carpets = pipelines.carpet_sprites.iter().filter(|_| self.has_carpets);
+            for p in pipelines.sprites.iter().chain(carpets).chain(epiphytes) {
                 pass.set_pipeline(p);
                 pass.draw(0..6, 0..self.sprite_count);
             }
@@ -1790,6 +1827,11 @@ struct Pipelines {
     /// first use.
     epiphytes: Option<wgpu::RenderPipeline>,
     epiphyte_sprites: Option<wgpu::RenderPipeline>,
+    /// The split grid's carpet blades and pads (`fs_carpets`) and the
+    /// sprites over them (`fs_sprite_carpets`), made when a tank first has
+    /// a carpet.
+    carpets: Option<wgpu::RenderPipeline>,
+    carpet_sprites: Option<wgpu::RenderPipeline>,
 }
 
 /// `fs_ground_film` blends the algae's colour and keeps the ground's alpha.
@@ -1963,6 +2005,8 @@ fn create_pipelines(
             .collect(),
         epiphytes: None,
         epiphyte_sprites: None,
+        carpets: None,
+        carpet_sprites: None,
     };
     let lens_frame = pipeline(
         "lens frame",

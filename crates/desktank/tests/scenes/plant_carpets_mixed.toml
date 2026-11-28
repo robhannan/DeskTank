@@ -1,0 +1,99 @@
+# Grown carpets among other plants and creatures: dwarf hairgrass and Monte
+# Carlo spreading until their edges touch an amazon sword, a cryptocoryne and
+# rotala (another species' leaves are never painted over), with neon tetras
+# swimming low over them, shrimp walking on them and a nerite on the bed.
+# Compared with the split grid, which draws the carpets in passes of their
+# own.
+ticks = 18000
+
+[world]
+water_level = 0.92
+
+[[pour]]
+repeat = 42
+x = 0
+y = 98
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+[[pour]]
+x = 22
+y = 40
+radius = 0
+plant = "dwarf_hairgrass"
+
+[[pour]]
+x = 46
+y = 40
+radius = 0
+plant = "dwarf_hairgrass"
+
+[[pour]]
+x = 58
+y = 20
+radius = 0
+plant = "amazon_sword"
+
+[[pour]]
+x = 72
+y = 40
+radius = 0
+plant = "monte_carlo"
+
+[[pour]]
+x = 96
+y = 40
+radius = 0
+plant = "monte_carlo"
+
+[[pour]]
+x = 86
+y = 20
+radius = 0
+plant = "cryptocoryne"
+
+[[pour]]
+x = 118
+y = 20
+radius = 0
+plant = "rotala"
+
+[[pour]]
+x = 112
+y = 40
+radius = 0
+plant = "dwarf_hairgrass"
+
+[[creature]]
+tick = 17999
+species = "neon_tetra"
+x = 40
+y = 76
+count = 10
+dx = 2
+
+[[creature]]
+tick = 17999
+species = "cherry_shrimp"
+x = 30
+y = 82
+count = 4
+dx = 4
+
+[[creature]]
+tick = 17999
+species = "cherry_shrimp"
+x = 80
+y = 82
+count = 4
+dx = 4
+
+[[creature]]
+tick = 17999
+species = "nerite"
+x = 108
+y = 82
+count = 3
+dx = 3

@@ -277,6 +277,14 @@ fn plant_marimo_lotus_scene_matches_reference() {
     check("plant_marimo_lotus");
 }
 
+/// Grown carpets (dwarf hairgrass and Monte Carlo) touching an amazon sword,
+/// a cryptocoryne and rotala, with fish and shrimp over them, at scale 2
+/// (and at scale 4 with the plant scenes below).
+#[test]
+fn plant_carpets_mixed_scene_matches_reference() {
+    check("plant_carpets_mixed");
+}
+
 /// Four-texel plant detail: the plant scenes at scale 4, where every leaf,
 /// stem and root shape is drawn with quarter-cell structure, against
 /// `<scene>_x4.png`.
@@ -288,6 +296,7 @@ fn plant_scenes_match_reference_at_scale_4() {
         "plant_lit",
         "plant_rosettes",
         "plant_carpets",
+        "plant_carpets_mixed",
         "plant_floaters",
         "plant_marimo_lotus",
     ] {
@@ -412,6 +421,14 @@ fn split_grid_matches_one_pass_with_sway_and_overlays() {
             &["--sway", "--field", "light"][..],
         ),
         ("plant_epiphytes", SIZE_X4, Some("00:00"), &["--sway"][..]),
+        (
+            "plant_carpets_mixed",
+            SIZE_X4,
+            None,
+            &["--sway", "--field", "light"][..],
+        ),
+        // At night, with the carpets' leaves folded, and at scale 2.
+        ("plant_carpets_mixed", SIZE, Some("00:00"), &["--sway"][..]),
         (
             "plant_epiphytes_mixed",
             SIZE_X4,

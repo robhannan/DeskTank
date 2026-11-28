@@ -22,7 +22,7 @@
 //! repeat the default species, so a cell whose plant texel isn't written
 //! yet still draws as a plant.
 
-use desktank_sim::plants::{Form, PlantSpecies, PlantSpeciesTable};
+use desktank_sim::plants::{Form, LeafShape, PlantSpecies, PlantSpeciesTable};
 use desktank_sim::{Part, World};
 
 /// Texture side: 256 ids per row, 256 rows.
@@ -134,6 +134,9 @@ pub const SHAPES_COLUMN: usize = 3 * RAMP;
 /// Flag in the shapes texel's arrangement byte for epiphyte leaf profiles
 /// (bit 128 is the rosette flag, `ROSETTE_FLAG` in the shader).
 pub const EPIPHYTE: u8 = 64;
+/// Flag in the same byte for carpets with grass or pad leaves (`CARPET_FLAG`
+/// in the shader): their own split passes draw them.
+pub const CARPET: u8 = 32;
 /// Column of the sizes texel: stem height, root depth and leaf length in
 /// cells (blade length for the first and last of a rosette or carpet, then
 /// its leaf pad width; fronds, root length and fronds for a floater; radius
@@ -197,6 +200,15 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
                 Form::Rosette(_) => 0x80,
                 Form::Epiphyte(_) => EPIPHYTE,
                 _ => 0,
+            }
+            // Grass tufts and pads outside epiphytes: the carpet passes draw
+            // them.
+            | if matches!(s.form, Form::Carpet(_) | Form::Rosette(_))
+                && matches!(look.leaf, LeafShape::Grass | LeafShape::Pad)
+            {
+                CARPET
+            } else {
+                0
             },
     ]);
     // A rosette's, carpet's or epiphyte's blades shade by length, as stems
