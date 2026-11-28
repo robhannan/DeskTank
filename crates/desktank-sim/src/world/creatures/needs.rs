@@ -84,7 +84,7 @@ pub enum NeedLevel {
     Low,
     /// 50 to 74: middling.
     Middling,
-    /// 75 to 100: comfortable. A fish is hungry only below this.
+    /// 75 to 100: comfortable. At 75, there is room for another bite.
     Comfortable,
 }
 
@@ -155,6 +155,17 @@ pub(super) struct State {
 }
 
 impl State {
+    pub(super) fn at_spawn(weights: Option<crate::species::NeedWeights>) -> Self {
+        Self {
+            observed: if weights.is_some_and(|w| w.social > 0) {
+                75
+            } else {
+                0
+            },
+            ..Self::default()
+        }
+    }
+
     /// Drop the old decision while keeping the last observation.
     pub(super) fn interrupt(&mut self) {
         self.remaining = 0;
@@ -506,7 +517,7 @@ mod tests {
         world.creature_mut(ids[0]).unwrap().satiety = FULL / 2;
         world.tick();
         assert_eq!(readings(&world, ids[0]), [49, 100]);
-        assert_eq!(readings(&world, ids[3]), [0, 0]);
+        assert_eq!(readings(&world, ids[3]), [74, 0]);
         let guppy = world.species().id("guppy").unwrap();
         let guppy = world.add_creature(guppy, 40, 170).unwrap();
         assert_eq!(readings(&world, guppy), [] as [u8; 0]);
@@ -518,7 +529,7 @@ mod tests {
         assert_eq!(Need::Social.label(), "Social");
         assert_eq!(Need::Shelter.label(), "Shelter");
         // 0 is unmet and 100 satisfied; the bands start where a fish gets
-        // hungry (a bite fits below 75%).
+        // hungry (a bite fits at 75%).
         let bands: Vec<_> = [0, 25, 26, 49, 50, 74, 75, 100]
             .into_iter()
             .map(NeedLevel::of)
@@ -569,6 +580,7 @@ mod tests {
         assert_eq!(c.needs.remaining, 0);
 
         c.fear = 0;
+        c.satiety = 0;
         assert_eq!(
             world.choose_need_action(&k, &mut c, food, &mut rng),
             Action::Forage
@@ -691,7 +703,7 @@ mod tests {
         let materials = world.materials().clone();
         let older = World::from_v19(world.to_v19(), materials.clone()).unwrap();
         assert_eq!(older.creature(ids[0]).unwrap().needs, State::default());
-        assert_eq!(readings(&older, ids[0]), [0, 0]);
+        assert_eq!(readings(&older, ids[0]), [74, 0]);
 
         // A tetra has no cover to take, so it can't save the action either.
         for invalid in [[5, 0, 0], [1, 0, 0], [0, 24, 0], [0, 0, 101], [4, 3, 0]] {
@@ -800,6 +812,35 @@ mod tests {
         let guppy = world.species().id("guppy").unwrap();
         let guppy = world.add_creature(guppy, 80, 20).unwrap();
         assert_eq!(labels(&world, guppy), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn new_creatures_start_with_comfortable_needs_and_room_for_a_bite() {
+        let (mut world, ids) = tank(&[(40, 160)]);
+        for (name, x) in [("honey_gourami", 75), ("guppy", 110)] {
+            let species = world.species().id(name).unwrap();
+            world.add_creature(species, x, 160).unwrap();
+        }
+        let expected = [vec![75, 75], vec![75, 100], vec![]];
+        for (c, values) in world.creatures().iter().zip(expected) {
+            assert_eq!(readings(&world, c.id()), values);
+            assert!(
+                world
+                    .creature_needs(c)
+                    .iter()
+                    .all(|r| r.level() == Comfortable)
+            );
+            assert!(c.hungry());
+            assert_eq!(c.satiety, FULL - BITE);
+        }
+        let loaded = save::decode(&save::encode(&world), world.materials().clone()).unwrap();
+        assert_eq!(loaded.state_hash(), world.state_hash());
+        assert_eq!(readings(&loaded, ids[0]), [75, 75]);
+
+        let worm = world.materials().id("bloodworm").unwrap();
+        world.set_cell(40, 160, worm).unwrap();
+        world.tick();
+        assert_eq!(world.creature(ids[0]).unwrap().eaten(), 1);
     }
 
     #[test]
@@ -1027,6 +1068,6 @@ mod tests {
         // Older saves, before any gourami had needs, start it sheltered.
         let older = World::from_v19(a.to_v19(), materials).unwrap();
         assert_eq!(state(&older, id), State::default());
-        assert_eq!(readings(&older, id), [0, 100]);
+        assert_eq!(readings(&older, id), [readings(&a, id)[0], 100]);
     }
 }

@@ -469,8 +469,11 @@ mod tests {
 
         let old = wrap(17, &postcard::to_allocvec(&world.to_v17()).unwrap());
         let level = decode(&old, materials.clone()).unwrap();
-        assert_eq!(level.state_hash(), world.state_hash());
         assert!(level.creatures().iter().all(|c| c.pitch() == 0));
+        // v17 has no social observation. Compare the pitch hash against
+        // the v18 migration of the same creatures, with the same needs.
+        let unpitched = World::from_v18(world.to_v18(), materials.clone()).unwrap();
+        assert_eq!(level.state_hash(), unpitched.state_hash());
 
         let mut saved = world.to_v18();
         saved.pitches[0] = -1;

@@ -358,6 +358,7 @@ fn creatures_eat_until_full_and_only_their_diet() {
     let mut w = world(96, 64, 3);
     sand_bed(&mut w, 6);
     let tetra = w.add_creature(species(&w, "neon_tetra"), 48, 40).unwrap();
+    w.catch_up(90);
     // Wafers sink past the tetra, which doesn't eat them.
     let wafer = id(&w, "algae_wafer");
     w.paint(48, 30, 2, wafer, Brush::Pour).unwrap();
@@ -951,6 +952,10 @@ fn grazing_removes_food_or_coat_and_updates_the_ecosystem() {
         for &meal in meals {
             let mut w = world(128, 64, 7);
             sand_bed(&mut w, 6);
+            let grazer = w.add_creature(species(&w, name), 40, 54).unwrap();
+            w.set_time_ratio(desktank_sim::MAX_TIME_RATIO);
+            w.catch_up(1);
+            w.set_time_ratio(1.0);
             if meal == "algae" {
                 for x in 34..46 {
                     assert!(w.set_algae_coat(x, 58, 4));
@@ -960,14 +965,13 @@ fn grazing_removes_food_or_coat_and_updates_the_ecosystem() {
                 w.fill_rect(rect(34, 57, 46, 58), food, Brush::Replace)
                     .unwrap();
             }
-            let grazer = w.add_creature(species(&w, name), 40, 54).unwrap();
             let mut control = w.clone();
             control.remove_creature(grazer);
             run(&mut w, 40);
             run(&mut control, 40);
             let c = w.creature(grazer).unwrap();
             let eaten = c.eaten() as usize;
-            assert!(!c.hungry());
+            assert!(!c.hungry(), "{name} grazing {meal}: {eaten}");
             let (after, before) = (w.ecosystem(), control.ecosystem());
             if meal == "algae" {
                 // A grazer with less taste for the green film takes partial
@@ -1293,6 +1297,8 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     w.fill_rect(rect(70, 46, 84, 74), rock, Brush::Replace)
         .unwrap();
     w.set_anchored(w.body_at(76, 60).unwrap(), true);
+    let oto = w.add_creature(species(&w, "otocinclus"), 20, 72).unwrap();
+    w.catch_up(90);
     // Diatoms (variety 2, which it grazes in full bites) on the rock's left
     // face and top, about 45 cells from the start.
     for y in 50..66 {
@@ -1301,7 +1307,6 @@ fn otocinclus_crawls_to_an_algae_film_on_a_rock_and_grazes_it() {
     for x in 72..82 {
         assert!(w.set_algae_variety(x, 46, 2, 4));
     }
-    let oto = w.add_creature(species(&w, "otocinclus"), 20, 72).unwrap();
     // The same tank without it, for the algae it took.
     let mut control = w.clone();
     control.remove_creature(oto);

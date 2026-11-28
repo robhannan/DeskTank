@@ -1880,8 +1880,8 @@ fn the_inspect_card_shows_need_meters_in_two_columns_or_one() {
     let mut tank = Tank::new(world, TankConfig::default());
     tank.set_saver_mode(true);
     tank.set_inspected(Some(desktank_render::Inspected::Creature(ids[0])));
-    // Settle, then feed the inspected fish and let it take its first bite.
-    for _ in 0..250 {
+    // Let the initial satiety drain so a single bite shows a critical bar.
+    for _ in 0..90 * desktank_sim::TICKS_PER_SECOND {
         tank.step();
     }
     let (x, y) = tank.world().creature(ids[0]).unwrap().centre();
