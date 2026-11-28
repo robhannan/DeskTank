@@ -221,8 +221,9 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     a wing is taken from the nearer blade only, so where two blades stand a
     cell apart a pixel the nearer one's profile doesn't reach stays water).
     Only a rosette's swords are drawn this way (its species texel's shapes
-    `w` carries a rosette bit): an epiphyte's sword (java fern) keeps its
-    own narrow art and its night folding. A sword (amazon
+    `w` carries a rosette bit, 128, `ROSETTE_FLAG`): an epiphyte's sword
+    (java fern, whose texel carries the epiphyte bit, 64) is drawn by the
+    epiphyte blades below. A sword (amazon
     sword, cryptocoryne) is a short petiole flaring into a lanceolate blade
     widest at about half its length (`3.2 + 0.07 * blade_length` quarters
     each side at most, so a crypt's 12-cell leaf is two cells broad and an
@@ -284,8 +285,9 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     `on`, `rhizome_length` (1–32), `spacing` (rhizome cells between
     leaves), `leaf_length` and `lean`. A fragment touching `on` roots as a
     `rhizome` cell (id 80, counted with stems); the rhizome creeps as a
-    single strand over cells touching `on` and puts up upright blade leaves
-    (`pad` for anubias, id 15; `sword` for java fern, id 16). `[mat]` gains
+    single strand over cells touching `on`. The leaves (`pad` for anubias,
+    id 15, and `sword` for java fern, id 16) lean outward, with extra
+    sideways steps on the outer blades. `[mat]` gains
     `layers` (1–4; java moss 1, christmas moss 3), storing each cell's
     layer in its variant position; outer layers stay while touching a
     nearer layer. Both epiphytes and mats stay on the grid and are **torn
@@ -426,6 +428,33 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     preferences in `localStorage`. Sway remains disabled in screensaver
     mode, while hidden, or when the tank has no plants. The host's power
     and visibility policies still govern the tank's pacing and pauses.
+  - **Epiphyte blades.** Java fern has long lanceolate blades with a pale
+    midrib and faint lateral veins. Anubias has broad, shaded ovals on
+    short petioles. Both show their rhizome against the rock or wood, with
+    small shaded grips. The renderer uses the species ramps and extends
+    blade texels into nearby water at scale 2 and up. The leaf art follows
+    sway and night folding, and tests the same coverage when a creature
+    swims behind it. The view's epiphyte bounds (the epiphyte plants' bounds merged into at most four boxes, so far-apart plants leave the water between them alone) gate the overhang, which
+    occupies no simulation cells. The placement ghost previews the cellular
+    shape. Render-only leaves grow behind and in front of the main row:
+    redrawn from the same leaf cells, behind them shorter, duller and
+    shifted into the gaps, in front of them lower, brighter, shorter and at
+    another angle, over the base of the row and the rhizome. A plant's roll
+    picks their directions, and some Anubias leaves have none, by their cell
+    positions; sway, night folding, health tint and creatures treat them as
+    part of the plant, at a band further back or forward. The pane sprite
+    draws the same leaves. Anubias leaves overlap in a clump (spacing 2).
+    The epiphyte bit (`EPIPHYTE`, 64, in the species texel's shapes `w`
+    beside the rosette's 128) routes a species' `sword` and `pad` leaves
+    to a split pass (`fs_epiphytes`, with its own sprite pass, both created
+    on first use) at scale 2 and up; the other leaf passes skip those
+    pixels. At scale 1 java fern and anubias are drawn by the ordinary leaf
+    shapes, where only the shade matters, so the quarter-cell sword art
+    there is gone: it was reachable only by epiphytes.
+    Blades never paint over another species' leaves (a rotala stem touching
+    a java fern keeps its own pixels), and a creature behind a front leaf is
+    hidden over the rhizome as elsewhere, in both the one-pass and the split
+    grid.
 - **Interaction.** Each plant species is a palette item under Plants
   (§2.5), in `desktank window` and on the web. A click pours seeds or
   places one piece of the species' default propagule; `P` (and, on the web, a row of chips under the

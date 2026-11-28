@@ -241,6 +241,32 @@ fn plant_floaters_scene_matches_reference() {
 #[test]
 fn plant_epiphytes_scene_matches_reference() {
     check("plant_epiphytes");
+    check_named("plant_epiphytes", "plant_epiphytes_x4", None, SIZE_X4);
+}
+
+/// Grown anubias and java fern with their leaves in front of and behind the
+/// main row (the scene above grows them for too short a time), and fish.
+#[test]
+fn plant_epiphytes_mature_scene_matches_reference() {
+    check_named(
+        "plant_epiphytes_mature",
+        "plant_epiphytes_mature_x4",
+        None,
+        SIZE_X4,
+    );
+}
+
+/// The grown epiphytes among other plants (rotala, cryptocoryne, a carpet)
+/// and snails: their blades never paint over another species' leaves, and
+/// the split grid draws the scene exactly as one pass does.
+#[test]
+fn plant_epiphytes_mixed_scene_matches_reference() {
+    check_named(
+        "plant_epiphytes_mixed",
+        "plant_epiphytes_mixed_x4",
+        None,
+        SIZE_X4,
+    );
 }
 
 /// Issue #45: tiger lotus (mottled leaf pads on petioles of differing
@@ -263,7 +289,6 @@ fn plant_scenes_match_reference_at_scale_4() {
         "plant_rosettes",
         "plant_carpets",
         "plant_floaters",
-        "plant_epiphytes",
         "plant_marimo_lotus",
     ] {
         check_named(scene, &format!("{scene}_x4"), None, SIZE_X4);
@@ -384,6 +409,13 @@ fn split_grid_matches_one_pass_with_sway_and_overlays() {
             "plant_rosettes",
             SIZE_X4,
             None,
+            &["--sway", "--field", "light"][..],
+        ),
+        ("plant_epiphytes", SIZE_X4, Some("00:00"), &["--sway"][..]),
+        (
+            "plant_epiphytes_mixed",
+            SIZE_X4,
+            Some("00:00"),
             &["--sway", "--field", "light"][..],
         ),
     ] {

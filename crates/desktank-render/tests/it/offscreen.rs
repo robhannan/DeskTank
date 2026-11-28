@@ -2776,3 +2776,79 @@ fn the_ruler_respects_srgb_targets_oled_mode_and_the_hud() {
         "the ruler still shows outside the card"
     );
 }
+
+/// Creatures near grown epiphytes, drawn in one pass and in the split grid
+/// at scale 4: a creature behind a leaf in front of the rhizome (or behind
+/// the rhizome itself) is hidden the same way, whichever pass draws it.
+#[test]
+fn epiphyte_leaves_hide_creatures_the_same_in_both_grids() {
+    let (Some(single), Some(split)) = (
+        gpu_with(GpuOptions {
+            split_grid: Some(false),
+            ..GpuOptions::default()
+        }),
+        gpu_with(GpuOptions {
+            split_grid: Some(true),
+            ..GpuOptions::default()
+        }),
+    ) else {
+        return;
+    };
+    let (cols, rows, size) = (40_usize, 27_usize, (160, 108));
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let make = |seed: u64| {
+        let materials = MaterialTable::builtin().unwrap();
+        let wood = materials.id("driftwood").unwrap();
+        let mut world = World::new(
+            WorldConfig {
+                width: cols,
+                height: rows,
+                seed,
+                water_level: 1.0,
+            },
+            materials,
+        )
+        .unwrap();
+        world
+            .fill_rect(
+                desktank_sim::Rect {
+                    x0: 6,
+                    y0: 22,
+                    x1: cols - 6,
+                    y1: rows,
+                },
+                wood,
+                Brush::Replace,
+            )
+            .unwrap();
+        for (name, x) in [("java_fern", 14), ("anubias", 27)] {
+            let id = world.plant_species().id(name).unwrap();
+            world
+                .place_plant(id, desktank_sim::PlantStage::Mature, x, 21, false)
+                .unwrap()
+                .unwrap();
+        }
+        for (name, x) in [
+            ("nerite", 13),
+            ("neon_tetra", 16),
+            ("nerite", 26),
+            ("neon_tetra", 28),
+        ] {
+            let id = world.species().id(name).unwrap();
+            let _ = world.add_creature(id, x, 20);
+        }
+        let mut tank = Tank::new(world, TankConfig::default());
+        tank.set_time_of_day(12 * 60);
+        tank
+    };
+    let mut differing = 0;
+    for seed in 1..=12 {
+        let one = render_sized(single, &mut make(seed), format, size);
+        let two = render_sized(split, &mut make(seed), format, size);
+        differing += one.iter().zip(&two).filter(|(a, b)| a != b).count();
+    }
+    assert_eq!(
+        differing, 0,
+        "pixels differ between one pass and the split grid"
+    );
+}

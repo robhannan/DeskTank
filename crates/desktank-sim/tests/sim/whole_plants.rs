@@ -177,6 +177,31 @@ fn place(w: &mut World, name: &str, stage: PlantStage, x: i64, y: i64, flip: boo
 }
 
 #[test]
+fn mature_epiphytes_fan_out_from_their_rhizomes() {
+    let w = tank(7);
+    for (name, count) in [("java_fern", 5), ("anubias", 4)] {
+        let (x, y) = spot(&w, name);
+        for flip in [false, true] {
+            let g = ghost(&w, name, PlantStage::Mature, x, y, flip);
+            assert!(g.fits, "{name}");
+            let mut starts = Vec::new();
+            let mut left = g.base.0;
+            let mut right = g.base.0;
+            for c in g.cells.iter().filter(|c| c.part == Part::Leaf) {
+                if plant_position(c.variant) == 1 {
+                    starts.push(c.x);
+                }
+                left = left.min(c.x);
+                right = right.max(c.x);
+            }
+            assert_eq!(starts.len(), count, "{name}");
+            assert!(left < *starts.iter().min().unwrap(), "{name} left spread");
+            assert!(right > *starts.iter().max().unwrap(), "{name} right spread");
+        }
+    }
+}
+
+#[test]
 fn every_species_places_whole_plants_that_are_ordinary_plants() {
     for name in names(&tank(1)) {
         let mut sizes = Vec::new();

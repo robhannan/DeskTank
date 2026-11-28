@@ -1,0 +1,58 @@
+# Grown epiphytes (the plant_epiphytes scene's are still young): anubias on
+# glued rock and java fern on glued driftwood, each with the leaves drawn in
+# front of and behind its main row, and two fish swimming past.
+ticks = 60000
+
+[world]
+water_level = 0.62
+
+[[pour]]
+repeat = 42
+x = 0
+y = 96
+dx = 4
+radius = 15
+material = "aquasoil"
+brush = "replace"
+
+# Rock on the left for anubias.
+[[pour]]
+repeat = 4
+x = 18
+y = 74
+dx = 5
+radius = 6
+material = "rock"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 24
+y = 64
+radius = 0
+plant = "anubias"
+
+# Driftwood on the right for java fern.
+[[pour]]
+repeat = 5
+x = 92
+y = 70
+dx = 5
+radius = 4
+material = "driftwood"
+brush = "replace"
+glued = true
+
+[[pour]]
+x = 102
+y = 60
+radius = 0
+plant = "java_fern"
+
+[[creature]]
+tick = 59999
+species = "neon_tetra"
+x = 100
+y = 56
+count = 2
+dx = 5

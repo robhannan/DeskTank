@@ -1,7 +1,7 @@
 # Epiphytes, layered mats and branching/trailing stems (T6c part 3):
 # anubias on glued rock, java fern on glued driftwood, layered christmas
 # moss on glued rock, and branching rotala plus surface-trailing cabomba,
-# grown for 15 minutes.
+# grown for 18 minutes. Add two fish to exercise epiphyte occlusion.
 ticks = 21600
 
 [world]
@@ -86,3 +86,11 @@ x = 144
 y = 44
 radius = 0
 plant = "cabomba"
+
+[[creature]]
+tick = 21599
+species = "neon_tetra"
+x = 57
+y = 60
+count = 2
+dx = 5
