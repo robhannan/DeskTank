@@ -216,8 +216,13 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     as a swept profile as wide as three cells, from the leaf's path, in the
     water cells beside it (`wing_source`: a water pixel next to a blade cell
     draws that blade's texel, with its quarter unclamped; sway moves the wing
-    with the blade, the sprite passes hide behind it, and tanks without
-    rosettes pay nothing, since the view's flag bit is off). A sword (amazon
+    with the blade, the sprite passes hide behind it, and tanks without a
+    sword or ribbon rosette pay nothing, since the view's flag bit is off;
+    a wing is taken from the nearer blade only, so where two blades stand a
+    cell apart a pixel the nearer one's profile doesn't reach stays water).
+    Only a rosette's swords are drawn this way (its species texel's shapes
+    `w` carries a rosette bit): an epiphyte's sword (java fern) keeps its
+    own narrow art and its night folding. A sword (amazon
     sword, cryptocoryne) is a short petiole flaring into a lanceolate blade
     widest at about half its length (`3.2 + 0.07 * blade_length` quarters
     each side at most, so a crypt's 12-cell leaf is two cells broad and an
