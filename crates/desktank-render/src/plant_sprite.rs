@@ -1285,6 +1285,131 @@ mod tests {
         }
     }
 
+    /// `EPIPHYTE_SHOTS=before` (or `after`) captures the pane sprite and
+    /// the same Mature plant on hardscape at tank scales 2 and 4.
+    #[test]
+    fn writes_epiphyte_before_after_on_request() {
+        use desktank_sim::{Brush, PlantStage, Rect, World, WorldConfig};
+
+        let Ok(prefix) = std::env::var("EPIPHYTE_SHOTS") else {
+            return;
+        };
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let gpu = pollster::block_on(crate::Gpu::new(
+            &instance,
+            None,
+            crate::GpuOptions::default(),
+        ))
+        .expect("GPU for epiphyte shots");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/epiphyte-before-after");
+        std::fs::create_dir_all(&dir).unwrap();
+        let species = table();
+        let (cols, rows, mount_y) = (36_usize, 27_usize, 23_usize);
+        let (zoom, gap) = (4, 12);
+        let (panel_w, panel_h) = (cols * 2 * zoom, rows * 2 * zoom);
+        let width = panel_w * 3 + gap * 2;
+        let bg = crate::hud::BACKGROUND;
+        let blank = |height| {
+            (0..width * height)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect::<Vec<_>>()
+        };
+        let write = |name: &str, data: &[u8], height| {
+            std::fs::write(
+                dir.join(format!("{prefix}-{name}.png")),
+                crate::testing::png(
+                    data,
+                    (
+                        u32::try_from(width).unwrap(),
+                        u32::try_from(height).unwrap(),
+                    ),
+                ),
+            )
+            .unwrap();
+        };
+        let mut sheet = blank(panel_h * 2 + gap);
+        for (row, (name, hardscape)) in [("java_fern", "driftwood"), ("anubias", "rock")]
+            .into_iter()
+            .enumerate()
+        {
+            let mut world = World::new(
+                WorldConfig {
+                    width: cols,
+                    height: rows,
+                    seed: 7,
+                    water_level: 1.0,
+                },
+                MaterialTable::builtin().unwrap(),
+            )
+            .unwrap();
+            let mount = world.materials().id(hardscape).unwrap();
+            world
+                .fill_rect(
+                    Rect {
+                        x0: 7,
+                        y0: mount_y,
+                        x1: cols - 7,
+                        y1: rows,
+                    },
+                    mount,
+                    Brush::Replace,
+                )
+                .unwrap();
+            let id = species.id(name).unwrap();
+            world
+                .place_plant(
+                    id,
+                    PlantStage::Mature,
+                    (cols / 2) as i64,
+                    (mount_y - 1) as i64,
+                    false,
+                )
+                .unwrap()
+                .unwrap();
+            let mut tank = crate::Tank::new(world, crate::TankConfig::default());
+            tank.set_time_of_day(12 * 60);
+            // The pane shares the same baseline as the mounted plant.
+            let ((sw, sh), sprite) = build(species.get(id).unwrap());
+            let mut image = blank(panel_h);
+            let mut stamp = |x: usize, y: usize, scale: usize, pixel: &[u8]| {
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let i = ((y + dy) * width + x + dx) * 4;
+                        image[i..i + 4].copy_from_slice(pixel);
+                    }
+                }
+            };
+            let top = mount_y * 2 * zoom - (sh - 4) * zoom;
+            for (i, pixel) in sprite.iter().enumerate().filter(|(_, p)| p[3] == 255) {
+                stamp(
+                    (panel_w - sw * zoom) / 2 + i % sw * zoom,
+                    top + i / sw * zoom,
+                    zoom,
+                    pixel,
+                );
+            }
+            for (panel, scale) in [2, 4].into_iter().enumerate() {
+                let (w, h) = (cols * scale, rows * scale);
+                let pixels = tank.capture(&gpu, (w as u32, h as u32)).unwrap();
+                let k = zoom * 2 / scale;
+                for (i, pixel) in pixels.chunks_exact(4).enumerate() {
+                    stamp(
+                        (panel + 1) * (panel_w + gap) + i % w * k,
+                        i / w * k,
+                        k,
+                        pixel,
+                    );
+                }
+            }
+            write(name, &image, panel_h);
+            let begin = row * (panel_h + gap) * width * 4;
+            sheet[begin..begin + image.len()].copy_from_slice(&image);
+        }
+        write("contact", &sheet, panel_h * 2 + gap);
+    }
+
     /// Writes, when `STEM_SHOTS` or `ROSETTE_SHOTS` names a prefix (`before`,
     /// `after`; `SHOTS_MINUTE=0` draws at midnight), one PNG per stem (or rosette) species to
     /// `target/shots/stem-before-after/` (`rosette-before-after/`): its pane
