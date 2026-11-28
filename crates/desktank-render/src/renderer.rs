@@ -15,12 +15,12 @@ use crate::card::{self, CardLayout};
 use crate::grid::{self, DirtyRects};
 use crate::hud::{self, BrushPreview, Magnifier, MagnifierLayout, PaletteLayout};
 use crate::layout::Layout;
-use crate::palette;
 use crate::plants::{self, PlantTints};
 use crate::post::{Offscreen, Post};
 use crate::ruler;
 use crate::sprites::{self, Atlas};
 use crate::{Gpu, timer::GpuTimer};
+use crate::{ornaments, palette};
 
 /// The shader's field overlay mode: 0 = none; 1, 2, 3 = nutrient, CO₂, light
 /// (the texture's channels); 4 = flow.
@@ -126,6 +126,9 @@ pub struct Renderer {
     has_carpets: bool,
     /// The material palette, built once.
     palette: wgpu::Texture,
+    ornament_art: wgpu::Texture,
+    ornament_poses: BTreeMap<u16, [f32; 4]>,
+    ornament_materials: [bool; palette::SIDE],
     /// Ramps, shapes and sizes per plant species, built once.
     species: wgpu::Texture,
     /// The palette strip image (top-left corner of a fixed-size texture).
@@ -185,7 +188,7 @@ struct CameraGpu {
 
 impl Renderer {
     /// Resources for `world`'s grid, drawing into `format` targets.
-    #[allow(clippy::too_many_lines)] // one field at a time
+    #[allow(clippy::too_many_lines)] // Builds the shared resources and binds them in shader order.
     pub fn new(gpu: &Gpu, world: &World, format: wgpu::TextureFormat) -> Self {
         let d = &gpu.device;
         let grid = (side(world.width()), side(world.height()));
@@ -193,6 +196,11 @@ impl Renderer {
         let cells = create_grid_texture(d, "cells", grid, wgpu::TextureFormat::Rgba8Unorm);
         let bands = create_grid_texture(d, "depth bands", grid, wgpu::TextureFormat::R8Unorm);
         let palette = create_palette(gpu, world);
+        let ornament_art = create_ornament_art(gpu, world);
+        let mut ornament_materials = [false; palette::SIDE];
+        for material in world.materials().iter() {
+            ornament_materials[usize::from(material.id.0)] = material.ornament.is_some();
+        }
         let plant_tints = PlantTints::default();
         let plants = create_plants(gpu, &plant_tints);
         let species = create_species(gpu, world);
@@ -236,6 +244,7 @@ impl Renderer {
             &algae.coat,
             &algae.glass,
             &algae.look_atlas,
+            &ornament_art,
         ];
         let bind_group = create_bind_group(d, &bind_layout, &view_buffer, textures);
         let lens_bind_group = create_bind_group(d, &bind_layout, &lens_view_buffer, textures);
@@ -271,6 +280,9 @@ impl Renderer {
             epiphyte_areas: Vec::new(),
             has_carpets: false,
             palette,
+            ornament_art,
+            ornament_poses: BTreeMap::new(),
+            ornament_materials,
             species,
             hud,
             fields,
@@ -347,6 +359,7 @@ impl Renderer {
             &self.algae.coat,
             &self.algae.glass,
             &self.algae.look_atlas,
+            &self.ornament_art,
         ];
         self.bind_group = create_bind_group(d, &self.bind_layout, &self.view_buffer, textures);
         self.lens_bind_group =
@@ -405,6 +418,7 @@ impl Renderer {
         let cells = world.cells();
         if !dirty.is_empty() {
             // Cells changed: look for variety stones again (stops at the first).
+            self.upload_ornament_poses(gpu, world);
             let stones = &self.variety_stones;
             self.stone_varieties_visible = cells.iter().any(|c| stones[usize::from(c.material.0)]);
             let species = world.plant_species();
@@ -455,9 +469,23 @@ impl Renderer {
         }
         let (scratch, band_scratch) = (&mut self.scratch, &mut self.band_scratch);
         let (texture, bands) = (&self.cells, &self.bands);
+        let ornament_materials = &self.ornament_materials;
         dirty.take(|r| {
             let r = r.unwrap_or(full);
-            grid::pack(cells, width, r, |i| world.rigid_mask(i), scratch);
+            grid::pack(
+                cells,
+                width,
+                r,
+                |i| {
+                    // The ornament shader uses its body id to find the art pose.
+                    if ornament_materials[usize::from(cells[i].material.0)] {
+                        None
+                    } else {
+                        world.rigid_mask(i)
+                    }
+                },
+                scratch,
+            );
             write_rect(gpu, texture, r, scratch, grid::TEXEL_BYTES);
             // Unbanded cells never sample this texture, so old bytes can stay.
             if world.render_bands(r, band_scratch) {
@@ -496,6 +524,36 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    fn upload_ornament_poses(&mut self, gpu: &Gpu, world: &World) {
+        let next: BTreeMap<_, _> = world.ornament_poses().collect();
+        let update = |id: u16, pose| {
+            let [x, y] = id.to_le_bytes().map(usize::from);
+            write_rect(
+                gpu,
+                &self.ornament_art,
+                desktank_sim::Rect {
+                    x0: x,
+                    y0: y,
+                    x1: x + 1,
+                    y1: y + 1,
+                },
+                &ornaments::bytes(&[pose]),
+                ornaments::TEXEL_BYTES,
+            );
+        };
+        for (&id, &pose) in &next {
+            if self.ornament_poses.get(&id) != Some(&pose) {
+                update(id, pose);
+            }
+        }
+        for &id in self.ornament_poses.keys() {
+            if !next.contains_key(&id) {
+                update(id, [0.0; 4]);
+            }
+        }
+        self.ornament_poses = next;
     }
 
     /// Uploads the rows of the plant tint texture whose plants changed
@@ -1115,7 +1173,7 @@ impl Renderer {
     }
 
     /// The textures every bind group binds, in binding order from 1.
-    fn bound_textures(&self) -> [&wgpu::Texture; 12] {
+    fn bound_textures(&self) -> [&wgpu::Texture; 13] {
         [
             &self.cells,
             &self.palette,
@@ -1129,6 +1187,7 @@ impl Renderer {
             &self.algae.coat,
             &self.algae.glass,
             &self.algae.look_atlas,
+            &self.ornament_art,
         ]
     }
 
@@ -1542,6 +1601,31 @@ fn create_grid_texture(
     })
 }
 
+fn create_ornament_art(gpu: &Gpu, world: &World) -> wgpu::Texture {
+    let d = &gpu.device;
+    let art = ornaments::bake(world, d.limits().max_texture_dimension_2d as usize);
+    let art_height = art.len() / ornaments::WIDTH;
+    let ornament_art = create_grid_texture(
+        d,
+        "ornament art and poses",
+        (side(ornaments::WIDTH), side(art_height)),
+        wgpu::TextureFormat::Rgba32Float,
+    );
+    write_rect(
+        gpu,
+        &ornament_art,
+        desktank_sim::Rect {
+            x0: 0,
+            y0: 0,
+            x1: ornaments::WIDTH,
+            y1: art_height,
+        },
+        &ornaments::bytes(&art),
+        ornaments::TEXEL_BYTES,
+    );
+    ornament_art
+}
+
 /// The palette texture for `world`'s materials, sRGB-encoded.
 fn create_palette(gpu: &Gpu, world: &World) -> wgpu::Texture {
     let d = &gpu.device;
@@ -1700,7 +1784,7 @@ fn create_fields(d: &wgpu::Device, world: &World) -> (wgpu::Texture, wgpu::Textu
     (texture, flow, size)
 }
 
-/// The shared view and twelve textures.
+/// The shared view and thirteen textures.
 fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
     let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
         binding,
@@ -1738,16 +1822,17 @@ fn create_bind_layout(d: &wgpu::Device) -> wgpu::BindGroupLayout {
             texture_entry(10, false),
             texture_entry(11, false),
             texture_entry(12, false),
+            texture_entry(13, false),
         ],
     })
 }
 
-/// The bind group: `view` at binding 0, then `textures` at 1–12.
+/// The bind group: `view` at binding 0, then `textures` at 1–13.
 fn create_bind_group(
     d: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     view: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 12],
+    textures: [&wgpu::Texture; 13],
 ) -> wgpu::BindGroup {
     let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
     let mut entries = vec![wgpu::BindGroupEntry {

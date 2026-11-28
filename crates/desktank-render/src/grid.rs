@@ -69,7 +69,7 @@ pub const TEXEL_BYTES: usize = 4;
 /// its contents. A rigid cell (`mask` gives its sub-cell outline, see
 /// `World::rigid_mask`) sends its outline mask in place of its state (its
 /// body id, which the shader never reads), so outlines cost no texture of
-/// their own.
+/// their own. Ornaments keep their body id to select an artwork pose.
 pub fn pack(
     cells: &[Cell],
     width: usize,

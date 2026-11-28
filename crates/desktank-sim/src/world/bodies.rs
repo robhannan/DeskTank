@@ -822,6 +822,37 @@ impl World {
         Some(changed)
     }
 
+    /// Inverse drawn poses of intact ornament bodies for sampling their
+    /// rest-pose artwork. Each pose holds the local origin of world (0, 0)
+    /// in cells, followed by the cosine and sine of the drawn angle.
+    pub fn ornament_poses(&self) -> impl Iterator<Item = (u16, [f32; 4])> + '_ {
+        self.bodies.iter().filter_map(|(&id, b)| {
+            let art = self.ornament_art(b.material)?;
+            if b.pending != Pending::None || b.shape.size() != art.size() {
+                return None;
+            }
+            let (cx, cy) = b.drawn_com();
+            #[allow(clippy::cast_precision_loss)] // Bounded grid positions and fixed-point basis.
+            let (x, y, local_x, local_y, cos, sin) = (
+                cx as f32 / 256.0,
+                cy as f32 / 256.0,
+                b.shape.com.0 as f32 / 256.0,
+                b.shape.com.1 as f32 / 256.0,
+                shape::cos(b.drawn) as f32 / 65_536.0,
+                shape::sin(b.drawn) as f32 / 65_536.0,
+            );
+            Some((
+                id,
+                [
+                    local_x - x * cos - y * sin,
+                    local_y + x * sin - y * cos,
+                    cos,
+                    sin,
+                ],
+            ))
+        })
+    }
+
     /// Recover each outlet's cell from the current drawn pose, using the
     /// same centre and angle the rigid raster uses.
     pub(super) fn ornament_bubble_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
@@ -1056,6 +1087,41 @@ mod tests {
         let turned: Vec<_> = w.ornament_bubble_cells().collect();
         assert_ne!(turned, upright);
         assert_eq!(turned, expected);
+    }
+
+    #[test]
+    fn ornament_pose_maps_a_drawn_quarter_back_to_its_rest_texel() {
+        use super::{ONE, TURN, shape};
+        let mut world =
+            World::new(WorldConfig::default(), MaterialTable::builtin().unwrap()).unwrap();
+        let material = world.materials().id("stone_castle").unwrap();
+        assert!(world.add_ornament(material, 44, 40) > 0);
+        let id = *world.bodies.first_key_value().unwrap().0;
+        // A quarter-texel centre at the main roof. Move the body and sample
+        // the same artwork after an oblique rotation and a full quarter turn.
+        let (qx, qy) = (17 * 4 + 2, 0);
+        let (local_x, local_y) = ((2 * qx + 1) * ONE / 8, (2 * qy + 1) * ONE / 8);
+        for drawn in [0, 13 * TURN / 256, TURN / 4] {
+            let body = world.bodies.get_mut(&id).unwrap();
+            body.drawn = drawn;
+            body.anchor.0 += 4;
+            body.anchor.1 += 2;
+            let (cx, cy) = body.drawn_com();
+            let (dx, dy) = shape::rotate(
+                local_x - body.shape.com.0,
+                local_y - body.shape.com.1,
+                drawn,
+            );
+            #[allow(clippy::cast_precision_loss)]
+            let (x, y) = ((cx + dx) as f32 / 256.0, (cy + dy) as f32 / 256.0);
+            let (found, [tx, ty, cos, sin]) = world.ornament_poses().next().unwrap();
+            assert_eq!(found, id);
+            #[allow(clippy::cast_precision_loss)]
+            {
+                assert!(((tx + x * cos + y * sin) * 4.0 - (qx as f32 + 0.5)).abs() < 0.03);
+                assert!(((ty - x * sin + y * cos) * 4.0 - (qy as f32 + 0.5)).abs() < 0.03);
+            }
+        }
     }
 
     #[test]

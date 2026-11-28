@@ -443,3 +443,53 @@ fn split_grid_matches_one_pass_with_sway_and_overlays() {
         check_split(scene, &name, time, size, extra, &one_pass);
     }
 }
+
+#[test]
+fn fine_castle_preview_trims_the_roof_tip_on_the_quarter_grid() {
+    use desktank_render::{Gpu, GpuOptions, Tank, TankConfig, wgpu};
+    use desktank_sim::{MaterialTable, World, WorldConfig};
+
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let gpu = match pollster::block_on(Gpu::new(&instance, None, GpuOptions::default())) {
+        Ok(gpu) => gpu,
+        Err(err)
+            if err.to_string().contains("no suitable GPU adapter")
+                && std::env::var_os("CI").is_none() =>
+        {
+            eprintln!("skipping castle preview: {err}");
+            return;
+        }
+        Err(err) => panic!("castle preview GPU: {err}"),
+    };
+    let world = World::new(
+        WorldConfig {
+            width: 160,
+            height: 90,
+            ..WorldConfig::default()
+        },
+        MaterialTable::builtin().unwrap(),
+    )
+    .unwrap();
+    let material = world.materials().id("stone_castle").unwrap();
+    let ghost = world.ornament_placement(material, 80, 45).unwrap();
+    assert!(ghost.fits);
+    let mut tank = Tank::new(world, TankConfig::default());
+    let (x, y) = (ghost.origin.0 + 17, ghost.origin.1);
+    let sample = |rgba: &[u8], scale, qx, qy| {
+        let start = ((y * scale + qy) * 160 * scale + x * scale + qx) * 4;
+        <[u8; 4]>::try_from(&rgba[start..start + 4]).unwrap()
+    };
+
+    let fine_water = tank.capture(&gpu, (640, 360)).unwrap();
+    let coarse_water = tank.capture(&gpu, (320, 180)).unwrap();
+    tank.set_ornament_ghost(Some(ghost));
+    let fine_ghost = tank.capture(&gpu, (640, 360)).unwrap();
+    let coarse_ghost = tank.capture(&gpu, (320, 180)).unwrap();
+    assert_eq!(sample(&fine_ghost, 4, 0, 0), sample(&fine_water, 4, 0, 0));
+    assert_ne!(sample(&fine_ghost, 4, 1, 1), sample(&fine_water, 4, 1, 1));
+    assert_ne!(
+        sample(&coarse_ghost, 2, 0, 0),
+        sample(&coarse_water, 2, 0, 0)
+    );
+}
