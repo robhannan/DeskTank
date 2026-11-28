@@ -2502,8 +2502,7 @@ fn stem_leaf_cell(me: vec4<f32>, part: i32) -> bool {
     if part == PART_LEAF && (shapes.x == LEAF_RIBBON || shapes.x == LEAF_LOTUS) {
         return true;
     }
-    return (shapes.x < LEAF_RIBBON && shapes.y < STEM_FUZZ)
-        || (part == PART_LEAF && (shapes.w & EPIPHYTE) != 0);
+    return shapes.x < LEAF_RIBBON && shapes.y < STEM_FUZZ;
 }
 
 // The first non-plant neighbour on `quarter`'s side (across, then above or

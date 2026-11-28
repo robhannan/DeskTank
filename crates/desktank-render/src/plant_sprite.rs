@@ -1238,53 +1238,6 @@ mod tests {
         }
     }
 
-    /// Writes the sprites as PNGs to `target/shots/plant-*.png` when
-    /// `CARD_SHOTS` is set, enlarged eight times on the card's background.
-    #[test]
-    fn writes_plant_shots_on_request() {
-        if std::env::var_os("CARD_SHOTS").is_none() {
-            return;
-        }
-        let t = table();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/shots");
-        std::fs::create_dir_all(&dir).unwrap();
-        let bg = crate::hud::BACKGROUND;
-        let sprites = all(&t);
-        // Contact sheets of six sprites each, in a cell of the widest and
-        // tallest, on the card's background.
-        let (scale, cols, cell) = (6_usize, 3_usize, (92_usize, 42_usize));
-        for (n, group) in sprites.chunks(6).enumerate() {
-            let rows = group.len().div_ceil(cols);
-            let (sw, sh) = (cols * cell.0 * scale, rows * cell.1 * scale);
-            let mut big: Vec<u8> = (0..sw * sh)
-                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
-                .collect();
-            for (i, (_, ((w, h), px))) in group.iter().enumerate() {
-                let (ox, oy) = (
-                    (i % cols) * cell.0 + (cell.0 - w) / 2,
-                    (i / cols) * cell.1 + (cell.1 - h) / 2,
-                );
-                for (j, p) in px.iter().enumerate().filter(|(_, p)| p[3] == 255) {
-                    let (x, y) = ((ox + j % w) * scale, (oy + j / w) * scale);
-                    for dy in 0..scale {
-                        for dx in 0..scale {
-                            let k = ((y + dy) * sw + x + dx) * 4;
-                            big[k..k + 4].copy_from_slice(p);
-                        }
-                    }
-                }
-            }
-            std::fs::write(
-                dir.join(format!("plants-{n}.png")),
-                crate::testing::png(
-                    &big,
-                    (u32::try_from(sw).unwrap(), u32::try_from(sh).unwrap()),
-                ),
-            )
-            .unwrap();
-        }
-    }
-
     /// `EPIPHYTE_SHOTS=before` (or `after`) captures the pane sprite and
     /// the same Mature plant on hardscape at tank scales 2 and 4.
     #[test]
@@ -1408,6 +1361,53 @@ mod tests {
             sheet[begin..begin + image.len()].copy_from_slice(&image);
         }
         write("contact", &sheet, panel_h * 2 + gap);
+    }
+
+    /// Writes the sprites as PNGs to `target/shots/plant-*.png` when
+    /// `CARD_SHOTS` is set, enlarged eight times on the card's background.
+    #[test]
+    fn writes_plant_shots_on_request() {
+        if std::env::var_os("CARD_SHOTS").is_none() {
+            return;
+        }
+        let t = table();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/shots");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bg = crate::hud::BACKGROUND;
+        let sprites = all(&t);
+        // Contact sheets of six sprites each, in a cell of the widest and
+        // tallest, on the card's background.
+        let (scale, cols, cell) = (6_usize, 3_usize, (92_usize, 42_usize));
+        for (n, group) in sprites.chunks(6).enumerate() {
+            let rows = group.len().div_ceil(cols);
+            let (sw, sh) = (cols * cell.0 * scale, rows * cell.1 * scale);
+            let mut big: Vec<u8> = (0..sw * sh)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect();
+            for (i, (_, ((w, h), px))) in group.iter().enumerate() {
+                let (ox, oy) = (
+                    (i % cols) * cell.0 + (cell.0 - w) / 2,
+                    (i / cols) * cell.1 + (cell.1 - h) / 2,
+                );
+                for (j, p) in px.iter().enumerate().filter(|(_, p)| p[3] == 255) {
+                    let (x, y) = ((ox + j % w) * scale, (oy + j / w) * scale);
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            let k = ((y + dy) * sw + x + dx) * 4;
+                            big[k..k + 4].copy_from_slice(p);
+                        }
+                    }
+                }
+            }
+            std::fs::write(
+                dir.join(format!("plants-{n}.png")),
+                crate::testing::png(
+                    &big,
+                    (u32::try_from(sw).unwrap(), u32::try_from(sh).unwrap()),
+                ),
+            )
+            .unwrap();
+        }
     }
 
     /// Writes, when `STEM_SHOTS` or `ROSETTE_SHOTS` names a prefix (`before`,
