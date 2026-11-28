@@ -461,6 +461,7 @@ fn a_starving_plant_yellows_without_rewriting_its_cells() {
 fn plants_in_front_hide_creatures_behind_them() {
     let Some(gpu) = gpu() else { return };
     let (mut hidden, mut shown) = (0, 0);
+    let mut previous = None;
     for seed in 1..=24 {
         let materials = MaterialTable::builtin().unwrap();
         let leaf = materials.id("leaf").unwrap();
@@ -488,6 +489,10 @@ fn plants_in_front_hide_creatures_behind_them() {
         // Placed in a band clear of the leaves it overlaps, or beside them.
         let id = world.add_creature(tetra, 40, 16).unwrap();
         let mut tank = Tank::new(world, TankConfig::default());
+        // Each seed starts a fresh world and shares the compiled pipelines.
+        if let Some(old) = &mut previous {
+            tank.take_gpu(old);
+        }
         let with = render(gpu, &mut tank, wgpu::TextureFormat::Rgba8Unorm);
         let world = tank.world_mut();
         let depth = world.creature(id).unwrap().depth();
@@ -519,6 +524,7 @@ fn plants_in_front_hide_creatures_behind_them() {
         } else if covered > 0 {
             shown += 1;
         }
+        previous = Some(tank);
     }
     assert!(hidden > 0 && shown > 0, "hidden {hidden}, shown {shown}");
 }
