@@ -62,8 +62,9 @@ struct View {
     // Day and night: a colour multiplier for the tank (rgb; 1 by day), and
     // how dark it is (w: 0 by day, 1 at night) for glowing creatures.
     daylight: vec4<f32>,
-    // Target size in pixels (xy), sway phase in seconds (z), and sway
-    // enabled (w: 1 when active, 0 when off).
+    // Target size in pixels (xy), sway phase in seconds (z), and flags (w:
+    // bit 0 when sway is active, bit 1 when any rosette's broad blades are
+    // drawn, see `wing_source`).
     target_size: vec4<f32>,
     // Material ids of the plant parts root (x), stem (y) and leaf (z), and
     // of water (w); -1 if missing.
@@ -199,6 +200,11 @@ const LEAF_LANCEOLATE: i32 = 0;
 const LEAF_NEEDLE: i32 = 1;
 const LEAF_ROUND: i32 = 2;
 const LEAF_FEATHER: i32 = 3;
+// Set in a rosette species' shapes texel's w (the arrangement, 0 for
+// rosettes): its sword blades are drawn broad (`wide_blade_cover`; an
+// epiphyte's, java fern's, keep their own art). Ribbons are always the thin
+// strap.
+const ROSETTE_FLAG: i32 = 128;
 const LEAF_RIBBON: i32 = 4;
 const LEAF_SWORD: i32 = 5;
 const LEAF_GRASS: i32 = 6;
@@ -312,28 +318,83 @@ fn quarter_of(g: vec2<f32>, cell: vec2<f32>) -> vec2<i32> {
     return clamp(vec2<i32>(floor((g - cell) * 4.0)), vec2<i32>(0), vec2<i32>(3));
 }
 
+// Rosette blades (sword and ribbon) are broader than their one-cell path: a
+// water pixel beside a blade cell draws that blade's wing, so a blade's
+// texels reach a cell either side of its own. The result is that blade cell
+// (xy) and the texel's quarter in it (zw, with z unclamped: below 0 left of
+// the cell, above 3 right of it), or w = -1 for none. The nearer side is
+// tried first, then the other: two cell reads, and none where no rosette is
+// in the tank. (A vec4, not a GridSource: it keeps SwiftShader's registers
+// down.)
+fn wing_source(g: vec2<f32>) -> vec4<i32> {
+    let cell = vec2<i32>(floor(g));
+    let right = fract(g.x) >= 0.5;
+    for (var i = 0; i < 2; i++) {
+        let nb = cell + vec2<i32>(select(-1, 1, right == (i == 0)), 0);
+        if inside(nb) {
+            let t = textureLoad(cells, nb, 0);
+            if round(t.r * 255.0) == view.plant_parts.z {
+                let shape = textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, i32(round(plant_of(t).a * 255.0))), 0) * 255.0;
+                if abs(shape.x - 4.5) < 1.0 && shape.w > f32(ROSETTE_FLAG) - 0.5 {
+                    let q = (g - vec2<f32>(nb)) * 4.0;
+                    return vec4<i32>(nb, i32(floor(q.x)), clamp(i32(floor(q.y)), 0, 3));
+                }
+            }
+        }
+    }
+    return vec4<i32>(0, 0, 0, -1);
+}
+
 fn grid_source(grid_pos: vec2<f32>, at: vec2<i32>, texel: vec4<f32>, quarter: vec2<i32>) -> GridSource {
     let part = part_of(texel);
     var src = GridSource(at, texel, part, quarter, false, false);
-    let sway_on = view.target_size.w > 0.5;
+    let sway_on = (i32(view.target_size.w + 0.5) & 1) != 0;
+    let wings = view.target_size.w > 1.5 && view.scale >= 2.0;
     let self_sways = sway_on && part >= 0 && is_swaying_part(part, texel);
-    if sway_on && (part < 0 || self_sways) {
-        let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
-        let s_cell = floor(s_grid);
-        let s_at = vec2<i32>(s_cell);
-        var s_sways = false;
-        var s_texel = vec4<f32>(0.0);
-        var s_part = -1;
-        if inside(s_at) {
-            s_texel = textureLoad(cells, s_at, 0);
-            s_part = part_of(s_texel);
-            s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
-        }
-        if s_sways && (self_sways || effective_style(at, style_of(texel)) == STYLE_WATER) {
+    let sway_here = sway_on && (part < 0 || self_sways);
+    let s_grid = vec2<f32>(grid_pos.x - sway_dx(grid_pos), grid_pos.y);
+    let s_cell = floor(s_grid);
+    let s_at = vec2<i32>(s_cell);
+    var s_sways = false;
+    var s_texel = vec4<f32>(0.0);
+    var s_part = -1;
+    if sway_here && inside(s_at) {
+        s_texel = textureLoad(cells, s_at, 0);
+        s_part = part_of(s_texel);
+        s_sways = s_part >= 0 && is_swaying_part(s_part, s_texel);
+    }
+    // Whether this is a water cell (read only where it matters: one call
+    // site, since every call site of an inlined function costs Chromium 68's
+    // SwiftShader its own registers).
+    let water = part < 0 && (wings || (sway_here && s_sways))
+        && effective_style(at, style_of(texel)) == STYLE_WATER;
+    // Whether to look for a blade's wing, and where (also one call).
+    var want_wing = false;
+    var wing_at = grid_pos;
+    var wing_sways = false;
+    if sway_here {
+        if s_sways && (self_sways || water) {
             src = GridSource(s_at, s_texel, s_part, quarter_of(s_grid, s_cell), !self_sways, false);
-        } else if self_sways {
-            src.part = -1;
-            src.swayed_away = true;
+        } else {
+            // No blade in the swayed cell: perhaps the wing of one beside it,
+            // else (for a blade swayed away) what is behind.
+            want_wing = wings && s_part < 0 && (water || self_sways);
+            wing_at = s_grid;
+            wing_sways = self_sways;
+            if self_sways {
+                src.part = -1;
+                src.swayed_away = true;
+            }
+        }
+    } else if wings && water {
+        want_wing = true;
+    }
+    if want_wing {
+        let wing = wing_source(wing_at);
+        if wing.w >= 0 {
+            // A swayed-away blade's cell showing a wing still shows what is
+            // behind where the wing's texel is empty.
+            src = GridSource(wing.xy, textureLoad(cells, wing.xy, 0), PART_LEAF, wing.zw, !wing_sways, wing_sways);
         }
     }
     return src;
@@ -438,7 +499,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                 let nbr = behind_cell(at, quarter);
                 if nbr.x >= 0 {
                     ground_texel = textureLoad(cells, nbr, 0);
-                } else if overlay_enabled() || stem_leaf_cell(src.texel, src.part) {
+                } else if overlay_enabled() || src.swayed_away || stem_leaf_cell(src.texel, src.part) {
                     water_behind = true;
                 } else {
                     let shadow = plant_shadow_of(src.texel, src.part, band);
@@ -659,7 +720,7 @@ fn plant_pass_colour(pos: vec2<f32>, src: GridSource, pt: vec4<f32>, band: f32) 
     var alpha = pt.a;
     if pt.a >= 0.999 {
         alpha = 1.0;
-    } else if !overlay_enabled() && !src.from_sway && behind_cell(vec2<i32>(cell), quarter_of(grid_pos, cell)).x < 0
+    } else if !overlay_enabled() && !src.from_sway && !src.swayed_away && behind_cell(vec2<i32>(cell), quarter_of(grid_pos, cell)).x < 0
         && !stem_leaf_cell(src.texel, src.part) {
         rgb = mix(plant_shadow_of(src.texel, src.part, band), pt.rgb, pt.a);
         alpha = 1.0;
@@ -2414,7 +2475,12 @@ fn stem_leaf_cell(me: vec4<f32>, part: i32) -> bool {
         return false;
     }
     let species = i32(round(plant_of(me).a * 255.0));
-    let shapes = vec2<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).xy * 255.0));
+    let shapes = vec4<i32>(round(textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0) * 255.0));
+    // So do a rosette ribbon's straps and a lotus's petioles and pads, thin
+    // lines between which the water shows.
+    if part == PART_LEAF && (shapes.x == LEAF_RIBBON || shapes.x == LEAF_LOTUS) {
+        return true;
+    }
     return shapes.x < LEAF_RIBBON && shapes.y < STEM_FUZZ;
 }
 
@@ -2471,6 +2537,34 @@ fn leaf_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band:
 fn stem_texel(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, band: f32) -> vec4<f32> {
     let plant = plant_of(me);
     return plant_colour(plant, part, stem_cover(at, me, part, quarter, plant), band);
+}
+
+// Whether the plant texel `plant_texel` etc. would give is opaque enough
+// (alpha above 0.5) to hide a sprite behind it: its alpha alone (`plant_colour`'s
+// opacity where covered), without the colour work, which costs Chromium 68's
+// SwiftShader registers the sprite passes need.
+fn texel_hides(plant: vec4<f32>, cover: vec2<i32>) -> bool {
+    let health = plant.r;
+    let opacity = select(mix(MIN_OPACITY, 1.0, health / FADE_AT), 1.0, health >= FADE_AT);
+    return (cover.x != 0 || view.scale < 2.0) && opacity > 0.5;
+}
+
+fn plant_hides(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> bool {
+    let plant = plant_of(me);
+    if is_leafy(part) {
+        return texel_hides(plant, leaf_cover(at, me, part, quarter, plant));
+    }
+    return texel_hides(plant, stem_cover(at, me, part, quarter, plant));
+}
+
+fn leaf_hides(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> bool {
+    let plant = plant_of(me);
+    return texel_hides(plant, leaf_cover(at, me, part, quarter, plant));
+}
+
+fn stem_hides(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>) -> bool {
+    let plant = plant_of(me);
+    return texel_hides(plant, stem_cover(at, me, part, quarter, plant));
 }
 
 // The plant texture's texel for plant cell `me`: health (r), colouration
@@ -2579,6 +2673,133 @@ fn blade_px(shape: i32, a: i32, span: i32, r: i32, coarse: bool) -> bool {
     return blade_shape(shape, a, t, f32(r), 0.5);
 }
 
+// How far a blade's path is shifted sideways at this texel (in quarters of a
+// cell, positive to the right) where the sim steps it a cell sideways: the
+// step cell (the one whose next is beside it, not above it) and the cell it
+// steps to share one row, and the blade's path runs diagonally across the
+// pair, a texel a texel-row, instead of jogging a whole cell. Cells whose
+// next (or previous) cell is beside them but past `limit` (a petiole's tip
+// and the pad it spreads) don't step. `up`, `down`, `left` and `right` are
+// the cell's `kin` neighbours (read once by the caller: every call site
+// costs Chromium 68's SwiftShader its own registers).
+fn lean_shift(
+    pos: i32,
+    quarter: vec2<i32>,
+    limit: i32,
+    up: vec2<i32>,
+    down: vec2<i32>,
+    left: vec2<i32>,
+    right: vec2<i32>,
+) -> f32 {
+    let rises = up.x == PART_LEAF && up.y == pos + 1;
+    let rose = down.x == PART_LEAF && down.y == pos - 1;
+    // Texel rows up from the cell's bottom, plus one, in quarters.
+    let fine = fine_scale();
+    let climb = f32(select(2 - quarter.y / 2, 4 - quarter.y, fine)) * select(2.0, 1.0, fine);
+    var shift = 0.0;
+    if right.x == PART_LEAF && right.y == pos + 1 && pos < limit && !rises {
+        shift = climb;
+    } else if left.x == PART_LEAF && left.y == pos + 1 && pos < limit && !rises {
+        shift = -climb;
+    } else if left.x == PART_LEAF && left.y == pos - 1 && pos <= limit && !rose {
+        shift = climb - 4.0;
+    } else if right.x == PART_LEAF && right.y == pos - 1 && pos <= limit && !rose {
+        shift = 4.0 - climb;
+    }
+    return shift;
+}
+
+// A sword or ribbon blade's texel (cover x: 1 or 0, shade y), drawn as a
+// swept profile across the cell and a cell either side of it
+// (`wing_source`): `quarter.x` is below 0 or above 3 for a wing texel. The
+// profile is measured from the cell's centre in quarters (`dx`), shifted
+// along a diagonal where the blade steps a cell sideways (`lean_shift`): a
+// sword is a petiole flaring to a broad lanceolate blade with a pale midrib,
+// lateral veins and a darker rim, pointed at its tip; a ribbon is a straight
+// strap two quarters wide (a texel at scale 2), paler on its left, that
+// arcs sideways only near its tip.
+fn wide_blade_cover(
+    at: vec2<i32>,
+    me: vec4<f32>,
+    quarter: vec2<i32>,
+    shape: i32,
+    len: f32,
+    tip: bool,
+    shift: f32,
+    beside: vec2<i32>,
+) -> vec2<i32> {
+    let fine = fine_scale();
+    let pos = position_of(me);
+    let t = clamp(f32(pos) / max(len, 1.0), 0.0, 1.0);
+    // The texel's centre across the cell (quarters from the cell's centre),
+    // the width of a texel, and how far down the cell it is (0 top, 1 bottom).
+    var dx = f32((quarter.x >> 1u) * 2) - 1.0;
+    var px = 2.0;
+    var row = f32(quarter.y / 2);
+    if fine {
+        dx = f32(quarter.x) - 1.5;
+        px = 1.0;
+        row = f32(quarter.y) / 3.0;
+    }
+    dx -= shift;
+    let night = view.daylight.w;
+    let noise = noise_step(me);
+    let phase = f32(hash(vec2<i32>(at.x, i32(round(me.b * 255.0)))) & 255u) * (6.2831853 / 255.0);
+    var half = 1.01;
+    var step = 1;
+    if shape == LEAF_SWORD {
+        let hmax = clamp(3.2 + 0.07 * len, 3.6, 5.6) * (1.0 - 0.4 * night);
+        let s = clamp((t - 0.14) / 0.86, 0.0, 1.0);
+        let lance = pow(max(sin(3.1415927 * pow(s, 0.8)), 0.0), 0.8);
+        if pos > 2 {
+            half = max(hmax * lance, 1.01);
+            if len < 20.0 {
+                // A crinkled margin.
+                half = max(half + 0.7 * sin(f32(pos) * 2.0 + phase), 1.01);
+            }
+        }
+        if tip {
+            if row < 0.5 {
+                // A point: only the texel left of the midrib.
+                half = 0.0;
+            } else {
+                half = min(half, 2.1);
+            }
+        }
+        let covered = (tip && row < 0.5 && dx < 0.0 && dx > -px - 0.01) || abs(dx) < half;
+        if !covered {
+            return vec2<i32>(0, 0);
+        }
+        step = 1 + i32(round(t * 3.0)) + noise;
+        let rim = abs(dx) > half - px - 0.01 && half > 2.5;
+        let rib = dx < 0.0 && dx > -px - 0.01 && pos > 2;
+        let vein = pos % 3 == 0 && abs(dx) > px + 0.01 && (row < 0.5) == (abs(dx) > 3.5 * px);
+        step += select(0, 1, dx < 0.0) - select(0, 1, rim) + select(0, 2, rib) + select(0, 1, vein && !rib)
+            + select(0, 1, tip);
+        return vec2<i32>(1, step);
+    }
+    // Ribbon: straight, left of the cell's centre at scale 2 (so a texel
+    // covers exactly its width) and centred at scale 4; over its last
+    // quarter it arcs away from a blade beside it (or by chance), a little
+    // further each row.
+    let ahead = (f32(pos) + 1.0 - row) / max(len, 1.0);
+    let bend_t = clamp((ahead - 0.78) / 0.22, 0.0, 1.0);
+    var side = select(-1.0, 1.0, (hash(vec2<i32>(i32(round(me.b * 255.0)), 5)) & 1u) == 0u);
+    if beside.y >= 0 && beside.x < 0 {
+        side = -1.0;
+    } else if beside.x >= 0 && beside.y < 0 {
+        side = 1.0;
+    }
+    let centre = select(-1.0, 0.0, fine) + side * 2.5 * bend_t * bend_t;
+    let d = dx - centre;
+    if abs(d) >= half {
+        return vec2<i32>(0, 0);
+    }
+    step = 1 + i32(round(t * 3.5)) + noise;
+    step += select(0, 1, d < 0.01 && !(fine && d > 0.0)) + select(0, 1, tip);
+    return vec2<i32>(1, step);
+}
+
 // Whether a leafy part's texel is covered (x: 1 or 0) and its ramp shade
 // before clamping (y), from the species' leaf shape.
 fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant: vec4<f32>) -> vec2<i32> {
@@ -2602,6 +2823,18 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
             || (right.x == PART_LEAF && right.y == next));
         step += 1 + i32(round(f32(pos) / max(sizes.z, 1.0) * 4.0)) + select(0, 1, top);
         let shape = shapes.x;
+        // A rosette's (not an epiphyte's) sword, ribbon and lotus petiole
+        // step diagonally where they lean a cell sideways (the petiole's
+        // length is `sizes.x`; one shared call).
+        let broad = shape == LEAF_RIBBON || (shape == LEAF_SWORD && shapes.w >= ROSETTE_FLAG);
+        let down = kin(at, vec2<i32>(0, 1), me);
+        var shift = 0.0;
+        if broad || shape == LEAF_LOTUS {
+            shift = lean_shift(pos, quarter, select(255, i32(sizes.x), shape == LEAF_LOTUS), up, down, left, right);
+        }
+        if broad {
+            return wide_blade_cover(at, me, quarter, shape, sizes.z, tip, shift, vec2<i32>(left.x, right.x));
+        }
         if shape == LEAF_GRASS {
             // One texel wide, the tip a texel lighter.
             covered = sub.x == 0;
@@ -2651,7 +2884,7 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 let open_l = left.x < 0;
                 let open_r = right.x < 0;
                 let open_u = up.x < 0;
-                let open_d = kin(at, vec2<i32>(0, 1), me).x < 0;
+                let open_d = down.x < 0;
                 let blotch = (hash(at * 2 + sub) & 7u) < 2u || (hash(at) & 7u) == 0u;
                 let corner = (top && open_u) || (!top && open_d && !upper);
                 covered = !(corner && ((open_l && sub.x == 0) || (open_r && sub.x == 1)));
@@ -2662,27 +2895,25 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                 }
                 if fine {
                     // Quarter detail: rounded ends, a lit rim along the
-                    // top, a dark rim under the lower row, and maroon
-                    // flecks two quarters across.
+                    // top and a dark rim under the lower row.
                     let end = (open_l && (quarter.x == 0)) || (open_r && (quarter.x == 3));
                     let rim_u = open_u && quarter.y == 0;
                     let rim_d = open_d && quarter.y == 3;
                     covered = !(end && (rim_u || rim_d));
-                    let fleck = (hash(at * 4 + quarter / 2 * 2) & 7u) < 2u;
                     step = 5 + select(0, 2, rim_u) - select(0, 2, rim_d) + noise_step(me);
-                    if blotch || fleck {
+                    if blotch {
                         step = 1 + i32(rim_u) + i32(hash(at) >> 9u) % 2;
                     }
                 }
             } else {
-                // The petiole: a bronze stalk one texel wide.
-                covered = sub.x == 0;
-                step = 3 + noise_step(me);
-                if fine {
-                    // Two quarters wide, lit on its left.
-                    covered = quarter.x == 1 || quarter.x == 2;
-                    step += select(0, 1, quarter.x == 1);
-                }
+                // The petiole: a thin bronze stalk (a texel at scale 2, two
+                // quarters at scale 4, drawn from the stem ramp so the
+                // colouration leaves it brown), shifted along a diagonal
+                // where it steps a cell sideways (`lean_shift`).
+                let c = select(-1.0, 0.0, fine) + shift;
+                let dx = select(f32((quarter.x >> 1u) * 2) - 1.0, f32(quarter.x) - 1.5, fine);
+                let along = i32(round(f32(pos) / max(sizes.x, 1.0) * 3.0));
+                return vec2<i32>(select(0, 3, abs(dx - c) < 1.01), 1 + along + select(0, 1, dx < c));
             }
         } else if shape == LEAF_SWORD {
             // A narrow stalk, then a broad blade with a pale midrib (the
@@ -2715,30 +2946,10 @@ fn leaf_cover(at: vec2<i32>, me: vec4<f32>, part: i32, quarter: vec2<i32>, plant
                         - select(0, 1, quarter.x == 3) + select(0, 1, quarter.x == 0);
                 }
             }
-        } else {
-            // Ribbon: a strap one texel wide that twists every four cells,
-            // crossing to the other side where it shows its full face.
-            let side = (pos / 4) % 2;
-            let face = pos % 4 == 0 && !top && !tip;
-            covered = sub.x == side || face;
-            step += select(0, 1, face) - select(0, 1, sub.x == 1);
-            if fine {
-                // A strap two quarters wide, lit along one edge, that
-                // slides across the cell where it twists, showing its
-                // broader, paler face mid-twist.
-                let twist = pos % 4 == 0 && pos > 0 && !tip;
-                let after = side * 2;
-                let before = 2 - after;
-                let left_edge = select(after, before + (after - before) * (3 - quarter.y) / 3, twist);
-                let wide = twist && (quarter.y == 1 || quarter.y == 2);
-                let width = select(1, 2, wide);
-                covered = quarter.x >= left_edge && quarter.x <= left_edge + width;
-                step = step - select(0, 1, face) + select(0, 1, wide)
-                    + select(-1, 1, quarter.x == left_edge);
-            }
         }
-        // Night folding on rosette, carpet and epiphyte blades (T6d): broad
-        // blades and pads tuck narrower at night (view.daylight.w: 0 day, 1 night).
+        // Night folding on carpet and epiphyte blades (T6d; a rosette's sword
+        // narrows in wide_blade_cover): broad blades and pads tuck narrower at
+        // night (view.daylight.w: 0 day, 1 night).
         let night = view.daylight.w;
         if night > 0.01 {
             if fine {
@@ -3325,8 +3536,10 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
     let step = cover.y;
     // Runners and rhizomes are drawn from the stem's ramp, floating leaves
     // from the leaf's.
+    // A lotus petiole (cover 3) is a bare bronze stalk, drawn from the stem's
+    // ramp and left out of the colouration.
     let ramp = select(
-        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME),
+        select(part, PART_STEM, part == PART_RUNNER || part == PART_RHIZOME || cover.x == 3),
         PART_LEAF,
         part == PART_FLOAT || cover.x == 2,
     );
@@ -3337,7 +3550,7 @@ fn plant_colour(plant: vec4<f32>, part: i32, cover: vec2<i32>, band: f32) -> vec
         // A stem plant's upper and newest leaves, and its bud, lean towards
         // the species' colouration colour (the sprite's tip ramp) even
         // before the light colours the plant.
-        var amount = plant.g;
+        var amount = select(plant.g, 0.0, cover.x == 3);
         if ramp == PART_LEAF && part != PART_FLOAT
             && textureLoad(plant_species, vec2<i32>(SHAPES_COLUMN, species), 0).x * 255.0 < f32(LEAF_RIBBON) - 0.5 {
             amount = max(amount, TIP_TINT * clamp((f32(shade) - 3.0) / 4.0, 0.0, 1.0));
@@ -3588,7 +3801,7 @@ fn hidden_by_plant(pos: vec2<f32>, depth: f32) -> bool {
         return false;
     }
     let band = band_at(src.at);
-    return band + 0.5 < depth && plant_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
+    return band + 0.5 < depth && plant_hides(src.at, src.texel, src.part, src.quarter);
 }
 
 // hidden_by_plant for the split sprite passes, which reach only their own
@@ -3605,7 +3818,7 @@ fn hidden_by_leaf(pos: vec2<f32>, depth: f32) -> bool {
         discard;
     }
     let band = band_at(src.at);
-    return band + 0.5 < depth && leaf_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
+    return band + 0.5 < depth && leaf_hides(src.at, src.texel, src.part, src.quarter);
 }
 
 fn hidden_by_stem(pos: vec2<f32>, depth: f32) -> bool {
@@ -3614,7 +3827,7 @@ fn hidden_by_stem(pos: vec2<f32>, depth: f32) -> bool {
         discard;
     }
     let band = band_at(src.at);
-    return band + 0.5 < depth && stem_texel(src.at, src.texel, src.part, src.quarter, band).a > 0.5;
+    return band + 0.5 < depth && stem_hides(src.at, src.texel, src.part, src.quarter);
 }
 
 // A sprite in front of the body's first occupied band is visible. Test the

@@ -1063,6 +1063,9 @@ mod tests {
     use desktank_sim::{MaterialTable, PlantSpeciesTable};
     use std::collections::HashSet;
 
+    /// A crop rectangle (x, y, width, height) in cells.
+    type Crop = (usize, usize, usize, usize);
+
     fn table() -> PlantSpeciesTable {
         let m = MaterialTable::builtin().unwrap();
         PlantSpeciesTable::builtin_for(&m).unwrap()
@@ -1282,16 +1285,19 @@ mod tests {
         }
     }
 
-    /// Writes, when `STEM_SHOTS` names a prefix (`before`, `after`), one PNG
-    /// per stem species to `target/shots/stem-before-after/`: its pane
+    /// Writes, when `STEM_SHOTS` or `ROSETTE_SHOTS` names a prefix (`before`,
+    /// `after`; `SHOTS_MINUTE=0` draws at midnight), one PNG per stem (or rosette) species to
+    /// `target/shots/stem-before-after/` (`rosette-before-after/`): its pane
     /// sprite, then the same species placed Mature in a tank at scale 2 and
-    /// at scale 4 (quarter-cell art), all enlarged four times the sprite's
-    /// pixels, and a contact sheet of the five.
+    /// at scale 4 (quarter-cell art), all enlarged to the sprite's pixels,
+    /// and a contact sheet of the species.
     #[test]
     fn writes_stem_before_after_on_request() {
-        let Some(prefix) = std::env::var_os("STEM_SHOTS") else {
+        let rosettes = std::env::var_os("ROSETTE_SHOTS");
+        let Some(prefix) = rosettes.clone().or_else(|| std::env::var_os("STEM_SHOTS")) else {
             return;
         };
+        let rosettes = rosettes.is_some();
         let prefix = prefix.to_string_lossy().into_owned();
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -1304,10 +1310,20 @@ mod tests {
             return;
         };
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/shots/stem-before-after");
+            .join("../../target/shots")
+            .join(if rosettes {
+                "rosette-before-after"
+            } else {
+                "stem-before-after"
+            });
         std::fs::create_dir_all(&dir).unwrap();
         let t = table();
-        let (cw, ch) = (48_i64, 64_i64);
+        // A rosette's blades and a lotus's stalks reach 56 cells up and fan out.
+        let (cw, ch) = if rosettes {
+            (64_i64, 80_i64)
+        } else {
+            (48_i64, 64_i64)
+        };
         let bg = crate::hud::BACKGROUND;
         // Tank pixels are shown at 4x (scale 2) or 2x (scale 4): the same size.
         let tank_shot = |name: &str,
@@ -1328,7 +1344,13 @@ mod tests {
             .unwrap();
             // Shown in lean or fertilised water, the plant stands on a high bed so
             // its whole height is in strong light.
-            let bed = if tint.is_some() { 30 } else { 58 };
+            let bed = if tint.is_some() {
+                30
+            } else if rosettes {
+                74
+            } else {
+                58
+            };
             let soil = world.materials().id("aquasoil").unwrap();
             world
                 .fill_rect(
@@ -1374,7 +1396,12 @@ mod tests {
                 );
             }
             let mut tank = crate::Tank::new(world, crate::TankConfig::default());
-            tank.set_time_of_day(12 * 60);
+            // `SHOTS_MINUTE`: the minute of the day to draw at (noon by default).
+            let minute = std::env::var("SHOTS_MINUTE")
+                .ok()
+                .and_then(|m| m.parse().ok())
+                .unwrap_or(12 * 60);
+            tank.set_time_of_day(minute);
             tank.step();
             (
                 tank.capture(&gpu, (cw as u32 * scale, ch as u32 * scale))
@@ -1382,11 +1409,18 @@ mod tests {
                 stub,
             )
         };
-        let stems: Vec<&PlantSpecies> = t
+        let species: Vec<&PlantSpecies> = t
             .iter()
-            .filter(|sp| matches!(sp.form, Form::Stem(_)))
+            .filter(|sp| {
+                if rosettes {
+                    matches!(sp.form, Form::Rosette(_))
+                } else {
+                    matches!(sp.form, Form::Stem(_))
+                }
+            })
             .collect();
-        for sp in stems {
+        let mut sheet: Vec<(Vec<u8>, usize, usize)> = Vec::new();
+        for sp in species {
             let ((sw, sh), px) = build(sp);
             // Enlarge `rgba` (`w` wide), cropped to `crop` (x0, y0, w, h),
             // `k` times.
@@ -1444,8 +1478,12 @@ mod tests {
             // The whole plant: sprite and tank at the same pixel size (the
             // scale-2 tank shows a texel as a pixel, as the sprite does),
             // then the quarter-cell tank at half the zoom.
-            let (x0, y0, pw, ph) = (cwu / 2 - 16, 6, 32, chu - 6);
-            let (k, gap) = (6, 16);
+            let (x0, y0, pw, ph) = if rosettes {
+                (cwu / 2 - 24, 4, 48, chu - 4)
+            } else {
+                (cwu / 2 - 16, 6, 32, chu - 6)
+            };
+            let (k, gap) = if rosettes { (4, 12) } else { (6, 16) };
             let (spr_w, spr_h) = (sw * k, sh * k);
             let tank_w = pw * 2 * k;
             let panel_h = ph * 2 * k;
@@ -1482,8 +1520,18 @@ mod tests {
                 &img,
                 (total_w, panel_h),
             );
+            if rosettes {
+                // Sprite, scale 2 and scale 4 only (not the juveniles).
+                let w3 = spr_w + 2 * (gap + tank_w);
+                let mut row = vec![0u8; w3 * panel_h * 4];
+                for y in 0..panel_h {
+                    row[y * w3 * 4..(y + 1) * w3 * 4]
+                        .copy_from_slice(&img[y * total_w * 4..y * total_w * 4 + w3 * 4]);
+                }
+                sheet.push((row, w3, panel_h));
+            }
             // A close look at a side shoot's lean, where the plant has one.
-            if let Some((sx, sy)) = stub {
+            if let (false, Some((sx, sy))) = (rosettes, stub) {
                 let (bw, bh, bk) = (20, 16, 10);
                 let bx = sx.saturating_sub(10).min(cwu - bw);
                 let by = sy.saturating_sub(13).min(chu - bh);
@@ -1494,20 +1542,55 @@ mod tests {
                     (bw * 4 * bk, bh * 4 * bk),
                 );
             }
-            // A close look at the plant's upper half.
-            let (zx, zy, zw, zh) = (cwu / 2 - 14, 14, 28, 20);
-            let zk = 8;
-            let a = up(&two, cwu * 2, (zx * 2, zy * 2, zw * 2, zh * 2), zk * 2);
-            let b = up(&four, cwu * 4, (zx * 4, zy * 4, zw * 4, zh * 4), zk);
-            let zw_px = zw * 2 * zk * 2;
-            let zh_px = zh * 2 * zk * 2;
-            let mut img: Vec<u8> = (0..(zw_px * 2 + gap) * zh_px)
+            // A close look at the plant's upper half (a rosette's, its crown
+            // and its blade tips or pads).
+            let crops: &[(&str, Crop)] = if rosettes {
+                &[
+                    ("zoom", (cwu / 2 - 14, chu - 26, 28, 22)),
+                    ("top", (cwu / 2 - 20, 8, 40, 30)),
+                ]
+            } else {
+                &[("zoom", (cwu / 2 - 14, 14, 28, 20))]
+            };
+            for &(label, (zx, zy, zw, zh)) in crops {
+                let zk = 8;
+                let a = up(&two, cwu * 2, (zx * 2, zy * 2, zw * 2, zh * 2), zk * 2);
+                let b = up(&four, cwu * 4, (zx * 4, zy * 4, zw * 4, zh * 4), zk);
+                let zw_px = zw * 2 * zk * 2;
+                let zh_px = zh * 2 * zk * 2;
+                let mut img: Vec<u8> = (0..(zw_px * 2 + gap) * zh_px)
+                    .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                    .collect();
+                let tw = zw_px * 2 + gap;
+                blit(&mut img, tw, &a, (zw_px, zh_px), (0, 0));
+                blit(&mut img, tw, &b, (zw_px, zh_px), (zw_px + gap, 0));
+                write(
+                    format!("{prefix}-{}-{label}.png", sp.name),
+                    &img,
+                    (tw, zh_px),
+                );
+            }
+        }
+        if rosettes {
+            let w = sheet.iter().map(|s| s.1).max().unwrap_or(0);
+            let h: usize = sheet.iter().map(|s| s.2).sum();
+            let mut img: Vec<u8> = (0..w * h)
                 .flat_map(|_| [bg[0], bg[1], bg[2], 255])
                 .collect();
-            let tw = zw_px * 2 + gap;
-            blit(&mut img, tw, &a, (zw_px, zh_px), (0, 0));
-            blit(&mut img, tw, &b, (zw_px, zh_px), (zw_px + gap, 0));
-            write(format!("{prefix}-{}-zoom.png", sp.name), &img, (tw, zh_px));
+            let mut y0 = 0;
+            for (row, rw, rh) in &sheet {
+                for y in 0..*rh {
+                    let o = ((y0 + y) * w) * 4;
+                    img[o..o + rw * 4].copy_from_slice(&row[y * rw * 4..(y + 1) * rw * 4]);
+                }
+                y0 += rh;
+            }
+            std::fs::write(
+                dir.join(format!("{prefix}-contact-sheet.png")),
+                crate::testing::png(&img, (u32::try_from(w).unwrap(), u32::try_from(h).unwrap())),
+            )
+            .unwrap();
+            return;
         }
         // Rotala's crown at colouration 0 (fertilised) and 1 (lean water),
         // side by side, upper half, quarter-cell art.

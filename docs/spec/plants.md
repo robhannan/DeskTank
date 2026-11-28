@@ -210,6 +210,38 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     from `spacing` on climbs back up to root its child where water is
     above, then stops. A plant at its mature size still grows its runners.
     `[growth] root_feeder` makes only roots and runners sample nutrients.
+    *Rosette blades in the tank look like the info pane's sprite* (render
+    only, `tank.wgsl`; the sim's one-cell blades are unchanged, so swimmers
+    pass and food falls as before): a `sword` or `ribbon` blade is drawn
+    as a swept profile as wide as three cells, from the leaf's path, in the
+    water cells beside it (`wing_source`: a water pixel next to a blade cell
+    draws that blade's texel, with its quarter unclamped; sway moves the wing
+    with the blade, the sprite passes hide behind it, and tanks without a
+    sword or ribbon rosette pay nothing, since the view's flag bit is off;
+    a wing is taken from the nearer blade only, so where two blades stand a
+    cell apart a pixel the nearer one's profile doesn't reach stays water).
+    Only a rosette's swords are drawn this way (its species texel's shapes
+    `w` carries a rosette bit): an epiphyte's sword (java fern) keeps its
+    own narrow art and its night folding. A sword (amazon
+    sword, cryptocoryne) is a short petiole flaring into a lanceolate blade
+    widest at about half its length (`3.2 + 0.07 * blade_length` quarters
+    each side at most, so a crypt's 12-cell leaf is two cells broad and an
+    amazon sword's three), with a pale midrib, lateral veins every third
+    cell, a darker rim and a pointed tip; a blade under 20 cells has a
+    crinkled margin (crypt's). It narrows at night. A ribbon (vallisneria)
+    is a straight, thin strap (two quarters wide: a texel at scale 2, left
+    of the cell's centre, paler on its left, lighter towards its tip) that
+    arcs sideways only over its last quarter, away from a blade beside it.
+    A tiger lotus's petioles are thin bronze stalks (a texel at scale 2, two
+    quarters at scale 4) drawn from the stem's ramp, so the colouration
+    leaves them brown; where the water shows through the gaps between
+    ribbon straps and petioles it is water, not the plant's shadow.
+    Where the sim steps a blade (or petiole) a cell sideways, its leaf
+    cell and the one it steps to share a row, and the drawn blade runs
+    diagonally across that pair, a texel a texel-row, instead of jogging a
+    cell (`lean_shift`: four neighbour reads, no loops). Its pads are as before with fewer maroon
+    flecks at quarter-cell scale. Grass and pad blades (carpets) are
+    unchanged.
   - **Carpet:** low tufts; runners creep through the top substrate layer
     and sprout a new tuft every `spacing` cells. *T6c:* `[carpet]` is a
     rosette with a one-cell crown and blades of at most 3 cells; each tuft
@@ -367,7 +399,7 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     *T6d part 3:* night folding is render-only in `tank.wgsl`, driven by
     the existing darkness uniform (`view.daylight.w`, 0 by day to 1 at
     midnight): stem leaves tuck inward toward their stem and fold upward
-    as darkness rises, broad rosette/epiphyte blades and pads narrow, and
+    as darkness rises, broad rosette (sword) blades, epiphyte blades and pads narrow, and
     leaves dim slightly, with zero daytime cost or chunk wakes. Pearling
     runs in `visit_plant_cell` on submerged leaf cells with water above
     when `health >= 0.8` (`PEARL_HEALTH`), `light >= 0.65` (`PEARL_LIGHT`)
@@ -375,7 +407,7 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     hard tank-wide cap of 4 bubbles/s (`PEARL_MAX_PER_SECOND`: at most 1
     bubble every 5 ticks, needing no extra saved state). Optional sway
     is render-only (`view.target_size.zw` holds the world-time phase and
-    enable flag, keeping the 160-byte `View` uniform unchanged), gently
+    flags (bit 0 sway on, bit 1 rosette blades present), keeping the 160-byte `View` uniform unchanged), gently
     displacing leaves and upper stems (`pos >= 4`, keeping roots, runners,
     rhizomes, floaters, crowns and mats anchored) in a smooth wave across
     water cells and matching sprite occlusion (`hidden_by_plant`). The

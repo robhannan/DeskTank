@@ -185,7 +185,14 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
         look.leaf as u8,
         look.stem as u8,
         look.root as u8,
-        look.arrangement as u8,
+        // A rosette's arrangement is unused; its top bit tells the shader to
+        // draw its sword and ribbon blades broad (`ROSETTE_FLAG`).
+        look.arrangement as u8
+            | if matches!(s.form, Form::Rosette(_)) {
+                0x80
+            } else {
+                0
+            },
     ]);
     // A rosette's, carpet's or epiphyte's blades shade by length, as stems
     // by height.
