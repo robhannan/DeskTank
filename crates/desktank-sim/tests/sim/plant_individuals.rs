@@ -303,9 +303,10 @@ fn a_starving_plants_tint_changes_without_waking_a_chunk_or_rewriting_cells() {
     };
     let cells = drawn(&w);
     let version = w.plants_version();
-    // 70 s of starvation: health falls after its 20 s tolerance, but stays
-    // above the 0.5 at which leaves drop.
-    for _ in 0..70 * 20 {
+    // 60 s of starvation: health falls after its 20 s tolerance (0.01 a
+    // second), but stays above the 0.5 at which leaves drop (70 s would end
+    // on it, so a plant's update phase would decide).
+    for _ in 0..60 * 20 {
         drain(&mut w);
         w.tick();
         assert_eq!(w.awake_chunks(), 0, "tick {}", w.tick_count());
@@ -706,4 +707,54 @@ fn aged_and_fresh_marimo_fragments_join_one_ball() {
     assert_eq!(ball.species, marimo);
     assert!(ball.size() >= 3);
     check_table(&w);
+}
+
+/// A broad stem leaf's upper cells always sit over the row cell they belong to,
+/// even as a failing plant drops its leaves (an upper cell left over would be
+/// a stemless piece the tidy kills, breaking the one-piece promise).
+#[test]
+fn dropped_leaves_take_their_upper_cells_with_them() {
+    let mut w = grown_and_asleep(4);
+    let leaf = id(&w, "leaf");
+    let orphans = |w: &World| -> usize {
+        let mut n = 0;
+        for y in 1..w.height() {
+            for x in 0..w.width() {
+                let c = w.cell(x, y - 1).unwrap();
+                if c.material != leaf || desktank_sim::plants::plant_position(c.variant) < 32 {
+                    continue;
+                }
+                let below = w.cell(x, y).unwrap();
+                if below.material != leaf
+                    || desktank_sim::plants::plant_position(below.variant)
+                        != desktank_sim::plants::plant_position(c.variant) - 32
+                {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    let upper = |w: &World| -> usize {
+        (0..w.height())
+            .flat_map(|y| (0..w.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let c = w.cell(x, y).unwrap();
+                c.material == leaf && desktank_sim::plants::plant_position(c.variant) >= 32
+            })
+            .count()
+    };
+    assert!(upper(&w) > 0, "the grown hygrophila has upper cells");
+    let before = upper(&w);
+    lid(&mut w, 0, 160, 16);
+    let mut dropped = false;
+    for _ in 0..8 * MINUTE {
+        w.tick();
+        assert_eq!(orphans(&w), 0, "tick {}", w.tick_count());
+        dropped |= upper(&w) < before;
+        if w.plant_count() == 0 {
+            break;
+        }
+    }
+    assert!(dropped, "no upper cell dropped with its leaf");
 }

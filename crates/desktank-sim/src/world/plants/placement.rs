@@ -32,8 +32,8 @@ use std::sync::Arc;
 use super::PlantId;
 use crate::material::MaterialId;
 use crate::plants::{
-    BallForm, EpiphyteForm, FloaterForm, Form, MAX_POSITION, MatForm, Part, PlantSpecies,
-    PlantSpeciesId, PlantStage, RosetteForm, StemForm, plant_variant,
+    BallForm, EpiphyteForm, FloaterForm, Form, LEAF_UPPER, LeafShape, MAX_POSITION, MatForm, Part,
+    PlantSpecies, PlantSpeciesId, PlantStage, RosetteForm, SHOOT_LEAN, StemForm, plant_variant,
 };
 use crate::rng::splitmix64;
 use crate::world::{World, WorldError};
@@ -213,6 +213,18 @@ impl<'w> Builder<'w> {
         [(-1, 0), (1, 0), (0, -1), (0, 1)]
             .into_iter()
             .all(|(dx, dy)| (x + dx, y + dy) == from || !self.own(x + dx, y + dy, part))
+    }
+
+    /// Whether a stem cell at `(x, y)` would touch no other stem cell of the
+    /// plant than the one at `from` and those of the main stem (column
+    /// `main_x`).
+    fn lone_shoot(&self, x: i64, y: i64, from: (i64, i64), main_x: i64) -> bool {
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .into_iter()
+            .all(|(dx, dy)| {
+                let at = (x + dx, y + dy);
+                at == from || at.0 == main_x || !self.own(at.0, at.1, Part::Stem)
+            })
     }
 
     /// A number in `0..1` from the plant's salt and `key`.
@@ -526,7 +538,7 @@ impl World {
         for _ in 0..24 {
             let mut b = Builder::new(self, s, key, flip, strict);
             match &s.form {
-                Form::Stem(f) => gen_stem(&mut b, f, frac, anchor),
+                Form::Stem(f) => gen_stem(&mut b, f, s.look.leaf, frac, anchor),
                 Form::Rosette(f) | Form::Carpet(f) => gen_rosette(&mut b, f, frac, mature, anchor),
                 Form::Floater(f) => gen_floater(&mut b, f, frac, anchor),
                 Form::Epiphyte(f) => gen_epiphyte(&mut b, f, frac, anchor),
@@ -554,7 +566,18 @@ fn crown_shift(f: &RosetteForm, flip: bool) -> i64 {
     if flip { crown / 2 } else { (crown - 1) / 2 }
 }
 
-fn gen_stem(b: &mut Builder<'_>, f: &StemForm, frac: f64, (bx, by): (i64, i64)) {
+/// How many columns out from its main stem a side shoot's cell `rows` rows
+/// above its node is: one, then one more every two rows, up to `SHOOT_LEAN`
+/// (`plant_sprite.rs`: `dir * ((k + 1) / 2).min(4)`, in texels).
+const fn shoot_column(rows: i64) -> i64 {
+    if (rows + 1) / 2 > SHOOT_LEAN {
+        SHOOT_LEAN
+    } else {
+        (rows + 1) / 2
+    }
+}
+
+fn gen_stem(b: &mut Builder<'_>, f: &StemForm, shape: LeafShape, frac: f64, (bx, by): (i64, i64)) {
     let h = scaled(i64::from(f.height), frac);
     if !b.put(bx, by, Part::Stem, 1) {
         b.core = false;
@@ -590,8 +613,9 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, frac: f64, (bx, by): (i64, i64)) 
         }
     }
     let node = |pos: i64| pos >= i64::from(f.internode) && pos % i64::from(f.internode) == 0;
-    // Side shoots at some nodes: a stub that steps out two cells, then
-    // rises.
+    // Side shoots at some nodes: a stalk that leaves its node on the diagonal,
+    // steps out a column every two rows (the sprite's), up to `SHOOT_LEAN`
+    // columns from the main stem, and rises straight on from there.
     if f.branching > 0.0 {
         let column = nodes.clone();
         for &(x, y, pos) in &column {
@@ -602,41 +626,84 @@ fn gen_stem(b: &mut Builder<'_>, f: &StemForm, frac: f64, (bx, by): (i64, i64)) 
                 let dx = rel * b.mir;
                 let key = ((pos as u64) << 2) | (rel + 1) as u64;
                 if b.unit(key) >= f64::from(f.branching)
-                    || !b.fit(x + dx, y, Part::Stem)
-                    || !b.lone(x + dx, y, Part::Stem, (x, y))
-                    || !b.fit(x + 2 * dx, y, Part::Stem)
-                    || !b.fit(x + 2 * dx, y - 1, Part::Stem)
-                    || b.own(x + 2 * dx, y + 1, Part::Stem)
-                    || b.own(x + 3 * dx, y, Part::Stem)
+                    || !b.fit(x + dx, y - 1, Part::Stem)
+                    || !b.lone_shoot(x + dx, y - 1, (x, y), bx)
+                    || !b.fit(x + dx, y - 2, Part::Stem)
+                    || !b.fit(x + 2 * dx, y - 3, Part::Stem)
+                    || b.own(x + 2 * dx, y, Part::Stem)
                 {
                     continue;
                 }
-                b.put(x + dx, y, Part::Stem, pos + 1);
-                b.put(x + 2 * dx, y, Part::Stem, pos + 2);
-                let top = pos + 2 + (h - pos - 2) * 3 / 5;
-                let (bxp, mut byp, mut bp) = (x + 2 * dx, y, pos + 2);
-                while bp < top && b.fit(bxp, byp - 1, Part::Stem) {
-                    byp -= 1;
+                let top = pos + 1 + (h - pos - 2) * 3 / 5;
+                let (mut from, mut bp, mut rows) = ((x, y), pos, 0);
+                while bp < top {
+                    rows += 1;
+                    let at = (x + dx * shoot_column(rows), y - rows);
+                    if !b.fit(at.0, at.1, Part::Stem) || !b.lone_shoot(at.0, at.1, from, bx) {
+                        break;
+                    }
                     bp += 1;
-                    b.put(bxp, byp, Part::Stem, bp);
-                    nodes.push((bxp, byp, bp));
+                    b.put(at.0, at.1, Part::Stem, bp);
+                    nodes.push((at.0, at.1, bp));
+                    from = at;
                 }
             }
         }
     }
-    // Pairs of leaves at the nodes.
-    let leaf = scaled(i64::from(f.leaf_length), frac);
-    let all = nodes.clone();
-    for (x, y, pos) in all {
+    // Pairs of leaves at the nodes. They shorten towards the tip of their
+    // stem (`StemForm::leaf_taper`: none on its bare top, a one-cell pair
+    // under that), and broad ones are two cells thick where they are widest:
+    // a second cell over the row's, so the blade fills the internode row
+    // above its node.
+    let leaves = |b: &Builder<'_>, x: i64, y: i64, pos: i64| {
+        // Cells of its own stem above it, up a side shoot's slope too.
+        let (mut below_tip, mut at) = (0u8, (x, y));
+        while below_tip < u8::MAX {
+            let Some(next) =
+                [0, -1, 1]
+                    .into_iter()
+                    .map(|d| (at.0 + d, at.1 - 1))
+                    .find(|&(nx, ny)| {
+                        b.own(nx, ny, Part::Stem) && (nx == at.0 || !b.own(nx, at.1, Part::Stem))
+                    })
+            else {
+                break;
+            };
+            at = next;
+            below_tip += 1;
+        }
+        let len = f.leaf_taper(below_tip);
+        (
+            len,
+            StemForm::leaf_upper(shape, len, len == f.leaf_length)
+                .filter(|_| f.broad_node(u8::try_from(pos).unwrap_or(u8::MAX))),
+        )
+    };
+    for &(x, y, pos) in &nodes {
         if !node(pos) {
             continue;
         }
+        let (len, _) = leaves(b, x, y, pos);
         for rel in [-1i64, 1] {
             let dx = rel * b.mir;
-            for k in 1..=leaf {
+            for k in 1..=i64::from(len) {
                 let (lx, ly) = (x + dx * k, y);
                 if b.own(lx, ly + 1, Part::Stem) || !b.put(lx, ly, Part::Leaf, k) {
                     break;
+                }
+            }
+        }
+    }
+    for &(x, y, pos) in &nodes {
+        let Some((first, last)) = leaves(b, x, y, pos).1.filter(|_| node(pos)) else {
+            continue;
+        };
+        for rel in [-1i64, 1] {
+            let dx = rel * b.mir;
+            for k in i64::from(first)..=i64::from(last) {
+                let at = (x + dx * k, y);
+                if b.own(at.0, at.1, Part::Leaf) {
+                    b.put(at.0, at.1 - 1, Part::Leaf, i64::from(LEAF_UPPER) + k);
                 }
             }
         }

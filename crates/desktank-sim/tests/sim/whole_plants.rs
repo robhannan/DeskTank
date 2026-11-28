@@ -127,21 +127,24 @@ fn cells_of(w: &World, plant: PlantId) -> Vec<(usize, usize)> {
     out
 }
 
-/// Whether `cells` are one 4-connected piece.
-fn connected(cells: &[(usize, usize)]) -> bool {
+/// Whether `cells` are one piece: 4-connected, but for the diagonal steps
+/// between the stem cells of a side shoot's sloping stalk.
+fn connected(w: &World, cells: &[(usize, usize)]) -> bool {
     let Some(&first) = cells.first() else {
         return true;
+    };
+    let stem = id(w, "stem");
+    let is_stem = |c: (usize, usize)| w.cell(c.0, c.1).unwrap().material == stem;
+    let joined = |a: (usize, usize), b: (usize, usize)| {
+        let (dx, dy) = (a.0.abs_diff(b.0), a.1.abs_diff(b.1));
+        dx + dy == 1 || (dx == 1 && dy == 1 && is_stem(a) && is_stem(b))
     };
     let mut seen = vec![first];
     let mut grew = true;
     while grew {
         grew = false;
         for &c in cells {
-            if !seen.contains(&c)
-                && seen
-                    .iter()
-                    .any(|s| s.0.abs_diff(c.0) + s.1.abs_diff(c.1) == 1)
-            {
+            if !seen.contains(&c) && seen.iter().any(|&s| joined(s, c)) {
                 seen.push(c);
                 grew = true;
             }
@@ -208,7 +211,7 @@ fn every_species_places_whole_plants_that_are_ordinary_plants() {
                     info.size()
                 );
                 assert!(
-                    connected(&cells_of(&w, plant)),
+                    connected(&w, &cells_of(&w, plant)),
                     "{name} {stage:?} in pieces"
                 );
                 if !flip {
@@ -687,4 +690,182 @@ fn clicking_places_a_whole_plant_with_a_ghost_and_a_flip() {
     assert!(t.set_plant_start(&w, PlantStart::Propagule(Propagule::Cuttings)));
     assert!(t.plant_ghost(&w).is_none());
     assert!(!t.can_flip(&w));
+}
+
+/// A stem plant's leaf rows, top first, each as `(row, longest leaf length)`,
+/// and how many upper cells it has.
+fn leaf_rows(w: &World, plant: PlantId) -> (Vec<(usize, u8)>, usize) {
+    let leaf = id(w, "leaf");
+    let mut longest: std::collections::BTreeMap<usize, u8> = std::collections::BTreeMap::new();
+    let mut upper = 0;
+    for (cx, cy) in cells_of(w, plant) {
+        let c = w.cell(cx, cy).unwrap();
+        if c.material != leaf {
+            continue;
+        }
+        let pos = desktank_sim::plants::plant_position(c.variant);
+        if pos >= desktank_sim::plants::LEAF_UPPER {
+            upper += 1;
+            // Over a row cell of the same leaf.
+            let below = w.cell(cx, cy + 1).unwrap();
+            assert_eq!(below.material, leaf);
+            assert_eq!(
+                desktank_sim::plants::plant_position(below.variant),
+                pos - desktank_sim::plants::LEAF_UPPER
+            );
+        } else {
+            let e = longest.entry(cy).or_default();
+            *e = (*e).max(pos);
+        }
+    }
+    (longest.into_iter().collect(), upper)
+}
+
+/// Stem leaves taper to the plant's own tip: whatever its age, the leaves
+/// are longest low on the stem, never longer than the tier below, one cell
+/// long just under a bare top, and the broad ones grow upper cells.
+#[test]
+fn stem_plants_taper_to_their_own_tip_and_broad_leaves_have_upper_cells() {
+    for stage in [PlantStage::Juvenile, PlantStage::Mature] {
+        let mut w = tank(3);
+        let (x, y) = spot(&w, "hygrophila");
+        let plant = place(&mut w, "hygrophila", stage, x, y, false);
+        let sp = w.plant_species().get(species(&w, "hygrophila")).unwrap();
+        let desktank_sim::plants::Form::Stem(f) = &sp.form else {
+            panic!("hygrophila is a stem plant");
+        };
+        let info = w.plant(plant).unwrap();
+        let (rows, upper) = leaf_rows(&w, plant);
+        assert!(upper > 0, "{stage:?}: no upper cells");
+        // Rows are top first: lengths never shrink going down.
+        for pair in rows.windows(2) {
+            assert!(pair[0].1 <= pair[1].1, "{stage:?}: {rows:?}");
+        }
+        assert_eq!(rows.first().unwrap().1, 1, "{stage:?}: {rows:?}");
+        assert!(
+            rows.first().unwrap().0 >= info.bounds.y0 + usize::from(f.internode),
+            "{stage:?}: the top is bare"
+        );
+        if stage == PlantStage::Mature {
+            assert_eq!(rows.last().unwrap().1, f.leaf_length, "{rows:?}");
+        }
+    }
+}
+
+/// A growing stem keeps tapering as it grows: its leaves stay within what
+/// their depth below the tip allows and lengthen as the tip moves up.
+#[test]
+fn a_growing_stem_tapers_and_its_lower_leaves_lengthen() {
+    let mut w = tank(3);
+    let (x, y) = spot(&w, "hygrophila");
+    let plant = place(&mut w, "hygrophila", PlantStage::Juvenile, x, y, false);
+    let before = leaf_rows(&w, plant).0;
+    run(&mut w, 20 * 60 * 5);
+    let info = w.plant(plant).unwrap();
+    let (rows, _) = leaf_rows(&w, plant);
+    assert!(rows.len() > before.len(), "it grew: {before:?} -> {rows:?}");
+    for pair in rows.windows(2) {
+        assert!(pair[0].1 <= pair[1].1, "{rows:?}");
+    }
+    let longest_before = before.iter().map(|r| r.1).max().unwrap();
+    let longest_after = rows.iter().map(|r| r.1).max().unwrap();
+    assert!(longest_after >= longest_before, "{before:?} -> {rows:?}");
+    assert!(info.size() > 0);
+}
+
+/// Side shoots lean out: a shoot leaves its node on the diagonal, steps out a column
+/// every two rows (diagonal links between stem cells) up to `SHOOT_LEAN`
+/// columns past the stub, then rises straight; placed whole or grown, and
+/// the plant stays one piece.
+#[test]
+fn side_shoots_lean_out_then_rise() {
+    for name in ["rotala", "ludwigia"] {
+        let mut w = tank(5);
+        let (x, y) = spot(&w, name);
+        let plant = place(&mut w, name, PlantStage::Mature, x, y, false);
+        let stem = id(&w, "stem");
+        let base_x = w.plant(plant).unwrap().base.0;
+        let is_stem = |w: &World, x: usize, y: usize| w.cell(x, y).unwrap().material == stem;
+        let check = |w: &World, what: &str| {
+            let cells = cells_of(w, plant);
+            let mut diagonal = 0;
+            for &(cx, cy) in &cells {
+                if !is_stem(w, cx, cy) {
+                    continue;
+                }
+                // A diagonal stem link between two cells of a side shoot.
+                for dx in [-1isize, 1] {
+                    let (nx, ny) = (cx.wrapping_add_signed(dx), cy + 1);
+                    if nx < w.width()
+                        && ny < w.height()
+                        && is_stem(w, nx, ny)
+                        && cx != base_x
+                        && nx != base_x
+                    {
+                        diagonal += 1;
+                    }
+                }
+                let reach = cx.abs_diff(base_x);
+                let reach = i64::try_from(reach).unwrap();
+                assert!(
+                    reach <= desktank_sim::plants::SHOOT_LEAN,
+                    "{name} {what}: stem {reach} columns from the main stem"
+                );
+            }
+            assert!(diagonal > 0, "{name} {what}: no sloped shoot");
+            assert!(connected(w, &cells), "{name} {what} in pieces");
+        };
+        check(&w, "placed");
+        run(&mut w, 5 * 60 * 20);
+        check(&w, "grown");
+    }
+}
+
+/// How many stem cells stand in a plant's base column from its base up.
+fn main_stem_height(w: &World, plant: PlantId) -> usize {
+    let stem = id(w, "stem");
+    let (bx, by) = w.plant(plant).unwrap().base;
+    (0..=by)
+        .take_while(|k| w.cell(bx, by - k).unwrap().material == stem)
+        .count()
+}
+
+/// With side shoots on, no shoot ever stops its main stem growing: every main
+/// stem of the branching species grows to the species' height, from a placed
+/// Juvenile or a cutting, across seeds.
+#[test]
+fn a_side_shoot_never_stops_the_main_stem_growing() {
+    for name in ["rotala", "ludwigia"] {
+        for seed in 1..=8 {
+            for placed in [true, false] {
+                let mut w = tank(seed);
+                let (x, y) = spot(&w, name);
+                let s = species(&w, name);
+                let plant = if placed {
+                    place(&mut w, name, PlantStage::Juvenile, x, y, false)
+                } else {
+                    w.paint_plant(x, y + 1, 0, s, desktank_sim::Propagule::Cuttings)
+                        .unwrap();
+                    run(&mut w, 20);
+                    w.plants().next().map_or(PlantId(0), |p| p.id)
+                };
+                run(&mut w, 25 * 60 * 20);
+                let desktank_sim::plants::Form::Stem(f) = &w.plant_species().get(s).unwrap().form
+                else {
+                    panic!("{name} is a stem plant");
+                };
+                let plant = w.plants().next().map_or(plant, |p| p.id);
+                let got = main_stem_height(&w, plant);
+                let cap = w.plant_species().get(s).unwrap().growth.size;
+                let size = w.plant(plant).unwrap().size();
+                // Full height, or its cell budget used up (shoots and leaves
+                // take cells too): never a main stem held back under a shoot.
+                assert!(
+                    got == usize::from(f.height) || size + 10 >= cap,
+                    "{name} seed {seed} placed {placed}: main stem {got} of {} at size {size} of {cap}",
+                    f.height
+                );
+            }
+        }
+    }
 }

@@ -515,7 +515,9 @@ fn legacy_powder_cuttings_still_root_and_rot() {
     let hyg = species(&w, "hygrophila");
     w.paint_plant(80, 40, 1, hyg, Propagule::Cuttings).unwrap();
     assert!(count(&w, "cutting") > 1);
-    run(&mut w, 8 * MINUTE);
+    // A cutting that doesn't root turns to dead matter within one in-tank
+    // day (ten minutes); the last of them can take more than eight.
+    run(&mut w, 10 * MINUTE);
     assert_eq!(count(&w, "cutting"), 0);
     assert!(w.plant_count() >= 1);
     check_table(&w);

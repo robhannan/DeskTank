@@ -37,7 +37,7 @@ root = ["#a89c74", "#c9bd94", "#e4dbb8"]
 stem = ["#3e6a22", "#4c7e28", "#5c9430", "#6ca838"]
 leaf = ["#4a8c22", "#5ea42a", "#74bc32", "#8cd03e", "#a6e052", "#c4ee74"]
 
-# Long feathery fans (a midrib with fine teeth) on a thin stalk.
+# Opposite pairs on angled petioles, each ending in a fan of fine filaments.
 [look]
 leaf = "feather"
 stem = "stalk"

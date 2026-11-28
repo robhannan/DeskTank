@@ -141,6 +141,9 @@ pub struct Renderer {
     variety_stones: [bool; palette::SIDE],
     /// Whether any cell holds one, as of the last upload that changed cells.
     stone_varieties_visible: bool,
+    /// The rectangle of cells covering every plant (none: no plants), so the
+    /// split grid's plant passes only draw where a plant is.
+    plant_area: Option<desktank_sim::Rect>,
     /// Uniform bytes last written.
     view: Vec<u8>,
     /// Uniform bytes last written for the magnifier pass.
@@ -263,6 +266,7 @@ impl Renderer {
             plant_parts,
             variety_stones: palette::variety_stones(world.materials()),
             stone_varieties_visible: false,
+            plant_area: None,
             view: Vec::new(),
             lens_view: Vec::new(),
             scratch: Vec::new(),
@@ -369,6 +373,12 @@ impl Renderer {
                 write_rect(gpu, bands, r, band_scratch, 1);
             }
         });
+        // Floaters drift without any plant changing, so look every frame.
+        self.plant_area = world
+            .plants()
+            .map(|p| p.bounds)
+            .filter(|b| !b.is_empty())
+            .reduce(desktank_sim::Rect::union);
         if self.bases_version != Some(world.plants_version()) {
             self.bases_version = Some(world.plants_version());
             for p in world.plants() {
@@ -824,7 +834,13 @@ impl Renderer {
         let Some(view) = camera else {
             self.offscreen = None;
             let mut pass = begin_pass(encoder, "tank", target, timer.map(GpuTimer::pass_writes));
-            self.draw_view(&mut pass, &self.bind_group, layout.scale, front_pass);
+            self.draw_view(
+                &mut pass,
+                &self.bind_group,
+                layout.scale,
+                front_pass,
+                PlantPasses::Within(self.plant_pixels(layout, size)),
+            );
             if let Some(min_px) = overlay.ruler {
                 // Only the edge strips are shaded; the rest of the tank is untouched.
                 let strips = ruler::Plan::new(layout.scale, min_px, self.grid).strips(
@@ -864,7 +880,13 @@ impl Renderer {
                 &image,
                 timer.map(GpuTimer::begin_writes),
             );
-            self.draw_view(&mut pass, &self.bind_group, source_layout.scale, front_pass);
+            self.draw_view(
+                &mut pass,
+                &self.bind_group,
+                source_layout.scale,
+                front_pass,
+                PlantPasses::Within(self.plant_pixels(source_layout, source_size)),
+            );
         }
         // Where the view puts the grid, for the overlay's brush outline.
         let (sx, sy) = view.pixels_per_cell(size);
@@ -1003,7 +1025,13 @@ impl Renderer {
             ml.lens_size.0,
             ml.lens_size.1,
         );
-        self.draw_view(pass, &self.lens_bind_group, ml.scale, front_pass);
+        self.draw_view(
+            pass,
+            &self.lens_bind_group,
+            ml.scale,
+            front_pass,
+            PlantPasses::Everywhere,
+        );
         if ml.frame_size.0 > 0 && ml.frame_size.1 > 0 {
             pass.set_scissor_rect(
                 ml.frame_origin.0,
@@ -1016,6 +1044,41 @@ impl Renderer {
         }
     }
 
+    /// The pixels the plants cover in a view at `layout` into a target of
+    /// `size`, with a margin for leaves swaying out of their cells; none if
+    /// there are no plants (or none on screen).
+    fn plant_pixels(&self, layout: Layout, size: (u32, u32)) -> Option<PlantRect> {
+        let area = self.plant_area?;
+        let scale = i64::from(layout.scale);
+        let to_px = |cell: usize, origin: i64, limit: u32| {
+            let cell = i64::try_from(cell).unwrap_or(i64::MAX / 4);
+            (origin + cell * scale).clamp(0, i64::from(limit))
+        };
+        let (x0, y0) = (
+            to_px(
+                area.x0.saturating_sub(PLANT_MARGIN),
+                layout.offset.0,
+                size.0,
+            ),
+            to_px(
+                area.y0.saturating_sub(PLANT_MARGIN),
+                layout.offset.1,
+                size.1,
+            ),
+        );
+        let (x1, y1) = (
+            to_px(area.x1 + PLANT_MARGIN, layout.offset.0, size.0),
+            to_px(area.y1 + PLANT_MARGIN, layout.offset.1, size.1),
+        );
+        (x1 > x0 && y1 > y0).then(|| PlantRect {
+            x: u32::try_from(x0).unwrap_or(0),
+            y: u32::try_from(y0).unwrap_or(0),
+            w: u32::try_from(x1 - x0).unwrap_or(0),
+            h: u32::try_from(y1 - y0).unwrap_or(0),
+            target: size,
+        })
+    }
+
     /// Draws the grid and creature sprites with `bind_group`.
     fn draw_view(
         &self,
@@ -1023,12 +1086,28 @@ impl Renderer {
         bind_group: &wgpu::BindGroup,
         scale: u32,
         front_pass: bool,
+        plants: PlantPasses,
     ) {
         let pipelines = &self.pipelines;
         pass.set_bind_group(0, bind_group, &[]);
         for (i, p) in pipelines.grid.iter().enumerate() {
+            // The split grid's plant passes (after the ground) draw nothing
+            // but over plant cells: skip them with no plants, and shade only
+            // the rectangle round the plants.
+            let plant_pass = i > 0;
+            let scissor = match (plant_pass, plants) {
+                (true, PlantPasses::Within(None)) => continue,
+                (true, PlantPasses::Within(Some(r))) => Some(r),
+                _ => None,
+            };
+            if let Some(r) = scissor {
+                pass.set_scissor_rect(r.x, r.y, r.w, r.h);
+            }
             pass.set_pipeline(p);
             pass.draw(0..3, 0..1);
+            if let Some(r) = scissor {
+                pass.set_scissor_rect(0, 0, r.target.0, r.target.1);
+            }
             if i == 0 {
                 if let Some(stone) = &pipelines.stone_varieties
                     && self.stone_varieties_visible
@@ -1057,6 +1136,29 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
     }
+}
+
+/// Cells round the plants that the plant passes still shade: a swaying
+/// leaf moves out of its cell, and a plant's cells all lie within its bounds.
+const PLANT_MARGIN: usize = 4;
+
+/// A pixel rectangle in a target of `target` pixels.
+#[derive(Clone, Copy, Debug)]
+struct PlantRect {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    target: (u32, u32),
+}
+
+/// Where the split grid's plant passes draw.
+#[derive(Clone, Copy, Debug)]
+enum PlantPasses {
+    /// Over the whole view (the lens, whose layout differs from the tank's).
+    Everywhere,
+    /// Within the plants' rectangle, or not at all with no plants.
+    Within(Option<PlantRect>),
 }
 
 #[derive(Debug)]

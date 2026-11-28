@@ -72,9 +72,9 @@ use crate::grid::{Cell, Rect};
 use crate::hash::Fnv64;
 use crate::material::{MaterialId, MaterialTable};
 use crate::plants::{
-    BallForm, COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, Limit, Part, PlantSpecies,
-    PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, plant_position, plant_variant,
-    propagule_age, propagule_species, propagule_state,
+    BallForm, COUNTED_PARTS, EpiphyteForm, Factor, FloaterForm, Form, LEAF_UPPER, Limit, Part,
+    PlantSpecies, PlantSpeciesId, PlantSpeciesTable, Propagule, RosetteForm, SHOOT_LEAN, StemForm,
+    plant_position, plant_variant, propagule_age, propagule_species, propagule_state,
 };
 use crate::rng::splitmix64;
 use crate::save::{SaveError, v1, v8};
@@ -576,7 +576,11 @@ impl World {
         };
         let (x, y) = (i % self.width, i / self.width);
         let (key, spread) = match (part, depth.shape) {
-            (Part::Leaf, Shape::Stem { base_x }) => (((y as u64) << 1) | u64::from(x < base_x), 1),
+            // A broad leaf's upper cell shares its row cell's band.
+            (Part::Leaf, Shape::Stem { base_x }) => {
+                let row = y + usize::from(plant_position(cell.variant) >= LEAF_UPPER);
+                (((row as u64) << 1) | u64::from(x < base_x), 1)
+            }
             // Leaf pads lie across columns: a plant's pads share a band.
             (
                 Part::Leaf,
@@ -1450,6 +1454,22 @@ impl World {
         let mut seen = vec![false; r.area()];
         let mut pieces = Vec::new();
         let mut stack = Vec::new();
+        // On a stem plant a broad leaf's upper cell joins the row cell under
+        // it and no other leaf above, so the leaves of neighbouring nodes
+        // don't bridge a cut stem.
+        let stem_plant = self
+            .plants
+            .table
+            .get(&id)
+            .and_then(|p| self.plants.species.get(p.species))
+            .is_some_and(|s| matches!(s.form, Form::Stem(_)));
+        let leaf = self.plants.material(Part::Leaf);
+        let stem = self.plants.material(Part::Stem);
+        let upper_leaf = |i: usize| {
+            let c = self.cells[i];
+            Some(c.material) == leaf && plant_position(c.variant) >= LEAF_UPPER
+        };
+        let leaf_at = |i: usize| Some(self.cells[i].material) == leaf;
         for &start in cells {
             if seen[local(start)] {
                 continue;
@@ -1466,10 +1486,35 @@ impl World {
                     (y > r.y0).then(|| i - self.width),
                     (y + 1 < r.y1).then(|| i + self.width),
                 ];
-                for j in neighbours.into_iter().flatten() {
-                    if !seen[local(j)] && self.is_plant_member(j, id) {
+                for (k, j) in neighbours.into_iter().enumerate() {
+                    let Some(j) = j else { continue };
+                    // k is 2 for the cell above and 3 for the one below.
+                    let bridge = stem_plant
+                        && match k {
+                            2 => upper_leaf(i) && leaf_at(j) && !upper_leaf(j),
+                            3 => upper_leaf(j) && leaf_at(i) && !upper_leaf(i),
+                            _ => false,
+                        };
+                    if !bridge && !seen[local(j)] && self.is_plant_member(j, id) {
                         seen[local(j)] = true;
                         stack.push(j);
+                    }
+                }
+                // A side shoot's stalk leans a column every two rows, so
+                // stem cells also join their diagonal stem neighbours.
+                if stem_plant && Some(self.cells[i].material) == stem {
+                    for (dx, dy) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+                        let (nx, ny) = (x.wrapping_add_signed(dx), y.wrapping_add_signed(dy));
+                        if nx >= r.x0 && nx < r.x1 && ny >= r.y0 && ny < r.y1 {
+                            let j = ny * self.width + nx;
+                            if !seen[local(j)]
+                                && self.is_plant_member(j, id)
+                                && Some(self.cells[j].material) == stem
+                            {
+                                seen[local(j)] = true;
+                                stack.push(j);
+                            }
+                        }
                     }
                 }
             }
@@ -2193,6 +2238,49 @@ impl World {
             let c = self.cells[j];
             Some(c.material) == stem_mat && c.state == id
         };
+        // How many cells of its own stem are above `(x, y)`: its depth below
+        // the tip of its stem or side shoot, that leaf lengths taper from.
+        let below_tip = |x: usize, y: usize| {
+            let (mut d, mut at) = (0u8, (x, y));
+            while d < u8::MAX {
+                // Straight up, else up the slope: a diagonal cell that
+                // isn't the main stem (that has stem beside the cell it
+                // steps from).
+                let Some(next) = [0, -1, 1].into_iter().find_map(|dx| {
+                    self.at(at.0, at.1, dx, -1)
+                        .filter(|&j| {
+                            is_own_stem(j)
+                                && (dx == 0 || !self.at(at.0, at.1, dx, 0).is_some_and(is_own_stem))
+                        })
+                        .map(|j| (j % self.width, j / self.width))
+                }) else {
+                    break;
+                };
+                at = next;
+                d += 1;
+            }
+            d
+        };
+        let main_x = base % self.width;
+        // Whether stem cell `j` touches no stem cell of its plant but `from`
+        // and the main stem (a side shoot's first cells run beside it).
+        let lone_shoot = |j: usize, from: usize| {
+            let (jx, jy) = (j % self.width, j / self.width);
+            DIRS.iter().all(|&(dx, dy)| {
+                self.at(jx, jy, dx, dy)
+                    .is_none_or(|e| e == from || !is_own_stem(e) || e % self.width == main_x)
+            })
+        };
+        // Whether the main stem's next cell `j` touches no stem cell of its
+        // plant but `from` and side shoot cells (a shoot's first cells run
+        // beside the main stem, and must not stop it growing).
+        let lone_main = |j: usize, from: usize| {
+            let (jx, jy) = (j % self.width, j / self.width);
+            DIRS.iter().all(|&(dx, dy)| {
+                self.at(jx, jy, dx, dy)
+                    .is_none_or(|e| e == from || !is_own_stem(e) || e % self.width != main_x)
+            })
+        };
         let mut sites = Vec::new();
         for &i in members {
             let c = self.cells[i];
@@ -2202,21 +2290,34 @@ impl World {
                 Some(Part::Stem) => {
                     let above = self.at(x, y, 0, -1);
                     let below = self.at(x, y, 0, 1);
-                    let left = self.at(x, y, -1, 0);
-                    let right = self.at(x, y, 1, 0);
                     let stem_above = above.is_some_and(is_own_stem);
                     let stem_below = below.is_some_and(is_own_stem);
-                    let stem_left = left.is_some_and(is_own_stem);
-                    let stem_right = right.is_some_and(is_own_stem);
                     if pos < f.height {
-                        // Grow straight up from a stem tip if water is above
-                        // and no other stem cell of this plant touches it
-                        // (so a 1-cell branch stub steps out a second cell
-                        // before rising).
-                        if let Some(j) = above
-                            && is_water(j)
-                            && self.lone_part(j, i, id, Part::Stem)
-                        {
+                        // Grow up from a stem tip if water is above and no
+                        // other stem cell of this plant touches it. A side
+                        // shoot leaves its node on the diagonal and leans out
+                        // a column every two rows (a cell that rose straight
+                        // steps up and out; the cell that stepped out rises
+                        // straight), for up to `SHOOT_LEAN` columns from the
+                        // main stem, then rises. It may touch the main stem
+                        // beside it.
+                        let off = x.cast_signed() - main_x.cast_signed();
+                        let lean = off.signum();
+                        let slopes = off != 0
+                            && off.abs() < isize::try_from(SHOOT_LEAN).unwrap_or(0)
+                            && stem_below;
+                        let steps: &[isize] = if slopes { &[lean, 0] } else { &[0] };
+                        let target = steps.iter().find_map(|&dx| {
+                            self.at(x, y, dx, -1).filter(|&j| {
+                                is_water(j)
+                                    && if off == 0 {
+                                        lone_main(j, i)
+                                    } else {
+                                        lone_shoot(j, i)
+                                    }
+                            })
+                        });
+                        if let Some(j) = target {
                             sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
                         } else if above.is_some_and(is_air_like) {
                             // Topped out at the surface: trail sideways along
@@ -2232,52 +2333,44 @@ impl World {
                                     sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
                                 }
                             }
-                        } else if f.branching > 0.0
-                            && !stem_above
-                            && !stem_below
-                            && (stem_left != stem_right)
-                        {
-                            // A 1-cell horizontal branch stub: step one more
-                            // cell away from the parent stem so the rising
-                            // shoot keeps a 1-cell gap from it.
-                            let dx = if stem_left { 1 } else { -1 };
-                            if let Some(j) = self.at(x, y, dx, 0)
-                                && is_water(j)
-                                && self.lone_part(j, i, id, Part::Stem)
-                            {
-                                sites.push(Site::new(j, Part::Stem, pos + 1, STEM_WEIGHT));
-                            }
                         }
                     }
                     // Nodes on upright stem cells put out opposite leaves,
                     // or a side shoot with probability `f.branching`.
-                    let upright = stem_below || stem_above || i == base;
+                    let diag_stem = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+                        .iter()
+                        .any(|&(dx, dy)| self.at(x, y, dx, dy).is_some_and(is_own_stem));
+                    let upright = stem_below || stem_above || diag_stem || i == base;
                     if upright && pos >= f.internode && pos.is_multiple_of(f.internode) {
                         for dx in [-1, 1] {
-                            let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j)) else {
-                                continue;
-                            };
+                            // A side shoot leaves on the diagonal, in place of
+                            // this side's leaves.
+                            let shoot = self.at(x, y, dx, -1).filter(|&j| is_water(j));
                             let branch = f.branching > 0.0
                                 && stem_above
+                                && x == main_x
                                 && pos.saturating_add(3) < f.height
-                                && self.lone_part(j, i, id, Part::Stem)
-                                && self.at(x, y, dx * 2, 0).is_some_and(is_water)
-                                && self.at(x, y, dx * 2, -1).is_some_and(is_water)
-                                && !self.at(x, y, dx * 2, 1).is_some_and(is_own_stem)
-                                && !self.at(x, y, dx * 3, 0).is_some_and(is_own_stem)
+                                && shoot.is_some_and(|j| lone_shoot(j, i))
+                                && self.at(x, y, dx, -2).is_some_and(is_water)
+                                && self.at(x, y, dx * 2, -3).is_some_and(is_water)
+                                && !self.at(x, y, dx * 2, 0).is_some_and(is_own_stem)
                                 && self.branch_node(id, i, dx > 0, f.branching);
-                            if branch {
+                            if branch && let Some(j) = shoot {
                                 sites.push(Site::new(j, Part::Stem, pos + 1, LEAF_WEIGHT));
-                            } else if !self
-                                .at(j % self.width, j / self.width, 0, 1)
-                                .is_some_and(is_own_stem)
+                            } else if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
+                                && f.leaf_taper(below_tip(x, y)) > 0
+                                && !self
+                                    .at(j % self.width, j / self.width, 0, 1)
+                                    .is_some_and(is_own_stem)
                             {
                                 sites.push(Site::new(j, Part::Leaf, 1, LEAF_WEIGHT));
                             }
                         }
                     }
                 }
-                Some(Part::Leaf) if pos < f.leaf_length => {
+                // A row cell of a leaf (an upper cell, at or past `LEAF_UPPER`,
+                // only grows from the row below it).
+                Some(Part::Leaf) if pos < LEAF_UPPER => {
                     let from_left = self.at(x, y, -1, 0).is_some_and(|l| {
                         let lc = self.cells[l];
                         lc.state == id
@@ -2286,13 +2379,36 @@ impl World {
                                     && self.plants.part(lc.material) == Some(Part::Leaf)
                                     && plant_position(lc.variant) == pos - 1))
                     });
-                    let dx = if from_left { 1 } else { -1 };
-                    if let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
+                    let dx: isize = if from_left { 1 } else { -1 };
+                    // Leaves shorten towards the tip: this one's length is
+                    // capped by how far below its stem's tip its node is, so
+                    // it lengthens as the stem grows (a leaf whose stem is
+                    // gone keeps the full length).
+                    let node = self
+                        .at(x, y, -dx * isize::from(pos), 0)
+                        .filter(|&j| is_own_stem(j));
+                    let (node_pos, len) = node.map_or((0, f.leaf_length), |j| {
+                        (
+                            plant_position(self.cells[j].variant),
+                            f.leaf_taper(below_tip(j % self.width, j / self.width)),
+                        )
+                    });
+                    if pos < len
+                        && let Some(j) = self.at(x, y, dx, 0).filter(|&j| is_water(j))
                         && !self
                             .at(j % self.width, j / self.width, 0, 1)
                             .is_some_and(is_own_stem)
                     {
                         sites.push(Site::new(j, Part::Leaf, pos + 1, LEAF_WEIGHT));
+                    }
+                    // A broad leaf's widest cells put out one above them,
+                    // filling the row above the node.
+                    if f.broad_node(node_pos)
+                        && StemForm::leaf_upper(s.look.leaf, len, len == f.leaf_length)
+                            .is_some_and(|(first, last)| (first..=last).contains(&pos))
+                        && let Some(j) = self.at(x, y, 0, -1).filter(|&j| is_water(j))
+                    {
+                        sites.push(Site::new(j, Part::Leaf, LEAF_UPPER + pos, LEAF_WEIGHT));
                     }
                 }
                 Some(Part::Root) if pos < f.root_depth => {
@@ -3065,6 +3181,29 @@ impl World {
             });
         }
         leaves.truncate(n);
+        // A broad leaf's upper cell goes with the row cell under it, or it
+        // would be left a stemless piece.
+        let stem_plant = self
+            .plants
+            .species
+            .get(p.species)
+            .is_some_and(|s| matches!(s.form, Form::Stem(_)));
+        if stem_plant {
+            let uppers: Vec<usize> = leaves
+                .iter()
+                .filter_map(|&i| {
+                    let up = i.checked_sub(self.width)?;
+                    let (below, above) = (self.cells[i], self.cells[up]);
+                    (Some(above.material) == leaf
+                        && above.state == below.state
+                        && plant_position(below.variant) < LEAF_UPPER
+                        && plant_position(above.variant)
+                            == plant_position(below.variant) + LEAF_UPPER)
+                        .then_some(up)
+                })
+                .collect();
+            leaves.extend(uppers);
+        }
         self.make_dead(&leaves);
         if let Some(p) = self.plants.table.get_mut(&id) {
             p.pending = true;

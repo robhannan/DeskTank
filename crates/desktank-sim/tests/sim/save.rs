@@ -531,45 +531,19 @@ fn a_version_7_fixture_loads() {
     assert!(w.plants().all(|p| p.colour == 0.0));
 }
 
-/// A shallow, brightly lit aquasoil tank (T6d) with rotala, ludwigia and
-/// hygrophila grown for 3 minutes: the rotala and ludwigia colour, the
-/// hygrophila doesn't.
-fn coloured() -> World {
-    let mut w = World::new(
-        WorldConfig {
-            width: 96,
-            height: 40,
-            seed: 11,
-            water_level: 0.95,
-        },
-        table(),
-    )
-    .unwrap();
-    let soil = id(&w, "aquasoil");
-    w.fill_rect(rect(0, 32, 96, 40), soil, Brush::Replace)
-        .unwrap();
-    for (x, name) in [(20, "rotala"), (48, "ludwigia"), (76, "hygrophila")] {
-        let s = w.plant_species().id(name).unwrap();
-        w.paint_plant(x, 30, 0, s, desktank_sim::Propagule::Cuttings)
-            .unwrap();
-    }
-    for _ in 0..3600 {
-        w.tick();
-    }
-    w
-}
-
 #[test]
 fn a_version_8_fixture_loads() {
     // Frozen since version 9: blessing writes only the current version.
     let bytes = std::fs::read(fixture(8)).unwrap();
     assert_eq!(save::check(&bytes), Ok(8));
     let mut w = save::decode(&bytes, table()).unwrap();
-    let mut fresh = coloured();
-    assert_eq!(w.state_hash(), fresh.state_hash());
+    // Pinned, so every platform decodes the same state. The tank that wrote
+    // it no longer grows the same since stem leaves taper and broad ones
+    // grow an upper cell, so it is no longer compared with a freshly
+    // grown one: instead it carries on exactly as its own re-save does.
+    assert_eq!(w.state_hash(), 7_514_548_943_538_772_860);
     let colours =
         |w: &World| -> Vec<(u16, f32)> { w.plants().map(|p| (p.id.0, p.colour)).collect() };
-    assert_eq!(colours(&w), colours(&fresh));
     assert!(
         w.plants().filter(|p| p.colour > 0.2).count() >= 2,
         "{:?}",
@@ -581,6 +555,9 @@ fn a_version_8_fixture_loads() {
             .iter()
             .all(|c| c.quarry().is_none() && c.fear() == 0)
     );
+    let mut fresh = save::decode(&save::encode(&w), table()).unwrap();
+    assert_eq!(fresh.state_hash(), w.state_hash());
+    assert_eq!(colours(&w), colours(&fresh));
     for _ in 0..400 {
         w.tick();
         fresh.tick();

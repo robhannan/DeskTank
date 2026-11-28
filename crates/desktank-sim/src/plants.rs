@@ -545,6 +545,72 @@ pub struct StemForm {
     pub substrates: Vec<MaterialId>,
 }
 
+/// What a broad stem leaf's upper cells add to their position along the
+/// leaf (see [`StemForm::leaf_upper`]): a position at or above it is the
+/// cell stacked on the leaf's row, at `position - LEAF_UPPER`.
+pub const LEAF_UPPER: u8 = 32;
+
+/// Columns out from the main stem a side shoot leans before it rises
+/// straight: it leaves its node on the diagonal and steps out a column every
+/// two rows. The sprite's four pixels (a texel each, half a cell) are two
+/// cells, and its shoot starts a column out. Wider leans wove neighbouring
+/// stands into walls that stalled swimmers.
+pub const SHOOT_LEAN: i64 = 3;
+
+impl StemForm {
+    /// How many cells long the leaves at a node `below_tip` cells under the
+    /// tip of its stem (or side shoot) may be, as the species sprite's are:
+    /// none on the bare top `internode` cells (the stem ends in a bud), then
+    /// one cell, lengthening in whole cells towards `leaf_length` at half the
+    /// stem's `height` below the tip and staying there. Measured from the
+    /// stem's own tip, so a young stem is tapered too and its lower leaves
+    /// lengthen as it grows past them, and monotonic: a tier is never
+    /// longer than the one below it on the same stem.
+    #[must_use]
+    pub fn leaf_taper(&self, below_tip: u8) -> u8 {
+        if below_tip < self.internode {
+            return 0;
+        }
+        let length = i64::from(self.leaf_length);
+        let half = i64::from((self.height / 2).max(1));
+        let d = i64::from(below_tip).min(half);
+        u8::try_from(((2 * length * d + half) / (2 * half)).clamp(1, length.max(1))).unwrap_or(1)
+    }
+
+    /// Whether the leaves at the node `pos` cells up the stem are broad
+    /// ones that grow an upper cell (see [`StemForm::leaf_upper`]): every
+    /// other node, so the tiers alternate broad and narrow and a swimmer
+    /// can pass between them (a stack at every node is a wall).
+    #[must_use]
+    pub fn broad_node(&self, pos: u8) -> bool {
+        (pos / self.internode.max(1)) % 2 == 1
+    }
+
+    /// The positions along a leaf of `length` cells, as `first..=last`, that
+    /// carry a second cell above them (at [`LEAF_UPPER`] + their position)
+    /// when the leaves are `shape`: the broad and feathered shapes (lanceolate,
+    /// round, feather) fill the internode row above a node's leaf, as a blade
+    /// two cells thick at its middle. A leaf of one or two cells has it on
+    /// its outer cell, and on its inner one too (a fuller round leaf) when
+    /// it is `full` length, as the lowest leaves of a stem are. Needle leaves
+    /// stay a row thick.
+    #[must_use]
+    pub fn leaf_upper(shape: LeafShape, length: u8, full: bool) -> Option<(u8, u8)> {
+        if !matches!(
+            shape,
+            LeafShape::Lanceolate | LeafShape::Round | LeafShape::Feather
+        ) || length >= LEAF_UPPER
+        {
+            return None;
+        }
+        Some(if length <= 2 {
+            (if full { 1 } else { length.max(1) }, length.max(1))
+        } else {
+            (2, length - 1)
+        })
+    }
+}
+
 /// Parameters of the mat form.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatForm {
@@ -773,6 +839,20 @@ impl RootShape {
     pub const ALL: [Self; 2] = [Self::Strand, Self::Thick];
 }
 
+/// How a stem plant's leaves are arranged round its stem (`[look] arrangement`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum Arrangement {
+    /// Opposite pairs, each turned a quarter from the pair below (decussate):
+    /// side pairs at alternate nodes, front and back pairs between.
+    #[default]
+    Opposite = 0,
+    /// A whorl: every node's leaves fan out in a full disc round the stem
+    /// (cabomba).
+    Whorl = 1,
+}
+
 /// A species' drawn shapes per part (SPEC §2.7 *Appearance*, T6d). Every
 /// key is optional in the TOML: leaves default to lanceolate, roots to
 /// strands, and stems to stalks (fuzz for a mat).
@@ -784,6 +864,8 @@ pub struct Look {
     pub stem: StemShape,
     /// Root shape.
     pub root: RootShape,
+    /// How leaves are arranged round a stem plant's stem.
+    pub arrangement: Arrangement,
 }
 /// Fastest growth rate, in cells per minute at full response (the plant
 /// update grows at most 8 cells per plant every 5 s).
@@ -1180,6 +1262,7 @@ struct LookDef {
     leaf: Option<LeafShape>,
     stem: Option<StemShape>,
     root: Option<RootShape>,
+    arrangement: Option<Arrangement>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -1568,11 +1651,11 @@ fn validate(
             let max = MAX_POSITION;
             if !(1..=max).contains(&s.height)
                 || !(2..=max).contains(&s.internode)
-                || !(1..=max).contains(&s.leaf_length)
+                || !(1..LEAF_UPPER).contains(&s.leaf_length)
                 || !(1..=max).contains(&s.root_depth)
             {
                 return Err(invalid(
-                    "stem height, leaf_length and root_depth must be 1..=63 and internode 2..=63",
+                    "stem height and root_depth must be 1..=63, leaf_length 1..=31 (the upper cells' positions start at 32) and internode 2..=63",
                 ));
             }
             if !(s.branching.is_finite() && (0.0..=1.0).contains(&s.branching)) {
@@ -1682,6 +1765,7 @@ fn validate(
         leaf: d.look.leaf.unwrap_or(default_leaf),
         stem: d.look.stem.unwrap_or(default_stem),
         root: d.look.root.unwrap_or_default(),
+        arrangement: d.look.arrangement.unwrap_or_default(),
     };
     let mat_shape = matches!(look.stem, StemShape::Fuzz | StemShape::Frond);
     if mat_shape != matches!(form, Form::Mat(_))
@@ -2021,6 +2105,9 @@ mod tests {
         invalid(bad("optimum = 0.5", "optimum = 0.05"));
         invalid(bad("internode = 2", "internode = 1"));
         invalid(bad("height = 20", "height = 64"));
+        // Stem leaves must stay below the upper cells' positions.
+        invalid(bad("leaf_length = 3", "leaf_length = 32"));
+        invalid(bad("leaf_length = 3", "leaf_length = 0"));
         invalid(bad("rate = 10.0", "rate = 0.0"));
         invalid(bad("decline = 0.01", "decline = 0.0"));
         invalid(bad("[\"cuttings\"]", "[]"));
@@ -2139,6 +2226,22 @@ mod tests {
             (look.leaf, look.stem, look.root),
             (LeafShape::Feather, StemShape::Thick, RootShape::Thick)
         );
+        // Leaves are arranged in opposite pairs unless a species asks for a
+        // whorl (a data option no shipped species uses yet).
+        for sp in t.iter() {
+            assert_eq!(sp.look.arrangement, Arrangement::Opposite, "{}", sp.name);
+        }
+        let whorled = format!("{OK}\n[look]\narrangement = \"whorl\"\n");
+        let s = PlantSpeciesTable::from_toml_sources(&[&whorled], &m).unwrap();
+        assert_eq!(
+            s.get(PlantSpeciesId(9)).unwrap().look.arrangement,
+            Arrangement::Whorl
+        );
+        let odd = format!("{OK}\n[look]\narrangement = \"spiral\"\n");
+        assert!(matches!(
+            PlantSpeciesTable::from_toml_sources(&[&odd], &m),
+            Err(PlantSpeciesError::Parse { .. })
+        ));
         // A mat shape on a stem plant is invalid.
         let mat_on_stem = format!("{OK}\n[look]\nstem = \"fuzz\"\n");
         assert!(matches!(

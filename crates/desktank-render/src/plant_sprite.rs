@@ -26,8 +26,8 @@
 )]
 
 use desktank_sim::plants::{
-    EpiphyteForm, FloaterForm, Form, LeafShape, Look, MatForm, PlantSpecies, RootShape,
-    RosetteForm, StemForm, StemShape,
+    Arrangement, EpiphyteForm, FloaterForm, Form, LeafShape, Look, MatForm, PlantSpecies,
+    RootShape, RosetteForm, StemForm, StemShape,
 };
 
 /// A cropped sprite: its size in pixels and its RGBA rows, sRGB, alpha 0 or
@@ -309,7 +309,9 @@ fn run(pic: &mut Pic, c: &Ctx, f: &StemForm, r: &Run, offset: &dyn Fn(i32) -> i3
         }
     }
     let mut k = first;
+    let mut node = 0;
     while k < r.len - 1 {
+        node += 1;
         let ht = (r.base + k) as f32 / r.height as f32;
         let x = r.x0 + offset(k);
         let y = -(r.base + k);
@@ -318,9 +320,22 @@ fn run(pic: &mut Pic, c: &Ctx, f: &StemForm, r: &Run, offset: &dyn Fn(i32) -> i3
         // Leaves at the upper nodes carry the colouration, if the species
         // has one.
         let ramp: &[Rgb] = if ht > 0.5 { &c.tip } else { &c.leaf };
-        for dir in [-1, 1] {
-            let sx = if dir > 0 && r.thick { x + 1 } else { x };
-            stem_leaf(pic, ramp, c.look.leaf, (sx, y), dir, len, ht);
+        if c.look.arrangement == Arrangement::Whorl {
+            // A whorl: a disc of fine segments round the node.
+            whorl(pic, ramp, (x, y), len, ht);
+        } else {
+            // Opposite pairs, turned a quarter at alternate nodes: there the
+            // side leaves are seen at an angle (shorter) and a front leaf is
+            // drawn over the stem.
+            let turned = node % 2 == 0;
+            let side = if turned { (len - 2).max(2) } else { len };
+            for dir in [-1, 1] {
+                let sx = if dir > 0 && r.thick { x + 1 } else { x };
+                stem_leaf(pic, ramp, c.look.leaf, (sx, y), dir, side, ht);
+            }
+            if turned {
+                front_leaf(pic, ramp, c.look.leaf, (x + i32::from(r.thick), y), ht);
+            }
         }
         k += step;
     }
@@ -332,6 +347,61 @@ fn run(pic: &mut Pic, c: &Ctx, f: &StemForm, r: &Run, offset: &dyn Fn(i32) -> i3
     if c.look.leaf != LeafShape::Needle {
         pic.put(x - 1, y, pick(ramp, 0.75));
         pic.put(x + 1, y, pick(ramp, 0.75));
+    }
+}
+
+/// A leaf turned to the viewer, drawn over the stem at its node `at`: an oval
+/// (a needle's a small tuft) lit above and darker beneath, a pale rib down it.
+fn front_leaf(pic: &mut Pic, ramp: &[Rgb], shape: LeafShape, at: (i32, i32), ht: f32) {
+    let (x, y) = at;
+    let base = 0.35 + 0.4 * ht;
+    if shape == LeafShape::Feather {
+        // A fan seen face-on: filaments radiating up from the stem.
+        for i in 0..5 {
+            let th = 0.5 + i as f32 * 0.55;
+            for r in 1..=3 {
+                let (dx, dy) = (
+                    (r as f32 * th.cos()).round() as i32,
+                    (r as f32 * th.sin()).round() as i32,
+                );
+                pic.put(x + dx, y - 1 - dy, pick(ramp, base + 0.1 + 0.05 * r as f32));
+            }
+        }
+        return;
+    }
+    let rows: &[(i32, i32)] = if shape == LeafShape::Needle {
+        &[(-1, 0), (0, 1), (1, 0)]
+    } else {
+        &[(-2, 0), (-1, 1), (0, 1), (1, 1), (2, 0)]
+    };
+    for &(dy, w) in rows {
+        for dx in -w..=w {
+            let lit = 0.15 * (1 - dy).clamp(-1, 2) as f32 / 2.0 + if dx == 0 { 0.1 } else { 0.0 };
+            pic.put(x + dx, y + dy - 1, pick(ramp, base + lit));
+        }
+    }
+}
+
+/// A whorl (cabomba): a disc of fine, lacy leaf segments round the node `at`,
+/// `len` pixels across each way and about a third as tall, with a solid rib through
+/// it, lighter towards its upper rim.
+fn whorl(pic: &mut Pic, ramp: &[Rgb], at: (i32, i32), len: i32, ht: f32) {
+    let (x, y) = at;
+    let rx = len as f32;
+    let ry = (len as f32 * 0.38).max(2.0);
+    let base = 0.25 + 0.4 * ht;
+    for dy in -(ry as i32)..=(ry as i32) {
+        for dx in -len..=len {
+            if dx == 0 {
+                continue;
+            }
+            let inside = (dx as f32 / rx).powi(2) + (dy as f32 / ry).powi(2) <= 1.0;
+            let lace = (dx + dy).rem_euclid(2) == 0;
+            if inside && (dy == 0 || lace) {
+                let lit = 0.3 * (-dy as f32 / ry + 1.0) / 2.0;
+                pic.put(x + dx, y + dy - 1, pick(ramp, base + lit));
+            }
+        }
     }
 }
 
@@ -386,25 +456,27 @@ fn stem_leaf(
             }
         }
         LeafShape::Feather => {
-            // A midrib with a fringe of fine teeth, a little wider than long.
-            for k in 1..=len {
-                let rib = sy - k / 4;
-                let t = k as f32 / len as f32;
-                pic.put(sx + dir * k, rib, pick(ramp, base + 0.25 * t));
-                if k % 2 == 1 {
-                    let up = [2, 3, 3, 3, 2][((k / 2) as usize).min(4)];
-                    for j in 1..=up {
-                        pic.put(
-                            sx + dir * k,
-                            rib - j,
-                            pick(ramp, base + 0.2 + 0.1 * j as f32),
-                        );
-                    }
-                } else if k > 1 {
-                    let down = 1 + i32::from(k % 4 == 0);
-                    for j in 1..=down {
-                        pic.put(sx + dir * k, rib + j, pick(ramp, base - 0.05));
-                    }
+            // A short petiole rising out from the stem to a fan: thin filaments
+            // radiating up and out from its end, lighter towards their tips,
+            // water between them.
+            let apex = (sx + dir * 2, sy - 2);
+            for k in 1..=2 {
+                pic.put(sx + dir * k, sy - k, pick(ramp, base));
+            }
+            let reach = (len - 4).clamp(3, 4);
+            for i in 0..6 {
+                let th = -0.2 + i as f32 * 0.5;
+                for r in 1..=reach {
+                    let (dx, dy) = (
+                        (r as f32 * th.cos()).round() as i32,
+                        (r as f32 * th.sin()).round() as i32,
+                    );
+                    let tip = r as f32 / reach as f32;
+                    pic.put(
+                        apex.0 + dir * dx,
+                        apex.1 - dy,
+                        pick(ramp, base + 0.1 + 0.3 * tip),
+                    );
                 }
             }
         }
@@ -1032,6 +1104,20 @@ mod tests {
         }
     }
 
+    /// A whorled species (the data option no shipped species uses) draws as
+    /// stacked discs, an image of its own that still fits the pane.
+    #[test]
+    fn a_whorled_species_draws_discs_within_bounds() {
+        let t = table();
+        let cabomba = t.iter().find(|sp| sp.name == "cabomba").unwrap();
+        let mut whorled = cabomba.clone();
+        whorled.look.arrangement = Arrangement::Whorl;
+        let ((w, h), px) = build(&whorled);
+        assert!(w <= MAX_WIDTH && h <= MAX_HEIGHT, "{w}x{h}");
+        assert!(px.iter().any(|p| p[3] == 255));
+        assert_ne!(px, build(cabomba).1, "a whorl isn't a pair of fans");
+    }
+
     #[test]
     fn every_species_is_a_distinct_image() {
         let t = table();
@@ -1194,5 +1280,273 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    /// Writes, when `STEM_SHOTS` names a prefix (`before`, `after`), one PNG
+    /// per stem species to `target/shots/stem-before-after/`: its pane
+    /// sprite, then the same species placed Mature in a tank at scale 2 and
+    /// at scale 4 (quarter-cell art), all enlarged four times the sprite's
+    /// pixels, and a contact sheet of the five.
+    #[test]
+    fn writes_stem_before_after_on_request() {
+        let Some(prefix) = std::env::var_os("STEM_SHOTS") else {
+            return;
+        };
+        let prefix = prefix.to_string_lossy().into_owned();
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let Ok(gpu) = pollster::block_on(crate::Gpu::new(
+            &instance,
+            None,
+            crate::GpuOptions::default(),
+        )) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/shots/stem-before-after");
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = table();
+        let (cw, ch) = (48_i64, 64_i64);
+        let bg = crate::hud::BACKGROUND;
+        // Tank pixels are shown at 4x (scale 2) or 2x (scale 4): the same size.
+        let tank_shot = |name: &str,
+                         scale: u32,
+                         stage: desktank_sim::PlantStage,
+                         tint: Option<bool>|
+         -> (Vec<u8>, Option<(usize, usize)>) {
+            let m = MaterialTable::builtin().unwrap();
+            let mut world = desktank_sim::World::new(
+                desktank_sim::WorldConfig {
+                    width: cw as usize,
+                    height: ch as usize,
+                    seed: 7,
+                    water_level: 0.95,
+                },
+                m,
+            )
+            .unwrap();
+            // Shown in lean or fertilised water, the plant stands on a high bed so
+            // its whole height is in strong light.
+            let bed = if tint.is_some() { 30 } else { 58 };
+            let soil = world.materials().id("aquasoil").unwrap();
+            world
+                .fill_rect(
+                    desktank_sim::Rect {
+                        x0: 0,
+                        y0: bed,
+                        x1: cw as usize,
+                        y1: ch as usize,
+                    },
+                    soil,
+                    desktank_sim::Brush::Replace,
+                )
+                .unwrap();
+            let id = world.plant_species().id(name).unwrap();
+            world
+                .place_plant(id, stage, cw / 2, bed as i64 - 1, false)
+                .unwrap()
+                .unwrap();
+            // The lowest stem cell off the main stem: where a side shoot starts.
+            let stem = world.materials().id("stem").unwrap();
+            let stub = (0..ch as usize)
+                .rev()
+                .flat_map(|y| (0..cw as usize).map(move |x| (x, y)))
+                .find(|&(x, y)| x != cw as usize / 2 && world.cell(x, y).unwrap().material == stem);
+            // `Some(true)`: a lean tank, so the plant colours up fully;
+            // `Some(false)`: a fertilised one, so it doesn't colour at all.
+            if let Some(lean) = tint {
+                // Hold the nutrient at 0.3 (colouration 1) or 1.5 (none).
+                let want = if lean { 0.3 } else { 1.5 };
+                for _ in 0..4800 {
+                    for y in (0..ch as usize).step_by(8) {
+                        for x in (0..cw as usize).step_by(8) {
+                            let now = world.field(desktank_sim::FieldKind::Nutrient).at_cell(x, y);
+                            world.add_to_field(desktank_sim::FieldKind::Nutrient, x, y, want - now);
+                        }
+                    }
+                    world.tick();
+                }
+                let c = world.plants().next().map_or(-1.0, |p| p.colour);
+                eprintln!(
+                    "rotala colouration {c:.2} ({})",
+                    if lean { "lean" } else { "fed" }
+                );
+            }
+            let mut tank = crate::Tank::new(world, crate::TankConfig::default());
+            tank.set_time_of_day(12 * 60);
+            tank.step();
+            (
+                tank.capture(&gpu, (cw as u32 * scale, ch as u32 * scale))
+                    .unwrap(),
+                stub,
+            )
+        };
+        let stems: Vec<&PlantSpecies> = t
+            .iter()
+            .filter(|sp| matches!(sp.form, Form::Stem(_)))
+            .collect();
+        for sp in stems {
+            let ((sw, sh), px) = build(sp);
+            // Enlarge `rgba` (`w` wide), cropped to `crop` (x0, y0, w, h),
+            // `k` times.
+            let up = |rgba: &[u8], w: usize, crop: (usize, usize, usize, usize), k: usize| {
+                let (cx, cy, cw, ch) = crop;
+                let mut out = vec![0u8; cw * k * ch * k * 4];
+                for y in 0..ch * k {
+                    for x in 0..cw * k {
+                        let s = ((cy + y / k) * w + cx + x / k) * 4;
+                        let o = (y * cw * k + x) * 4;
+                        out[o..o + 4].copy_from_slice(&rgba[s..s + 4]);
+                    }
+                }
+                out
+            };
+            let blit = |img: &mut Vec<u8>,
+                        total_w: usize,
+                        src: &[u8],
+                        (w, h): (usize, usize),
+                        (x0, y0): (usize, usize)| {
+                for y in 0..h {
+                    let o = ((y0 + y) * total_w + x0) * 4;
+                    img[o..o + w * 4].copy_from_slice(&src[y * w * 4..(y + 1) * w * 4]);
+                }
+            };
+            let write = |name: String, img: &[u8], (w, h): (usize, usize)| {
+                std::fs::write(
+                    dir.join(name),
+                    crate::testing::png(
+                        img,
+                        (u32::try_from(w).unwrap(), u32::try_from(h).unwrap()),
+                    ),
+                )
+                .unwrap();
+            };
+            let spr: Vec<u8> = px
+                .iter()
+                .flat_map(|p| {
+                    if p[3] == 255 {
+                        *p
+                    } else {
+                        [bg[0], bg[1], bg[2], 255]
+                    }
+                })
+                .collect();
+            let (mature, young) = (
+                desktank_sim::PlantStage::Mature,
+                desktank_sim::PlantStage::Juvenile,
+            );
+            let (two, _) = tank_shot(&sp.name, 2, mature, None);
+            let (four, stub) = tank_shot(&sp.name, 4, mature, None);
+            let (two_j, _) = tank_shot(&sp.name, 2, young, None);
+            let (four_j, _) = tank_shot(&sp.name, 4, young, None);
+            let (cwu, chu) = (cw as usize, ch as usize);
+            // The whole plant: sprite and tank at the same pixel size (the
+            // scale-2 tank shows a texel as a pixel, as the sprite does),
+            // then the quarter-cell tank at half the zoom.
+            let (x0, y0, pw, ph) = (cwu / 2 - 16, 6, 32, chu - 6);
+            let (k, gap) = (6, 16);
+            let (spr_w, spr_h) = (sw * k, sh * k);
+            let tank_w = pw * 2 * k;
+            let panel_h = ph * 2 * k;
+            let total_w = spr_w + 4 * (gap + tank_w);
+            let mut img: Vec<u8> = (0..total_w * panel_h)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect();
+            let spr_up = up(&spr, sw, (0, 0, sw, sh), k);
+            blit(
+                &mut img,
+                total_w,
+                &spr_up,
+                (spr_w, spr_h),
+                (0, panel_h - spr_h - 4 * k),
+            );
+            let a = up(&two, cwu * 2, (x0 * 2, y0 * 2, pw * 2, ph * 2), k);
+            blit(&mut img, total_w, &a, (tank_w, panel_h), (spr_w + gap, 0));
+            let b = up(&four, cwu * 4, (x0 * 4, y0 * 4, pw * 4, ph * 4), k / 2);
+            blit(
+                &mut img,
+                total_w,
+                &b,
+                (tank_w, panel_h),
+                (spr_w + gap + tank_w + gap, 0),
+            );
+            // The same plant placed Juvenile, to show a growing one.
+            for (n, shot, c, kk) in [(2, &two_j, 2, k), (3, &four_j, 4, k / 2)] {
+                let b = up(shot, cwu * c, (x0 * c, y0 * c, pw * c, ph * c), kk);
+                let at = spr_w + n * (gap + tank_w) + gap;
+                blit(&mut img, total_w, &b, (tank_w, panel_h), (at, 0));
+            }
+            write(
+                format!("{prefix}-{}.png", sp.name),
+                &img,
+                (total_w, panel_h),
+            );
+            // A close look at a side shoot's lean, where the plant has one.
+            if let Some((sx, sy)) = stub {
+                let (bw, bh, bk) = (20, 16, 10);
+                let bx = sx.saturating_sub(10).min(cwu - bw);
+                let by = sy.saturating_sub(13).min(chu - bh);
+                let b = up(&four, cwu * 4, (bx * 4, by * 4, bw * 4, bh * 4), bk);
+                write(
+                    format!("{prefix}-{}-branch.png", sp.name),
+                    &b,
+                    (bw * 4 * bk, bh * 4 * bk),
+                );
+            }
+            // A close look at the plant's upper half.
+            let (zx, zy, zw, zh) = (cwu / 2 - 14, 14, 28, 20);
+            let zk = 8;
+            let a = up(&two, cwu * 2, (zx * 2, zy * 2, zw * 2, zh * 2), zk * 2);
+            let b = up(&four, cwu * 4, (zx * 4, zy * 4, zw * 4, zh * 4), zk);
+            let zw_px = zw * 2 * zk * 2;
+            let zh_px = zh * 2 * zk * 2;
+            let mut img: Vec<u8> = (0..(zw_px * 2 + gap) * zh_px)
+                .flat_map(|_| [bg[0], bg[1], bg[2], 255])
+                .collect();
+            let tw = zw_px * 2 + gap;
+            blit(&mut img, tw, &a, (zw_px, zh_px), (0, 0));
+            blit(&mut img, tw, &b, (zw_px, zh_px), (zw_px + gap, 0));
+            write(format!("{prefix}-{}-zoom.png", sp.name), &img, (tw, zh_px));
+        }
+        // Rotala's crown at colouration 0 (fertilised) and 1 (lean water),
+        // side by side, upper half, quarter-cell art.
+        let (fed, _) = tank_shot("rotala", 4, desktank_sim::PlantStage::Mature, Some(false));
+        let (lean, _) = tank_shot("rotala", 4, desktank_sim::PlantStage::Mature, Some(true));
+        let (cwu, chu) = (cw as usize, ch as usize);
+        let (zx, zy, zw, zh, zk) = (cwu / 2 - 14, 0, 28, 30, 8);
+        let crop = |img: &[u8]| {
+            let mut out = vec![0u8; zw * 4 * zk * zh * 4 * zk * 4];
+            for y in 0..zh * 4 * zk {
+                for x in 0..zw * 4 * zk {
+                    let s = (((zy * 4 + y / zk) * cwu * 4) + zx * 4 + x / zk) * 4;
+                    let o = (y * zw * 4 * zk + x) * 4;
+                    out[o..o + 4].copy_from_slice(&img[s..s + 4]);
+                }
+            }
+            out
+        };
+        let (a, b) = (crop(&fed), crop(&lean));
+        let _ = chu;
+        let half = zw * 4 * zk;
+        let gap = 16;
+        let mut img = vec![0u8; (half * 2 + gap) * zh * 4 * zk * 4];
+        for y in 0..zh * 4 * zk {
+            let row = (y * (half * 2 + gap)) * 4;
+            img[row..row + half * 4].copy_from_slice(&a[y * half * 4..(y + 1) * half * 4]);
+            let at = row + (half + gap) * 4;
+            img[at..at + half * 4].copy_from_slice(&b[y * half * 4..(y + 1) * half * 4]);
+        }
+        std::fs::write(
+            dir.join(format!("{prefix}-rotala-colour.png")),
+            crate::testing::png(
+                &img,
+                (
+                    u32::try_from(half * 2 + gap).unwrap(),
+                    u32::try_from(zh * 4 * zk).unwrap(),
+                ),
+            ),
+        )
+        .unwrap();
     }
 }

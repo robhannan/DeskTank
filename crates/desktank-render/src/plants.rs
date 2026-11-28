@@ -181,11 +181,17 @@ fn species_row(s: &PlantSpecies) -> [u8; SPECIES_WIDTH * 4] {
     }
     let look = s.look;
     let at = SHAPES_COLUMN * 4;
-    row[at..at + 4].copy_from_slice(&[look.leaf as u8, look.stem as u8, look.root as u8, 0]);
+    row[at..at + 4].copy_from_slice(&[
+        look.leaf as u8,
+        look.stem as u8,
+        look.root as u8,
+        look.arrangement as u8,
+    ]);
     // A rosette's, carpet's or epiphyte's blades shade by length, as stems
     // by height.
     let sizes = match &s.form {
-        Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, 0],
+        // A stem plant's node spacing, for the arrangement of its leaves.
+        Form::Stem(f) => [f.height, f.root_depth, f.leaf_length, f.internode],
         // A tiger lotus type's leaf pads: leaf cells past the blade length,
         // up to `pad` further.
         Form::Rosette(f) | Form::Carpet(f) => [f.blade_length, f.root_depth, f.blade_length, f.pad],
@@ -403,6 +409,34 @@ mod tests {
         }
         for s in RootShape::ALL {
             check("ROOT", format!("{s:?}"), s as u8);
+        }
+        // The upper cells' position offset is the sim's.
+        let line = format!(
+            "const LEAF_UPPER: i32 = {};",
+            desktank_sim::plants::LEAF_UPPER
+        );
+        assert!(wgsl.contains(&line), "tank.wgsl lacks `{line}`");
+    }
+
+    /// The shader counts a stem leaf's length along its row to four cells past
+    /// the one it is in, and reads the leaf taper's `half` (a stem's half
+    /// height) and `leaf_length` as 8-bit sizes: every shipped stem species
+    /// stays within them, so what the sim grows and what the shader draws
+    /// agree.
+    #[test]
+    fn shipped_stem_species_fit_the_shaders_loops() {
+        let m = desktank_sim::MaterialTable::builtin().unwrap();
+        let table = PlantSpeciesTable::builtin_for(&m).unwrap();
+        for sp in table.iter() {
+            let Form::Stem(f) = &sp.form else { continue };
+            assert!(
+                f.height / 2 <= 32,
+                "{}: half height {}",
+                sp.name,
+                f.height / 2
+            );
+            assert!(f.leaf_length <= 5, "{}: leaf {}", sp.name, f.leaf_length);
+            assert!(f.internode >= 2, "{}", sp.name);
         }
     }
 }

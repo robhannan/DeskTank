@@ -150,10 +150,46 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     at the surface and trailing along it. A rootless variant anchors
     loosely or floats (hornwort type). *T6c part 3:* `[stem] branching`
     (0..=1; rotala 0.2, ludwigia 0.15) sets the deterministic per-node
-    chance of a side shoot, which steps two cells out before rising so it
-    keeps a one-cell gap from the main stem (leaves stop short of a rising
-    shoot below them); any stem reaching the top water row trails sideways
-    along it up to `height`.
+    chance of a side shoot, which leaves its node on the diagonal and leans
+    out (below), running beside the main stem for its first two cells
+    (which it must not stop growing: the main stem's growth ignores shoot
+    cells beside it; leaves stop short of a rising shoot below them); any stem reaching the top water row trails sideways
+    along it up to `height`. *Stem leaves in the tank look like the info
+    pane's sprite:* leaf length tapers to the tip of the plant's own stem
+    or side shoot (`StemForm::leaf_taper`): the top `internode` cells are
+    a bare stalk ending in a bud (drawn from the leaf ramp's brightest
+    shade), then a one-cell pair, lengthening in whole cells to
+    `leaf_length` at half the stem's `height` below the tip, and never
+    longer than the tier below. A leaf's growth is capped by that depth,
+    so a young stem is tapered too and its lower leaves lengthen as the
+    stem grows past them; the shader draws each blade at the length it
+    has reached. At every other node the broad shapes (lanceolate, round)
+    grow an *upper cell* over their middle cells (`StemForm::leaf_upper`;
+    position `LEAF_UPPER` (32) plus its row cell's), so the blade is two
+    cells thick where widest. A plant's pieces don't join through an upper
+    cell and the leaf above it, so cutting the stem still frees the top.
+    Feather leaves (cabomba) grow upper cells too, so each fan of filaments,
+    on its short petiole, stands taller; needle leaves stay a row thick. Side shoots lean:
+    the shoot leaves its node on the diagonal (no flat stub) and steps out
+    a column every two rows, up to `SHOOT_LEAN` columns from the main stem,
+    then rises straight on; their cells join diagonally, in growth (`stem_sites`) and
+    in placement, and in splitting a plant into pieces. The shader draws
+    that stalk on a slope and each leaf's outer cell a texel short where the
+    taper falls between two lengths. Stem plants' upper leaves and buds lean
+    a little towards the colouration colour even before the light colours
+    the plant (`TIP_TINT`, a quarter of the full amount at the very tips:
+    a hint of pink on rotala's crown in fertilised water, where the plant
+    otherwise stays green; the light and lean water colour it fully).
+    *Leaves round the stem* (render only, `tank.wgsl`): opposite-leaved
+    species are decussate. At alternate nodes (the narrow ones; the broad
+    ones carry the upper cells) the pair points at and away from the viewer:
+    a front leaf is drawn over the stem at the node and the internode cell
+    above it, and the side pair is a texel shorter at its tip, seen at an
+    angle (its cells still grow, so nothing invisible blocks a swimmer). For
+    cabomba the front leaf is a fan seen face-on. `[look] arrangement`
+    (`opposite`, the default, or `whorl`) is a data option; `whorl` draws
+    every node's feather leaves as a lacy disc round the stem and no shipped
+    species uses it yet.
   - **Rosette:** a crown at the substrate grows `blades` blades of a
     given length, width (1–2 cells) and lean; spreads by runners.
     *T6c:* `[rosette]` gives `crown` (1–3 cells, growing rightwards from
