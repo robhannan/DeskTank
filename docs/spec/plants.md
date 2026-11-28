@@ -224,9 +224,17 @@ grows as a surface coat on hardscape, substrate and glass (§2.3, D28).
     amazon sword's three), with a pale midrib, lateral veins every third
     cell, a darker rim and a pointed tip; a blade under 20 cells has a
     crinkled margin (crypt's). It narrows at night. A ribbon (vallisneria)
-    is a strap two texels wide that meanders more towards its tip, with a
-    broader, paler face where it twists. A tiger lotus's petioles are plain
-    bronze stalks a cell wide, darker on their right, its pads as before with fewer maroon
+    is a straight, thin strap (two quarters wide: a texel at scale 2, left
+    of the cell's centre, paler on its left, lighter towards its tip) that
+    arcs sideways only over its last quarter, away from a blade beside it.
+    A tiger lotus's petioles are thin bronze stalks (a texel at scale 2, two
+    quarters at scale 4) drawn from the stem's ramp, so the colouration
+    leaves them brown; where the water shows through the gaps between
+    ribbon straps and petioles it is water, not the plant's shadow.
+    Where the sim steps a blade (or petiole) a cell sideways, its leaf
+    cell and the one it steps to share a row, and the drawn blade runs
+    diagonally across that pair, a texel a texel-row, instead of jogging a
+    cell (`lean_shift`: four neighbour reads, no loops). Its pads are as before with fewer maroon
     flecks at quarter-cell scale. Grass and pad blades (carpets) are
     unchanged.
   - **Carpet:** low tufts; runners creep through the top substrate layer
